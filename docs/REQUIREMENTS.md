@@ -1,6 +1,6 @@
-# Product Requirements Document: Internal Developer Portal (IDP) 2.0
+# Product Requirements Document: Lekton
 
-| **Project Name** | Dynamic Rust Documentation Portal |
+| **Project Name** | Lekton |
 | --- | --- |
 | **Status** | Draft / Planning |
 | **Target Stack** | Rust (Leptos, Axum), MongoDB, S3, Meilisearch |
@@ -12,7 +12,7 @@
 
 **Problem:** The current documentation portal (Nextra fork) suffers from high maintenance overhead, requires full site rebuilds for content updates, forces a monolithic repository structure, and lacks granular access control for sensitive documentation.
 
-**Solution:** Build a custom Server-Side Rendered (SSR) portal using Rust. This platform will decouple content from code, allowing microservices to inject their own documentation via CI/CD, enforce strict Role-Based Access Control (RBAC) at the server level, and provide a unified interface for API Schemas (OpenAPI/AsyncAPI).
+**Solution:** Build Lekton, a custom Server-Side Rendered (SSR) portal using Rust. This platform will decouple content from code, allowing microservices to inject their own documentation via CI/CD, enforce strict Role-Based Access Control (RBAC) at the server level, and provide a unified interface for API Schemas (OpenAPI/AsyncAPI).
 
 ---
 
@@ -31,11 +31,11 @@ The system follows a **Headless CMS** architecture where the Rust backend acts a
 
 ### Core Components
 
-* **Frontend:** **Leptos** (Rust). Handles SSR, hydration, and client-side interactivity.
-* **Backend API:** **Axum** (Rust). Handles auth, ingestion logic, and schema validation.
-* **Metadata Store:** **MongoDB**. Stores document hierarchy, permissions, versioning, and link graphs.
-* **Blob Store:** **S3**. Stores raw Markdown/MDX files and schema artifacts (JSON/YAML).
-* **Search Engine:** **Meilisearch**. Stores indexed content with protected tenant tokens.
+*   **Frontend:** **Leptos** (Rust). Handles SSR, hydration, and client-side interactivity.
+*   **Backend API:** **Axum** (Rust). Handles auth, ingestion logic, and schema validation.
+*   **Metadata Store:** **MongoDB**. Stores document hierarchy, permissions, versioning, and link graphs.
+*   **Blob Store:** **S3**. Stores raw Markdown/MDX files and schema artifacts (JSON/YAML).
+*   **Search Engine:** **Meilisearch**. Stores indexed content with protected tenant tokens.
 
 ---
 
@@ -43,12 +43,12 @@ The system follows a **Headless CMS** architecture where the Rust backend acts a
 
 ### 4.1. Authentication & Authorization (RBAC)
 
-* **Auth Provider:** Integration with company OIDC/OAuth provider (e.g., Keycloak, Okta, Google Workspace).
-* **Role Mapping:** Map IDP groups to internal roles: `Public`, `Developer`, `Architect`, `Admin`.
-* **Granularity:**
-* Every document and schema version must have a `min_access_level` field in MongoDB.
-* The Axum middleware must reject requests to restricted paths before fetching content from S3.
-* **Requirement:** Users must never see a link in the sidebar or search result for a document they cannot access.
+*   **Auth Provider:** Integration with company OIDC/OAuth provider (e.g., Keycloak, Okta, Google Workspace).
+*   **Role Mapping:** Map Lekton groups to internal roles: `Public`, `Developer`, `Architect`, `Admin`.
+*   **Granularity:**
+*   Every document and schema version must have a `min_access_level` field in MongoDB.
+*   The Axum middleware must reject requests to restricted paths before fetching content from S3.
+*   **Requirement:** Users must never see a link in the sidebar or search result for a document they cannot access.
 
 
 

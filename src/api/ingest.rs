@@ -21,15 +21,7 @@ pub struct IngestResponse {
     pub slug: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct SearchDocument {
-    pub id: String, // Use slug for search ID
-    pub slug: String,
-    pub title: String,
-    pub content: String,
-    pub access_level: String,
-    pub tags: Vec<String>,
-}
+pub use crate::models::search::SearchDocument;
 
 pub async fn ingest_handler(
     State(state): State<AppState>,

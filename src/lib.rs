@@ -2,14 +2,18 @@ pub mod app;
 pub mod models {
     pub mod document;
     pub mod link_validator;
+    pub mod search;
 }
+#[cfg(feature = "ssr")]
 pub mod state;
+#[cfg(feature = "ssr")]
 pub mod auth;
 pub mod components {
     pub mod document_view;
     pub mod search_bar;
     pub mod editor;
 }
+#[cfg(feature = "ssr")]
 pub mod api {
     pub mod ingest;
     pub mod search;

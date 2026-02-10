@@ -1,10 +1,9 @@
 use serde::{Deserialize, Serialize};
-use mongodb::bson::oid::ObjectId;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Document {
     #[serde(rename = "_id", skip_serializing_if = "Option::is_none")]
-    pub id: Option<ObjectId>,
+    pub id: Option<String>,
     pub slug: String,
     pub title: String,
     pub s3_key: String,

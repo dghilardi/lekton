@@ -1,13 +1,13 @@
 use leptos::prelude::*;
-use crate::api::ingest::SearchDocument;
+use crate::models::search::SearchDocument;
 
 #[component]
 pub fn SearchBar() -> impl IntoView {
     let (query, set_query) = signal(String::new());
     
-    let search_results = Resource::new(
-        move || query.get(),
-        |q| async move {
+    let search_results = LocalResource::new(move || {
+        let q = query.get();
+        async move {
             if q.is_empty() {
                 return Ok(Vec::<SearchDocument>::new());
             }
@@ -17,7 +17,7 @@ pub fn SearchBar() -> impl IntoView {
                 Err(e) => Err(e.to_string()),
             }
         }
-    );
+    });
 
     view! {
         <div class="search-container">
@@ -30,13 +30,14 @@ pub fn SearchBar() -> impl IntoView {
             <div class="search-results">
                 <Suspense fallback=|| view! { <p>"Searching..."</p> }>
                     {move || search_results.get().and_then(|res| {
-                        match res {
+                        match &*res {
                             Ok(docs) => {
                                 if docs.is_empty() && !query.get().is_empty() {
                                     Some(view! { <p>"No results found."</p> }.into_any())
                                 } else if docs.is_empty() {
                                     None
                                 } else {
+                                    let docs = docs.clone();
                                     Some(view! {
                                         <ul>
                                             {docs.into_iter().map(|doc| view! {
@@ -48,7 +49,10 @@ pub fn SearchBar() -> impl IntoView {
                                     }.into_any())
                                 }
                             }
-                            Err(e) => Some(view! { <p class="error">"Search Error: " {e}</p> }.into_any()),
+                            Err(e) => {
+                                let e = e.clone();
+                                Some(view! { <p class="error">"Search Error: " {e}</p> }.into_any())
+                            }
                         }
                     })}
                 </Suspense>

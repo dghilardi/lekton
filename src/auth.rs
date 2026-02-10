@@ -6,11 +6,22 @@ use openidconnect::{
 use std::env;
 
 pub struct AuthClient {
-    pub client: CoreClient,
+    pub client: Option<CoreClient>,
+    pub is_mock: bool,
 }
 
 impl AuthClient {
     pub async fn new() -> Self {
+        let is_mock = env::var("MOCK_AUTH")
+            .map(|v| v.to_lowercase() == "true")
+            .unwrap_or(false);
+        
+        tracing::info!("Initializing AuthClient (is_mock: {})", is_mock);
+
+        if is_mock {
+            return Self { client: None, is_mock: true };
+        }
+
         let client_id = env::var("OIDC_CLIENT_ID").expect("OIDC_CLIENT_ID not set");
         let client_secret = env::var("OIDC_CLIENT_SECRET").expect("OIDC_CLIENT_SECRET not set");
         let issuer_url = env::var("OIDC_ISSUER_URL").expect("OIDC_ISSUER_URL not set");
@@ -30,11 +41,18 @@ impl AuthClient {
         )
         .set_redirect_uri(RedirectUrl::new(redirect_url).expect("Invalid redirect URL"));
 
-        Self { client }
+        Self { client: Some(client), is_mock: false }
     }
 
     pub fn auth_url(&self) -> (reqwest::Url, CsrfToken, Nonce) {
-        self.client
+        if self.is_mock {
+            return (
+                reqwest::Url::parse("http://localhost:3000/auth/callback?code=mock&state=mock").unwrap(),
+                CsrfToken::new("mock".to_string()),
+                Nonce::new("mock".to_string()),
+            );
+        }
+        self.client.as_ref().unwrap()
             .authorize_url(AuthenticationFlow::<CoreResponseType>::AuthorizationCode, CsrfToken::new_random, Nonce::new_random)
             .add_scope(Scope::new("openid".to_string()))
             .add_scope(Scope::new("profile".to_string()))
@@ -78,13 +96,22 @@ pub async fn callback_handler(
     session: Session,
     Query(query): Query<AuthCallbackQuery>,
 ) -> impl IntoResponse {
+    if state.auth_client.is_mock {
+        let user_session = UserSession {
+            email: "mock-user@example.com".to_string(),
+            roles: vec!["developer".to_string(), "admin".to_string()],
+        };
+        session.insert("user", user_session).await.expect("Failed to insert session");
+        return Redirect::to("/").into_response();
+    }
+
     let stored_csrf: Option<String> = session.get("csrf_token").await.expect("Failed to get session");
     
     if stored_csrf.as_ref() != Some(&query.state) {
         return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
     }
 
-    let _token_response = state.auth_client.client
+    let _token_response = state.auth_client.client.as_ref().unwrap()
         .exchange_code(AuthorizationCode::new(query.code))
         .request_async(openidconnect::reqwest::async_http_client)
         .await

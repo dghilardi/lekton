@@ -6,13 +6,31 @@ async fn main() {
     use leptos_axum::{generate_route_list, LeptosRoutes};
     use lekton::app::*;
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+    use dotenvy;
+
+    dotenvy::dotenv().ok();
+    
+    let cwd = std::env::current_dir().unwrap_or_default();
+    println!("--- DEBUG: CWD = {:?} ---", cwd);
+    
+    let mock_env = std::env::var("MOCK_AUTH").unwrap_or_else(|_| "NOT SET".to_string());
+    println!("--- DEBUG: MOCK_AUTH = {} ---", mock_env);
+
+    let oidc_id = std::env::var("OIDC_CLIENT_ID").unwrap_or_else(|_| "NOT SET".to_string());
+    println!("--- DEBUG: OIDC_CLIENT_ID = {} ---", oidc_id);
 
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::from_default_env())
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let conf = get_configuration(None).unwrap();
+    let conf = if std::env::var("LEPTOS_OUTPUT_NAME").is_ok() {
+        println!("--- DEBUG: Using get_configuration(None) ---");
+        get_configuration(None).unwrap()
+    } else {
+        println!("--- DEBUG: Using get_configuration(Some(Cargo.toml)) ---");
+        get_configuration(Some("Cargo.toml")).unwrap()
+    };
     let addr = conf.leptos_options.site_addr;
     let leptos_options = conf.leptos_options;
     

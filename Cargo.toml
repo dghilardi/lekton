@@ -3,19 +3,22 @@ name = "lekton"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
 axum = { version = "0.7", features = ["macros"], optional = true }
-leptos = { version = "0.7", features = ["ssr"] }
-leptos_axum = "0.7"
-leptos_router = "0.7"
-leptos_meta = "0.7"
+leptos = { version = "0.7" }
+leptos_axum = { version = "0.7", optional = true }
+leptos_router = { version = "0.7" }
+leptos_meta = { version = "0.7" }
 tokio = { version = "1", features = ["full"], optional = true }
 tower = { version = "0.4", optional = true }
 tower-http = { version = "0.5", features = ["fs", "cors"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 mongodb = { version = "3", features = ["bson-3"], optional = true }
-bson = { version = "3", features = ["chrono-0_4"] }
+bson = { version = "3", features = ["serde", "chrono-0_4"] }
 aws-sdk-s3 = { version = "1", optional = true }
 aws-config = { version = "1", optional = true }
 openidconnect = { version = "3.5", optional = true }
@@ -27,14 +30,21 @@ http = "1"
 reqwest = { version = "0.12", features = ["json"] }
 tower-sessions = { version = "0.13", optional = true }
 meilisearch-sdk = { version = "0.27", optional = true }
-leptos-tiptap = { version = "0.8", optional = true }
-markdown = { version = "1.0.0-alpha.18", optional = true }
+leptos-tiptap = { version = "0.8" }
+markdown = { version = "1.0.0-alpha.18" }
+dotenvy = "0.15"
+wasm-bindgen = "0.2.108"
 
 [features]
-hydrate = ["leptos/hydrate"]
+hydrate = [
+    "leptos/hydrate",
+]
 ssr = [
     "leptos/ssr",
+    "leptos_router/ssr",
+    "leptos_meta/ssr",
     "dep:axum",
+    "dep:leptos_axum",
     "dep:tokio",
     "dep:tower",
     "dep:tower-http",
@@ -45,13 +55,19 @@ ssr = [
     "dep:tracing-subscriber",
     "dep:tower-sessions",
     "dep:meilisearch-sdk",
-    "dep:leptos-tiptap",
-    "dep:markdown",
 ]
 
 [package.metadata.leptos]
 # The name used by wasm-bindgen/cargo-leptos for the JS/WASM bundle. Defaults to the binary name
 output-name = "lekton"
+# The features used to compile the bin target
+bin-features = ["ssr"]
+# Whether to use default features for the bin target
+bin-default-features = false
+# The features used to compile the lib target
+lib-features = ["hydrate"]
+# Whether to use default features for the lib target
+lib-default-features = false
 # The site root folder is where cargo-leptos generate all output. WARNING: all content of this folder will be erased on a rebuild.
 # Use an absolute path or a path relative to the Cargo.toml
 site-root = "target/site"
@@ -64,7 +80,7 @@ style-file = "style/main.scss"
 # The assets-dir cannot have a sub directory with the same name/path as site-pkg-dir.
 assets-dir = "public"
 # The IP and port (eg: 127.0.0.1:3000) where the server serves the content. Use it in your server setup.
-site-addr = "127.0.0.1:3000"
+site-addr = "0.0.0.0:3000"
 # The port to use for automatic reload monitoring
 reload-port = 3001
 # [Optional] Command to use when running tests.

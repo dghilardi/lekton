@@ -33,24 +33,54 @@ Lekton follows a Headless CMS architecture:
 -   **Service Layer:** Axum handles auth, ingestion, and search scoped by user roles.
 -   **Presentation Layer:** Leptos for high-performance rendering.
 
-## 📅 Roadmap
+## 🚀 Phase Status
 
-### Phase 1: Core (In Progress)
-- [ ] Axum + Leptos scaffold
-- [ ] OIDC Authentication
-- [ ] Ingestion API (`POST /ingest`)
-- [ ] Basic GFM rendering
+### Phase 1: Core [COMPLETED]
+- [x] Axum + Leptos scaffold
+- [x] OIDC Authentication
+- [x] Ingestion API (`POST /ingest`)
+- [x] Basic GFM rendering
 
-### Phase 2: Editor & Search
-- [ ] Tiptap-based Web Editor
-- [ ] Meilisearch integration
-- [ ] Link validation engine
+### Phase 2: Editor & Search [COMPLETED]
+- [x] Tiptap-based Web Editor
+- [x] Meilisearch integration
+- [x] Link validation engine
 
-### Phase 3: Registry & Versioning
-- [ ] OpenAPI/AsyncAPI visualization (Scalar/Redoc)
-- [ ] Versioning support for schemas and docs
+## 🏁 Getting Started
 
-## 🤝 Contributing
+### 1. Prerequisites
+- [Rust](https://www.rust-lang.org/tools/install)
+- [Docker & Docker Compose](https://docs.docker.com/compose/install/)
+
+### 2. Infrastructure Setup
+Start the required infrastructure (MongoDB, Minio/S3, Meilisearch):
+```bash
+docker-compose up -d
+```
+
+### 3. Environment Configuration
+Copy the example environment file and fill in your OIDC credentials:
+```bash
+cp .env.example .env
+```
+> [!IMPORTANT]
+> You must provide valid `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` for the application to start.
+
+### 4. Running the Project
+You can run the project in two ways:
+
+#### Option A: Using `cargo-leptos` (Recommended for Dev)
+```bash
+cargo install cargo-leptos
+cargo leptos watch
+```
+
+#### Option B: Using standard `cargo`
+```bash
+cargo run --features ssr
+```
+
+## 🏗️ Architecture
 
 We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.
 

@@ -1,0 +1,39 @@
+/* Tailwind CSS v4 — CSS-first configuration */
+@import "tailwindcss";
+
+/* DaisyUI 5 plugin */
+@plugin "daisyui";
+
+/*
+ * Lekton Design Tokens (CSS Custom Properties)
+ *
+ * These variables can be overridden by users in public/custom.css
+ * to customize the look and feel WITHOUT recompiling the application.
+ */
+:root {
+  /* Brand overrides — users can set these in custom.css */
+  --lekton-font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --lekton-sidebar-width: 16rem;
+  --lekton-content-max-width: 72rem;
+  --lekton-header-height: 4rem;
+
+  /* Spacing tokens */
+  --lekton-spacing-xs: 0.25rem;
+  --lekton-spacing-sm: 0.5rem;
+  --lekton-spacing-md: 1rem;
+  --lekton-spacing-lg: 1.5rem;
+  --lekton-spacing-xl: 2rem;
+}
+
+body {
+  font-family: var(--lekton-font-family);
+}
+
+/*
+ * Runtime customizability:
+ * This import loads the user-injectable stylesheet from the public/ directory.
+ * Users can modify public/custom.css (or mount a Docker volume) to override
+ * any styles — including DaisyUI theme variables — without recompiling.
+ *
+ * It is loaded LAST to ensure user overrides take precedence.
+ */

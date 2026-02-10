@@ -1,6 +1,140 @@
 [package]
 name = "lekton"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+# Leptos ecosystem
+leptos = { version = "0.8" }
+leptos_meta = { version = "0.8" }
+leptos_router = { version = "0.8" }
+leptos_axum = { version = "0.8", optional = true }
+
+# Web framework
+axum = { version = "0.8", features = ["macros"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread"], optional = true }
+tower = { version = "0.5", optional = true }
+tower-http = { version = "0.6", features = ["fs", "cors"], optional = true }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Auth (OIDC)
+openidconnect = { version = "4", optional = true }
+
+# Database
+mongodb = { version = "3", optional = true }
+bson = { version = "2", features = ["chrono-0_4"] }
+
+# Storage (S3)
+aws-sdk-s3 = { version = "1", optional = true }
+aws-config = { version = "1", optional = true }
+
+# Markdown rendering
+pulldown-cmark = { version = "0.12" }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging / tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+
+# Async traits
+async-trait = "0.1"
+
+# Async utilities
+futures = "0.3"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# WASM
+wasm-bindgen = { version = "0.2", optional = true }
+console_error_panic_hook = { version = "0.1", optional = true }
+
+# HTTP client (for OIDC discovery)
+reqwest = { version = "0.12", features = ["json"], optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+mockall = "0.13"
+
+[features]
+hydrate = [
+    "leptos/hydrate",
+    "dep:console_error_panic_hook",
+    "dep:wasm-bindgen",
+]
+ssr = [
+    "dep:axum",
+    "dep:tokio",
+    "dep:tower",
+    "dep:tower-http",
+    "dep:leptos_axum",
+    "dep:openidconnect",
+    "dep:mongodb",
+    "dep:aws-sdk-s3",
+    "dep:aws-config",
+    "dep:tracing-subscriber",
+    "dep:reqwest",
+    "leptos/ssr",
+    "leptos_meta/ssr",
+    "leptos_router/ssr",
+]
+
+# Defines a size-optimized profile for the WASM bundle in release mode
+[profile.wasm-release]
+inherits = "release"
+opt-level = 'z'
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[package.metadata.leptos]
+# The name used by wasm-bindgen/cargo-leptos for the JS/WASM bundle
+output-name = "lekton"
+
+# The site root folder is where cargo-leptos generates all output
+site-root = "target/site"
+
+# The site-root relative folder where all compiled output (JS, WASM and CSS) is written
+site-pkg-dir = "pkg"
+
+# Tailwind CSS v4 input file
+tailwind-input-file = "style/tailwind.css"
+
+# Assets source dir. All files found here will be copied and synced to site-root.
+assets-dir = "public"
+
+# The IP and port where the server serves content
+site-addr = "127.0.0.1:3000"
+
+# The port for automatic reload monitoring
+reload-port = 3001
+
+# The browserlist query used for optimizing the CSS
+browserquery = "defaults"
+
+# The environment Leptos will run in
+env = "DEV"
+
+# The features to use when compiling the bin target
+bin-features = ["ssr"]
+
+# If the --no-default-features flag should be used when compiling the bin target
+bin-default-features = false
+
+# The features to use when compiling the lib target
+lib-features = ["hydrate"]
+
+# If the --no-default-features flag should be used when compiling the lib target
+lib-default-features = false
+
+# The profile to use for the lib target when compiling for release
+lib-profile-release = "wasm-release"

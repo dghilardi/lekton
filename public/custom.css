@@ -1,0 +1,40 @@
+/*
+ * Lekton — Custom User Stylesheet
+ * =================================
+ *
+ * This file is loaded at runtime and allows you to customize the look and feel
+ * of Lekton WITHOUT recompiling the application.
+ *
+ * HOW TO USE:
+ * -----------
+ * 1. Edit this file directly, OR
+ * 2. Mount a Docker volume to /app/public/custom.css with your overrides.
+ *
+ * EXAMPLES:
+ * ---------
+ *
+ * Override the brand font:
+ *   :root {
+ *     --lekton-font-family: "Fira Code", monospace;
+ *   }
+ *
+ * Override DaisyUI theme colors (see https://daisyui.com/docs/themes/):
+ *   [data-theme="light"] {
+ *     --p: 210 64% 31%;    (primary)
+ *     --s: 210 40% 50%;    (secondary)
+ *     --a: 15 80% 50%;     (accent)
+ *   }
+ *
+ * Override sidebar width:
+ *   :root {
+ *     --lekton-sidebar-width: 20rem;
+ *   }
+ *
+ * Add custom utility classes:
+ *   .my-custom-badge {
+ *     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+ *     color: white;
+ *     padding: 0.25rem 0.75rem;
+ *     border-radius: 9999px;
+ *   }
+ */

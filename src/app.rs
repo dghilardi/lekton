@@ -1,8 +1,8 @@
 use leptos::prelude::*;
-use leptos_meta::{provide_meta_context, Stylesheet, Title};
+use leptos_meta::{Stylesheet, Title, provide_meta_context};
 use leptos_router::components::*;
-use leptos_router::path;
 use leptos_router::hooks::use_params_map;
+use leptos_router::path;
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -54,7 +54,7 @@ fn EditPage() -> impl IntoView {
 
     let doc_content = Resource::new(
         move || slug_memo.get(),
-        |s| async move { crate::components::document_view::get_document_content(s).await }
+        |s| async move { crate::components::document_view::get_document_content(s).await },
     );
 
     view! {

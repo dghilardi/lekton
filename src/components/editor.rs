@@ -14,7 +14,9 @@ pub async fn save_document_content(slug: String, content: String) -> Result<(), 
 
     // 2. Upload to S3
     let s3_key = format!("docs/{}.md", slug);
-    state.s3.put_object()
+    state
+        .s3
+        .put_object()
         .bucket(&state.config.s3_bucket)
         .key(&s3_key)
         .body(content.into_bytes().into())
@@ -31,7 +33,8 @@ pub async fn save_document_content(slug: String, content: String) -> Result<(), 
         }
     };
 
-    state.documents_collection()
+    state
+        .documents_collection()
         .update_one(filter, update)
         .await
         .map_err(|e| ServerFnError::new(format!("MongoDB error: {}", e)))?;
@@ -44,18 +47,16 @@ pub fn Editor(slug: String, initial_content: String) -> impl IntoView {
     let content = RwSignal::new(TiptapContent::Html(initial_content));
     let msg = RwSignal::new(TiptapInstanceMsg::Noop);
     let disabled = RwSignal::new(false);
-    
+
     let save_action = Action::new(|(s, c): &(String, String)| {
         let slug = s.clone();
         let content = c.clone();
         async move { save_document_content(slug, content).await }
     });
 
-    let current_content_html = Memo::new(move |_| {
-        match content.get() {
-            TiptapContent::Html(html) => html,
-            TiptapContent::Json(json) => json,
-        }
+    let current_content_html = Memo::new(move |_| match content.get() {
+        TiptapContent::Html(html) => html,
+        TiptapContent::Json(json) => json,
     });
 
     view! {

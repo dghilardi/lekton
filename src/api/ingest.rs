@@ -1,9 +1,9 @@
-use axum::{extract::State, Json};
-use serde::{Deserialize, Serialize};
 use crate::state::AppState;
-use chrono::Utc;
 use axum::response::IntoResponse;
+use axum::{Json, extract::State};
+use chrono::Utc;
 use http::StatusCode;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
 pub struct IngestRequest {
@@ -31,28 +31,45 @@ pub async fn ingest_handler(
     let links = crate::models::link_validator::LinkValidator::extract_links(&payload.content);
     for link in &links {
         let filter = mongodb::bson::doc! { "slug": link };
-        let exists = state.documents_collection()
+        let exists = state
+            .documents_collection()
             .find_one(filter)
             .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("MongoDB error during validation: {}", e)))?
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("MongoDB error during validation: {}", e),
+                )
+            })?
             .is_some();
-        
+
         if !exists {
             // In a real scenario, we might want this to be a warning or a strict error based on config
-            tracing::warn!("Document {} links to non-existent slug: {}", payload.slug, link);
+            tracing::warn!(
+                "Document {} links to non-existent slug: {}",
+                payload.slug,
+                link
+            );
         }
     }
 
     let s3_key = format!("docs/{}.md", payload.slug);
 
     // 2. Upload to S3
-    state.s3.put_object()
+    state
+        .s3
+        .put_object()
         .bucket(&state.config.s3_bucket)
         .key(&s3_key)
         .body(payload.content.clone().into_bytes().into())
         .send()
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("S3 error: {}", e)))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("S3 error: {}", e),
+            )
+        })?;
 
     // 3. Update MongoDB
     let filter = mongodb::bson::doc! { "slug": &payload.slug };
@@ -71,11 +88,17 @@ pub async fn ingest_handler(
         }
     };
 
-    state.documents_collection()
+    state
+        .documents_collection()
         .update_one(filter, update)
         .upsert(true)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("MongoDB error: {}", e)))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("MongoDB error: {}", e),
+            )
+        })?;
 
     // 4. Index in Meilisearch
     if let Some(ref meili) = state.meili {
@@ -88,10 +111,16 @@ pub async fn ingest_handler(
             access_level: payload.access_level,
             tags: payload.tags,
         };
-        
-        index.add_documents(&[search_doc], Some("id"))
+
+        index
+            .add_documents(&[search_doc], Some("id"))
             .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Meilisearch error: {}", e)))?;
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Meilisearch error: {}", e),
+                )
+            })?;
     }
 
     Ok(Json(IngestResponse {

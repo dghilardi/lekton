@@ -142,6 +142,7 @@ The system supports two methods of ingestion:
 * **Performance:** The Rust binary should consume <100MB RAM under normal load.
 * **Availability:** Stateless backend allows for horizontal scaling (Kubernetes ReplicaSet).
 * **Maintainability:** Codebase must be a standard Cargo workspace. No forked frameworks.
+* **Style Customizability:** The application MUST allow users to inject custom CSS styles at runtime (e.g., via a settings UI or a specific CSS file) to override the default theme without requiring a project recompilation.
 * **Observability:** Integrated `tracing` (OpenTelemetry) for all requests. Errors logged to stdout/Sentry.
 
 ---
@@ -150,7 +151,7 @@ The system supports two methods of ingestion:
 
 ### Phase 1: The Core (MVP)
 
-* Setup Axum + Leptos boilerplate.
+* Setup Axum + Leptos boilerplate with Tailwind CSS and DaisyUI.
 * Implement OIDC Authentication.
 * Create MongoDB Schema + S3 connection.
 * Build the `POST /ingest` API.

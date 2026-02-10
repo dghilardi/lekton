@@ -2,17 +2,17 @@
 #[tokio::main]
 async fn main() {
     use axum::Router;
-    use leptos::prelude::*;
-    use leptos_axum::{generate_route_list, LeptosRoutes};
-    use lekton::app::*;
-    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
     use dotenvy;
+    use lekton::app::*;
+    use leptos::prelude::*;
+    use leptos_axum::{LeptosRoutes, generate_route_list};
+    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
     dotenvy::dotenv().ok();
-    
+
     let cwd = std::env::current_dir().unwrap_or_default();
     println!("--- DEBUG: CWD = {:?} ---", cwd);
-    
+
     let mock_env = std::env::var("MOCK_AUTH").unwrap_or_else(|_| "NOT SET".to_string());
     println!("--- DEBUG: MOCK_AUTH = {} ---", mock_env);
 
@@ -33,23 +33,45 @@ async fn main() {
     };
     let addr = conf.leptos_options.site_addr;
     let leptos_options = conf.leptos_options;
-    
+
     // Initialize AppState
     let state = lekton::state::AppState::new(leptos_options.clone()).await;
-    
+
+    // Seeding demo data if needed
+    if std::env::var("DEMO_MODE")
+        .map(|v| v == "true")
+        .unwrap_or(false)
+    {
+        lekton::demo_seeder::seed_demo_data(&state).await;
+    }
+
     // Generate the list of routes in your Leptos App
     let routes = generate_route_list(App);
 
     let session_store = tower_sessions::MemoryStore::default();
     let session_layer = tower_sessions::SessionManagerLayer::new(session_store)
         .with_secure(false) // For local dev
-        .with_expiry(tower_sessions::Expiry::OnInactivity(tower_sessions::cookie::time::Duration::hours(1)));
+        .with_expiry(tower_sessions::Expiry::OnInactivity(
+            tower_sessions::cookie::time::Duration::hours(1),
+        ));
 
     let app = Router::new()
-        .route("/api/v1/ingest", axum::routing::post(lekton::api::ingest::ingest_handler))
-        .route("/api/v1/search", axum::routing::get(lekton::api::search::search_handler))
-        .route("/auth/login", axum::routing::get(lekton::auth::login_handler))
-        .route("/auth/callback", axum::routing::get(lekton::auth::callback_handler))
+        .route(
+            "/api/v1/ingest",
+            axum::routing::post(lekton::api::ingest::ingest_handler),
+        )
+        .route(
+            "/api/v1/search",
+            axum::routing::get(lekton::api::search::search_handler),
+        )
+        .route(
+            "/auth/login",
+            axum::routing::get(lekton::auth::login_handler),
+        )
+        .route(
+            "/auth/callback",
+            axum::routing::get(lekton::auth::callback_handler),
+        )
         .leptos_routes(&state, routes, {
             let leptos_options = leptos_options.clone();
             let state = state.clone();
@@ -58,7 +80,10 @@ async fn main() {
                 shell(leptos_options.clone())
             }
         })
-        .fallback(leptos_axum::file_and_error_handler::<lekton::state::AppState, _>(shell))
+        .fallback(leptos_axum::file_and_error_handler::<
+            lekton::state::AppState,
+            _,
+        >(shell))
         .layer(session_layer)
         .with_state(state);
 
@@ -69,8 +94,8 @@ async fn main() {
 
 #[cfg(feature = "ssr")]
 fn shell(options: leptos::prelude::LeptosOptions) -> impl leptos::prelude::IntoView {
-    use leptos::prelude::*;
     use lekton::app::App;
+    use leptos::prelude::*;
 
     view! {
         <!DOCTYPE html>

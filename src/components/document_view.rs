@@ -5,26 +5,32 @@ pub async fn get_document_content(slug: String) -> Result<String, ServerFnError>
     use crate::state::AppState;
     let state = leptos::prelude::use_context::<AppState>()
         .ok_or_else(|| ServerFnError::new("AppState not found in context"))?;
-    
+
     // 1. Find document metadata in MongoDB
     let filter = mongodb::bson::doc! { "slug": slug };
-    let doc = state.documents_collection()
+    let doc = state
+        .documents_collection()
         .find_one(filter)
         .await
         .map_err(|e| ServerFnError::new(format!("MongoDB error: {}", e)))?
         .ok_or_else(|| ServerFnError::new("Document not found"))?;
 
     // 2. Fetch content from S3
-    let output = state.s3.get_object()
+    let output = state
+        .s3
+        .get_object()
         .bucket(&state.config.s3_bucket)
         .key(&doc.s3_key)
         .send()
         .await
         .map_err(|e| ServerFnError::new(format!("S3 error: {}", e)))?;
 
-    let body = output.body.collect().await
+    let body = output
+        .body
+        .collect()
+        .await
         .map_err(|e| ServerFnError::new(format!("S3 body error: {}", e)))?;
-        
+
     Ok(String::from_utf8(body.to_vec())
         .map_err(|e| ServerFnError::new(format!("UTF-8 error: {}", e)))?)
 }
@@ -33,7 +39,7 @@ pub async fn get_document_content(slug: String) -> Result<String, ServerFnError>
 pub fn DocumentView(slug: String) -> impl IntoView {
     let doc_content = Resource::new(
         move || slug.clone(),
-        |s| async move { get_document_content(s).await }
+        |s| async move { get_document_content(s).await },
     );
 
     view! {

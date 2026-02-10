@@ -1,10 +1,10 @@
-use leptos::prelude::*;
 use crate::models::search::SearchDocument;
+use leptos::prelude::*;
 
 #[component]
 pub fn SearchBar() -> impl IntoView {
     let (query, set_query) = signal(String::new());
-    
+
     let search_results = LocalResource::new(move || {
         let q = query.get();
         async move {
@@ -13,7 +13,10 @@ pub fn SearchBar() -> impl IntoView {
             }
             let res = reqwest::get(format!("/api/v1/search?q={}", q)).await;
             match res {
-                Ok(resp) => resp.json::<Vec<SearchDocument>>().await.map_err(|e| e.to_string()),
+                Ok(resp) => resp
+                    .json::<Vec<SearchDocument>>()
+                    .await
+                    .map_err(|e| e.to_string()),
                 Err(e) => Err(e.to_string()),
             }
         }

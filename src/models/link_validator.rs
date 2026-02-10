@@ -1,5 +1,5 @@
-use markdown::{to_mdast, ParseOptions};
-use markdown::mdast::{Node, Link};
+use markdown::mdast::{Link, Node};
+use markdown::{ParseOptions, to_mdast};
 
 pub struct LinkValidator;
 

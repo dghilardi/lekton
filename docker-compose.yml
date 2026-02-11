@@ -1,0 +1,100 @@
+services:
+  # ===========================================================================
+  # MongoDB — Document metadata & RBAC
+  # ===========================================================================
+  mongodb:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ===========================================================================
+  # Garage — S3-compatible object storage
+  # ===========================================================================
+  garage:
+    image: dxflrs/garage:v1.1.0
+    ports:
+      - "3900:3900"   # S3 API
+      - "3902:3902"   # Admin API
+    volumes:
+      - garage_data:/var/lib/garage/data
+      - garage_meta:/var/lib/garage/meta
+      - ./demo/garage.toml:/etc/garage.toml:ro
+    environment:
+      - GARAGE_CONFIG_FILE=/etc/garage.toml
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3902/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ===========================================================================
+  # Garage Init — one-shot: configure layout, create bucket, create API key
+  # ===========================================================================
+  garage-init:
+    image: dxflrs/garage:v1.1.0
+    depends_on:
+      garage:
+        condition: service_healthy
+    volumes:
+      - ./demo/garage-init.sh:/garage-init.sh:ro
+      - ./demo/garage.toml:/etc/garage.toml:ro
+    environment:
+      - GARAGE_CONFIG_FILE=/etc/garage.toml
+    entrypoint: ["/bin/sh", "/garage-init.sh"]
+    restart: "no"
+
+  # ===========================================================================
+  # Lekton — Internal Developer Portal
+  # ===========================================================================
+  lekton:
+    build: .
+    ports:
+      - "3000:3000"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      garage-init:
+        condition: service_completed_successfully
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017
+      - MONGODB_DATABASE=lekton
+      - S3_BUCKET=lekton-docs
+      - S3_ENDPOINT=http://garage:3900
+      - AWS_ACCESS_KEY_ID=lekton-demo-key
+      - AWS_SECRET_ACCESS_KEY=lekton-demo-secret
+      - AWS_REGION=garage
+      - SERVICE_TOKEN=demo-ingest-token
+      - DEMO_MODE=true
+      - RUST_LOG=lekton=info,tower_http=info
+      - LEPTOS_SITE_ADDR=0.0.0.0:3000
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ===========================================================================
+  # Demo Loader — one-shot: ingest demo documents into Lekton
+  # ===========================================================================
+  demo-loader:
+    image: curlimages/curl:latest
+    depends_on:
+      lekton:
+        condition: service_healthy
+    volumes:
+      - ./demo:/demo:ro
+    entrypoint: ["/bin/sh", "/demo/load_demo.sh"]
+    restart: "no"
+
+volumes:
+  mongo_data:
+  garage_data:
+  garage_meta:

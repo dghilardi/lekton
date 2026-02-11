@@ -18,6 +18,7 @@ axum = { version = "0.8", features = ["macros"], optional = true }
 tokio = { version = "1", features = ["rt-multi-thread"], optional = true }
 tower = { version = "0.5", optional = true }
 tower-http = { version = "0.6", features = ["fs", "cors"], optional = true }
+axum-extra = { version = "0.10", features = ["cookie"], optional = true }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -73,6 +74,7 @@ hydrate = [
 ]
 ssr = [
     "dep:axum",
+    "dep:axum-extra",
     "dep:tokio",
     "dep:tower",
     "dep:tower-http",

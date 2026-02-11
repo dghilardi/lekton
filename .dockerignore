@@ -1,0 +1,33 @@
+# Build artifacts
+target/
+pkg/
+
+# Dependencies
+node_modules/
+
+# Version control
+.git/
+.gitignore
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Environment
+.env
+.env.*
+
+# Documentation (not needed in image)
+docs/
+*.md
+!README.md
+LICENSE
+
+# Demo content (loaded at runtime, not baked into image)
+demo/
+
+# Artifacts
+.gemini/

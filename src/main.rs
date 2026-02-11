@@ -21,6 +21,15 @@ async fn main() {
 
     tracing::info!("Starting Lekton server...");
 
+    // Check demo mode
+    let demo_mode = std::env::var("DEMO_MODE")
+        .map(|v| v == "true" || v == "1" || v == "yes")
+        .unwrap_or(false);
+
+    if demo_mode {
+        tracing::warn!("⚠️  DEMO MODE ENABLED — built-in credentials are active. Do NOT use in production!");
+    }
+
     // Load Leptos options from Cargo.toml metadata
     let conf = get_configuration(None).unwrap();
     let leptos_options = conf.leptos_options;
@@ -61,18 +70,33 @@ async fn main() {
         storage_client,
         leptos_options: leptos_options.clone(),
         service_token,
+        demo_mode,
     };
 
     // Generate the Leptos route list for SSR
     let routes = generate_route_list(App);
 
     // Build the Axum router
-    let app = Router::new()
+    let mut app = Router::new()
         // API routes
         .route(
             "/api/v1/ingest",
             axum::routing::post(api::ingest::ingest_handler),
-        )
+        );
+
+    // Mount demo auth routes when demo mode is enabled
+    if demo_mode {
+        use lekton::auth::demo_auth;
+
+        app = app
+            .route("/api/auth/login", axum::routing::post(demo_auth::login_handler))
+            .route("/api/auth/me", axum::routing::get(demo_auth::me_handler))
+            .route("/api/auth/logout", axum::routing::post(demo_auth::logout_handler));
+
+        tracing::info!("Demo auth routes mounted: /api/auth/login, /api/auth/me, /api/auth/logout");
+    }
+
+    let app = app
         // Leptos SSR routes
         .leptos_routes(&app_state, routes, {
             move || {

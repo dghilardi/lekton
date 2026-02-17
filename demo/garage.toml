@@ -3,6 +3,8 @@ data_dir = "/var/lib/garage/data"
 db_engine = "sqlite"
 
 replication_factor = 1
+rpc_bind_addr = "[::]:3901"
+rpc_secret = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
 
 [s3_api]
 s3_region = "garage"

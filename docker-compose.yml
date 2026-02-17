@@ -20,8 +20,8 @@ services:
   garage:
     image: dxflrs/garage:v1.1.0
     ports:
-      - "3900:3900"   # S3 API
-      - "3902:3902"   # Admin API
+      - "3900:3900" # S3 API
+      - "3902:3902" # Admin API
     volumes:
       - garage_data:/var/lib/garage/data
       - garage_meta:/var/lib/garage/meta
@@ -29,7 +29,7 @@ services:
     environment:
       - GARAGE_CONFIG_FILE=/etc/garage.toml
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:3902/health"]
+      test: ["CMD", "/garage", "stats"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -38,15 +38,12 @@ services:
   # Garage Init — one-shot: configure layout, create bucket, create API key
   # ===========================================================================
   garage-init:
-    image: dxflrs/garage:v1.1.0
+    image: curlimages/curl:latest
     depends_on:
       garage:
         condition: service_healthy
     volumes:
       - ./demo/garage-init.sh:/garage-init.sh:ro
-      - ./demo/garage.toml:/etc/garage.toml:ro
-    environment:
-      - GARAGE_CONFIG_FILE=/etc/garage.toml
     entrypoint: ["/bin/sh", "/garage-init.sh"]
     restart: "no"
 

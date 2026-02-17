@@ -19,20 +19,35 @@ pub struct AppState {
     pub leptos_options: LeptosOptions,
 }
 
+/// The HTML shell for the application.
+#[cfg(feature = "ssr")]
+pub fn shell(options: LeptosOptions) -> impl IntoView {
+    view! {
+        <!DOCTYPE html>
+        <html lang="en" data-theme="light">
+            <head>
+                <meta charset="utf-8" />
+                <meta name="viewport" content="width=device-width, initial-scale=1" />
+                <AutoReload options=options.clone() />
+                <HydrationScripts options=options />
+                <Meta name="description" content="Lekton: A dynamic, high-performance Internal Developer Portal with RBAC and unified schema registry." />
+                <Stylesheet id="leptos" href="/pkg/lekton.css" />
+                <Link rel="stylesheet" href="/custom.css" />
+            </head>
+            <body>
+                <App />
+            </body>
+        </html>
+    }
+}
+
 /// Root application component.
 #[component]
 pub fn App() -> impl IntoView {
     provide_meta_context();
 
     view! {
-        <Html attr:lang="en" attr:data-theme="light" />
         <Title text="Lekton — Internal Developer Portal" />
-        <Meta charset="utf-8" />
-        <Meta name="viewport" content="width=device-width, initial-scale=1" />
-        <Meta name="description" content="Lekton: A dynamic, high-performance Internal Developer Portal with RBAC and unified schema registry." />
-
-        // Runtime customizable stylesheet — loaded AFTER the main CSS
-        <Link rel="stylesheet" href="/custom.css" />
 
         <Router>
             <Layout>

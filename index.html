@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <link rel="stylesheet" id="leptos" href="/pkg/lekton.css" />
+        <link rel="stylesheet" href="/custom.css" />
+        <link rel="modulepreload" href="/pkg/lekton.js" />
+        <link rel="preload" href="/pkg/lekton_bg.wasm" as="fetch" type="application/wasm" crossorigin="" />
+        <script type="module">import init, * as bindings from '/pkg/lekton.js'; window.wasmBindings = bindings; init('/pkg/lekton_bg.wasm');</script>
+    </head>
+    <body></body>
+</html>

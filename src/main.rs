@@ -99,8 +99,9 @@ async fn main() {
     let app = app
         // Leptos SSR routes
         .leptos_routes(&app_state, routes, {
+            let options = app_state.leptos_options.clone();
             move || {
-                lekton::app::App()
+                lekton::app::shell(options.clone())
             }
         })
         // Static files (including custom.css)

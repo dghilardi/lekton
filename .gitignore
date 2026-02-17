@@ -22,3 +22,6 @@ Thumbs.db
 
 # Lock files (npm - we only use daisyui as dev dep, lock is not critical)
 package-lock.json
+
+*.log
+*_log.txt

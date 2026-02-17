@@ -37,10 +37,11 @@ Lekton decouples content from code, allowing microservices to push their documen
 -   [Rust](https://rustup.rs/) (stable toolchain)
 -   [cargo-leptos](https://github.com/leptos-rs/cargo-leptos): `cargo install cargo-leptos --locked`
 -   [Node.js](https://nodejs.org/) (for DaisyUI)
--   [MongoDB](https://www.mongodb.com/) (running instance)
--   S3-compatible storage (e.g., [MinIO](https://min.io/) for local development)
+-   [Docker](https://www.docker.com/) & [Docker Compose](https://docs.docker.com/compose/)
 
-### Installation
+### Quick Start with Docker Compose (Recommended)
+
+The easiest way to run Lekton with all dependencies:
 
 ```bash
 # Clone the repository
@@ -50,11 +51,158 @@ cd lekton
 # Install Node dependencies (DaisyUI)
 npm install
 
+# Start all services (MongoDB, Garage S3, and Lekton)
+docker-compose up
+```
+
+The application will be available at `http://localhost:3000`.
+
+**What's included:**
+- MongoDB 7 for metadata storage
+- Garage S3-compatible storage for documents
+- Lekton application with demo auth mode
+- Automatic initialization of Garage (bucket creation, API keys)
+
+### Development Mode (Cargo + Docker)
+
+For faster development without rebuilding Docker containers, you can run the Rust application with `cargo` while keeping MongoDB and S3 storage in Docker.
+
+#### Quick Setup (Recommended)
+
+Use the setup script to automatically start dependencies and create your `.env` file:
+
+```bash
+# The setup script will install npm dependencies, start Docker services, and create .env
+./scripts/setup-dev-env.sh
+```
+
+This script will:
+1. Install Node.js dependencies (DaisyUI for Tailwind CSS)
+2. Start MongoDB and Garage S3 in Docker
+3. Initialize Garage (create bucket and API keys)
+4. Extract credentials automatically
+5. Create a `.env` file with the correct configuration
+
+Then just run:
+```bash
+cargo leptos watch
+```
+
+#### Manual Setup
+
+If you prefer to set up manually:
+
+**1. Install Node.js dependencies**
+
+```bash
+# Install DaisyUI and other frontend dependencies
+npm install
+```
+
+**2. Start dependencies only**
+
+```bash
+# Start MongoDB and Garage in the background
+docker-compose up -d mongodb garage garage-init
+```
+
+Wait for `garage-init` to complete (check with `docker-compose logs garage-init`). It will output credentials like:
+
+```
+Access Key ID: GK6dcd28a916458f75d62f0720
+Secret Access Key: 893fa79f053d67be65237fdc5d2a8521df5dc0a27858f991ffa72c1ba3470291
+```
+
+**3. Create a `.env` file**
+
+Create a `.env` file in the project root with these variables:
+
+```bash
+# MongoDB Configuration
+MONGODB_URI=mongodb://localhost:27017
+MONGODB_DATABASE=lekton
+
+# S3 Storage Configuration (use credentials from garage-init output)
+S3_BUCKET=lekton-docs
+S3_ENDPOINT=http://localhost:3900
+AWS_ACCESS_KEY_ID=GK6dcd28a916458f75d62f0720
+AWS_SECRET_ACCESS_KEY=893fa79f053d67be65237fdc5d2a8521df5dc0a27858f991ffa72c1ba3470291
+AWS_REGION=garage
+
+# Service Token for API ingestion
+SERVICE_TOKEN=demo-ingest-token
+
+# Enable demo auth mode (bypasses OIDC)
+DEMO_MODE=true
+
+# Logging
+RUST_LOG=lekton=info,tower_http=info
+
+# Leptos configuration
+LEPTOS_SITE_ADDR=127.0.0.1:3000
+```
+
+**Important:** Replace `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` with the actual credentials output by `garage-init`.
+
+**4. Run with cargo**
+
+You have two options:
+
+**Option A: Using environment variables from `.env` manually**
+```bash
+# Export environment variables
+export $(cat .env | xargs)
+
 # Run the development server
 cargo leptos watch
 ```
 
-The application will be available at `http://127.0.0.1:3000`.
+**Option B: Using a tool like `dotenv-cli` or `just`**
+
+With `dotenv-cli`:
+```bash
+# Install dotenv-cli
+cargo install dotenv-cli
+
+# Run with auto-loaded .env
+dotenv cargo leptos watch
+```
+
+With `just` (if you have a justfile):
+```bash
+just dev  # (if configured to load .env)
+```
+
+The application will be available at `http://127.0.0.1:3000` with hot-reload enabled.
+
+**5. Stop dependencies when done**
+
+```bash
+docker-compose down
+```
+
+### Troubleshooting
+
+**Problem: "Can't resolve 'daisyui'" or Tailwind CSS errors**
+- Run `npm install` to install Node.js dependencies
+- If that doesn't work, delete `node_modules` and `package-lock.json`, then run `npm install` again
+
+**Problem: "Failed to connect to MongoDB"**
+- Ensure MongoDB is running: `docker-compose ps mongodb`
+- Check if the port is already in use: `lsof -i :27017`
+
+**Problem: "Failed to initialize S3 client"**
+- Check that Garage is running: `docker-compose ps garage`
+- Verify credentials in `.env` match the output from `docker-compose logs garage-init`
+- Ensure S3_ENDPOINT is set to `http://localhost:3900` (not `https`)
+
+**Problem: Garage init fails or shows errors**
+- Remove volumes and restart: `docker-compose down -v && docker-compose up -d mongodb garage garage-init`
+- Check Garage logs: `docker-compose logs garage`
+
+**Problem: Port 3000 already in use**
+- Check what's using the port: `lsof -i :3000`
+- Either stop that process or change `LEPTOS_SITE_ADDR` in `.env` to use a different port (e.g., `127.0.0.1:3001`)
 
 ### Running Tests
 

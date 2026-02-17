@@ -1,5 +1,5 @@
+#[cfg(feature = "ssr")]
 use crate::error::AppError;
-
 #[cfg(feature = "ssr")]
 use axum::http::StatusCode;
 #[cfg(feature = "ssr")]

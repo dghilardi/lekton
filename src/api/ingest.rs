@@ -4,14 +4,18 @@ use crate::auth::models::AccessLevel;
 use crate::db::models::{Document, IngestRequest, IngestResponse};
 use crate::db::repository::DocumentRepository;
 use crate::error::AppError;
+use crate::rendering::links::extract_internal_links;
+use crate::search::client::SearchService;
 use crate::storage::client::StorageClient;
 
 /// Core ingestion logic — separated from the HTTP layer for testability.
 ///
-/// Validates the request, uploads content to S3, and upserts metadata in MongoDB.
+/// Validates the request, uploads content to S3, upserts metadata in MongoDB,
+/// and optionally indexes the document in Meilisearch.
 pub async fn process_ingest(
     repo: &dyn DocumentRepository,
     storage: &dyn StorageClient,
+    search: Option<&dyn SearchService>,
     request: IngestRequest,
     expected_token: &str,
 ) -> Result<IngestResponse, AppError> {
@@ -33,15 +37,28 @@ pub async fn process_ingest(
         ))
     })?;
 
-    // 4. Build the S3 key
+    // 4. Extract internal links from content
+    let links_out = extract_internal_links(&request.content);
+
+    // 5. Get old document to diff backlinks
+    let old_doc = repo.find_by_slug(&request.slug).await?;
+    let old_links = old_doc
+        .as_ref()
+        .map(|d| d.links_out.clone())
+        .unwrap_or_default();
+
+    // 6. Build the S3 key
     let s3_key = format!("docs/{}.md", request.slug.replace('/', "_"));
 
-    // 5. Upload content to S3
+    // Keep raw content for search indexing before uploading
+    let raw_content = request.content.clone();
+
+    // 7. Upload content to S3
     storage
         .put_object(&s3_key, request.content.into_bytes())
         .await?;
 
-    // 6. Upsert document metadata in MongoDB
+    // 8. Upsert document metadata in MongoDB
     let doc = Document {
         slug: request.slug.clone(),
         title: request.title,
@@ -50,11 +67,27 @@ pub async fn process_ingest(
         service_owner: request.service_owner,
         last_updated: Utc::now(),
         tags: request.tags,
-        links_out: vec![],
-        backlinks: vec![],
+        links_out: links_out.clone(),
+        backlinks: old_doc.map(|d| d.backlinks).unwrap_or_default(),
     };
 
+    // 9. Build search document before ownership transfer
+    let search_doc = search
+        .as_ref()
+        .map(|_| crate::search::client::build_search_document(&doc, &raw_content));
+
     repo.create_or_update(doc).await?;
+
+    // 10. Update backlinks on referenced documents
+    repo.update_backlinks(&request.slug, &old_links, &links_out)
+        .await?;
+
+    // 11. Index in Meilisearch (if available)
+    if let (Some(search_svc), Some(search_doc)) = (search, search_doc) {
+        if let Err(e) = search_svc.index_document(&search_doc).await {
+            tracing::warn!("Failed to index document in search: {e}");
+        }
+    }
 
     Ok(IngestResponse {
         message: "Document ingested successfully".to_string(),
@@ -71,9 +104,14 @@ pub async fn ingest_handler(
     axum::extract::State(state): axum::extract::State<crate::app::AppState>,
     axum::Json(request): axum::Json<IngestRequest>,
 ) -> Result<axum::Json<IngestResponse>, AppError> {
+    let search = state
+        .search_service
+        .as_deref();
+
     let response = process_ingest(
         state.document_repo.as_ref(),
         state.storage_client.as_ref(),
+        search,
         request,
         &state.service_token,
     )
@@ -161,6 +199,43 @@ mod tests {
                 .cloned()
                 .collect())
         }
+
+        async fn update_backlinks(
+            &self,
+            source_slug: &str,
+            old_links: &[String],
+            new_links: &[String],
+        ) -> Result<(), AppError> {
+            let mut docs = self.documents.lock().unwrap();
+
+            // Remove source from backlinks of old targets no longer linked
+            let removed: Vec<String> = old_links
+                .iter()
+                .filter(|l| !new_links.contains(l))
+                .cloned()
+                .collect();
+
+            for doc in docs.iter_mut() {
+                if removed.contains(&doc.slug) {
+                    doc.backlinks.retain(|b| b != source_slug);
+                }
+            }
+
+            // Add source to backlinks of new targets
+            let added: Vec<String> = new_links
+                .iter()
+                .filter(|l| !old_links.contains(l))
+                .cloned()
+                .collect();
+
+            for doc in docs.iter_mut() {
+                if added.contains(&doc.slug) && !doc.backlinks.contains(&source_slug.to_string()) {
+                    doc.backlinks.push(source_slug.to_string());
+                }
+            }
+
+            Ok(())
+        }
     }
 
     fn make_request(token: &str, slug: &str) -> IngestRequest {
@@ -181,7 +256,7 @@ mod tests {
         let repo = MockRepo::new();
         let request = make_request("valid-token", "docs/hello");
 
-        let result = process_ingest(&repo, &storage, request, "valid-token").await;
+        let result = process_ingest(&repo, &storage, None, request, "valid-token").await;
         assert!(result.is_ok());
 
         let response = result.unwrap();
@@ -215,7 +290,7 @@ mod tests {
         let repo = MockRepo::new();
         let request = make_request("wrong-token", "docs/hello");
 
-        let result = process_ingest(&repo, &storage, request, "valid-token").await;
+        let result = process_ingest(&repo, &storage, None, request, "valid-token").await;
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::Auth(msg) => assert!(msg.contains("Invalid service token")),
@@ -229,7 +304,7 @@ mod tests {
         let repo = MockRepo::new();
         let request = make_request("valid-token", "");
 
-        let result = process_ingest(&repo, &storage, request, "valid-token").await;
+        let result = process_ingest(&repo, &storage, None, request, "valid-token").await;
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::BadRequest(msg) => assert!(msg.contains("Slug cannot be empty")),
@@ -244,7 +319,7 @@ mod tests {
         let mut request = make_request("valid-token", "docs/hello");
         request.access_level = "superadmin".to_string();
 
-        let result = process_ingest(&repo, &storage, request, "valid-token").await;
+        let result = process_ingest(&repo, &storage, None, request, "valid-token").await;
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::BadRequest(msg) => assert!(msg.contains("Invalid access level")),
@@ -259,14 +334,14 @@ mod tests {
 
         // First ingest
         let request1 = make_request("valid-token", "docs/hello");
-        process_ingest(&repo, &storage, request1, "valid-token")
+        process_ingest(&repo, &storage, None, request1, "valid-token")
             .await
             .unwrap();
 
         // Second ingest (update)
         let mut request2 = make_request("valid-token", "docs/hello");
         request2.title = "Updated Doc".to_string();
-        process_ingest(&repo, &storage, request2, "valid-token")
+        process_ingest(&repo, &storage, None, request2, "valid-token")
             .await
             .unwrap();
 

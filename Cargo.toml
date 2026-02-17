@@ -38,6 +38,13 @@ aws-config = { version = "1", optional = true }
 # Markdown rendering
 pulldown-cmark = { version = "0.12" }
 
+# Search
+meilisearch-sdk = { version = "0.32", optional = true }
+jsonwebtoken = { version = "10", optional = true }
+
+# Rich text editor
+leptos-tiptap = "0.9"
+
 # Error handling
 thiserror = "2"
 anyhow = "1"
@@ -62,9 +69,13 @@ console_error_panic_hook = { version = "0.1", optional = true }
 # HTTP client (for OIDC discovery)
 reqwest = { version = "0.12", features = ["json"], optional = true }
 
+[build-dependencies]
+leptos-tiptap-build = "0.2"
+
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
 mockall = "0.13"
+base64 = "0.22"
 
 [features]
 hydrate = [
@@ -85,6 +96,8 @@ ssr = [
     "dep:aws-config",
     "dep:tracing-subscriber",
     "dep:reqwest",
+    "dep:meilisearch-sdk",
+    "dep:jsonwebtoken",
     "leptos/ssr",
     "leptos_meta/ssr",
     "leptos_router/ssr",

@@ -17,6 +17,17 @@ pub trait DocumentRepository: Send + Sync {
 
     /// List all documents accessible at or below the given access level.
     async fn list_accessible(&self, max_level: AccessLevel) -> Result<Vec<Document>, AppError>;
+
+    /// Update backlinks when a document's outgoing links change.
+    ///
+    /// Removes `source_slug` from backlinks of targets no longer linked,
+    /// and adds `source_slug` to backlinks of newly linked targets.
+    async fn update_backlinks(
+        &self,
+        source_slug: &str,
+        old_links: &[String],
+        new_links: &[String],
+    ) -> Result<(), AppError>;
 }
 
 /// MongoDB implementation of the DocumentRepository.
@@ -101,5 +112,48 @@ impl DocumentRepository for MongoDocumentRepository {
         }
 
         Ok(documents)
+    }
+
+    async fn update_backlinks(
+        &self,
+        source_slug: &str,
+        old_links: &[String],
+        new_links: &[String],
+    ) -> Result<(), AppError> {
+        use mongodb::bson::doc;
+
+        // Targets that lost a link from this source
+        let removed: Vec<&String> = old_links
+            .iter()
+            .filter(|link| !new_links.contains(link))
+            .collect();
+
+        // Targets that gained a link from this source
+        let added: Vec<&String> = new_links
+            .iter()
+            .filter(|link| !old_links.contains(link))
+            .collect();
+
+        for slug in removed {
+            self.collection
+                .update_one(
+                    doc! { "slug": slug },
+                    doc! { "$pull": { "backlinks": source_slug } },
+                )
+                .await
+                .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+
+        for slug in added {
+            self.collection
+                .update_one(
+                    doc! { "slug": slug },
+                    doc! { "$addToSet": { "backlinks": source_slug } },
+                )
+                .await
+                .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+
+        Ok(())
     }
 }

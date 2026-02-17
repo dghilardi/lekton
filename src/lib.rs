@@ -2,8 +2,10 @@ pub mod api;
 pub mod app;
 pub mod auth;
 pub mod db;
+pub mod editor;
 pub mod error;
 pub mod rendering;
+pub mod search;
 pub mod storage;
 
 /// Client-side hydration entry point.

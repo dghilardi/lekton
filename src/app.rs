@@ -3,7 +3,9 @@ use leptos_meta::*;
 use leptos_router::components::*;
 use leptos_router::path;
 
+use crate::editor::component::EditorPage;
 use crate::rendering::markdown::render_markdown;
+use crate::search::client::SearchHit;
 
 /// Shared application state (server-side only).
 #[cfg(feature = "ssr")]
@@ -14,6 +16,7 @@ use std::sync::Arc;
 pub struct AppState {
     pub document_repo: Arc<dyn crate::db::repository::DocumentRepository>,
     pub storage_client: Arc<dyn crate::storage::client::StorageClient>,
+    pub search_service: Option<Arc<dyn crate::search::client::SearchService>>,
     pub service_token: String,
     pub demo_mode: bool,
     pub leptos_options: LeptosOptions,
@@ -33,12 +36,35 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                 <Meta name="description" content="Lekton: A dynamic, high-performance Internal Developer Portal with RBAC and unified schema registry." />
                 <Stylesheet id="leptos" href="/pkg/lekton.css" />
                 <Link rel="stylesheet" href="/custom.css" />
+                <script type_="module" src="/js/tiptap-bundle.min.js"></script>
+                <script type_="module" src="/js/tiptap.js"></script>
             </head>
             <body>
                 <App />
             </body>
         </html>
     }
+}
+
+/// Server function to search documents.
+#[server(SearchDocs, "/api")]
+pub async fn search_docs(
+    query: String,
+) -> Result<Vec<SearchHit>, ServerFnError> {
+    use crate::auth::models::AccessLevel;
+    use crate::search::client::SearchService;
+
+    let state = expect_context::<AppState>();
+
+    let search_service = state.search_service.as_ref()
+        .ok_or_else(|| ServerFnError::new("Search not available"))?;
+
+    // Default to developer access for now; a full implementation would
+    // use the authenticated user's access level.
+    let results = search_service.search(&query, AccessLevel::Developer).await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(results)
 }
 
 /// Root application component.
@@ -55,6 +81,7 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/") view=HomePage />
                     <Route path=path!("/login") view=LoginPage />
                     <Route path=path!("/docs/:slug") view=DocPage />
+                    <Route path=path!("/edit/:slug") view=EditorPage />
                 </Routes>
             </Layout>
         </Router>
@@ -74,13 +101,7 @@ fn Layout(children: Children) -> impl IntoView {
                     </a>
                 </div>
                 <div class="flex-none gap-2">
-                    <div class="form-control">
-                        <input
-                            type="text"
-                            placeholder="Search docs..."
-                            class="input input-bordered w-24 md:w-auto"
-                        />
-                    </div>
+                    <SearchBar />
                     // User area — shows login button or user info
                     <div id="user-area" class="flex items-center gap-2">
                         <a href="/login" class="btn btn-primary btn-sm">"Login"</a>
@@ -286,36 +307,168 @@ fn LoginPage() -> impl IntoView {
 }
 
 
-/// Document viewer page — renders markdown content from the server.
+/// Server function to fetch a document's rendered HTML content.
+#[server(GetDocHtml, "/api")]
+pub async fn get_doc_html(
+    slug: String,
+) -> Result<Option<(String, String)>, ServerFnError> {
+    use crate::db::repository::DocumentRepository;
+    use crate::storage::client::StorageClient;
+
+    let state = expect_context::<AppState>();
+
+    let doc = state.document_repo.find_by_slug(&slug).await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let Some(doc) = doc else {
+        return Ok(None);
+    };
+
+    let content_bytes = state.storage_client.get_object(&doc.s3_key).await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let Some(content_bytes) = content_bytes else {
+        return Ok(None);
+    };
+
+    let raw = String::from_utf8(content_bytes)
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let html = render_markdown(&raw);
+    Ok(Some((doc.title, html)))
+}
+
+/// Document viewer page — renders markdown content fetched from S3.
 #[component]
 fn DocPage() -> impl IntoView {
     let params = leptos_router::hooks::use_params_map();
+    let slug = move || params.read().get("slug").unwrap_or_default();
 
-    let slug = move || {
-        params.read().get("slug").unwrap_or_default()
-    };
-
-    // For Phase 1 (MVP), render a placeholder.
-    // In production, this will fetch from the server via a server function.
-    let content = move || {
-        let current_slug = slug();
-        let sample_md = format!(
-            "# {}\n\nThis is the documentation page for `{}`.\n\n\
-             > **Note:** In the full implementation, this content will be \
-             fetched from S3 via a Leptos server function.\n\n\
-             ## Features\n\n\
-             - Dynamic content loading\n\
-             - Role-based access control\n\
-             - Version history\n",
-            current_slug, current_slug
-        );
-        render_markdown(&sample_md)
-    };
+    let doc_resource = Resource::new(
+        move || slug(),
+        |slug| get_doc_html(slug),
+    );
 
     view! {
-        <article class="prose prose-lg max-w-none">
-            <div inner_html=content />
-        </article>
+        <Suspense fallback=move || view! {
+            <div class="flex justify-center py-12">
+                <span class="loading loading-spinner loading-lg"></span>
+            </div>
+        }>
+            {move || {
+                doc_resource.get().map(|result| match result {
+                    Ok(Some((title, html))) => {
+                        view! {
+                            <div>
+                                <div class="flex justify-between items-center mb-6">
+                                    <h1 class="text-3xl font-bold">{title}</h1>
+                                    <a
+                                        href=move || format!("/edit/{}", slug())
+                                        class="btn btn-outline btn-sm"
+                                    >
+                                        "Edit"
+                                    </a>
+                                </div>
+                                <article class="prose prose-lg max-w-none">
+                                    <div inner_html=html />
+                                </article>
+                            </div>
+                        }.into_any()
+                    }
+                    Ok(None) => {
+                        view! {
+                            <div class="alert alert-warning">
+                                <span>{format!("Document '{}' not found.", slug())}</span>
+                            </div>
+                        }.into_any()
+                    }
+                    Err(e) => {
+                        view! {
+                            <div class="alert alert-error">
+                                <span>{format!("Error loading document: {e}")}</span>
+                            </div>
+                        }.into_any()
+                    }
+                })
+            }}
+        </Suspense>
+    }
+}
+
+/// Search bar component with live results dropdown.
+#[component]
+fn SearchBar() -> impl IntoView {
+    let (query, set_query) = signal(String::new());
+    let (show_results, set_show_results) = signal(false);
+
+    let search_resource = Resource::new(
+        move || query.get(),
+        |q| async move {
+            if q.len() < 2 {
+                return Ok(vec![]);
+            }
+            search_docs(q).await
+        },
+    );
+
+    view! {
+        <div class="dropdown dropdown-end">
+            <div class="form-control">
+                <input
+                    type="text"
+                    placeholder="Search docs..."
+                    class="input input-bordered w-24 md:w-64"
+                    prop:value=query
+                    on:input=move |ev| {
+                        let val = event_target_value(&ev);
+                        set_query.set(val.clone());
+                        set_show_results.set(val.len() >= 2);
+                    }
+                    on:focus=move |_| {
+                        if query.get().len() >= 2 {
+                            set_show_results.set(true);
+                        }
+                    }
+                />
+            </div>
+            <Show when=move || show_results.get()>
+                <ul class="dropdown-content menu bg-base-100 rounded-box z-[100] w-80 p-2 shadow-lg mt-2 max-h-80 overflow-y-auto">
+                    <Suspense fallback=move || view! { <li><span class="loading loading-spinner loading-sm"></span></li> }>
+                        {move || {
+                            search_resource.get().map(|result| match result {
+                                Ok(hits) if hits.is_empty() => {
+                                    view! {
+                                        <li class="text-base-content/50 p-2">"No results found"</li>
+                                    }.into_any()
+                                }
+                                Ok(hits) => {
+                                    view! {
+                                        {hits.into_iter().map(|hit| {
+                                            let slug = hit.slug.clone();
+                                            view! {
+                                                <li>
+                                                    <a href=format!("/docs/{}", slug) class="flex flex-col items-start">
+                                                        <span class="font-semibold">{hit.title}</span>
+                                                        <span class="text-xs text-base-content/50 truncate w-full">
+                                                            {hit.content_preview}
+                                                        </span>
+                                                    </a>
+                                                </li>
+                                            }
+                                        }).collect::<Vec<_>>()}
+                                    }.into_any()
+                                }
+                                Err(_) => {
+                                    view! {
+                                        <li class="text-error p-2">"Search error"</li>
+                                    }.into_any()
+                                }
+                            })
+                        }}
+                    </Suspense>
+                </ul>
+            </Show>
+        </div>
     }
 }
 

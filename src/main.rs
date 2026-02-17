@@ -7,6 +7,7 @@ async fn main() {
     use lekton::api;
     use lekton::app::App;
     use lekton::db::repository::MongoDocumentRepository;
+    use lekton::search::client::SearchService;
     use lekton::storage::client::S3StorageClient;
     use std::sync::Arc;
     use tower_http::services::ServeDir;
@@ -60,6 +61,22 @@ async fn main() {
 
     tracing::info!("S3 storage client initialized");
 
+    // Initialize Meilisearch (optional — app works without it)
+    let search_service: Option<Arc<dyn lekton::search::client::SearchService>> =
+        match lekton::search::client::MeilisearchService::from_env() {
+            Ok(service) => {
+                if let Err(e) = service.configure_index().await {
+                    tracing::warn!("Failed to configure Meilisearch index: {e}");
+                }
+                tracing::info!("Meilisearch search service initialized");
+                Some(Arc::new(service))
+            }
+            Err(e) => {
+                tracing::warn!("Meilisearch not available: {e} — search will be disabled");
+                None
+            }
+        };
+
     // Service token for API authentication
     let service_token =
         std::env::var("SERVICE_TOKEN").unwrap_or_else(|_| "dev-token".to_string());
@@ -68,6 +85,7 @@ async fn main() {
     let app_state = lekton::app::AppState {
         document_repo,
         storage_client,
+        search_service,
         leptos_options: leptos_options.clone(),
         service_token,
         demo_mode,
@@ -82,6 +100,18 @@ async fn main() {
         .route(
             "/api/v1/ingest",
             axum::routing::post(api::ingest::ingest_handler),
+        )
+        .route(
+            "/api/v1/search",
+            axum::routing::get(api::search::search_handler),
+        )
+        .route(
+            "/api/v1/upload-image",
+            axum::routing::post(api::upload::upload_image_handler),
+        )
+        .route(
+            "/api/v1/image/{filename}",
+            axum::routing::get(api::upload::serve_image_handler),
         );
 
     // Mount demo auth routes when demo mode is enabled

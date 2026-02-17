@@ -35,6 +35,25 @@ services:
       retries: 10
 
   # ===========================================================================
+  # Meilisearch — Full-text search engine
+  # ===========================================================================
+  meilisearch:
+    image: getmeili/meilisearch:v1.12
+    ports:
+      - "7700:7700"
+    environment:
+      - MEILI_MASTER_KEY=dev-master-key-change-in-prod
+      - MEILI_ENV=development
+      - MEILI_NO_ANALYTICS=true
+    volumes:
+      - meilisearch_data:/meili_data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:7700/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ===========================================================================
   # Garage Init — one-shot: configure layout, create bucket, create API key
   # ===========================================================================
   garage-init:
@@ -59,6 +78,8 @@ services:
         condition: service_healthy
       garage-init:
         condition: service_completed_successfully
+      meilisearch:
+        condition: service_healthy
     environment:
       - MONGODB_URI=mongodb://mongodb:27017
       - MONGODB_DATABASE=lekton
@@ -68,6 +89,8 @@ services:
       - AWS_SECRET_ACCESS_KEY=lekton-demo-secret
       - AWS_REGION=garage
       - SERVICE_TOKEN=demo-ingest-token
+      - MEILISEARCH_URL=http://meilisearch:7700
+      - MEILISEARCH_API_KEY=dev-master-key-change-in-prod
       - DEMO_MODE=true
       - RUST_LOG=lekton=info,tower_http=info
       - LEPTOS_SITE_ADDR=0.0.0.0:3000
@@ -95,3 +118,4 @@ volumes:
   mongo_data:
   garage_data:
   garage_meta:
+  meilisearch_data:

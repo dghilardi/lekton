@@ -12,21 +12,88 @@ pub struct TocHeading {
     pub id: String,
 }
 
-/// Render a raw Markdown string to sanitized HTML.
+/// Render a raw Markdown string to sanitized HTML with heading anchor IDs.
 ///
 /// Supports GitHub Flavored Markdown (GFM) features: tables,
 /// footnotes, strikethrough, task lists, and smart punctuation.
+/// Automatically adds IDs to h2-h6 headings for anchor navigation.
 pub fn render_markdown(raw: &str) -> String {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TASKLISTS
-        | Options::ENABLE_SMART_PUNCTUATION;
+        | Options::ENABLE_SMART_PUNCTUATION
+        | Options::ENABLE_HEADING_ATTRIBUTES;
 
     let parser = Parser::new_ext(raw, options);
     let mut html_output = String::new();
     html::push_html(&mut html_output, parser);
-    html_output
+    
+    // Post-process to add IDs to headings
+    add_heading_ids_simple(&html_output)
+}
+
+/// Simple post-processing to add IDs to heading tags.
+fn add_heading_ids_simple(html: &str) -> String {
+    // For h2-h6 tags, add id attribute based on text content
+    let mut result = html.to_string();
+    
+    for level in 2..=6 {
+        let pattern = format!("<h{}>", level);
+        let closing = format!("</h{}>", level);
+        
+        let mut new_result = String::new();
+        let mut last_end = 0;
+        
+        while let Some(start) = result[last_end..].find(&pattern) {
+            let abs_start = last_end + start;
+            let content_start = abs_start + pattern.len();
+            
+            // Find the closing tag
+            if let Some(end_pos) = result[content_start..].find(&closing) {
+                let abs_end = content_start + end_pos;
+                let heading_text = &result[content_start..abs_end];
+                
+                // Strip any HTML tags from the heading text
+                let clean_text = strip_html_tags(heading_text);
+                let id = slugify(&clean_text);
+                
+                // Add everything up to this heading
+                new_result.push_str(&result[last_end..abs_start]);
+                // Add heading with ID
+                new_result.push_str(&format!("<h{} id=\"{}\">", level, id));
+                new_result.push_str(heading_text);
+                new_result.push_str(&closing);
+                
+                last_end = abs_end + closing.len();
+            } else {
+                break;
+            }
+        }
+        
+        // Add the rest
+        new_result.push_str(&result[last_end..]);
+        result = new_result;
+    }
+    
+    result
+}
+
+/// Strip HTML tags from text for ID generation.
+fn strip_html_tags(text: &str) -> String {
+    let mut result = String::new();
+    let mut in_tag = false;
+    
+    for ch in text.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => result.push(ch),
+            _ => {}
+        }
+    }
+    
+    result.trim().to_string()
 }
 
 /// Extract headings from markdown content for building a table of contents.
@@ -49,7 +116,7 @@ pub fn extract_headings(raw: &str) -> Vec<TocHeading> {
             Event::Start(Tag::Heading { level, .. }) => {
                 current_heading = Some((level, String::new()));
             }
-            Event::End(TagEnd::Heading(level)) => {
+            Event::End(TagEnd::Heading(_level)) => {
                 if let Some((h_level, text)) = current_heading.take() {
                     let level_num = match h_level {
                         HeadingLevel::H1 => 1,
@@ -199,9 +266,18 @@ cargo install lekton
 "#;
         let result = render_markdown(input);
         assert!(result.contains("<h1>Getting Started</h1>"));
-        assert!(result.contains("<h2>Installation</h2>"));
+        // h2 and above now have IDs
+        assert!(result.contains("<h2 id=\"installation\">Installation</h2>"));
         assert!(result.contains("<strong>Lekton</strong>"));
         assert!(result.contains("<li>Fast</li>"));
+    }
+
+    #[test]
+    fn test_heading_ids_added() {
+        let input = "## Hello World\n\n### Using Code";
+        let result = render_markdown(input);
+        assert!(result.contains("<h2 id=\"hello-world\">Hello World</h2>"));
+        assert!(result.contains("<h3 id=\"using-code\">Using Code</h3>"));
     }
 
     #[test]

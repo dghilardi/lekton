@@ -249,7 +249,7 @@ fn Layout(children: Children) -> impl IntoView {
             <div class="drawer lg:drawer-open">
                 <input id="sidebar-drawer" type="checkbox" class="drawer-toggle" />
                 <div class="drawer-content p-6">
-                    <div class="max-w-4xl mx-auto">
+                    <div class="max-w-7xl mx-auto">
                         {children()}
                     </div>
                 </div>
@@ -438,13 +438,14 @@ fn LoginPage() -> impl IntoView {
 }
 
 
-/// Server function to fetch a document's rendered HTML content.
+/// Server function to fetch a document's rendered HTML content and TOC headings.
 #[server(GetDocHtml, "/api")]
 pub async fn get_doc_html(
     slug: String,
-) -> Result<Option<(String, String)>, ServerFnError> {
+) -> Result<Option<(String, String, Vec<crate::rendering::markdown::TocHeading>)>, ServerFnError> {
     use crate::db::repository::DocumentRepository;
     use crate::storage::client::StorageClient;
+    use crate::rendering::markdown::{extract_headings, render_markdown};
 
     let state = expect_context::<AppState>();
 
@@ -466,7 +467,9 @@ pub async fn get_doc_html(
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let html = render_markdown(&raw);
-    Ok(Some((doc.title, html)))
+    let headings = extract_headings(&raw);
+    
+    Ok(Some((doc.title, html, headings)))
 }
 
 /// Breadcrumbs component to show document hierarchy based on slug.
@@ -517,6 +520,43 @@ fn Breadcrumbs(slug: String) -> impl IntoView {
     }
 }
 
+/// Table of Contents component for document navigation.
+#[component]
+fn TableOfContents(headings: Vec<crate::rendering::markdown::TocHeading>) -> impl IntoView {
+    if headings.is_empty() {
+        return view! {
+            <div></div>
+        }.into_any();
+    }
+
+    view! {
+        <nav class="sticky top-20 hidden xl:block w-64 ml-8">
+            <div class="text-sm font-semibold mb-4">"On This Page"</div>
+            <ul class="space-y-2 text-sm">
+                {headings.into_iter().map(|heading| {
+                    let indent_class = if heading.level == 3 {
+                        "ml-4"
+                    } else {
+                        ""
+                    };
+                    let href = format!("#{}", heading.id);
+                    
+                    view! {
+                        <li class=indent_class>
+                            <a 
+                                href=href
+                                class="text-base-content/70 hover:text-primary transition-colors"
+                            >
+                                {heading.text}
+                            </a>
+                        </li>
+                    }
+                }).collect::<Vec<_>>()}
+            </ul>
+        </nav>
+    }.into_any()
+}
+
 /// Document viewer page — renders markdown content fetched from S3.
 #[component]
 fn DocPage() -> impl IntoView {
@@ -536,23 +576,26 @@ fn DocPage() -> impl IntoView {
         }>
             {move || {
                 doc_resource.get().map(|result| match result {
-                    Ok(Some((title, html))) => {
+                    Ok(Some((title, html, headings))) => {
                         let current_slug = slug();
                         view! {
-                            <div>
-                                <Breadcrumbs slug=current_slug.clone() />
-                                <div class="flex justify-between items-center mb-6">
-                                    <h1 class="text-3xl font-bold">{title}</h1>
-                                    <a
-                                        href=move || format!("/edit/{}", current_slug)
-                                        class="btn btn-outline btn-sm"
-                                    >
-                                        "Edit"
-                                    </a>
+                            <div class="flex gap-8">
+                                <div class="flex-1 min-w-0">
+                                    <Breadcrumbs slug=current_slug.clone() />
+                                    <div class="flex justify-between items-center mb-6">
+                                        <h1 class="text-3xl font-bold">{title}</h1>
+                                        <a
+                                            href=move || format!("/edit/{}", current_slug)
+                                            class="btn btn-outline btn-sm"
+                                        >
+                                            "Edit"
+                                        </a>
+                                    </div>
+                                    <article class="prose prose-lg max-w-none">
+                                        <div inner_html=html />
+                                    </article>
                                 </div>
-                                <article class="prose prose-lg max-w-none">
-                                    <div inner_html=html />
-                                </article>
+                                <TableOfContents headings=headings />
                             </div>
                         }.into_any()
                     }

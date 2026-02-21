@@ -7,7 +7,8 @@
  * Copy this file to public/custom.css or mount it as a Docker volume.
  */
 
-[data-theme="light"] {
+[data-theme="light"],
+:root {
   /* Override to use dark theme */
   color-scheme: dark;
 }
@@ -24,23 +25,32 @@
 /* GitHub Dark color palette */
 html[data-theme="light"] {
   /* Base colors */
-  --b1: 13 17 23;           /* Background: #0d1117 */
-  --b2: 22 27 34;           /* Slightly lighter: #161b22 */
-  --b3: 33 38 45;           /* Card backgrounds: #21262d */
-  --bc: 201 209 217;        /* Text color: #c9d1d9 */
+  --b1: 216 28% 7%;
+  /* Background: #0d1117 */
+  --b2: 215 21% 11%;
+  /* Slightly lighter: #161b22 */
+  --b3: 215 15% 15%;
+  /* Card backgrounds: #21262d */
+  --bc: 210 16% 82%;
+  /* Text color: #c9d1d9 */
 
   /* Primary: GitHub's blue accent */
-  --p: 212 92% 45%;         /* #1f6feb */
-  --pf: 212 92% 40%;        /* Darker on hover */
-  --pc: 0 0% 100%;          /* Primary content (white) */
+  --p: 212 92% 45%;
+  /* #1f6feb */
+  --pf: 212 92% 40%;
+  /* Darker on hover */
+  --pc: 0 0% 100%;
+  /* Primary content (white) */
 
   /* Secondary: Purple accent */
-  --s: 250 84% 60%;         /* #8b68ff */
+  --s: 250 84% 60%;
+  /* #8b68ff */
   --sf: 250 84% 55%;
   --sc: 0 0% 100%;
 
   /* Accent: Green for success */
-  --a: 137 55% 40%;         /* #238636 */
+  --a: 137 55% 40%;
+  /* #238636 */
   --af: 137 55% 35%;
   --ac: 0 0% 100%;
 
@@ -50,13 +60,87 @@ html[data-theme="light"] {
   --nc: 201 209 217;
 
   /* Info, Success, Warning, Error */
-  --in: 212 92% 45%;        /* Blue */
-  --su: 137 55% 40%;        /* Green */
-  --wa: 45 100% 51%;        /* Yellow: #fbbf24 */
-  --er: 358 77% 47%;        /* Red: #da3633 */
+  --in: 212 92% 45%;
+  /* Blue */
+  --su: 137 55% 40%;
+  /* Green */
+  --wa: 45 100% 51%;
+  /* Yellow: #fbbf24 */
+  --er: 358 77% 47%;
+  /* Red: #da3633 */
+}
+
+/* Explicitly apply background and text colors */
+html[data-theme="light"],
+body {
+  background-color: hsl(var(--b1)) !important;
+  color: hsl(var(--bc)) !important;
+}
+
+/* Ensure common DaisyUI containers use the theme backgrounds and text colors */
+.bg-base-100 {
+  background-color: hsl(var(--b1)) !important;
+}
+
+.bg-base-200 {
+  background-color: hsl(var(--b2)) !important;
+}
+
+.bg-base-300 {
+  background-color: hsl(var(--b3)) !important;
+}
+
+.text-base-content {
+  color: hsl(var(--bc)) !important;
+}
+
+/* Global text color overrides for better contrast */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+li,
+span,
+div {
+  color: inherit;
+}
+
+/* Typography polish */
+h1,
+h2,
+h3,
+h4 {
+  color: #f0f6fc !important;
+}
+
+p,
+li {
+  color: #8b949e;
+}
+
+strong {
+  color: #c9d1d9 !important;
 }
 
 /* Custom enhancements for code blocks */
+.prose {
+  color: #8b949e !important;
+}
+
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4 {
+  color: #f0f6fc !important;
+}
+
+.prose strong {
+  color: #c9d1d9 !important;
+}
+
 .prose pre {
   background-color: #161b22;
   border: 1px solid #30363d;

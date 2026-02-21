@@ -8,7 +8,8 @@
  * Copy this file to public/custom.css or mount it as a Docker volume.
  */
 
-[data-theme="light"] {
+[data-theme="light"],
+:root {
   color-scheme: dark;
 }
 
@@ -25,35 +26,103 @@
 /* Nord color palette */
 html[data-theme="light"] {
   /* Polar Night (dark backgrounds) */
-  --b1: 216 16% 13%;        /* #2e3440 */
-  --b2: 220 17% 17%;        /* #3b4252 */
-  --b3: 220 16% 22%;        /* #434c5e */
-  --bc: 218 27% 92%;        /* #eceff4 - Snow Storm text */
+  --b1: 216 16% 13%;
+  /* #2e3440 */
+  --b2: 220 17% 17%;
+  /* #3b4252 */
+  --b3: 220 16% 22%;
+  /* #434c5e */
+  --bc: 218 27% 92%;
+  /* #eceff4 - Snow Storm text */
 
   /* Frost (blue accents) */
-  --p: 193 43% 67%;         /* #88c0d0 - Nord8 */
+  --p: 193 43% 67%;
+  /* #88c0d0 - Nord8 */
   --pf: 193 43% 60%;
-  --pc: 220 16% 22%;        /* Dark text on light bg */
+  --pc: 220 16% 22%;
+  /* Dark text on light bg */
 
-  --s: 179 25% 65%;         /* #8fbcbb - Nord7 */
+  --s: 179 25% 65%;
+  /* #8fbcbb - Nord7 */
   --sf: 179 25% 60%;
   --sc: 220 16% 22%;
 
   /* Aurora (colorful accents) */
-  --a: 14 51% 63%;          /* #bf616a - Nord11 Red */
+  --a: 14 51% 63%;
+  /* #bf616a - Nord11 Red */
   --af: 14 51% 58%;
   --ac: 218 27% 92%;
 
   /* Neutral */
-  --n: 220 16% 36%;         /* #4c566a */
+  --n: 220 16% 36%;
+  /* #4c566a */
   --nf: 220 16% 31%;
   --nc: 218 27% 92%;
 
   /* Status colors from Aurora */
-  --in: 213 32% 52%;        /* #5e81ac - Nord10 Blue */
-  --su: 92 28% 65%;         /* #a3be8c - Nord14 Green */
-  --wa: 40 71% 73%;         /* #ebcb8b - Nord13 Yellow */
-  --er: 354 42% 56%;        /* #bf616a - Nord11 Red */
+  --in: 213 32% 52%;
+  /* #5e81ac - Nord10 Blue */
+  --su: 92 28% 65%;
+  /* #a3be8c - Nord14 Green */
+  --wa: 40 71% 73%;
+  /* #ebcb8b - Nord13 Yellow */
+  --er: 354 42% 56%;
+  /* #bf616a - Nord11 Red */
+}
+
+/* Explicitly apply background and text colors */
+html[data-theme="light"],
+body {
+  background-color: hsl(var(--b1)) !important;
+  color: hsl(var(--bc)) !important;
+}
+
+/* Ensure common DaisyUI containers use the theme backgrounds and text colors */
+.bg-base-100 {
+  background-color: hsl(var(--b1)) !important;
+}
+
+.bg-base-200 {
+  background-color: hsl(var(--b2)) !important;
+}
+
+.bg-base-300 {
+  background-color: hsl(var(--b3)) !important;
+}
+
+.text-base-content {
+  color: hsl(var(--bc)) !important;
+}
+
+/* Global text color overrides for better contrast */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+li,
+span,
+div {
+  color: inherit;
+}
+
+/* Typography polish */
+h1,
+h2,
+h3,
+h4 {
+  color: #eceff4 !important;
+}
+
+p,
+li {
+  color: #d8dee9;
+}
+
+strong {
+  color: #eceff4 !important;
 }
 
 /* Enhanced prose for Nord theme */
@@ -136,6 +205,18 @@ html[data-theme="light"] {
 
 .prose tbody tr:hover {
   background-color: rgba(59, 66, 82, 0.5);
+}
+
+/* Search bar polish */
+.input {
+  background-color: #3b4252 !important;
+  color: #eceff4 !important;
+  border-color: #4c566a !important;
+}
+
+.input::placeholder {
+  color: #d8dee9 !important;
+  opacity: 0.6;
 }
 
 /* Navbar styling */

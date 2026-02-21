@@ -338,6 +338,54 @@ pub async fn get_doc_html(
     Ok(Some((doc.title, html)))
 }
 
+/// Breadcrumbs component to show document hierarchy based on slug.
+#[component]
+fn Breadcrumbs(slug: String) -> impl IntoView {
+    // Parse slug like "engineering/deployment-guide" into breadcrumb trail
+    let parts: Vec<&str> = slug.split('/').collect();
+    
+    // Build breadcrumb items
+    let breadcrumb_items: Vec<_> = parts.iter().enumerate().map(|(idx, part)| {
+        let is_last = idx == parts.len() - 1;
+        let path = parts[..=idx].join("/");
+        let label = part.split('-')
+            .map(|word| {
+                let mut c = word.chars();
+                match c.next() {
+                    None => String::new(),
+                    Some(first) => first.to_uppercase().collect::<String>() + c.as_str(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        
+        (path, label, is_last)
+    }).collect();
+    
+    view! {
+        <div class="breadcrumbs text-sm mb-4">
+            <ul>
+                <li>
+                    <a href="/" class="hover:underline">"Docs"</a>
+                </li>
+                {breadcrumb_items.into_iter().map(|(path, label, is_last)| {
+                    if is_last {
+                        view! {
+                            <li>{label}</li>
+                        }.into_any()
+                    } else {
+                        view! {
+                            <li>
+                                <a href=format!("/docs/{}", path) class="hover:underline">{label}</a>
+                            </li>
+                        }.into_any()
+                    }
+                }).collect::<Vec<_>>()}
+            </ul>
+        </div>
+    }
+}
+
 /// Document viewer page — renders markdown content fetched from S3.
 #[component]
 fn DocPage() -> impl IntoView {
@@ -358,12 +406,14 @@ fn DocPage() -> impl IntoView {
             {move || {
                 doc_resource.get().map(|result| match result {
                     Ok(Some((title, html))) => {
+                        let current_slug = slug();
                         view! {
                             <div>
+                                <Breadcrumbs slug=current_slug.clone() />
                                 <div class="flex justify-between items-center mb-6">
                                     <h1 class="text-3xl font-bold">{title}</h1>
                                     <a
-                                        href=move || format!("/edit/{}", slug())
+                                        href=move || format!("/edit/{}", current_slug)
                                         class="btn btn-outline btn-sm"
                                     >
                                         "Edit"

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::editor::component::EditorPage;
 use crate::rendering::markdown::render_markdown;
+use crate::schema::component::{SchemaListPage, SchemaViewerPage};
 use crate::search::client::SearchHit;
 
 /// Shared application state (server-side only).
@@ -152,6 +153,8 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/login") view=LoginPage />
                     <Route path=path!("/docs/:slug") view=DocPage />
                     <Route path=path!("/edit/:slug") view=EditorPage />
+                    <Route path=path!("/schemas") view=SchemaListPage />
+                    <Route path=path!("/schemas/:name") view=SchemaViewerPage />
                 </Routes>
             </Layout>
         </Router>
@@ -287,6 +290,8 @@ fn Layout(children: Children) -> impl IntoView {
                         <li class="menu-title">"Documentation"</li>
                         <li><a href="/">"🏠 Home"</a></li>
                         <NavigationTree />
+                        <li class="menu-title mt-4">"API Schemas"</li>
+                        <li><a href="/schemas">"📡 Schema Registry"</a></li>
                     </ul>
                 </div>
             </div>

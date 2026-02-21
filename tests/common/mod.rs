@@ -143,6 +143,19 @@ impl TestEnv {
                 get(lekton::api::upload::serve_image_handler),
             )
             .route(
+                "/api/v1/schemas",
+                get(lekton::api::schemas::list_schemas_handler)
+                    .post(lekton::api::schemas::ingest_schema_handler),
+            )
+            .route(
+                "/api/v1/schemas/{name}",
+                get(lekton::api::schemas::get_schema_handler),
+            )
+            .route(
+                "/api/v1/schemas/{name}/{version}",
+                get(lekton::api::schemas::get_schema_version_handler),
+            )
+            .route(
                 "/api/auth/login",
                 post(lekton::auth::demo_auth::login_handler),
             )

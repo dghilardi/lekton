@@ -116,6 +116,19 @@ async fn main() {
         .route(
             "/api/v1/image/{filename}",
             axum::routing::get(api::upload::serve_image_handler),
+        )
+        .route(
+            "/api/v1/schemas",
+            axum::routing::get(api::schemas::list_schemas_handler)
+                .post(api::schemas::ingest_schema_handler),
+        )
+        .route(
+            "/api/v1/schemas/{name}",
+            axum::routing::get(api::schemas::get_schema_handler),
+        )
+        .route(
+            "/api/v1/schemas/{name}/{version}",
+            axum::routing::get(api::schemas::get_schema_version_handler),
         );
 
     // Mount demo auth routes when demo mode is enabled

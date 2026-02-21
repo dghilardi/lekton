@@ -81,7 +81,11 @@ pub async fn save_doc_content(
             .map(|d| d.tags.clone())
             .unwrap_or_default(),
         links_out: links_out.clone(),
-        backlinks: old_doc.map(|d| d.backlinks).unwrap_or_default(),
+        backlinks: old_doc.as_ref().map(|d| d.backlinks.clone()).unwrap_or_default(),
+        // Preserve hierarchy fields from existing document, or use defaults
+        parent_slug: old_doc.as_ref().and_then(|d| d.parent_slug.clone()),
+        order: old_doc.as_ref().map(|d| d.order).unwrap_or(0),
+        is_hidden: old_doc.as_ref().map(|d| d.is_hidden).unwrap_or(false),
     };
 
     let search_doc = state.search_service.as_ref().map(|_| {

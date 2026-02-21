@@ -26,6 +26,18 @@ pub struct Document {
     pub links_out: Vec<String>,
     /// Incoming backlinks (populated by ingestion logic).
     pub backlinks: Vec<String>,
+    /// Optional parent slug for explicit hierarchical relationships.
+    /// If None, the document is considered a top-level document.
+    #[serde(default)]
+    pub parent_slug: Option<String>,
+    /// Sort order within parent (or top-level if no parent).
+    /// Lower numbers appear first in navigation.
+    #[serde(default)]
+    pub order: u32,
+    /// Whether this document should be hidden from navigation.
+    /// Hidden documents can still be accessed directly via URL.
+    #[serde(default)]
+    pub is_hidden: bool,
 }
 
 /// Represents an API schema entry stored in MongoDB.
@@ -70,6 +82,15 @@ pub struct IngestRequest {
     /// Tags for categorization.
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Optional parent slug for hierarchy.
+    #[serde(default)]
+    pub parent_slug: Option<String>,
+    /// Sort order (defaults to 0 if not specified).
+    #[serde(default)]
+    pub order: u32,
+    /// Whether to hide from navigation (defaults to false).
+    #[serde(default)]
+    pub is_hidden: bool,
 }
 
 /// The response from a successful ingest operation.
@@ -99,6 +120,9 @@ mod tests {
             tags: vec!["k8s".to_string(), "cicd".to_string()],
             links_out: vec!["/docs/setup".to_string()],
             backlinks: vec![],
+            parent_slug: Some("engineering".to_string()),
+            order: 10,
+            is_hidden: false,
         };
 
         let json = serde_json::to_string(&doc).unwrap();
@@ -106,6 +130,30 @@ mod tests {
         assert_eq!(deserialized.slug, "engineering/deployment-guide");
         assert_eq!(deserialized.access_level, AccessLevel::Developer);
         assert_eq!(deserialized.tags.len(), 2);
+        assert_eq!(deserialized.parent_slug, Some("engineering".to_string()));
+        assert_eq!(deserialized.order, 10);
+        assert_eq!(deserialized.is_hidden, false);
+    }
+
+    #[test]
+    fn test_document_hierarchy_defaults() {
+        // Test that new hierarchy fields have proper defaults when deserializing old documents
+        let json = r###"{
+            "slug": "getting-started",
+            "title": "Getting Started",
+            "s3_key": "docs/getting-started.md",
+            "access_level": "Public",
+            "service_owner": "docs-team",
+            "last_updated": "2024-01-01T00:00:00Z",
+            "tags": [],
+            "links_out": [],
+            "backlinks": []
+        }"###;
+
+        let doc: Document = serde_json::from_str(json).unwrap();
+        assert_eq!(doc.parent_slug, None);
+        assert_eq!(doc.order, 0);
+        assert_eq!(doc.is_hidden, false);
     }
 
     #[test]

@@ -77,6 +77,7 @@ impl DocumentRepository for MongoDocumentRepository {
 
     async fn list_accessible(&self, max_level: AccessLevel) -> Result<Vec<Document>, AppError> {
         use mongodb::bson::doc;
+        use mongodb::options::FindOptions;
 
         // AccessLevel is serialized as a string, so we need to filter by the
         // known levels up to and including max_level.
@@ -92,12 +93,23 @@ impl DocumentRepository for MongoDocumentRepository {
         .collect();
 
         let filter = doc! {
-            "access_level": { "$in": &allowed_levels }
+            "access_level": { "$in": &allowed_levels },
+            // Exclude hidden documents from navigation
+            "$or": [
+                { "is_hidden": { "$exists": false } },
+                { "is_hidden": false }
+            ]
         };
+
+        // Sort by order field (ascending), then by slug (ascending)
+        let options = FindOptions::builder()
+            .sort(doc! { "order": 1, "slug": 1 })
+            .build();
 
         let mut cursor = self
             .collection
             .find(filter)
+            .with_options(options)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
 

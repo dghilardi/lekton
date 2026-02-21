@@ -66,9 +66,25 @@ pub async fn process_ingest(
         access_level,
         service_owner: request.service_owner,
         last_updated: Utc::now(),
-        tags: request.tags,
+        tags: request.tags.clone(),
         links_out: links_out.clone(),
-        backlinks: old_doc.map(|d| d.backlinks).unwrap_or_default(),
+        backlinks: old_doc.as_ref().map(|d| d.backlinks.clone()).unwrap_or_default(),
+        // Use request values if provided, otherwise preserve from old doc or use defaults
+        parent_slug: if request.parent_slug.is_some() {
+            request.parent_slug.clone()
+        } else {
+            old_doc.as_ref().and_then(|d| d.parent_slug.clone())
+        },
+        order: if request.order > 0 {
+            request.order
+        } else {
+            old_doc.as_ref().map(|d| d.order).unwrap_or(0)
+        },
+        is_hidden: if request.is_hidden {
+            true
+        } else {
+            old_doc.as_ref().map(|d| d.is_hidden).unwrap_or(false)
+        },
     };
 
     // 9. Build search document before ownership transfer
@@ -247,6 +263,9 @@ mod tests {
             access_level: "developer".to_string(),
             service_owner: "test-team".to_string(),
             tags: vec!["test".to_string()],
+            parent_slug: None,
+            order: 0,
+            is_hidden: false,
         }
     }
 

@@ -249,6 +249,9 @@ mod tests {
             tags: vec!["intro".to_string()],
             links_out: vec![],
             backlinks: vec![],
+            parent_slug: None,
+            order: 0,
+            is_hidden: false,
         };
 
         let search_doc = build_search_document(&doc, "# Getting Started\n\nWelcome to Lekton.");

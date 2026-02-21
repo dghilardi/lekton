@@ -7,6 +7,7 @@ async fn main() {
     use lekton::api;
     use lekton::app::App;
     use lekton::db::repository::MongoDocumentRepository;
+    use lekton::db::schema_repository::MongoSchemaRepository;
     use lekton::search::client::SearchService;
     use lekton::storage::client::S3StorageClient;
     use std::sync::Arc;
@@ -49,6 +50,8 @@ async fn main() {
     let mongo_db = mongo_client.database(&mongo_db_name);
     let document_repo: Arc<dyn lekton::db::repository::DocumentRepository> =
         Arc::new(MongoDocumentRepository::new(&mongo_db));
+    let schema_repo: Arc<dyn lekton::db::schema_repository::SchemaRepository> =
+        Arc::new(MongoSchemaRepository::new(&mongo_db));
 
     tracing::info!("Connected to MongoDB at {}", mongo_uri);
 
@@ -84,6 +87,7 @@ async fn main() {
     // Build application state
     let app_state = lekton::app::AppState {
         document_repo,
+        schema_repo,
         storage_client,
         search_service,
         leptos_options: leptos_options.clone(),
@@ -112,6 +116,19 @@ async fn main() {
         .route(
             "/api/v1/image/{filename}",
             axum::routing::get(api::upload::serve_image_handler),
+        )
+        .route(
+            "/api/v1/schemas",
+            axum::routing::get(api::schemas::list_schemas_handler)
+                .post(api::schemas::ingest_schema_handler),
+        )
+        .route(
+            "/api/v1/schemas/{name}",
+            axum::routing::get(api::schemas::get_schema_handler),
+        )
+        .route(
+            "/api/v1/schemas/{name}/{version}",
+            axum::routing::get(api::schemas::get_schema_version_handler),
         );
 
     // Mount demo auth routes when demo mode is enabled

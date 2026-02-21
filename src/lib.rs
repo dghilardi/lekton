@@ -5,6 +5,7 @@ pub mod db;
 pub mod editor;
 pub mod error;
 pub mod rendering;
+pub mod schema;
 pub mod search;
 pub mod storage;
 

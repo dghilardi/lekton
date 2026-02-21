@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::editor::component::EditorPage;
 use crate::rendering::markdown::render_markdown;
+use crate::schema::component::{SchemaListPage, SchemaViewerPage};
 use crate::search::client::SearchHit;
 
 /// Shared application state (server-side only).
@@ -16,6 +17,7 @@ use std::sync::Arc;
 #[derive(Clone, axum::extract::FromRef)]
 pub struct AppState {
     pub document_repo: Arc<dyn crate::db::repository::DocumentRepository>,
+    pub schema_repo: Arc<dyn crate::db::schema_repository::SchemaRepository>,
     pub storage_client: Arc<dyn crate::storage::client::StorageClient>,
     pub search_service: Option<Arc<dyn crate::search::client::SearchService>>,
     pub service_token: String,
@@ -151,6 +153,8 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/login") view=LoginPage />
                     <Route path=path!("/docs/:slug") view=DocPage />
                     <Route path=path!("/edit/:slug") view=EditorPage />
+                    <Route path=path!("/schemas") view=SchemaListPage />
+                    <Route path=path!("/schemas/:name") view=SchemaViewerPage />
                 </Routes>
             </Layout>
         </Router>
@@ -286,6 +290,8 @@ fn Layout(children: Children) -> impl IntoView {
                         <li class="menu-title">"Documentation"</li>
                         <li><a href="/">"🏠 Home"</a></li>
                         <NavigationTree />
+                        <li class="menu-title mt-4">"API Schemas"</li>
+                        <li><a href="/schemas">"📡 Schema Registry"</a></li>
                     </ul>
                 </div>
             </div>

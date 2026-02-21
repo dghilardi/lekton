@@ -10,6 +10,7 @@ use testcontainers_modules::mongo::Mongo;
 
 use lekton::app::AppState;
 use lekton::db::repository::{DocumentRepository, MongoDocumentRepository};
+use lekton::db::schema_repository::{MongoSchemaRepository, SchemaRepository};
 use lekton::search::client::{MeilisearchService, SearchService};
 use lekton::storage::client::{S3StorageClient, StorageClient};
 
@@ -23,6 +24,7 @@ pub struct TestEnv {
     _meili: ContainerAsync<Meilisearch>,
     pub router: Router,
     pub repo: Arc<dyn DocumentRepository>,
+    pub schema_repo: Arc<dyn SchemaRepository>,
     pub storage: Arc<dyn StorageClient>,
     pub search: Arc<dyn SearchService>,
 }
@@ -52,6 +54,8 @@ impl TestEnv {
         let mongo_db = mongo_client.database("lekton_test");
         let repo: Arc<dyn DocumentRepository> =
             Arc::new(MongoDocumentRepository::new(&mongo_db));
+        let schema_repo: Arc<dyn SchemaRepository> =
+            Arc::new(MongoSchemaRepository::new(&mongo_db));
 
         // --- MinIO (S3) ---
         let minio_port = minio_container
@@ -112,6 +116,7 @@ impl TestEnv {
 
         let app_state = AppState {
             document_repo: repo.clone(),
+            schema_repo: schema_repo.clone(),
             storage_client: storage.clone(),
             search_service: Some(search.clone()),
             service_token: "test-token".to_string(),
@@ -138,6 +143,19 @@ impl TestEnv {
                 get(lekton::api::upload::serve_image_handler),
             )
             .route(
+                "/api/v1/schemas",
+                get(lekton::api::schemas::list_schemas_handler)
+                    .post(lekton::api::schemas::ingest_schema_handler),
+            )
+            .route(
+                "/api/v1/schemas/{name}",
+                get(lekton::api::schemas::get_schema_handler),
+            )
+            .route(
+                "/api/v1/schemas/{name}/{version}",
+                get(lekton::api::schemas::get_schema_version_handler),
+            )
+            .route(
                 "/api/auth/login",
                 post(lekton::auth::demo_auth::login_handler),
             )
@@ -157,6 +175,7 @@ impl TestEnv {
             _meili: meili_container,
             router,
             repo,
+            schema_repo,
             storage,
             search,
         }
@@ -220,6 +239,7 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
 
     let app_state = AppState {
         document_repo: env.repo.clone(),
+        schema_repo: env.schema_repo.clone(),
         storage_client: env.storage.clone(),
         search_service: None,
         service_token: "test-token".to_string(),

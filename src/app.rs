@@ -18,6 +18,7 @@ use std::sync::Arc;
 pub struct AppState {
     pub document_repo: Arc<dyn crate::db::repository::DocumentRepository>,
     pub schema_repo: Arc<dyn crate::db::schema_repository::SchemaRepository>,
+    pub settings_repo: Arc<dyn crate::db::settings_repository::SettingsRepository>,
     pub storage_client: Arc<dyn crate::storage::client::StorageClient>,
     pub search_service: Option<Arc<dyn crate::search::client::SearchService>>,
     pub service_token: String,
@@ -34,6 +35,10 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
             <head>
                 <meta charset="utf-8" />
                 <meta name="viewport" content="width=device-width, initial-scale=1" />
+                // Inline script to apply saved theme before first paint (prevents FOUC)
+                <script>
+                    r#"(function(){var t=localStorage.getItem('lekton-theme');if(t==='dark'||t==='light'){document.documentElement.setAttribute('data-theme',t)}else{var d=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',d)}})()"#
+                </script>
                 <AutoReload options=options.clone() />
                 <HydrationScripts options=options />
                 <Meta name="description" content="Lekton: A dynamic, high-performance Internal Developer Portal with RBAC and unified schema registry." />
@@ -138,6 +143,24 @@ pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
     Ok(roots)
 }
 
+/// Server function to get the current custom CSS.
+#[server(GetCustomCss, "/api")]
+pub async fn get_custom_css() -> Result<String, ServerFnError> {
+    let state = expect_context::<AppState>();
+    let settings = state.settings_repo.get_settings().await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(settings.custom_css)
+}
+
+/// Server function to save custom CSS (admin only).
+#[server(SaveCustomCss, "/api")]
+pub async fn save_custom_css(css: String) -> Result<String, ServerFnError> {
+    let state = expect_context::<AppState>();
+    state.settings_repo.set_custom_css(&css).await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok("Custom CSS saved successfully".to_string())
+}
+
 /// Root application component.
 #[component]
 pub fn App() -> impl IntoView {
@@ -228,6 +251,27 @@ fn NavigationTree() -> impl IntoView {
     }
 }
 
+/// Runtime custom CSS component — injects user-defined CSS from settings.
+#[component]
+fn RuntimeCustomCss() -> impl IntoView {
+    let css_resource = Resource::new(|| (), |_| get_custom_css());
+
+    view! {
+        <Suspense fallback=|| ()>
+            {move || {
+                css_resource.get().map(|result| match result {
+                    Ok(css) if !css.is_empty() => {
+                        view! {
+                            <style>{css}</style>
+                        }.into_any()
+                    }
+                    _ => view! { <span /> }.into_any(),
+                })
+            }}
+        </Suspense>
+    }
+}
+
 /// Main layout: navbar + sidebar + content area.
 #[component]
 fn Layout(children: Children) -> impl IntoView {
@@ -244,6 +288,9 @@ fn Layout(children: Children) -> impl IntoView {
     });
 
     view! {
+        // Runtime custom CSS injection (loaded from MongoDB settings)
+        <RuntimeCustomCss />
+
         <div class="min-h-screen bg-base-200">
             // Navbar
             <div class="navbar bg-base-100 shadow-lg sticky top-0 z-50">
@@ -264,6 +311,8 @@ fn Layout(children: Children) -> impl IntoView {
                         <span class="hidden md:inline">"Search"</span>
                         <kbd class="kbd kbd-xs hidden md:inline">"Ctrl+K"</kbd>
                     </button>
+                    // Theme toggle
+                    <ThemeToggle />
                     // User area — shows login button or user info
                     <div id="user-area" class="flex items-center gap-2">
                         <a href="/login" class="btn btn-primary btn-sm">"Login"</a>
@@ -469,11 +518,21 @@ fn LoginPage() -> impl IntoView {
 }
 
 
-/// Server function to fetch a document's rendered HTML content and TOC headings.
+/// Data returned for rendering a document page.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocPageData {
+    pub title: String,
+    pub html: String,
+    pub headings: Vec<crate::rendering::markdown::TocHeading>,
+    pub last_updated: String,
+    pub tags: Vec<String>,
+}
+
+/// Server function to fetch a document's rendered HTML content, TOC, and metadata.
 #[server(GetDocHtml, "/api")]
 pub async fn get_doc_html(
     slug: String,
-) -> Result<Option<(String, String, Vec<crate::rendering::markdown::TocHeading>)>, ServerFnError> {
+) -> Result<Option<DocPageData>, ServerFnError> {
     use crate::db::repository::DocumentRepository;
     use crate::storage::client::StorageClient;
     use crate::rendering::markdown::{extract_headings, render_markdown};
@@ -499,8 +558,15 @@ pub async fn get_doc_html(
 
     let html = render_markdown(&raw);
     let headings = extract_headings(&raw);
-    
-    Ok(Some((doc.title, html, headings)))
+    let last_updated = doc.last_updated.format("%B %d, %Y").to_string();
+
+    Ok(Some(DocPageData {
+        title: doc.title,
+        html,
+        headings,
+        last_updated,
+        tags: doc.tags,
+    }))
 }
 
 /// Breadcrumbs component to show document hierarchy based on slug.
@@ -607,14 +673,16 @@ fn DocPage() -> impl IntoView {
         }>
             {move || {
                 doc_resource.get().map(|result| match result {
-                    Ok(Some((title, html, headings))) => {
+                    Ok(Some(data)) => {
                         let current_slug = slug();
+                        let has_tags = !data.tags.is_empty();
+                        let tags = data.tags.clone();
                         view! {
                             <div class="flex gap-8">
                                 <div class="flex-1 min-w-0">
                                     <Breadcrumbs slug=current_slug.clone() />
                                     <div class="flex justify-between items-center mb-6">
-                                        <h1 class="text-3xl font-bold">{title}</h1>
+                                        <h1 class="text-3xl font-bold">{data.title}</h1>
                                         <a
                                             href=move || format!("/edit/{}", current_slug)
                                             class="btn btn-outline btn-sm"
@@ -622,11 +690,32 @@ fn DocPage() -> impl IntoView {
                                             "Edit"
                                         </a>
                                     </div>
+                                    // Tags
+                                    <Show when=move || has_tags>
+                                        <div class="flex flex-wrap gap-2 mb-6">
+                                            {tags.iter().map(|tag| {
+                                                let tag_text = tag.clone();
+                                                view! {
+                                                    <span class="badge badge-outline badge-sm">{tag_text}</span>
+                                                }
+                                            }).collect::<Vec<_>>()}
+                                        </div>
+                                    </Show>
                                     <article class="prose prose-lg max-w-none">
-                                        <div inner_html=html />
+                                        <div inner_html=data.html />
                                     </article>
+                                    // Last Updated footer
+                                    <div class="divider mt-12"></div>
+                                    <div class="flex items-center gap-2 text-sm text-base-content/50 pb-4">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z">
+                                            </path>
+                                        </svg>
+                                        <span>"Last updated: " {data.last_updated}</span>
+                                    </div>
                                 </div>
-                                <TableOfContents headings=headings />
+                                <TableOfContents headings=data.headings />
                             </div>
                         }.into_any()
                     }
@@ -861,6 +950,103 @@ fn SearchBar() -> impl IntoView {
                     </Suspense>
                 </ul>
             </Show>
+        </div>
+    }
+}
+
+/// Theme toggle component — cycles through system/light/dark themes.
+///
+/// Persists choice in localStorage and applies it to the `<html>` element's `data-theme`.
+/// Uses three states: "system" (follows OS preference), "light", and "dark".
+#[component]
+fn ThemeToggle() -> impl IntoView {
+    let (theme, set_theme) = signal("system".to_string());
+
+    // On mount (client-side), read the saved theme from localStorage
+    #[cfg(feature = "hydrate")]
+    {
+        use wasm_bindgen::prelude::*;
+
+        // Read initial value
+        let saved = js_sys::eval("localStorage.getItem('lekton-theme') || 'system'")
+            .ok()
+            .and_then(|v| v.as_string())
+            .unwrap_or_else(|| "system".to_string());
+        set_theme.set(saved);
+    }
+
+    let cycle_theme = move |_| {
+        let next = match theme.get().as_str() {
+            "system" => "light",
+            "light" => "dark",
+            "dark" => "system",
+            _ => "system",
+        };
+        set_theme.set(next.to_string());
+
+        // Apply theme via JS — works on both SSR and hydrate
+        #[cfg(feature = "hydrate")]
+        {
+            use wasm_bindgen::prelude::*;
+
+            let js_code = format!(
+                r#"(function(){{
+                    var theme = '{}';
+                    if (theme === 'system') {{
+                        localStorage.removeItem('lekton-theme');
+                        var actual = window.matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light';
+                        document.documentElement.setAttribute('data-theme', actual);
+                    }} else {{
+                        localStorage.setItem('lekton-theme', theme);
+                        document.documentElement.setAttribute('data-theme', theme);
+                    }}
+                }})()"#,
+                next
+            );
+            let _ = js_sys::eval(&js_code);
+        }
+    };
+
+    view! {
+        <div class="tooltip tooltip-bottom" data-tip=move || {
+            match theme.get().as_str() {
+                "light" => "Light mode (click for dark)",
+                "dark" => "Dark mode (click for system)",
+                _ => "System theme (click for light)",
+            }
+        }>
+            <button
+                class="btn btn-ghost btn-sm btn-square"
+                on:click=cycle_theme
+                aria-label="Toggle theme"
+            >
+                {move || match theme.get().as_str() {
+                    "light" => view! {
+                        // Sun icon
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z">
+                            </path>
+                        </svg>
+                    }.into_any(),
+                    "dark" => view! {
+                        // Moon icon
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z">
+                            </path>
+                        </svg>
+                    }.into_any(),
+                    _ => view! {
+                        // Monitor icon (system)
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z">
+                            </path>
+                        </svg>
+                    }.into_any(),
+                }}
+            </button>
         </div>
     }
 }

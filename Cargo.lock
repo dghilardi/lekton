@@ -2824,6 +2824,7 @@ dependencies = [
  "chrono",
  "console_error_panic_hook",
  "futures",
+ "js-sys",
  "jsonwebtoken",
  "leptos",
  "leptos-tiptap",

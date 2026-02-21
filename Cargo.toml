@@ -76,6 +76,10 @@ leptos-tiptap-build = "0.2"
 tokio = { version = "1", features = ["full", "test-util"] }
 mockall = "0.13"
 base64 = "0.22"
+testcontainers = "0.27"
+testcontainers-modules = { version = "0.15", features = ["mongo", "minio", "meilisearch"] }
+axum-test = "18"
+uuid = { version = "1", features = ["v4"] }
 
 [features]
 hydrate = [

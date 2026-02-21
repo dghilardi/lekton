@@ -70,6 +70,14 @@ impl MeilisearchService {
             .map_err(|_| AppError::Internal("MEILISEARCH_URL not set".into()))?;
         let api_key = std::env::var("MEILISEARCH_API_KEY").ok();
 
+        Self::new(url, api_key)
+    }
+
+    /// Create a new MeilisearchService with explicit URL and optional API key.
+    pub fn new(
+        url: impl Into<String>,
+        api_key: Option<impl Into<String>>,
+    ) -> Result<Self, AppError> {
         let client = meilisearch_sdk::client::Client::new(url, api_key)
             .map_err(|e| AppError::Internal(format!("Failed to create Meilisearch client: {e}")))?;
 

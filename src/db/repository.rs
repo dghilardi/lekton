@@ -79,8 +79,8 @@ impl DocumentRepository for MongoDocumentRepository {
         use mongodb::bson::doc;
         use mongodb::options::FindOptions;
 
-        // AccessLevel is serialized as a string, so we need to filter by the
-        // known levels up to and including max_level.
+        // AccessLevel is serialized by serde as PascalCase (e.g. "Public", "Developer").
+        // We must use the same format in the MongoDB filter.
         let allowed_levels: Vec<String> = [
             AccessLevel::Public,
             AccessLevel::Developer,
@@ -89,7 +89,13 @@ impl DocumentRepository for MongoDocumentRepository {
         ]
         .iter()
         .filter(|level| **level <= max_level)
-        .map(|level| level.to_string())
+        .map(|level| {
+            serde_json::to_value(level)
+                .expect("AccessLevel serialization should not fail")
+                .as_str()
+                .expect("AccessLevel should serialize as a string")
+                .to_string()
+        })
         .collect();
 
         let filter = doc! {

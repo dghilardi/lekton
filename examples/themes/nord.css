@@ -1,0 +1,189 @@
+/*
+ * Lekton Theme: Nord
+ * ===================
+ * A beautiful arctic, north-bluish color palette theme.
+ * Inspired by the Nord color scheme (https://www.nordtheme.com/)
+ *
+ * INSTALLATION:
+ * Copy this file to public/custom.css or mount it as a Docker volume.
+ */
+
+[data-theme="light"] {
+  color-scheme: dark;
+}
+
+:root {
+  /* Font: Clean sans-serif stack */
+  --lekton-font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  /* Comfortable spacing */
+  --lekton-sidebar-width: 17rem;
+  --lekton-content-max-width: 75rem;
+  --lekton-spacing-lg: 2rem;
+}
+
+/* Nord color palette */
+html[data-theme="light"] {
+  /* Polar Night (dark backgrounds) */
+  --b1: 216 16% 13%;        /* #2e3440 */
+  --b2: 220 17% 17%;        /* #3b4252 */
+  --b3: 220 16% 22%;        /* #434c5e */
+  --bc: 218 27% 92%;        /* #eceff4 - Snow Storm text */
+
+  /* Frost (blue accents) */
+  --p: 193 43% 67%;         /* #88c0d0 - Nord8 */
+  --pf: 193 43% 60%;
+  --pc: 220 16% 22%;        /* Dark text on light bg */
+
+  --s: 179 25% 65%;         /* #8fbcbb - Nord7 */
+  --sf: 179 25% 60%;
+  --sc: 220 16% 22%;
+
+  /* Aurora (colorful accents) */
+  --a: 14 51% 63%;          /* #bf616a - Nord11 Red */
+  --af: 14 51% 58%;
+  --ac: 218 27% 92%;
+
+  /* Neutral */
+  --n: 220 16% 36%;         /* #4c566a */
+  --nf: 220 16% 31%;
+  --nc: 218 27% 92%;
+
+  /* Status colors from Aurora */
+  --in: 213 32% 52%;        /* #5e81ac - Nord10 Blue */
+  --su: 92 28% 65%;         /* #a3be8c - Nord14 Green */
+  --wa: 40 71% 73%;         /* #ebcb8b - Nord13 Yellow */
+  --er: 354 42% 56%;        /* #bf616a - Nord11 Red */
+}
+
+/* Enhanced prose for Nord theme */
+.prose {
+  color: #d8dee9;
+  font-size: 1.05rem;
+}
+
+.prose h1,
+.prose h2,
+.prose h3 {
+  color: #eceff4;
+  font-weight: 700;
+}
+
+.prose h1 {
+  border-bottom: 2px solid #4c566a;
+  padding-bottom: 0.3em;
+}
+
+.prose a {
+  color: #88c0d0;
+  text-decoration: none;
+  font-weight: 500;
+  transition: color 0.15s ease;
+}
+
+.prose a:hover {
+  color: #8fbcbb;
+  text-decoration: underline;
+}
+
+.prose strong {
+  color: #eceff4;
+  font-weight: 600;
+}
+
+.prose code {
+  background-color: #3b4252;
+  color: #ebcb8b;
+  padding: 0.2em 0.5em;
+  border-radius: 4px;
+  font-size: 0.9em;
+  border: 1px solid #4c566a;
+}
+
+.prose pre {
+  background-color: #2e3440;
+  border: 1px solid #4c566a;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.prose pre code {
+  background-color: transparent;
+  border: none;
+  color: #d8dee9;
+}
+
+.prose blockquote {
+  border-left-color: #5e81ac;
+  color: #d8dee9;
+  background-color: rgba(94, 129, 172, 0.05);
+  padding: 1em 1em 1em 1.5em;
+  border-radius: 4px;
+}
+
+.prose table {
+  border: 1px solid #4c566a;
+  font-size: 0.95rem;
+}
+
+.prose thead {
+  background-color: #3b4252;
+  color: #eceff4;
+}
+
+.prose tbody tr {
+  border-bottom-color: #4c566a;
+}
+
+.prose tbody tr:hover {
+  background-color: rgba(59, 66, 82, 0.5);
+}
+
+/* Navbar styling */
+.navbar {
+  background-color: #2e3440;
+  border-bottom: 1px solid #4c566a;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+/* Sidebar enhancements */
+.menu {
+  font-size: 0.95rem;
+}
+
+.menu a {
+  border-radius: 6px;
+  transition: all 0.15s ease;
+}
+
+.menu a:hover {
+  background-color: #3b4252;
+  padding-left: 1.25rem;
+}
+
+.menu-title {
+  color: #81a1c1;
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Cards and containers */
+.card {
+  background-color: #3b4252;
+  border: 1px solid #4c566a;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+/* Buttons */
+.btn-primary {
+  background-color: #88c0d0;
+  color: #2e3440;
+  border: none;
+  font-weight: 600;
+}
+
+.btn-primary:hover {
+  background-color: #8fbcbb;
+  color: #2e3440;
+}

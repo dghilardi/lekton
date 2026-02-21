@@ -228,9 +228,9 @@ Lekton is configured via environment variables:
 | `OIDC_REDIRECT_URI` | OIDC callback redirect URI           | *(required for auth)*            |
 | `RUST_LOG`          | Log level filter                     | `lekton=info,tower_http=info`    |
 
-## 🎨 Customizability
+## 🎨 Customizability & Theming
 
-Lekton is designed to be **highly customizable without recompilation**.
+Lekton is designed to be **highly customizable without recompilation**. Change colors, fonts, spacing, and more by simply editing a CSS file.
 
 ### Runtime Style Injection
 
@@ -250,11 +250,102 @@ Edit `public/custom.css` to override any styles. This file is loaded after the m
 }
 ```
 
-In Docker deployments, mount your custom CSS as a volume:
+### Pre-built Themes
+
+Lekton comes with **3 beautiful pre-built themes** in the `examples/themes/` directory:
+
+#### 🌙 GitHub Dark
+A developer-friendly dark theme inspired by GitHub's dark mode.
+```bash
+cp examples/themes/github-dark.css public/custom.css
+```
+**Features:**
+- Dark color scheme perfect for late-night coding
+- GitHub-style blue accents and syntax highlighting
+- Clean, minimalist design
+- Optimized for code readability
+
+#### ❄️ Nord
+A beautiful arctic, north-bluish color palette.
+```bash
+cp examples/themes/nord.css public/custom.css
+```
+**Features:**
+- Carefully selected frost and aurora colors
+- Excellent contrast and readability
+- Subtle animations and hover effects
+- Popular among developers and designers
+
+#### ☀️ Solarized Light
+A precision-crafted light theme with warm tones, perfect for documentation.
+```bash
+cp examples/themes/solarized-light.css public/custom.css
+```
+**Features:**
+- Warm, easy-on-the-eyes color palette
+- Serif fonts for a traditional documentation feel
+- High readability with scientific color selection
+- Ideal for long reading sessions
+
+### Using Themes in Docker
+
+Mount your chosen theme as a volume:
 
 ```bash
-docker run -v ./my-custom.css:/app/public/custom.css lekton
+# Using GitHub Dark theme
+docker run -v ./examples/themes/github-dark.css:/app/public/custom.css lekton
+
+# Or with Docker Compose, add to volumes:
+volumes:
+  - ./examples/themes/nord.css:/app/public/custom.css
 ```
+
+### Creating Custom Themes
+
+Start with one of the example themes and modify it to match your brand:
+
+1. **Copy an example theme:**
+   ```bash
+   cp examples/themes/nord.css public/custom.css
+   ```
+
+2. **Edit colors using DaisyUI color variables:**
+   ```css
+   html[data-theme="light"] {
+     --p: 220 90% 56%;     /* Primary color */
+     --s: 174 60% 51%;     /* Secondary color */
+     --a: 36 100% 50%;     /* Accent color */
+   }
+   ```
+
+3. **Customize Lekton-specific tokens:**
+   ```css
+   :root {
+     --lekton-font-family: "Your Font", sans-serif;
+     --lekton-sidebar-width: 18rem;
+     --lekton-content-max-width: 80rem;
+   }
+   ```
+
+4. **Reload the page** (no compilation needed!)
+
+### Theme Customization Reference
+
+**DaisyUI Color Variables:**
+- `--p` / `--pf` / `--pc` - Primary color (and focus/content variants)
+- `--s` / `--sf` / `--sc` - Secondary color
+- `--a` / `--af` / `--ac` - Accent color
+- `--b1` / `--b2` / `--b3` - Background colors (base)
+- `--bc` - Base content (text color)
+- `--in` / `--su` / `--wa` / `--er` - Info, Success, Warning, Error
+
+**Lekton Design Tokens:**
+- `--lekton-font-family` - Main font stack
+- `--lekton-sidebar-width` - Sidebar width
+- `--lekton-content-max-width` - Maximum content width
+- `--lekton-spacing-*` - Spacing scale (xs, sm, md, lg, xl)
+
+For more details, see [DaisyUI Themes Documentation](https://daisyui.com/docs/themes/).
 
 ## 🏗️ Architecture
 

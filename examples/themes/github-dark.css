@@ -1,0 +1,116 @@
+/*
+ * Lekton Theme: GitHub Dark
+ * =========================
+ * A developer-friendly dark theme inspired by GitHub's dark mode.
+ *
+ * INSTALLATION:
+ * Copy this file to public/custom.css or mount it as a Docker volume.
+ */
+
+[data-theme="light"] {
+  /* Override to use dark theme */
+  color-scheme: dark;
+}
+
+:root {
+  /* Font: Use a monospace-friendly font stack */
+  --lekton-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+
+  /* Spacing adjustments for a more compact feel */
+  --lekton-sidebar-width: 18rem;
+  --lekton-content-max-width: 80rem;
+}
+
+/* GitHub Dark color palette */
+html[data-theme="light"] {
+  /* Base colors */
+  --b1: 13 17 23;           /* Background: #0d1117 */
+  --b2: 22 27 34;           /* Slightly lighter: #161b22 */
+  --b3: 33 38 45;           /* Card backgrounds: #21262d */
+  --bc: 201 209 217;        /* Text color: #c9d1d9 */
+
+  /* Primary: GitHub's blue accent */
+  --p: 212 92% 45%;         /* #1f6feb */
+  --pf: 212 92% 40%;        /* Darker on hover */
+  --pc: 0 0% 100%;          /* Primary content (white) */
+
+  /* Secondary: Purple accent */
+  --s: 250 84% 60%;         /* #8b68ff */
+  --sf: 250 84% 55%;
+  --sc: 0 0% 100%;
+
+  /* Accent: Green for success */
+  --a: 137 55% 40%;         /* #238636 */
+  --af: 137 55% 35%;
+  --ac: 0 0% 100%;
+
+  /* Neutral: Gray tones */
+  --n: 215 13% 34%;
+  --nf: 215 13% 29%;
+  --nc: 201 209 217;
+
+  /* Info, Success, Warning, Error */
+  --in: 212 92% 45%;        /* Blue */
+  --su: 137 55% 40%;        /* Green */
+  --wa: 45 100% 51%;        /* Yellow: #fbbf24 */
+  --er: 358 77% 47%;        /* Red: #da3633 */
+}
+
+/* Custom enhancements for code blocks */
+.prose pre {
+  background-color: #161b22;
+  border: 1px solid #30363d;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.prose code {
+  background-color: rgba(110, 118, 129, 0.2);
+  color: #e3b341;
+  padding: 0.2em 0.4em;
+  border-radius: 6px;
+  font-size: 85%;
+}
+
+/* Links with GitHub's blue */
+.prose a {
+  color: #58a6ff;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.prose a:hover {
+  text-decoration: underline;
+}
+
+/* Tables */
+.prose table {
+  border: 1px solid #30363d;
+}
+
+.prose thead {
+  background-color: #161b22;
+}
+
+.prose tbody tr:hover {
+  background-color: rgba(110, 118, 129, 0.1);
+}
+
+/* Blockquotes */
+.prose blockquote {
+  border-left-color: #30363d;
+  color: #8b949e;
+}
+
+/* Sidebar styling */
+.menu {
+  font-size: 14px;
+}
+
+.menu a {
+  border-radius: 6px;
+  transition: background-color 0.1s ease;
+}
+
+.menu a:hover {
+  background-color: rgba(110, 118, 129, 0.1);
+}

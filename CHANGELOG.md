@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-02-21
+
+### Added — Phase 3: Advanced Schema Registry
+
+- **Schema Repository**: `SchemaRepository` trait with `MongoSchemaRepository` implementation backed by the `schemas` MongoDB collection. Supports CRUD operations: create/update, find by name, list all, add version, and delete.
+- **Schema Ingestion API**: `POST /api/v1/schemas` endpoint for CI/CD-driven schema registration. Validates service tokens, schema types (openapi, asyncapi, jsonschema), version status (stable, beta, deprecated). Auto-detects JSON vs YAML content for S3 storage. Supports adding new versions to existing schemas and updating existing versions.
+- **Schema Retrieval APIs**: `GET /api/v1/schemas` lists all schemas with latest version info. `GET /api/v1/schemas/:name` returns schema details with all versions. `GET /api/v1/schemas/:name/:version` returns raw spec content from S3.
+- **Interactive OpenAPI Viewer**: Schema viewer page renders OpenAPI specifications using Scalar (loaded from CDN) for interactive API reference documentation with try-it-out functionality.
+- **AsyncAPI Viewer**: AsyncAPI specifications rendered using AsyncAPI-React standalone component for event-driven API documentation.
+- **JSON Schema Viewer**: JSON Schema displayed as formatted, syntax-highlighted code blocks.
+- **Dynamic Version Selector**: Dropdown component to switch between different versions of a schema. Auto-selects latest stable version on page load. Version status badges (stable/beta/deprecated) shown for all versions.
+- **Schema Registry UI**: Grid-based schema list page with cards showing schema name, type badge, version count, and latest version. Schema viewer page with breadcrumbs, version selector, and spec viewer.
+- **Navigation**: Added "API Schemas" section in the sidebar with link to Schema Registry. Added `/schemas` and `/schemas/:name` routes.
+- **Tests**: 76 unit tests (13 new) covering schema ingestion, validation, listing, retrieval, and content fetching. 12 new integration tests using testcontainers covering the full schema lifecycle.
+
 ## [0.2.0] - 2026-02-17
 
 ### Added — Phase 2: The Editor & Search

@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use leptos_meta::*;
 use leptos_router::components::*;
 use leptos_router::path;
+use serde::{Deserialize, Serialize};
 
 use crate::editor::component::EditorPage;
 use crate::rendering::markdown::render_markdown;
@@ -46,6 +47,16 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
     }
 }
 
+/// Simplified document info for navigation tree.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NavItem {
+    pub slug: String,
+    pub title: String,
+    pub parent_slug: Option<String>,
+    pub order: u32,
+    pub children: Vec<NavItem>,
+}
+
 /// Server function to search documents.
 #[server(SearchDocs, "/api")]
 pub async fn search_docs(
@@ -67,6 +78,64 @@ pub async fn search_docs(
     Ok(results)
 }
 
+/// Server function to fetch navigation tree.
+#[server(GetNavigation, "/api")]
+pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
+    use crate::auth::models::AccessLevel;
+    use crate::db::repository::DocumentRepository;
+    use std::collections::HashMap;
+
+    let state = expect_context::<AppState>();
+
+    // Fetch all accessible documents (default to developer access)
+    let docs = state.document_repo.list_accessible(AccessLevel::Developer).await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    // Create all nav items first
+    let all_items: Vec<NavItem> = docs.into_iter().map(|doc| NavItem {
+        slug: doc.slug,
+        title: doc.title,
+        parent_slug: doc.parent_slug,
+        order: doc.order,
+        children: vec![],
+    }).collect();
+
+    // Build a map for quick parent lookup
+    let mut items_by_slug: HashMap<String, NavItem> = all_items.into_iter()
+        .map(|item| (item.slug.clone(), item))
+        .collect();
+
+    // Separate root items and child items
+    let mut roots = Vec::new();
+    let mut children_by_parent: HashMap<String, Vec<NavItem>> = HashMap::new();
+
+    for (slug, item) in items_by_slug.iter() {
+        if let Some(parent) = &item.parent_slug {
+            children_by_parent.entry(parent.clone())
+                .or_insert_with(Vec::new)
+                .push(item.clone());
+        } else {
+            roots.push(item.clone());
+        }
+    }
+
+    // Recursively attach children to parents
+    fn attach_children(item: &mut NavItem, children_map: &HashMap<String, Vec<NavItem>>) {
+        if let Some(children) = children_map.get(&item.slug) {
+            item.children = children.clone();
+            for child in &mut item.children {
+                attach_children(child, children_map);
+            }
+        }
+    }
+
+    for root in &mut roots {
+        attach_children(root, &children_by_parent);
+    }
+
+    Ok(roots)
+}
+
 /// Root application component.
 #[component]
 pub fn App() -> impl IntoView {
@@ -85,6 +154,73 @@ pub fn App() -> impl IntoView {
                 </Routes>
             </Layout>
         </Router>
+    }
+}
+
+/// Recursive navigation item component for rendering tree structure.
+#[component]
+fn NavigationItem(item: NavItem, #[prop(optional)] level: u32) -> impl IntoView {
+    let has_children = !item.children.is_empty();
+    let slug = item.slug.clone();
+    let children = item.children.clone();
+    
+    if has_children {
+        // Parent item with collapsible children using DaisyUI collapse
+        view! {
+            <li>
+                <details>
+                    <summary>{item.title}</summary>
+                    <ul>
+                        {children.into_iter().map(|child| {
+                            view! {
+                                <NavigationItem item=child level=level + 1 />
+                            }
+                        }).collect::<Vec<_>>()}
+                    </ul>
+                </details>
+            </li>
+        }.into_any()
+    } else {
+        // Leaf item with direct link
+        view! {
+            <li>
+                <a href=format!("/docs/{}", slug)>{item.title}</a>
+            </li>
+        }.into_any()
+    }
+}
+
+/// Navigation tree component that fetches and renders the sidebar navigation.
+#[component]
+fn NavigationTree() -> impl IntoView {
+    let nav_resource = Resource::new(
+        || (), // No dependencies, fetch once
+        |_| get_navigation(),
+    );
+
+    view! {
+        <Suspense fallback=move || view! {
+            <li><span class="loading loading-spinner loading-sm"></span></li>
+        }>
+            {move || {
+                nav_resource.get().map(|result| match result {
+                    Ok(items) => {
+                        view! {
+                            {items.into_iter().map(|item| {
+                                view! {
+                                    <NavigationItem item=item level=0 />
+                                }
+                            }).collect::<Vec<_>>()}
+                        }.into_any()
+                    }
+                    Err(e) => {
+                        view! {
+                            <li class="text-error">{format!("Error loading navigation: {}", e)}</li>
+                        }.into_any()
+                    }
+                })
+            }}
+        </Suspense>
     }
 }
 
@@ -124,12 +260,7 @@ fn Layout(children: Children) -> impl IntoView {
                     <ul class="menu bg-base-100 min-h-full w-64 p-4 text-base-content">
                         <li class="menu-title">"Documentation"</li>
                         <li><a href="/">"🏠 Home"</a></li>
-                        <li><a href="/docs/getting-started">"🚀 Getting Started"</a></li>
-                        <li><a href="/docs/architecture">"🏗️ Architecture"</a></li>
-                        <li><a href="/docs/deployment-guide">"📦 Deployment Guide"</a></li>
-                        <li class="menu-title">"API & Security"</li>
-                        <li><a href="/docs/api-reference">"📡 API Reference"</a></li>
-                        <li><a href="/docs/security-rbac">"🔒 Security & RBAC"</a></li>
+                        <NavigationTree />
                     </ul>
                 </div>
             </div>

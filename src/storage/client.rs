@@ -44,7 +44,16 @@ impl S3StorageClient {
         }
 
         let sdk_config = config_loader.load().await;
-        let client = aws_sdk_s3::Client::new(&sdk_config);
+        
+        // Build S3 client with path-style addressing for Garage/MinIO compatibility
+        let mut s3_config_builder = aws_sdk_s3::config::Builder::from(&sdk_config);
+        
+        // Force path-style requests when using a custom endpoint (required for Garage)
+        if std::env::var("S3_ENDPOINT").is_ok() {
+            s3_config_builder = s3_config_builder.force_path_style(true);
+        }
+        
+        let client = aws_sdk_s3::Client::from_conf(s3_config_builder.build());
 
         Ok(Self { client, bucket })
     }

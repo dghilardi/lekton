@@ -18,6 +18,7 @@ use std::sync::Arc;
 pub struct AppState {
     pub document_repo: Arc<dyn crate::db::repository::DocumentRepository>,
     pub schema_repo: Arc<dyn crate::db::schema_repository::SchemaRepository>,
+    pub settings_repo: Arc<dyn crate::db::settings_repository::SettingsRepository>,
     pub storage_client: Arc<dyn crate::storage::client::StorageClient>,
     pub search_service: Option<Arc<dyn crate::search::client::SearchService>>,
     pub service_token: String,
@@ -142,6 +143,24 @@ pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
     Ok(roots)
 }
 
+/// Server function to get the current custom CSS.
+#[server(GetCustomCss, "/api")]
+pub async fn get_custom_css() -> Result<String, ServerFnError> {
+    let state = expect_context::<AppState>();
+    let settings = state.settings_repo.get_settings().await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(settings.custom_css)
+}
+
+/// Server function to save custom CSS (admin only).
+#[server(SaveCustomCss, "/api")]
+pub async fn save_custom_css(css: String) -> Result<String, ServerFnError> {
+    let state = expect_context::<AppState>();
+    state.settings_repo.set_custom_css(&css).await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok("Custom CSS saved successfully".to_string())
+}
+
 /// Root application component.
 #[component]
 pub fn App() -> impl IntoView {
@@ -232,6 +251,27 @@ fn NavigationTree() -> impl IntoView {
     }
 }
 
+/// Runtime custom CSS component — injects user-defined CSS from settings.
+#[component]
+fn RuntimeCustomCss() -> impl IntoView {
+    let css_resource = Resource::new(|| (), |_| get_custom_css());
+
+    view! {
+        <Suspense fallback=|| ()>
+            {move || {
+                css_resource.get().map(|result| match result {
+                    Ok(css) if !css.is_empty() => {
+                        view! {
+                            <style>{css}</style>
+                        }.into_any()
+                    }
+                    _ => view! { <span /> }.into_any(),
+                })
+            }}
+        </Suspense>
+    }
+}
+
 /// Main layout: navbar + sidebar + content area.
 #[component]
 fn Layout(children: Children) -> impl IntoView {
@@ -248,6 +288,9 @@ fn Layout(children: Children) -> impl IntoView {
     });
 
     view! {
+        // Runtime custom CSS injection (loaded from MongoDB settings)
+        <RuntimeCustomCss />
+
         <div class="min-h-screen bg-base-200">
             // Navbar
             <div class="navbar bg-base-100 shadow-lg sticky top-0 z-50">

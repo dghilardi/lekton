@@ -229,16 +229,18 @@ fn NavigationTree() -> impl IntoView {
 fn Layout(children: Children) -> impl IntoView {
     let (search_modal_open, set_search_modal_open) = signal(false);
 
-    // Global keyboard listener for Ctrl+K / Cmd+K
-    let on_keydown = move |ev: leptos::web_sys::KeyboardEvent| {
+    // Global keyboard listener for Ctrl+K / Cmd+K at document level
+    use leptos::ev;
+    window_event_listener(ev::keydown, move |ev| {
         if (ev.ctrl_key() || ev.meta_key()) && ev.key() == "k" {
             ev.prevent_default();
+            ev.stop_propagation();
             set_search_modal_open.set(true);
         }
-    };
+    });
 
     view! {
-        <div class="min-h-screen bg-base-200" on:keydown=on_keydown>
+        <div class="min-h-screen bg-base-200">
             // Navbar
             <div class="navbar bg-base-100 shadow-lg sticky top-0 z-50">
                 <div class="flex-1">

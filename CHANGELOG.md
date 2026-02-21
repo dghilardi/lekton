@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-02-21
+
+### Added — Phase 4: Theme, Polish & Accessibility
+
+- **Dark/Light/System theme toggle**: Three-mode theme switcher in the navbar cycling system → light → dark. Persists user preference in `localStorage`. Inline `<head>` script prevents flash of unstyled content (FOUC) by applying saved theme before first paint. System mode respects OS `prefers-color-scheme` media query. Icons: sun (light), moon (dark), monitor (system).
+- **Runtime CSS injection**: `SettingsRepository` trait with `MongoSettingsRepository` storing application settings in a `settings` MongoDB collection. `GetCustomCss`/`SaveCustomCss` server functions enable reading and writing custom CSS at runtime. `RuntimeCustomCss` component injects stored CSS as a `<style>` tag in the layout, allowing theme overrides without recompilation.
+- **Document metadata display**: Document pages now show "Last Updated" timestamps at the bottom with a clock icon and divider. Dates formatted as human-friendly strings (e.g., "February 21, 2026"). Document tags displayed as badge pills below the title.
+- **DocPageData struct**: Replaced tuple-based return from `get_doc_html` with a proper `DocPageData` struct carrying title, HTML, TOC headings, last_updated, and tags.
+- **Tests**: 78 unit tests (2 new for settings). 9 new integration tests covering settings CRUD (default, set/get, update, clear) and document metadata (tags storage, timestamp freshness, timestamp refresh, tag replacement).
+
 ## [0.3.0] - 2026-02-21
 
 ### Added — Phase 3: Advanced Schema Registry

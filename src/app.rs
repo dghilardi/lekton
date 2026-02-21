@@ -16,6 +16,7 @@ use std::sync::Arc;
 #[derive(Clone, axum::extract::FromRef)]
 pub struct AppState {
     pub document_repo: Arc<dyn crate::db::repository::DocumentRepository>,
+    pub schema_repo: Arc<dyn crate::db::schema_repository::SchemaRepository>,
     pub storage_client: Arc<dyn crate::storage::client::StorageClient>,
     pub search_service: Option<Arc<dyn crate::search::client::SearchService>>,
     pub service_token: String,

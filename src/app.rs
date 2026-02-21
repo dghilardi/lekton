@@ -518,11 +518,21 @@ fn LoginPage() -> impl IntoView {
 }
 
 
-/// Server function to fetch a document's rendered HTML content and TOC headings.
+/// Data returned for rendering a document page.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocPageData {
+    pub title: String,
+    pub html: String,
+    pub headings: Vec<crate::rendering::markdown::TocHeading>,
+    pub last_updated: String,
+    pub tags: Vec<String>,
+}
+
+/// Server function to fetch a document's rendered HTML content, TOC, and metadata.
 #[server(GetDocHtml, "/api")]
 pub async fn get_doc_html(
     slug: String,
-) -> Result<Option<(String, String, Vec<crate::rendering::markdown::TocHeading>)>, ServerFnError> {
+) -> Result<Option<DocPageData>, ServerFnError> {
     use crate::db::repository::DocumentRepository;
     use crate::storage::client::StorageClient;
     use crate::rendering::markdown::{extract_headings, render_markdown};
@@ -548,8 +558,15 @@ pub async fn get_doc_html(
 
     let html = render_markdown(&raw);
     let headings = extract_headings(&raw);
-    
-    Ok(Some((doc.title, html, headings)))
+    let last_updated = doc.last_updated.format("%B %d, %Y").to_string();
+
+    Ok(Some(DocPageData {
+        title: doc.title,
+        html,
+        headings,
+        last_updated,
+        tags: doc.tags,
+    }))
 }
 
 /// Breadcrumbs component to show document hierarchy based on slug.
@@ -656,14 +673,16 @@ fn DocPage() -> impl IntoView {
         }>
             {move || {
                 doc_resource.get().map(|result| match result {
-                    Ok(Some((title, html, headings))) => {
+                    Ok(Some(data)) => {
                         let current_slug = slug();
+                        let has_tags = !data.tags.is_empty();
+                        let tags = data.tags.clone();
                         view! {
                             <div class="flex gap-8">
                                 <div class="flex-1 min-w-0">
                                     <Breadcrumbs slug=current_slug.clone() />
                                     <div class="flex justify-between items-center mb-6">
-                                        <h1 class="text-3xl font-bold">{title}</h1>
+                                        <h1 class="text-3xl font-bold">{data.title}</h1>
                                         <a
                                             href=move || format!("/edit/{}", current_slug)
                                             class="btn btn-outline btn-sm"
@@ -671,11 +690,32 @@ fn DocPage() -> impl IntoView {
                                             "Edit"
                                         </a>
                                     </div>
+                                    // Tags
+                                    <Show when=move || has_tags>
+                                        <div class="flex flex-wrap gap-2 mb-6">
+                                            {tags.iter().map(|tag| {
+                                                let tag_text = tag.clone();
+                                                view! {
+                                                    <span class="badge badge-outline badge-sm">{tag_text}</span>
+                                                }
+                                            }).collect::<Vec<_>>()}
+                                        </div>
+                                    </Show>
                                     <article class="prose prose-lg max-w-none">
-                                        <div inner_html=html />
+                                        <div inner_html=data.html />
                                     </article>
+                                    // Last Updated footer
+                                    <div class="divider mt-12"></div>
+                                    <div class="flex items-center gap-2 text-sm text-base-content/50 pb-4">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z">
+                                            </path>
+                                        </svg>
+                                        <span>"Last updated: " {data.last_updated}</span>
+                                    </div>
                                 </div>
-                                <TableOfContents headings=headings />
+                                <TableOfContents headings=data.headings />
                             </div>
                         }.into_any()
                     }

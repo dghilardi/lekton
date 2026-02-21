@@ -32,8 +32,8 @@ echo "✅ Node.js dependencies installed"
 echo ""
 
 # Start dependencies
-echo "📦 Starting MongoDB and Garage S3..."
-docker-compose up -d mongodb garage
+echo "📦 Starting MongoDB, Garage S3, and Meilisearch..."
+docker-compose up -d mongodb garage meilisearch
 
 echo "⏳ Waiting for services to be healthy..."
 sleep 5
@@ -52,6 +52,20 @@ while ! docker-compose ps garage | grep -q "healthy"; do
 done
 
 echo "✅ Garage is healthy"
+
+# Wait for Meilisearch to be healthy
+attempt=0
+while ! docker-compose ps meilisearch | grep -q "healthy"; do
+    attempt=$((attempt + 1))
+    if [ $attempt -ge $max_attempts ]; then
+        echo "❌ Timeout waiting for Meilisearch to become healthy"
+        exit 1
+    fi
+    echo "   Waiting for Meilisearch... ($attempt/$max_attempts)"
+    sleep 2
+done
+
+echo "✅ Meilisearch is healthy"
 
 # Run garage-init to create bucket and keys
 echo "🔧 Initializing Garage (creating bucket and API keys)..."
@@ -93,6 +107,10 @@ AWS_REGION=garage
 
 # Service Token for API ingestion
 SERVICE_TOKEN=demo-ingest-token
+
+# Meilisearch Configuration
+MEILISEARCH_URL=http://localhost:7700
+MEILISEARCH_API_KEY=dev-master-key-change-in-prod
 
 # Enable demo auth mode (bypasses OIDC)
 DEMO_MODE=true

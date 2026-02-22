@@ -1,0 +1,333 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Inventory Service API",
+    "description": "Manages product inventory, stock levels, and warehouse operations.",
+    "version": "1.0.0",
+    "contact": {
+      "name": "Inventory Team",
+      "email": "inventory@example.com"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.example.com/inventory/v1",
+      "description": "Production"
+    }
+  ],
+  "paths": {
+    "/products": {
+      "get": {
+        "summary": "List products",
+        "description": "Returns a paginated list of products with their current stock levels.",
+        "operationId": "listProducts",
+        "tags": ["Products"],
+        "parameters": [
+          {
+            "name": "warehouse_id",
+            "in": "query",
+            "schema": { "type": "string" },
+            "description": "Filter by warehouse"
+          },
+          {
+            "name": "in_stock",
+            "in": "query",
+            "schema": { "type": "boolean" },
+            "description": "Filter to only in-stock items"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "default": 50, "maximum": 200 }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Product list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/Product" }
+                    },
+                    "has_more": { "type": "boolean" },
+                    "next_cursor": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/products/{product_id}": {
+      "get": {
+        "summary": "Get product details",
+        "description": "Retrieves a product with stock levels across all warehouses.",
+        "operationId": "getProduct",
+        "tags": ["Products"],
+        "parameters": [
+          {
+            "name": "product_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Product details",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Product" }
+              }
+            }
+          },
+          "404": {
+            "description": "Product not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/products/{product_id}/stock": {
+      "put": {
+        "summary": "Update stock level",
+        "description": "Sets the stock level for a product in a specific warehouse.",
+        "operationId": "updateStock",
+        "tags": ["Stock"],
+        "parameters": [
+          {
+            "name": "product_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UpdateStockRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stock updated",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/StockLevel" }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/products/{product_id}/reserve": {
+      "post": {
+        "summary": "Reserve stock",
+        "description": "Temporarily reserves stock for an order. Reservation expires after 15 minutes if not confirmed.",
+        "operationId": "reserveStock",
+        "tags": ["Stock"],
+        "parameters": [
+          {
+            "name": "product_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ReserveStockRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Stock reserved",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Reservation" }
+              }
+            }
+          },
+          "409": {
+            "description": "Insufficient stock",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/warehouses": {
+      "get": {
+        "summary": "List warehouses",
+        "operationId": "listWarehouses",
+        "tags": ["Warehouses"],
+        "responses": {
+          "200": {
+            "description": "Warehouse list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Warehouse" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Product": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "example": "prod_abc123" },
+          "sku": { "type": "string", "example": "WIDGET-BLU-LG" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "total_stock": {
+            "type": "integer",
+            "description": "Sum of stock across all warehouses"
+          },
+          "reserved": {
+            "type": "integer",
+            "description": "Currently reserved units"
+          },
+          "available": {
+            "type": "integer",
+            "description": "total_stock - reserved"
+          },
+          "stock_by_warehouse": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/StockLevel" }
+          },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "StockLevel": {
+        "type": "object",
+        "properties": {
+          "warehouse_id": { "type": "string" },
+          "quantity": { "type": "integer" },
+          "reserved": { "type": "integer" },
+          "available": { "type": "integer" }
+        }
+      },
+      "UpdateStockRequest": {
+        "type": "object",
+        "required": ["warehouse_id", "quantity"],
+        "properties": {
+          "warehouse_id": { "type": "string" },
+          "quantity": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Absolute stock quantity"
+          },
+          "reason": {
+            "type": "string",
+            "enum": ["restock", "adjustment", "return", "damage"],
+            "description": "Reason for the stock change"
+          }
+        }
+      },
+      "ReserveStockRequest": {
+        "type": "object",
+        "required": ["quantity", "order_id"],
+        "properties": {
+          "quantity": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "order_id": {
+            "type": "string",
+            "description": "Associated order for tracking"
+          },
+          "warehouse_id": {
+            "type": "string",
+            "description": "Preferred warehouse; auto-selected if omitted"
+          }
+        }
+      },
+      "Reservation": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "example": "rsv_abc123" },
+          "product_id": { "type": "string" },
+          "order_id": { "type": "string" },
+          "warehouse_id": { "type": "string" },
+          "quantity": { "type": "integer" },
+          "expires_at": { "type": "string", "format": "date-time" },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Warehouse": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "example": "wh_east_01" },
+          "name": { "type": "string", "example": "East Coast Distribution Center" },
+          "location": {
+            "type": "object",
+            "properties": {
+              "city": { "type": "string" },
+              "state": { "type": "string" },
+              "country": { "type": "string" }
+            }
+          },
+          "active": { "type": "boolean" }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "code": { "type": "string" },
+          "message": { "type": "string" },
+          "details": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    }
+  },
+  "security": [
+    { "BearerAuth": [] }
+  ]
+}

@@ -1,0 +1,253 @@
+{
+  "asyncapi": "2.6.0",
+  "info": {
+    "title": "Order Events",
+    "version": "1.0.0",
+    "description": "Event-driven messaging for the order lifecycle. Publishes events when orders are created, updated, shipped, and completed.",
+    "contact": {
+      "name": "Orders Team",
+      "email": "orders@example.com"
+    }
+  },
+  "servers": {
+    "production": {
+      "url": "kafka://kafka.internal:9092",
+      "protocol": "kafka",
+      "description": "Production Kafka cluster"
+    },
+    "staging": {
+      "url": "kafka://kafka.staging:9092",
+      "protocol": "kafka",
+      "description": "Staging Kafka cluster"
+    }
+  },
+  "channels": {
+    "orders.created": {
+      "description": "Emitted when a new order is placed by a customer.",
+      "publish": {
+        "operationId": "onOrderCreated",
+        "summary": "Order created event",
+        "message": {
+          "$ref": "#/components/messages/OrderCreated"
+        }
+      }
+    },
+    "orders.status-changed": {
+      "description": "Emitted when an order transitions between statuses (e.g., confirmed, shipped, delivered).",
+      "publish": {
+        "operationId": "onOrderStatusChanged",
+        "summary": "Order status change event",
+        "message": {
+          "$ref": "#/components/messages/OrderStatusChanged"
+        }
+      }
+    },
+    "orders.cancelled": {
+      "description": "Emitted when an order is cancelled by the customer or the system.",
+      "publish": {
+        "operationId": "onOrderCancelled",
+        "summary": "Order cancellation event",
+        "message": {
+          "$ref": "#/components/messages/OrderCancelled"
+        }
+      }
+    },
+    "orders.refund-requested": {
+      "description": "Emitted when a refund is requested for a completed order.",
+      "publish": {
+        "operationId": "onRefundRequested",
+        "summary": "Refund request event",
+        "message": {
+          "$ref": "#/components/messages/RefundRequested"
+        }
+      }
+    }
+  },
+  "components": {
+    "messages": {
+      "OrderCreated": {
+        "name": "OrderCreated",
+        "title": "Order Created",
+        "contentType": "application/json",
+        "payload": {
+          "$ref": "#/components/schemas/OrderCreatedPayload"
+        }
+      },
+      "OrderStatusChanged": {
+        "name": "OrderStatusChanged",
+        "title": "Order Status Changed",
+        "contentType": "application/json",
+        "payload": {
+          "$ref": "#/components/schemas/OrderStatusChangedPayload"
+        }
+      },
+      "OrderCancelled": {
+        "name": "OrderCancelled",
+        "title": "Order Cancelled",
+        "contentType": "application/json",
+        "payload": {
+          "$ref": "#/components/schemas/OrderCancelledPayload"
+        }
+      },
+      "RefundRequested": {
+        "name": "RefundRequested",
+        "title": "Refund Requested",
+        "contentType": "application/json",
+        "payload": {
+          "$ref": "#/components/schemas/RefundRequestedPayload"
+        }
+      }
+    },
+    "schemas": {
+      "OrderCreatedPayload": {
+        "type": "object",
+        "required": ["event_id", "order_id", "customer_id", "items", "total", "timestamp"],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique event identifier for deduplication"
+          },
+          "order_id": {
+            "type": "string",
+            "example": "ord_abc123"
+          },
+          "customer_id": {
+            "type": "string",
+            "example": "cust_xyz789"
+          },
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/OrderItem" }
+          },
+          "total": {
+            "type": "integer",
+            "description": "Total amount in cents"
+          },
+          "currency": {
+            "type": "string",
+            "example": "usd"
+          },
+          "shipping_address": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "OrderStatusChangedPayload": {
+        "type": "object",
+        "required": ["event_id", "order_id", "previous_status", "new_status", "timestamp"],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "order_id": { "type": "string" },
+          "previous_status": {
+            "$ref": "#/components/schemas/OrderStatus"
+          },
+          "new_status": {
+            "$ref": "#/components/schemas/OrderStatus"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Optional reason for the status change"
+          },
+          "tracking_number": {
+            "type": "string",
+            "description": "Present when status changes to 'shipped'"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "OrderCancelledPayload": {
+        "type": "object",
+        "required": ["event_id", "order_id", "reason", "timestamp"],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "order_id": { "type": "string" },
+          "reason": {
+            "type": "string",
+            "enum": ["customer_request", "payment_failed", "out_of_stock", "fraud_detected"]
+          },
+          "cancelled_by": {
+            "type": "string",
+            "enum": ["customer", "system", "admin"]
+          },
+          "refund_amount": {
+            "type": "integer",
+            "description": "Refund amount in cents, if applicable"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "RefundRequestedPayload": {
+        "type": "object",
+        "required": ["event_id", "order_id", "amount", "reason", "timestamp"],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "order_id": { "type": "string" },
+          "charge_id": {
+            "type": "string",
+            "description": "Reference to the payment charge"
+          },
+          "amount": {
+            "type": "integer",
+            "description": "Refund amount in cents"
+          },
+          "reason": {
+            "type": "string",
+            "enum": ["defective", "wrong_item", "not_received", "customer_request"]
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "OrderItem": {
+        "type": "object",
+        "required": ["product_id", "name", "quantity", "unit_price"],
+        "properties": {
+          "product_id": { "type": "string" },
+          "name": { "type": "string" },
+          "quantity": { "type": "integer", "minimum": 1 },
+          "unit_price": {
+            "type": "integer",
+            "description": "Price per unit in cents"
+          }
+        }
+      },
+      "Address": {
+        "type": "object",
+        "properties": {
+          "line1": { "type": "string" },
+          "line2": { "type": "string" },
+          "city": { "type": "string" },
+          "state": { "type": "string" },
+          "postal_code": { "type": "string" },
+          "country": { "type": "string", "example": "US" }
+        }
+      },
+      "OrderStatus": {
+        "type": "string",
+        "enum": ["pending", "confirmed", "processing", "shipped", "delivered", "cancelled"]
+      }
+    }
+  }
+}

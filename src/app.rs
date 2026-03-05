@@ -278,12 +278,10 @@ pub async fn save_custom_css(css: String) -> Result<String, ServerFnError> {
 pub fn App() -> impl IntoView {
     provide_meta_context();
 
-    // Load the current user once per page load and provide it via context
-    // so all child components can access it without extra server calls.
-    let user_resource = Resource::new(
-        || (),
-        |_| get_current_user(),
-    );
+    // Load the current user on the client side only (LocalResource skips SSR).
+    // Using LocalResource avoids hydration mismatches: the server cannot read
+    // the browser's httpOnly cookies, so we let the client fetch this on hydration.
+    let user_resource = LocalResource::new(get_current_user);
 
     // Derive a flat signal: None = anonymous (or loading), Some(user) = authenticated.
     let current_user: Signal<Option<crate::auth::models::AuthenticatedUser>> =

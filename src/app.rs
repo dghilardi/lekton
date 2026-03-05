@@ -70,7 +70,6 @@ pub struct NavItem {
 pub async fn search_docs(
     query: String,
 ) -> Result<Vec<SearchHit>, ServerFnError> {
-    use crate::auth::models::AccessLevel;
     use crate::search::client::SearchService;
 
     let state = expect_context::<AppState>();
@@ -78,9 +77,10 @@ pub async fn search_docs(
     let search_service = state.search_service.as_ref()
         .ok_or_else(|| ServerFnError::new("Search not available"))?;
 
-    // Default to developer access for now; a full implementation would
-    // use the authenticated user's access level.
-    let results = search_service.search(&query, AccessLevel::Developer).await
+    // TODO(phase-5): replace with authenticated user's readable levels.
+    // For now, expose only "public" non-draft documents to anonymous callers.
+    let public_levels = vec!["public".to_string()];
+    let results = search_service.search(&query, Some(public_levels.as_slice()), false).await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(results)
@@ -89,14 +89,17 @@ pub async fn search_docs(
 /// Server function to fetch navigation tree.
 #[server(GetNavigation, "/api")]
 pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
-    use crate::auth::models::AccessLevel;
     use crate::db::repository::DocumentRepository;
     use std::collections::HashMap;
 
     let state = expect_context::<AppState>();
 
-    // Fetch all accessible documents (default to developer access)
-    let docs = state.document_repo.list_accessible(AccessLevel::Developer).await
+    // TODO(phase-5): replace with authenticated user's readable levels.
+    // For now, expose only "public" non-draft documents to anonymous callers.
+    let public_levels = vec!["public".to_string()];
+    let docs = state.document_repo
+        .list_by_access_levels(Some(public_levels.as_slice()), false)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     // Create all nav items first

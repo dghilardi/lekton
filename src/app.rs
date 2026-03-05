@@ -184,6 +184,77 @@ pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
     Ok(roots)
 }
 
+/// Server function to get the currently authenticated user from the JWT cookie.
+///
+/// Returns `None` for anonymous requests.  Both demo mode (session cookie)
+/// and production OIDC mode (JWT cookie) are handled transparently.
+#[server(GetCurrentUser, "/api")]
+pub async fn get_current_user() -> Result<Option<crate::auth::models::AuthenticatedUser>, ServerFnError> {
+    use axum_extra::extract::CookieJar;
+    use crate::auth::extractor::ACCESS_TOKEN_COOKIE;
+    use crate::auth::token_service::TokenService;
+
+    let state = expect_context::<AppState>();
+    let jar: CookieJar = leptos_axum::extract().await?;
+
+    // Try production JWT first
+    if let Some(token_user) = jar
+        .get(ACCESS_TOKEN_COOKIE)
+        .and_then(|c| state.token_service.validate_access_token(c.value()).ok())
+        .map(|claims| TokenService::claims_to_user(&claims))
+    {
+        return Ok(Some(token_user));
+    }
+
+    // Fall back to demo mode session cookie
+    if state.demo_mode {
+        if let Some(cookie) = jar.get("lekton_demo_user") {
+            if let Ok(user) =
+                serde_json::from_str::<crate::auth::models::AuthenticatedUser>(cookie.value())
+            {
+                return Ok(Some(user));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+/// Server function to log out the current user.
+///
+/// Clears the JWT and refresh token cookies (or the demo session cookie in
+/// demo mode).  Revocation of the refresh token is handled client-side via
+/// the `/auth/logout` endpoint.
+#[server(LogoutUser, "/api")]
+pub async fn logout_user() -> Result<(), ServerFnError> {
+    use leptos_axum::ResponseOptions;
+
+    let state = expect_context::<AppState>();
+    let response = expect_context::<ResponseOptions>();
+
+    let clear_cookie = |name: &str, path: &str| -> String {
+        format!("{name}=; Path={path}; HttpOnly; SameSite=Lax; Max-Age=0")
+    };
+
+    if state.demo_mode {
+        response.append_header(
+            axum::http::header::SET_COOKIE,
+            axum::http::HeaderValue::from_str(&clear_cookie("lekton_demo_user", "/")).unwrap(),
+        );
+    } else {
+        response.append_header(
+            axum::http::header::SET_COOKIE,
+            axum::http::HeaderValue::from_str(&clear_cookie("lekton_access_token", "/")).unwrap(),
+        );
+        response.append_header(
+            axum::http::header::SET_COOKIE,
+            axum::http::HeaderValue::from_str(&clear_cookie("lekton_refresh_token", "/auth/refresh")).unwrap(),
+        );
+    }
+
+    Ok(())
+}
+
 /// Server function to get the current custom CSS.
 #[server(GetCustomCss, "/api")]
 pub async fn get_custom_css() -> Result<String, ServerFnError> {
@@ -206,6 +277,21 @@ pub async fn save_custom_css(css: String) -> Result<String, ServerFnError> {
 #[component]
 pub fn App() -> impl IntoView {
     provide_meta_context();
+
+    // Load the current user once per page load and provide it via context
+    // so all child components can access it without extra server calls.
+    let user_resource = Resource::new(
+        || (),
+        |_| get_current_user(),
+    );
+
+    // Derive a flat signal: None = anonymous (or loading), Some(user) = authenticated.
+    let current_user: Signal<Option<crate::auth::models::AuthenticatedUser>> =
+        Signal::derive(move || {
+            user_resource.get().and_then(|res| res.ok()).flatten()
+        });
+
+    provide_context(current_user);
 
     view! {
         <Title text="Lekton — Internal Developer Portal" />
@@ -318,6 +404,67 @@ fn RuntimeCustomCss() -> impl IntoView {
     }
 }
 
+/// User menu in the navbar: shows login link for anonymous users, or a
+/// dropdown with the user's email and a logout button when authenticated.
+#[component]
+fn UserMenu() -> impl IntoView {
+    let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>()
+        .expect("UserMenu must be inside App");
+
+    let logout_action = Action::new(|_: &()| async move {
+        let _ = logout_user().await;
+        // Force a full page reload so the cookie change is reflected
+        #[cfg(feature = "hydrate")]
+        {
+            use leptos::web_sys::window;
+            if let Some(w) = window() {
+                let _ = w.location().assign("/");
+            }
+        }
+    });
+
+    view! {
+        {move || {
+            match current_user.get() {
+                Some(user) => {
+                    let display = user.name.clone().unwrap_or_else(|| user.email.clone());
+                    let is_admin = user.is_admin;
+                    view! {
+                        <div class="dropdown dropdown-end">
+                            <div tabindex="0" role="button" class="btn btn-ghost btn-sm gap-2 font-medium">
+                                <span class="truncate max-w-[120px]">{display}</span>
+                                {if is_admin {
+                                    view! { <span class="badge badge-error badge-xs">"Admin"</span> }.into_any()
+                                } else {
+                                    view! { <span /> }.into_any()
+                                }}
+                            </div>
+                            <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-[1] w-52 p-2 shadow border border-base-200 mt-2">
+                                <li class="menu-title text-xs opacity-60 px-2 pb-1 truncate">{user.email.clone()}</li>
+                                <div class="divider my-1"></div>
+                                <li>
+                                    <button
+                                        class="text-error"
+                                        on:click=move |_| { logout_action.dispatch(()); }
+                                    >
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                                        </svg>
+                                        "Log Out"
+                                    </button>
+                                </li>
+                            </ul>
+                        </div>
+                    }.into_any()
+                }
+                None => view! {
+                    <a href="/login" class="btn btn-ghost btn-sm font-medium whitespace-nowrap">"Log In"</a>
+                }.into_any(),
+            }
+        }}
+    }
+}
+
 /// Main layout: navbar + sidebar + content area.
 #[component]
 fn Layout(children: Children) -> impl IntoView {
@@ -376,7 +523,7 @@ fn Layout(children: Children) -> impl IntoView {
                     // Theme toggle
                     <ThemeToggle />
                     // User area — shows login button or user info
-                    <a href="/login" class="btn btn-ghost btn-sm font-medium whitespace-nowrap">"Log In"</a>
+                    <UserMenu />
                 </div>
             </header>
 
@@ -754,18 +901,27 @@ fn DocPage() -> impl IntoView {
                         let current_slug = slug();
                         let has_tags = !data.tags.is_empty();
                         let tags = data.tags.clone();
+                        let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
+                        let can_edit = move || {
+                            current_user
+                                .and_then(|s| s.get())
+                                .map(|u| u.is_admin)
+                                .unwrap_or(false)
+                        };
                         view! {
                             <div class="flex gap-8 items-start">
                                 <div class="flex-1 min-w-0">
                                     <Breadcrumbs slug=current_slug.clone() />
                                     <div class="flex justify-between items-center mb-6">
                                         <h1 class="text-3xl font-bold">{data.title}</h1>
-                                        <a
-                                            href=move || format!("/edit/{}", current_slug)
-                                            class="btn btn-outline btn-sm"
-                                        >
-                                            "Edit"
-                                        </a>
+                                        <Show when=can_edit>
+                                            <a
+                                                href={let s = current_slug.clone(); move || format!("/edit/{}", s)}
+                                                class="btn btn-outline btn-sm"
+                                            >
+                                                "Edit"
+                                            </a>
+                                        </Show>
                                     </div>
                                     // Tags
                                     <Show when=move || has_tags>

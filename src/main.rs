@@ -180,6 +180,30 @@ async fn main() {
             axum::routing::put(api::assets::upload_asset_handler)
                 .get(api::assets::serve_asset_handler)
                 .delete(api::assets::delete_asset_handler),
+        )
+        // Admin API
+        .route(
+            "/api/v1/admin/access-levels",
+            axum::routing::get(api::admin::list_access_levels_handler)
+                .post(api::admin::create_access_level_handler),
+        )
+        .route(
+            "/api/v1/admin/access-levels/{name}",
+            axum::routing::put(api::admin::update_access_level_handler)
+                .delete(api::admin::delete_access_level_handler),
+        )
+        .route(
+            "/api/v1/admin/users",
+            axum::routing::get(api::admin::list_users_handler),
+        )
+        .route(
+            "/api/v1/admin/users/{user_id}/permissions",
+            axum::routing::get(api::admin::get_user_permissions_handler)
+                .put(api::admin::set_user_permissions_handler),
+        )
+        .route(
+            "/api/v1/admin/users/{user_id}/permissions/{level}",
+            axum::routing::delete(api::admin::delete_user_permission_handler),
         );
 
     // Mount demo auth routes when demo mode is enabled, OAuth2/OIDC routes otherwise

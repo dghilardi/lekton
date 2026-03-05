@@ -195,9 +195,9 @@ fn NavigationItem(item: NavItem, #[prop(optional)] level: u32) -> impl IntoView 
         // Parent item with collapsible children using DaisyUI collapse
         view! {
             <li>
-                <details>
-                    <summary>{item.title}</summary>
-                    <ul>
+                <details open=true>
+                    <summary class="hover:bg-base-200/50 transition-colors font-medium text-base-content/80 text-sm hover:text-base-content">{item.title}</summary>
+                    <ul class="before:w-[1px] before:bg-base-300 ml-2 border-l border-base-200/50 mt-1">
                         {children.into_iter().map(|child| {
                             view! {
                                 <NavigationItem item=child level=level + 1 />
@@ -211,7 +211,12 @@ fn NavigationItem(item: NavItem, #[prop(optional)] level: u32) -> impl IntoView 
         // Leaf item with direct link
         view! {
             <li>
-                <a href=format!("/docs/{}", slug)>{item.title}</a>
+                <a 
+                    href=format!("/docs/{}", slug)
+                    class="hover:bg-base-200/50 hover:text-primary transition-colors text-base-content/70 data-[active]:bg-primary/10 data-[active]:text-primary data-[active]:font-medium text-sm py-1.5"
+                >
+                    {item.title}
+                </a>
             </li>
         }.into_any()
     }
@@ -291,57 +296,88 @@ fn Layout(children: Children) -> impl IntoView {
         // Runtime custom CSS injection (loaded from MongoDB settings)
         <RuntimeCustomCss />
 
-        <div class="min-h-screen bg-base-200">
+        <div class="min-h-screen bg-base-100/50">
             // Navbar
-            <div class="navbar bg-base-100 shadow-lg sticky top-0 z-50">
-                <div class="flex-1">
-                    <a class="btn btn-ghost text-xl font-bold" href="/">
-                        "🔥 Lekton"
+            <header class="bg-base-100/80 backdrop-blur-md fixed top-0 inset-x-0 z-50 border-b border-base-200 px-4 h-16 flex items-center justify-between shadow-sm">
+                // Left
+                <div class="flex items-center gap-2 z-10">
+                    <label for="sidebar-drawer" class="btn btn-square btn-ghost drawer-button lg:hidden">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="inline-block w-5 h-5 stroke-current"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                    </label>
+                    <a class="flex items-center gap-2 text-xl font-bold tracking-tight hover:opacity-80 transition-opacity" href="/">
+                        <svg class="w-6 h-6 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5Z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                        <span class="truncate">"Lekton"</span>
                     </a>
                 </div>
-                <div class="flex-none gap-2">
-                    // Search button that opens modal
-                    <button 
-                        class="btn btn-ghost btn-sm gap-2"
-                        on:click=move |_| set_search_modal_open.set(true)
-                    >
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
-                        </svg>
-                        <span class="hidden md:inline">"Search"</span>
-                        <kbd class="kbd kbd-xs hidden md:inline">"Ctrl+K"</kbd>
+                // Center (Absolutey Centered)
+                <div class="hidden sm:flex absolute inset-0 pointer-events-none items-center justify-center">
+                    <div class="w-full max-w-md px-4 pointer-events-auto">
+                        <button 
+                            class="btn btn-ghost bg-base-200/50 hover:bg-base-200 border border-base-300 hover:border-base-content/20 w-full justify-between shadow-sm flex-nowrap h-10 min-h-10 px-3 transition-colors font-normal text-base-content/70"
+                            on:click=move |_| set_search_modal_open.set(true)
+                        >
+                            <div class="flex items-center gap-2 overflow-hidden">
+                                <svg class="w-4 h-4 opacity-70 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                                </svg>
+                                <span class="truncate">"Search documentation..."</span>
+                            </div>
+                            <kbd class="kbd kbd-sm bg-base-100 border-none shadow-sm opacity-80 flex-shrink-0">"Ctrl K"</kbd>
+                        </button>
+                    </div>
+                </div>
+                // Right
+                <div class="flex items-center gap-2 z-10 flex-nowrap shrink-0">
+                    // Mobile search icon
+                    <button class="btn btn-circle btn-ghost sm:hidden" on:click=move |_| set_search_modal_open.set(true)>
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                     </button>
                     // Theme toggle
                     <ThemeToggle />
                     // User area — shows login button or user info
-                    <div id="user-area" class="flex items-center gap-2">
-                        <a href="/login" class="btn btn-primary btn-sm">"Login"</a>
-                    </div>
+                    <a href="/login" class="btn btn-ghost btn-sm font-medium whitespace-nowrap">"Log In"</a>
                 </div>
-            </div>
+            </header>
 
             // Global search modal
             <SearchModal is_open=search_modal_open set_is_open=set_search_modal_open />
 
             // Main content area with sidebar
-            <div class="drawer lg:drawer-open">
+            <div class="drawer lg:drawer-open pt-16">
                 <input id="sidebar-drawer" type="checkbox" class="drawer-toggle" />
-                <div class="drawer-content p-6">
-                    <div class="max-w-7xl mx-auto">
+                <div class="drawer-content lg:col-start-2 flex flex-col items-center bg-base-100 min-w-0">
+                    <div class="w-full max-w-6xl p-6 lg:p-10 min-h-[calc(100vh-4rem)]">
                         {children()}
                     </div>
                 </div>
 
                 // Sidebar
-                <div class="drawer-side">
+                <div class="drawer-side z-40">
                     <label for="sidebar-drawer" aria-label="close sidebar" class="drawer-overlay"></label>
-                    <ul class="menu bg-base-100 min-h-full w-64 p-4 text-base-content">
-                        <li class="menu-title">"Documentation"</li>
-                        <li><a href="/">"🏠 Home"</a></li>
-                        <NavigationTree />
-                        <li class="menu-title mt-4">"API Schemas"</li>
-                        <li><a href="/schemas">"📡 Schema Registry"</a></li>
-                    </ul>
+                    <div class="menu bg-base-200 min-h-full h-[calc(100vh-4rem)] w-64 p-4 text-base-content border-r border-base-300 pt-6 overflow-y-auto block">
+                        <ul class="flex flex-col gap-1">
+                            <li class="menu-title text-xs font-semibold tracking-wider text-base-content/60 uppercase mb-1">"Overview"</li>
+                            <li>
+                                <a href="/" class="gap-3 group data-[active]:bg-primary/10 data-[active]:text-primary data-[active]:font-medium transition-colors">
+                                    <svg class="w-4 h-4 opacity-70 group-hover:opacity-100 transition-opacity" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                                    "Home"
+                                </a>
+                            </li>
+                        </ul>
+                        <ul class="flex flex-col gap-1 mt-6">
+                            <li class="menu-title text-xs font-semibold tracking-wider text-base-content/60 uppercase mb-1">"Documentation"</li>
+                            <NavigationTree />
+                        </ul>
+                        <ul class="flex flex-col gap-1 mt-6">
+                            <li class="menu-title text-xs font-semibold tracking-wider text-base-content/60 uppercase mb-1">"API Resources"</li>
+                            <li>
+                                <a href="/schemas" class="gap-3 group data-[active]:bg-primary/10 data-[active]:text-primary data-[active]:font-medium transition-colors">
+                                    <svg class="w-4 h-4 opacity-70 group-hover:opacity-100 transition-opacity" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 7h10"/><path d="M7 12h10"/><path d="M7 17h10"/></svg>
+                                    "Schema Registry"
+                                </a>
+                            </li>
+                        </ul>
+                    </div>
                 </div>
             </div>
         </div>
@@ -678,7 +714,7 @@ fn DocPage() -> impl IntoView {
                         let has_tags = !data.tags.is_empty();
                         let tags = data.tags.clone();
                         view! {
-                            <div class="flex gap-8">
+                            <div class="flex gap-8 items-start">
                                 <div class="flex-1 min-w-0">
                                     <Breadcrumbs slug=current_slug.clone() />
                                     <div class="flex justify-between items-center mb-6">
@@ -772,15 +808,15 @@ fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) -> imp
                     on:click=move |ev: leptos::web_sys::MouseEvent| ev.stop_propagation()
                 >
                     // Search input
-                    <div class="p-4 border-b border-base-300">
+                    <div class="p-4 border-b border-base-200 bg-base-100/50 rounded-t-lg">
                         <div class="flex items-center gap-3">
-                            <svg class="w-5 h-5 text-base-content/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg class="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
                             </svg>
                             <input
                                 type="text"
                                 placeholder="Search documentation..."
-                                class="input input-ghost w-full focus:outline-none text-lg"
+                                class="w-full bg-transparent focus:outline-none text-xl placeholder:text-base-content/30"
                                 prop:value=query
                                 on:input=move |ev| {
                                     set_query.set(event_target_value(&ev));
@@ -788,7 +824,7 @@ fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) -> imp
                                 on:keydown=on_keydown
                                 autofocus
                             />
-                            <kbd class="kbd kbd-sm">ESC</kbd>
+                            <kbd class="kbd kbd-sm bg-base-200 border-none shadow-sm text-xs font-semibold">"ESC"</kbd>
                         </div>
                     </div>
 

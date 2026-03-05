@@ -15,7 +15,7 @@
  */
 :root {
     /* Brand overrides — users can set these in custom.css */
-    --lekton-font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+    --lekton-font-family: "Geist", "Inter", ui-sans-serif, system-ui, sans-serif;
     --lekton-sidebar-width: 16rem;
     --lekton-content-max-width: 72rem;
     --lekton-header-height: 4rem;
@@ -26,15 +26,45 @@
     --lekton-spacing-md: 1rem;
     --lekton-spacing-lg: 1.5rem;
     --lekton-spacing-xl: 2rem;
+
+    /* Refined Light Theme Colors (Sleek Indigo/Slate) */
+    --p: 54.4% 0.22 265; /* Primary: vibrant indigo */
+    --pf: 48% 0.2 265;   /* Primary focus */
+    --pc: 98% 0.01 265;  /* Primary content */
+    
+    --b1: 100% 0 0;      /* Base-100: White */
+    --b2: 97% 0 0;       /* Base-200: Soft gray/slate */
+    --b3: 94% 0 0;       /* Base-300: Gray border */
+    --bc: 25% 0 0;       /* Base content: Dark slate */
+}
+
+[data-theme="dark"] {
+    /* Refined Dark Theme Colors (Nextra/Vercel style) */
+    --p: 65% 0.18 265;   /* Primary: lighter indigo for dark mode */
+    --pf: 60% 0.18 265;  /* Primary focus */
+    --pc: 15% 0 0;       /* Primary content */
+
+    --b1: 13% 0 0;       /* Base-100: Very dark slate/zinc */
+    --b2: 17% 0 0;       /* Base-200: Dark slate */
+    --b3: 22% 0 0;       /* Base-300: Lighter slate border */
+    --bc: 92% 0 0;       /* Base content: Off-white */
 }
 
 body {
     font-family: var(--lekton-font-family);
+    -webkit-font-smoothing: antialiased;
+    overflow-x: clip;
 }
 
 /* Enhanced prose styling for markdown content */
 .prose {
     line-height: 1.75;
+    color: oklch(var(--bc) / 0.85);
+}
+
+.prose h1, .prose h2, .prose h3, .prose h4 {
+    color: oklch(var(--bc));
+    letter-spacing: -0.025em;
 }
 
 .prose h1 {
@@ -82,28 +112,32 @@ body {
 }
 
 .prose code {
-    color: oklch(var(--bc));
-    font-weight: 600;
+    color: oklch(var(--bc) / 0.9);
+    font-weight: 500;
     font-size: 0.875em;
     background-color: oklch(var(--b2));
+    border: 1px solid oklch(var(--b3));
     padding: 0.2em 0.4em;
     border-radius: 0.25rem;
 }
 
 .prose pre {
-    background-color: oklch(var(--b3));
+    background-color: oklch(var(--b1));
     color: oklch(var(--bc));
+    border: 1px solid oklch(var(--b3));
     overflow-x: auto;
     font-size: 0.875em;
     line-height: 1.7142857;
     margin-top: 1.7142857em;
     margin-bottom: 1.7142857em;
-    border-radius: 0.375rem;
+    border-radius: 0.5rem;
     padding: 1em 1.5em;
+    box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
 }
 
 .prose pre code {
     background-color: transparent;
+    border: none;
     padding: 0;
     font-weight: inherit;
     color: inherit;

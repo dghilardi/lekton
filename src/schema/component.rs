@@ -113,21 +113,21 @@ fn SchemaCard(schema: SchemaListItem) -> impl IntoView {
         .unwrap_or("no versions");
 
     view! {
-        <a href=href class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow cursor-pointer">
-            <div class="card-body">
-                <h2 class="card-title">
+        <a href=href class="card bg-base-100 border border-base-200/50 hover:border-primary/30 shadow-sm hover:shadow-md transition-all cursor-pointer group">
+            <div class="card-body p-6">
+                <h2 class="card-title text-xl group-hover:text-primary transition-colors">
                     {schema.name}
                 </h2>
-                <div class="flex items-center gap-2 mt-1">
-                    <span class=format!("badge {}", badge_class)>{type_label.to_string()}</span>
-                    <span class="text-sm text-base-content/60">
+                <div class="flex items-center gap-2 mt-2">
+                    <span class=format!("badge {} badge-sm font-semibold", badge_class)>{type_label.to_string()}</span>
+                    <span class="text-sm text-base-content/50">
                         {format!("{} version{}", schema.version_count, if schema.version_count == 1 { "" } else { "s" })}
                     </span>
                 </div>
-                <p class="text-sm text-base-content/70 mt-2">
-                    "Latest: "
-                    <span class="font-mono">{version_text.to_string()}</span>
-                </p>
+                <div class="mt-4 pt-4 border-t border-base-200 flex items-center justify-between text-sm">
+                    <span class="text-base-content/60">"Latest version"</span>
+                    <span class="font-mono bg-base-200 px-2 py-1 rounded text-xs text-base-content/80 font-medium">{version_text.to_string()}</span>
+                </div>
             </div>
         </a>
     }
@@ -382,7 +382,8 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
                                 spec: {{
                                     content: `{escaped_content}`,
                                 }},
-                                theme: 'default',
+                                theme: 'none',
+                                showSidebar: false,
                             }});
                         }} else if (window.ScalarApiReference) {{
                             window.ScalarApiReference(targetEl, {{
@@ -400,12 +401,34 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
                 "#
             );
 
+            // Using custom CSS to align Scalar's variables with DaisyUI's OKLCH format
+            let scalar_theme_css = r#"
+                .scalar-app, .scalar-api-reference {
+                    --scalar-color-1: oklch(var(--bc));
+                    --scalar-color-2: oklch(var(--bc) / 0.7);
+                    --scalar-color-3: oklch(var(--bc) / 0.5);
+                    --scalar-color-accent: oklch(var(--p));
+                    --scalar-background-1: transparent;
+                    --scalar-background-2: oklch(var(--b2) / 0.5);
+                    --scalar-background-3: oklch(var(--b3));
+                    --scalar-border-color: oklch(var(--b3) / 0.5);
+                    --scalar-font: var(--lekton-font-family);
+                    --scalar-font-size: 0.875rem;
+                }
+                .scalar-app .scalar-card {
+                    box-shadow: none;
+                    border: 1px solid oklch(var(--b3));
+                    border-radius: 0.75rem;
+                }
+            "#;
+
             view! {
                 <div>
-                    <div id="scalar-api-reference" class="border border-base-300 rounded-lg min-h-[600px]">
+                    <style>{scalar_theme_css}</style>
+                    <div id="scalar-api-reference" class="scalar-app min-h-[600px]">
                         <div class="flex justify-center items-center py-12">
-                            <span class="loading loading-spinner loading-lg"></span>
-                            <span class="ml-3">"Loading API reference viewer..."</span>
+                            <span class="loading loading-spinner loading-lg text-primary"></span>
+                            <span class="ml-3 text-base-content/70">"Loading API reference viewer..."</span>
                         </div>
                     </div>
                     <script>{script}</script>

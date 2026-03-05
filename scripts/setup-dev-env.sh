@@ -59,6 +59,13 @@ while ! docker-compose ps meilisearch | grep -q "healthy"; do
     attempt=$((attempt + 1))
     if [ $attempt -ge $max_attempts ]; then
         echo "❌ Timeout waiting for Meilisearch to become healthy"
+        echo ""
+        echo "💡 Troubleshooting Meilisearch:"
+        echo "   If you see 'incompatible database version' in the logs, run:"
+        echo "   docker-compose down -v meilisearch"
+        echo "   Then run this script again."
+        echo ""
+        echo "   Check logs with: docker-compose logs meilisearch"
         exit 1
     fi
     echo "   Waiting for Meilisearch... ($attempt/$max_attempts)"

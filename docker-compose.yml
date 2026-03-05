@@ -38,7 +38,7 @@ services:
   # Meilisearch — Full-text search engine
   # ===========================================================================
   meilisearch:
-    image: getmeili/meilisearch:v1.11.3
+    image: getmeili/meilisearch:v1.13.3
     ports:
       - "7700:7700"
     environment:

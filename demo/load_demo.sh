@@ -1,14 +1,14 @@
-#!/bin/sh
+#!/bin/bash
 # load_demo.sh — Ingest demo documents and schemas into Lekton via the API.
 #
 # This script is run by the demo-loader container after Lekton is healthy.
 
-set -e
+# set -e
 
-LEKTON_URL="${LEKTON_URL:-http://lekton:3000}"
+LEKTON_URL="${LEKTON_URL:-http://localhost:3000}"
 SERVICE_TOKEN="${SERVICE_TOKEN:-demo-ingest-token}"
-DEMO_DIR="/demo/documents"
-SCHEMA_DIR="/demo/schemas"
+DEMO_DIR="demo/documents"
+SCHEMA_DIR="demo/schemas"
 
 ingest_doc() {
     local slug="$1"

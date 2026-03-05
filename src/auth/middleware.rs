@@ -1,33 +1,32 @@
-use crate::auth::models::{AccessLevel, AuthenticatedUser};
+//! Auth middleware utilities.
+//!
+//! The heavy lifting (JWT validation, user + permission loading) lives in
+//! `crate::auth::extractor`. This module provides helpers used during the
+//! OAuth2/OIDC callback to build or update the user record.
 
-/// Extract the access level from OIDC claims.
+use crate::db::auth_models::User;
+
+/// Build a new [`User`] from provider identity claims received during login.
 ///
-/// This function maps OIDC groups/roles to Lekton's access levels.
-/// The mapping convention is:
-/// - Claims containing "admin" → Admin
-/// - Claims containing "architect" → Architect
-/// - Claims containing "developer" → Developer  
-/// - Anything else → Public
-pub fn map_claims_to_access_level(groups: &[String]) -> AccessLevel {
-    // Return the highest access level found in the claims
-    groups
-        .iter()
-        .filter_map(|g| AccessLevel::from_str_ci(g))
-        .max()
-        .unwrap_or(AccessLevel::Public)
-}
-
-/// Build an `AuthenticatedUser` from OIDC token claims.
-pub fn build_authenticated_user(
-    user_id: String,
+/// The returned user has `is_admin = false` and no permissions; those are
+/// assigned separately by an administrator.
+pub fn build_user_from_claims(
+    id: String,
     email: String,
-    groups: &[String],
-) -> AuthenticatedUser {
-    let access_level = map_claims_to_access_level(groups);
-    AuthenticatedUser {
-        user_id,
+    name: Option<String>,
+    provider_sub: String,
+    provider_type: &str,
+) -> User {
+    use chrono::Utc;
+    User {
+        id,
         email,
-        access_level,
+        name,
+        provider_sub,
+        provider_type: provider_type.to_string(),
+        is_admin: false,
+        created_at: Utc::now(),
+        last_login_at: None,
     }
 }
 
@@ -36,38 +35,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_map_claims_admin() {
-        let groups = vec!["developer".to_string(), "admin".to_string()];
-        assert_eq!(map_claims_to_access_level(&groups), AccessLevel::Admin);
-    }
-
-    #[test]
-    fn test_map_claims_developer() {
-        let groups = vec!["developer".to_string()];
-        assert_eq!(map_claims_to_access_level(&groups), AccessLevel::Developer);
-    }
-
-    #[test]
-    fn test_map_claims_empty() {
-        let groups: Vec<String> = vec![];
-        assert_eq!(map_claims_to_access_level(&groups), AccessLevel::Public);
-    }
-
-    #[test]
-    fn test_map_claims_unknown() {
-        let groups = vec!["some-random-group".to_string()];
-        assert_eq!(map_claims_to_access_level(&groups), AccessLevel::Public);
-    }
-
-    #[test]
-    fn test_build_authenticated_user() {
-        let user = build_authenticated_user(
-            "uid-1".to_string(),
-            "dev@company.com".to_string(),
-            &["developer".to_string(), "architect".to_string()],
+    fn test_build_user_from_claims() {
+        let user = build_user_from_claims(
+            "u-uuid".to_string(),
+            "dev@example.com".to_string(),
+            Some("Dev User".to_string()),
+            "sub-12345".to_string(),
+            "oidc",
         );
-        assert_eq!(user.user_id, "uid-1");
-        assert_eq!(user.email, "dev@company.com");
-        assert_eq!(user.access_level, AccessLevel::Architect);
+        assert_eq!(user.email, "dev@example.com");
+        assert_eq!(user.provider_type, "oidc");
+        assert!(!user.is_admin);
+        assert!(user.last_login_at.is_none());
+    }
+
+    #[test]
+    fn test_build_user_without_name() {
+        let user = build_user_from_claims(
+            "u-uuid2".to_string(),
+            "a@b.com".to_string(),
+            None,
+            "sub-oauth2".to_string(),
+            "oauth2",
+        );
+        assert!(user.name.is_none());
+        assert_eq!(user.provider_type, "oauth2");
     }
 }

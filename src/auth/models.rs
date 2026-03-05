@@ -1,60 +1,118 @@
+//! Public-facing auth identity types.
+//!
+//! These types are available in both SSR and hydrate builds (they appear
+//! as server-function return values visible to the Leptos client).
+
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
-/// Represents the access levels for RBAC in Lekton.
+/// Minimal user identity carried in the JWT and returned to clients.
 ///
-/// The order of variants matters: it defines the privilege hierarchy.
-/// `Public` is the least privileged, `Admin` is the most.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub enum AccessLevel {
-    /// Publicly accessible content.
-    Public = 0,
-    /// Internal developer documentation.
-    Developer = 1,
-    /// Architecture-level documentation.
-    Architect = 2,
-    /// Full administrative access.
-    Admin = 3,
-}
-
-impl fmt::Display for AccessLevel {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            AccessLevel::Public => write!(f, "public"),
-            AccessLevel::Developer => write!(f, "developer"),
-            AccessLevel::Architect => write!(f, "architect"),
-            AccessLevel::Admin => write!(f, "admin"),
-        }
-    }
-}
-
-impl AccessLevel {
-    /// Parse an access level from a string (case-insensitive).
-    pub fn from_str_ci(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "public" => Some(AccessLevel::Public),
-            "developer" => Some(AccessLevel::Developer),
-            "architect" => Some(AccessLevel::Architect),
-            "admin" => Some(AccessLevel::Admin),
-            _ => None,
-        }
-    }
-
-    /// Returns `true` if `self` has at least the required access level.
-    pub fn has_access(&self, required: AccessLevel) -> bool {
-        *self >= required
-    }
-}
-
-/// Represents an authenticated user extracted from OIDC claims.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Does **not** include permissions — those are loaded from the database on
+/// each request by the auth extractor and held in [`UserContext`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AuthenticatedUser {
-    /// Unique user identifier from the OIDC provider.
+    /// Internal user UUID.
     pub user_id: String,
-    /// User email address.
+    /// Email address from the provider profile.
     pub email: String,
-    /// The user's access level, mapped from OIDC groups/claims.
-    pub access_level: AccessLevel,
+    /// Display name from the provider profile.
+    pub name: Option<String>,
+    /// When `true`, all permission checks are bypassed.
+    pub is_admin: bool,
+}
+
+/// Full request context: identity + loaded RBAC permissions.
+///
+/// Constructed by the Axum auth extractor after validating the JWT and
+/// fetching the user's permission records from MongoDB.
+/// Server-side only (`ssr` feature).
+#[cfg(feature = "ssr")]
+#[derive(Debug, Clone)]
+pub struct UserContext {
+    /// Authenticated identity.
+    pub user: AuthenticatedUser,
+    /// The user's RBAC permissions, one record per access level.
+    pub permissions: Vec<crate::db::auth_models::UserPermission>,
+}
+
+#[cfg(feature = "ssr")]
+impl UserContext {
+    /// Returns `true` if the user may read published documents at `level`.
+    pub fn can_read(&self, level: &str) -> bool {
+        if self.user.is_admin {
+            return true;
+        }
+        self.permissions
+            .iter()
+            .any(|p| p.access_level_name == level && p.can_read)
+    }
+
+    /// Returns `true` if the user may create/update documents at `level`.
+    pub fn can_write(&self, level: &str) -> bool {
+        if self.user.is_admin {
+            return true;
+        }
+        self.permissions
+            .iter()
+            .any(|p| p.access_level_name == level && p.can_write)
+    }
+
+    /// Returns `true` if the user may read draft documents at `level`.
+    pub fn can_read_draft(&self, level: &str) -> bool {
+        if self.user.is_admin {
+            return true;
+        }
+        self.permissions
+            .iter()
+            .any(|p| p.access_level_name == level && p.can_read_draft)
+    }
+
+    /// Returns `true` if the user may write draft documents at `level`.
+    pub fn can_write_draft(&self, level: &str) -> bool {
+        if self.user.is_admin {
+            return true;
+        }
+        self.permissions
+            .iter()
+            .any(|p| p.access_level_name == level && p.can_write_draft)
+    }
+
+    /// Collects the access level names the user can read (published docs).
+    ///
+    /// Returns `None` for admin users (meaning: no restriction).
+    pub fn readable_levels(&self) -> Option<Vec<String>> {
+        if self.user.is_admin {
+            return None;
+        }
+        Some(
+            self.permissions
+                .iter()
+                .filter(|p| p.can_read)
+                .map(|p| p.access_level_name.clone())
+                .collect(),
+        )
+    }
+
+    /// Returns `(readable_levels, include_draft)` suitable for passing to
+    /// `DocumentRepository::list_by_access_levels` or `SearchService::search`.
+    ///
+    /// Admin → `(None, true)` (see everything).
+    pub fn document_visibility(&self) -> (Option<Vec<String>>, bool) {
+        if self.user.is_admin {
+            return (None, true);
+        }
+        let levels: Vec<String> = self
+            .permissions
+            .iter()
+            .filter(|p| p.can_read)
+            .map(|p| p.access_level_name.clone())
+            .collect();
+        let include_draft = self
+            .permissions
+            .iter()
+            .any(|p| p.can_read_draft);
+        (Some(levels), include_draft)
+    }
 }
 
 #[cfg(test)]
@@ -62,55 +120,115 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_access_level_ordering() {
-        assert!(AccessLevel::Admin > AccessLevel::Architect);
-        assert!(AccessLevel::Architect > AccessLevel::Developer);
-        assert!(AccessLevel::Developer > AccessLevel::Public);
-    }
-
-    #[test]
-    fn test_has_access() {
-        let admin = AccessLevel::Admin;
-        let dev = AccessLevel::Developer;
-        let public = AccessLevel::Public;
-
-        assert!(admin.has_access(AccessLevel::Admin));
-        assert!(admin.has_access(AccessLevel::Public));
-        assert!(dev.has_access(AccessLevel::Developer));
-        assert!(dev.has_access(AccessLevel::Public));
-        assert!(!dev.has_access(AccessLevel::Admin));
-        assert!(!public.has_access(AccessLevel::Developer));
-        assert!(public.has_access(AccessLevel::Public));
-    }
-
-    #[test]
-    fn test_from_str_ci() {
-        assert_eq!(AccessLevel::from_str_ci("Public"), Some(AccessLevel::Public));
-        assert_eq!(AccessLevel::from_str_ci("ADMIN"), Some(AccessLevel::Admin));
-        assert_eq!(AccessLevel::from_str_ci("developer"), Some(AccessLevel::Developer));
-        assert_eq!(AccessLevel::from_str_ci("Architect"), Some(AccessLevel::Architect));
-        assert_eq!(AccessLevel::from_str_ci("unknown"), None);
-    }
-
-    #[test]
-    fn test_display() {
-        assert_eq!(AccessLevel::Public.to_string(), "public");
-        assert_eq!(AccessLevel::Developer.to_string(), "developer");
-        assert_eq!(AccessLevel::Architect.to_string(), "architect");
-        assert_eq!(AccessLevel::Admin.to_string(), "admin");
-    }
-
-    #[test]
-    fn test_serialization_roundtrip() {
+    fn test_authenticated_user_roundtrip() {
         let user = AuthenticatedUser {
-            user_id: "user-123".to_string(),
-            email: "test@example.com".to_string(),
-            access_level: AccessLevel::Developer,
+            user_id: "u1".to_string(),
+            email: "alice@example.com".to_string(),
+            name: Some("Alice".to_string()),
+            is_admin: false,
         };
         let json = serde_json::to_string(&user).unwrap();
-        let deserialized: AuthenticatedUser = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.user_id, "user-123");
-        assert_eq!(deserialized.email, "test@example.com");
-        assert_eq!(deserialized.access_level, AccessLevel::Developer);
+        let de: AuthenticatedUser = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.user_id, "u1");
+        assert_eq!(de.email, "alice@example.com");
+        assert!(!de.is_admin);
+    }
+
+    #[test]
+    fn test_authenticated_user_admin_roundtrip() {
+        let user = AuthenticatedUser {
+            user_id: "admin1".to_string(),
+            email: "admin@example.com".to_string(),
+            name: None,
+            is_admin: true,
+        };
+        let json = serde_json::to_string(&user).unwrap();
+        let de: AuthenticatedUser = serde_json::from_str(&json).unwrap();
+        assert!(de.is_admin);
+    }
+
+    #[cfg(feature = "ssr")]
+    mod context_tests {
+        use super::*;
+        use crate::db::auth_models::UserPermission;
+
+        fn make_perm(level: &str, read: bool, write: bool, read_draft: bool) -> UserPermission {
+            UserPermission {
+                id: uuid::Uuid::new_v4().to_string(),
+                user_id: "u1".to_string(),
+                access_level_name: level.to_string(),
+                can_read: read,
+                can_write: write,
+                can_read_draft: read_draft,
+                can_write_draft: false,
+            }
+        }
+
+        fn make_context(is_admin: bool, perms: Vec<UserPermission>) -> UserContext {
+            UserContext {
+                user: AuthenticatedUser {
+                    user_id: "u1".to_string(),
+                    email: "u@test.com".to_string(),
+                    name: None,
+                    is_admin,
+                },
+                permissions: perms,
+            }
+        }
+
+        #[test]
+        fn test_admin_bypasses_all_checks() {
+            let ctx = make_context(true, vec![]);
+            assert!(ctx.can_read("anything"));
+            assert!(ctx.can_write("anything"));
+            assert!(ctx.can_read_draft("anything"));
+            assert_eq!(ctx.readable_levels(), None);
+        }
+
+        #[test]
+        fn test_regular_user_respects_permissions() {
+            let ctx = make_context(false, vec![
+                make_perm("public", true, false, false),
+                make_perm("internal", true, true, true),
+            ]);
+            assert!(ctx.can_read("public"));
+            assert!(!ctx.can_write("public"));
+            assert!(ctx.can_write("internal"));
+            assert!(ctx.can_read_draft("internal"));
+            assert!(!ctx.can_read("secret"));
+        }
+
+        #[test]
+        fn test_readable_levels_excludes_write_only() {
+            let ctx = make_context(false, vec![
+                make_perm("public", true, false, false),
+                make_perm("internal", false, true, false), // write-only, unusual but valid
+            ]);
+            let levels = ctx.readable_levels().unwrap();
+            assert!(levels.contains(&"public".to_string()));
+            assert!(!levels.contains(&"internal".to_string()));
+        }
+
+        #[test]
+        fn test_document_visibility_includes_draft() {
+            let ctx = make_context(false, vec![
+                make_perm("public", true, false, false),
+                make_perm("internal", true, false, true),
+            ]);
+            let (levels, include_draft) = ctx.document_visibility();
+            let levels = levels.unwrap();
+            assert!(levels.contains(&"public".to_string()));
+            assert!(levels.contains(&"internal".to_string()));
+            assert!(include_draft);
+        }
+
+        #[test]
+        fn test_document_visibility_no_draft() {
+            let ctx = make_context(false, vec![
+                make_perm("public", true, false, false),
+            ]);
+            let (_, include_draft) = ctx.document_visibility();
+            assert!(!include_draft);
+        }
     }
 }

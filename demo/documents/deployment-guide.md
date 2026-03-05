@@ -112,6 +112,13 @@ Lekton exposes the following endpoints for monitoring:
 
 > **Note:** Database migrations are handled automatically on startup.
 
+## Resources
+
+The following assets are available for reference:
+
+- [Sample configuration files (zip)](/api/v1/assets/deployment/sample-config.zip) — Includes nginx.conf and .env.example
+- [Deployment runbook (PDF)](/api/v1/assets/deployment/runbook.pdf) — Step-by-step deployment checklist
+
 ## Troubleshooting
 
 ### Common Issues

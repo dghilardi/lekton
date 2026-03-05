@@ -29,6 +29,10 @@ This document describes the high-level architecture of Lekton and the design dec
    └─────────────┘   └─────────────┘   └──────────────┘
 ```
 
+The diagram below illustrates the main components and their interactions:
+
+![Architecture Diagram](/api/v1/assets/architecture/diagram.svg)
+
 ## Design Principles
 
 ### 1. Decoupled Content Storage

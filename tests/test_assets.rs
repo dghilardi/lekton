@@ -204,3 +204,88 @@ async fn delete_asset_rejects_invalid_token() {
         .await;
     response.assert_status_unauthorized();
 }
+
+// --- Editor upload tests ---
+
+#[tokio::test]
+async fn editor_upload_creates_asset() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+
+    let png_bytes: Vec<u8> = vec![
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+    ];
+
+    let form = MultipartForm::new()
+        .add_part("file", Part::bytes(png_bytes.clone()).file_name("photo.png").mime_type("image/png"));
+
+    let response = server
+        .post("/api/v1/editor/upload-asset")
+        .multipart(form)
+        .await;
+
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    let key = body["key"].as_str().unwrap();
+    let url = body["url"].as_str().unwrap();
+
+    assert!(key.starts_with("editor/"), "Key should start with editor/, got: {}", key);
+    assert!(key.contains("photo.png"), "Key should contain filename, got: {}", key);
+    assert!(url.starts_with("/api/v1/assets/"), "URL should start with /api/v1/assets/, got: {}", url);
+    assert_eq!(body["content_type"], "image/png");
+    assert_eq!(body["size_bytes"], 8);
+
+    // Verify asset exists in repo
+    let asset = env.asset_repo.find_by_key(key).await.unwrap().unwrap();
+    assert_eq!(asset.uploaded_by, "web-editor");
+    assert_eq!(asset.content_type, "image/png");
+
+    // Verify content in S3
+    let stored = env.storage.get_object(&format!("assets/{}", key)).await.unwrap().unwrap();
+    assert_eq!(stored, png_bytes);
+}
+
+#[tokio::test]
+async fn editor_upload_serves_correctly() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+
+    let content = b"test file content";
+    let form = MultipartForm::new()
+        .add_part("file", Part::bytes(content.to_vec()).file_name("test.txt").mime_type("text/plain"));
+
+    let upload_response = server
+        .post("/api/v1/editor/upload-asset")
+        .multipart(form)
+        .await;
+
+    let body: serde_json::Value = upload_response.json();
+    let url = body["url"].as_str().unwrap();
+
+    // Serve it back
+    let response = server.get(url).await;
+    response.assert_status_ok();
+
+    let headers = response.headers();
+    assert_eq!(headers.get("content-type").unwrap(), "text/plain");
+
+    let served_content = response.into_bytes();
+    assert_eq!(served_content.as_ref(), content);
+}
+
+#[tokio::test]
+async fn editor_upload_missing_file_field() {
+    let env = common::TestEnv::start().await;
+    let server = env.server_permissive();
+
+    let form = MultipartForm::new()
+        .add_text("wrong_field", "some data");
+
+    let response = server
+        .post("/api/v1/editor/upload-asset")
+        .multipart(form)
+        .await;
+
+    response.assert_status_bad_request();
+}

@@ -9,6 +9,7 @@ LEKTON_URL="${LEKTON_URL:-http://localhost:3000}"
 SERVICE_TOKEN="${SERVICE_TOKEN:-demo-ingest-token}"
 DEMO_DIR="demo/documents"
 SCHEMA_DIR="demo/schemas"
+ASSET_DIR="demo/assets"
 
 ingest_doc() {
     local slug="$1"
@@ -86,6 +87,30 @@ ingest_schema() {
     fi
 }
 
+upload_asset() {
+    local key="$1"
+    local file="$2"
+    local content_type="$3"
+
+    if [ ! -f "$file" ]; then
+        echo "WARN: Asset file not found: $file — skipping"
+        return
+    fi
+
+    echo "→ Uploading asset: $key"
+
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+        -X PUT "${LEKTON_URL}/api/v1/assets/${key}" \
+        -F "service_token=${SERVICE_TOKEN}" \
+        -F "file=@${file};type=${content_type}")
+
+    if [ "$HTTP_CODE" = "200" ]; then
+        echo "  ✅ OK (HTTP $HTTP_CODE)"
+    else
+        echo "  ❌ FAILED (HTTP $HTTP_CODE)"
+    fi
+}
+
 echo "============================================"
 echo "  Lekton Demo Loader"
 echo "  Target: $LEKTON_URL"
@@ -120,6 +145,14 @@ ingest_schema "inventory-service-api" "openapi" "1.0.0" "stable" "$SCHEMA_DIR/in
 
 # Order Events — AsyncAPI
 ingest_schema "order-events" "asyncapi" "1.0.0" "stable" "$SCHEMA_DIR/order-events-v1.json"
+
+# --- Assets ---
+echo "--- Loading assets ---"
+echo ""
+
+upload_asset "architecture/diagram.svg"       "$ASSET_DIR/architecture-diagram.svg"  "image/svg+xml"
+upload_asset "deployment/sample-config.zip"    "$ASSET_DIR/sample-config.zip"         "application/zip"
+upload_asset "deployment/runbook.pdf"          "$ASSET_DIR/runbook.pdf"               "application/pdf"
 
 echo ""
 echo "============================================"

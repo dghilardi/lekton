@@ -1,6 +1,21 @@
 use leptos::prelude::*;
 use leptos_tiptap::*;
 
+use super::asset_panel::AssetPanel;
+
+#[cfg(feature = "hydrate")]
+use wasm_bindgen::prelude::*;
+
+#[cfg(feature = "hydrate")]
+#[wasm_bindgen(module = "/public/js/editor-assets.js")]
+extern "C" {
+    #[wasm_bindgen(js_name = "uploadAndInsertImage")]
+    fn upload_and_insert_image(editor_id: &str) -> js_sys::Promise;
+
+    #[wasm_bindgen(js_name = "uploadAsset")]
+    pub fn upload_asset_js() -> js_sys::Promise;
+}
+
 /// Server function to fetch document content for editing.
 #[server(GetDocContent, "/api")]
 pub async fn get_doc_content(
@@ -233,6 +248,18 @@ pub fn EditorPage() -> impl IntoView {
                                         on:click=move |_| set_msg.set(TiptapInstanceMsg::Highlight)>
                                         "HL"
                                     </button>
+                                    <div class="divider divider-horizontal mx-0"></div>
+                                    <button class="btn btn-sm btn-ghost" title="Insert Image"
+                                        on:click=move |_| {
+                                            #[cfg(feature = "hydrate")]
+                                            leptos::task::spawn_local(async {
+                                                let _ = wasm_bindgen_futures::JsFuture::from(
+                                                    upload_and_insert_image("lekton-editor")
+                                                ).await;
+                                            });
+                                        }>
+                                        "Img"
+                                    </button>
                                 </div>
 
                                 // Editor
@@ -280,6 +307,9 @@ pub fn EditorPage() -> impl IntoView {
                                         }
                                     }}
                                 </div>
+
+                                // Asset panel
+                                <AssetPanel set_msg=set_msg />
                             </div>
                         }.into_any()
                     }

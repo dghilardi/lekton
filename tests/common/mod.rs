@@ -166,6 +166,10 @@ impl TestEnv {
                 get(lekton::api::schemas::get_schema_version_handler),
             )
             .route(
+                "/api/v1/editor/upload-asset",
+                post(lekton::api::assets::editor_upload_asset_handler),
+            )
+            .route(
                 "/api/v1/assets",
                 get(lekton::api::assets::list_assets_handler),
             )

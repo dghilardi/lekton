@@ -139,6 +139,10 @@ async fn main() {
             axum::routing::get(api::schemas::get_schema_version_handler),
         )
         .route(
+            "/api/v1/editor/upload-asset",
+            axum::routing::post(api::assets::editor_upload_asset_handler),
+        )
+        .route(
             "/api/v1/assets",
             axum::routing::get(api::assets::list_assets_handler),
         )

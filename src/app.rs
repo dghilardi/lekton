@@ -70,6 +70,40 @@ pub struct NavItem {
     pub children: Vec<NavItem>,
 }
 
+/// Helper to derive `(allowed_levels, include_draft)` from the current
+/// request's JWT cookie.  Anonymous callers get public-only, non-draft access.
+///
+/// Uses `CookieJar` (state-free extractor) and validates the token directly
+/// via `state.token_service` — `OptionalAuthUser` cannot be used inside Leptos
+/// server functions because `leptos_axum::extract()` uses an empty `()` state.
+#[cfg(feature = "ssr")]
+async fn request_document_visibility(
+    state: &AppState,
+) -> Result<(Option<Vec<String>>, bool), ServerFnError> {
+    use axum_extra::extract::CookieJar;
+    use crate::auth::extractor::ACCESS_TOKEN_COOKIE;
+    use crate::auth::models::UserContext;
+    use crate::auth::token_service::TokenService;
+
+    let jar: CookieJar = leptos_axum::extract().await?;
+
+    let maybe_user = jar
+        .get(ACCESS_TOKEN_COOKIE)
+        .and_then(|c| state.token_service.validate_access_token(c.value()).ok())
+        .map(|claims| TokenService::claims_to_user(&claims));
+
+    if let Some(auth_user) = maybe_user {
+        let perms = state
+            .user_repo
+            .get_permissions(&auth_user.user_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        Ok(UserContext { user: auth_user, permissions: perms }.document_visibility())
+    } else {
+        Ok((Some(vec!["public".to_string()]), false))
+    }
+}
+
 /// Server function to search documents.
 #[server(SearchDocs, "/api")]
 pub async fn search_docs(
@@ -82,10 +116,10 @@ pub async fn search_docs(
     let search_service = state.search_service.as_ref()
         .ok_or_else(|| ServerFnError::new("Search not available"))?;
 
-    // TODO(phase-5): replace with authenticated user's readable levels.
-    // For now, expose only "public" non-draft documents to anonymous callers.
-    let public_levels = vec!["public".to_string()];
-    let results = search_service.search(&query, Some(public_levels.as_slice()), false).await
+    let (allowed_levels, include_draft) = request_document_visibility(&state).await?;
+    let results = search_service
+        .search(&query, allowed_levels.as_deref(), include_draft)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(results)
@@ -99,11 +133,9 @@ pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
 
     let state = expect_context::<AppState>();
 
-    // TODO(phase-5): replace with authenticated user's readable levels.
-    // For now, expose only "public" non-draft documents to anonymous callers.
-    let public_levels = vec!["public".to_string()];
+    let (allowed_levels, include_draft) = request_document_visibility(&state).await?;
     let docs = state.document_repo
-        .list_by_access_levels(Some(public_levels.as_slice()), false)
+        .list_by_access_levels(allowed_levels.as_deref(), include_draft)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 

@@ -19,6 +19,7 @@ pub struct AppState {
     pub document_repo: Arc<dyn crate::db::repository::DocumentRepository>,
     pub schema_repo: Arc<dyn crate::db::schema_repository::SchemaRepository>,
     pub settings_repo: Arc<dyn crate::db::settings_repository::SettingsRepository>,
+    pub asset_repo: Arc<dyn crate::db::asset_repository::AssetRepository>,
     pub storage_client: Arc<dyn crate::storage::client::StorageClient>,
     pub search_service: Option<Arc<dyn crate::search::client::SearchService>>,
     pub service_token: String,

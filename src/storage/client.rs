@@ -12,6 +12,9 @@ pub trait StorageClient: Send + Sync {
 
     /// Retrieve content by key. Returns `None` if the object doesn't exist.
     async fn get_object(&self, key: &str) -> Result<Option<Vec<u8>>, AppError>;
+
+    /// Delete an object by key.
+    async fn delete_object(&self, key: &str) -> Result<(), AppError>;
 }
 
 /// S3 implementation of StorageClient.
@@ -109,5 +112,17 @@ impl StorageClient for S3StorageClient {
                 }
             }
         }
+    }
+
+    async fn delete_object(&self, key: &str) -> Result<(), AppError> {
+        self.client
+            .delete_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+            .map_err(|e| AppError::Storage(format!("Failed to delete object '{}': {}", key, e)))?;
+
+        Ok(())
     }
 }

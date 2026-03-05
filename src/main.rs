@@ -6,6 +6,7 @@ async fn main() {
     use leptos_axum::{generate_route_list, LeptosRoutes};
     use lekton::api;
     use lekton::app::App;
+    use lekton::db::asset_repository::MongoAssetRepository;
     use lekton::db::repository::MongoDocumentRepository;
     use lekton::db::schema_repository::MongoSchemaRepository;
     use lekton::db::settings_repository::MongoSettingsRepository;
@@ -55,6 +56,8 @@ async fn main() {
         Arc::new(MongoSchemaRepository::new(&mongo_db));
     let settings_repo: Arc<dyn lekton::db::settings_repository::SettingsRepository> =
         Arc::new(MongoSettingsRepository::new(&mongo_db));
+    let asset_repo: Arc<dyn lekton::db::asset_repository::AssetRepository> =
+        Arc::new(MongoAssetRepository::new(&mongo_db));
 
     tracing::info!("Connected to MongoDB at {}", mongo_uri);
 
@@ -92,6 +95,7 @@ async fn main() {
         document_repo,
         schema_repo,
         settings_repo,
+        asset_repo,
         storage_client,
         search_service,
         leptos_options: leptos_options.clone(),
@@ -133,6 +137,16 @@ async fn main() {
         .route(
             "/api/v1/schemas/{name}/{version}",
             axum::routing::get(api::schemas::get_schema_version_handler),
+        )
+        .route(
+            "/api/v1/assets",
+            axum::routing::get(api::assets::list_assets_handler),
+        )
+        .route(
+            "/api/v1/assets/{*key}",
+            axum::routing::put(api::assets::upload_asset_handler)
+                .get(api::assets::serve_asset_handler)
+                .delete(api::assets::delete_asset_handler),
         );
 
     // Mount demo auth routes when demo mode is enabled

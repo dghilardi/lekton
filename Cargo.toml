@@ -59,6 +59,9 @@ async-trait = "0.1"
 # Async utilities
 futures = "0.3"
 
+# Encoding
+base64 = "0.22"
+
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
@@ -76,7 +79,6 @@ leptos-tiptap-build = "0.2"
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
 mockall = "0.13"
-base64 = "0.22"
 testcontainers = "0.27"
 testcontainers-modules = { version = "0.15", features = ["mongo", "minio", "meilisearch"] }
 axum-test = "18"

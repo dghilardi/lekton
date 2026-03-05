@@ -169,6 +169,11 @@ mod tests {
         async fn get_object(&self, key: &str) -> Result<Option<Vec<u8>>, AppError> {
             Ok(self.objects.lock().unwrap().get(key).cloned())
         }
+
+        async fn delete_object(&self, key: &str) -> Result<(), AppError> {
+            self.objects.lock().unwrap().remove(key);
+            Ok(())
+        }
     }
 
     struct MockRepo {

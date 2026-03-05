@@ -1,3 +1,4 @@
+pub mod assets;
 pub mod errors;
 pub mod ingest;
 pub mod schemas;

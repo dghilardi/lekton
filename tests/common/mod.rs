@@ -9,6 +9,7 @@ use testcontainers_modules::minio::MinIO;
 use testcontainers_modules::mongo::Mongo;
 
 use lekton::app::AppState;
+use lekton::db::asset_repository::{AssetRepository, MongoAssetRepository};
 use lekton::db::repository::{DocumentRepository, MongoDocumentRepository};
 use lekton::db::schema_repository::{MongoSchemaRepository, SchemaRepository};
 use lekton::db::settings_repository::{MongoSettingsRepository, SettingsRepository};
@@ -27,6 +28,7 @@ pub struct TestEnv {
     pub repo: Arc<dyn DocumentRepository>,
     pub schema_repo: Arc<dyn SchemaRepository>,
     pub settings_repo: Arc<dyn SettingsRepository>,
+    pub asset_repo: Arc<dyn AssetRepository>,
     pub storage: Arc<dyn StorageClient>,
     pub search: Arc<dyn SearchService>,
 }
@@ -60,6 +62,8 @@ impl TestEnv {
             Arc::new(MongoSchemaRepository::new(&mongo_db));
         let settings_repo: Arc<dyn SettingsRepository> =
             Arc::new(MongoSettingsRepository::new(&mongo_db));
+        let asset_repo: Arc<dyn AssetRepository> =
+            Arc::new(MongoAssetRepository::new(&mongo_db));
 
         // --- MinIO (S3) ---
         let minio_port = minio_container
@@ -122,6 +126,7 @@ impl TestEnv {
             document_repo: repo.clone(),
             schema_repo: schema_repo.clone(),
             settings_repo: settings_repo.clone(),
+            asset_repo: asset_repo.clone(),
             storage_client: storage.clone(),
             search_service: Some(search.clone()),
             service_token: "test-token".to_string(),
@@ -161,6 +166,16 @@ impl TestEnv {
                 get(lekton::api::schemas::get_schema_version_handler),
             )
             .route(
+                "/api/v1/assets",
+                get(lekton::api::assets::list_assets_handler),
+            )
+            .route(
+                "/api/v1/assets/{*key}",
+                axum::routing::put(lekton::api::assets::upload_asset_handler)
+                    .get(lekton::api::assets::serve_asset_handler)
+                    .delete(lekton::api::assets::delete_asset_handler),
+            )
+            .route(
                 "/api/auth/login",
                 post(lekton::auth::demo_auth::login_handler),
             )
@@ -182,6 +197,7 @@ impl TestEnv {
             repo,
             schema_repo,
             settings_repo,
+            asset_repo,
             storage,
             search,
         }
@@ -247,6 +263,7 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
         document_repo: env.repo.clone(),
         schema_repo: env.schema_repo.clone(),
         settings_repo: env.settings_repo.clone(),
+        asset_repo: env.asset_repo.clone(),
         storage_client: env.storage.clone(),
         search_service: None,
         service_token: "test-token".to_string(),

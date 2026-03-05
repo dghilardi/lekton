@@ -64,6 +64,28 @@ pub struct SchemaVersion {
     pub status: String,
 }
 
+/// Represents a binary asset stored in MongoDB with content in S3.
+///
+/// Assets are identified by a caller-defined key (e.g., "project-a/configs/nginx.conf").
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Asset {
+    /// Caller-defined unique key (e.g., "project-a/configs/nginx.conf").
+    pub key: String,
+    /// MIME content type (e.g., "image/png", "application/pdf").
+    pub content_type: String,
+    /// File size in bytes.
+    pub size_bytes: u64,
+    /// S3 key where the asset content is stored.
+    pub s3_key: String,
+    /// When the asset was last uploaded or replaced.
+    pub uploaded_at: DateTime<Utc>,
+    /// Identifier of who uploaded the asset.
+    pub uploaded_by: String,
+    /// Document slugs that reference this asset (managed during document save).
+    #[serde(default)]
+    pub referenced_by: Vec<String>,
+}
+
 /// The request payload for the ingest API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IngestRequest {
@@ -198,6 +220,40 @@ mod tests {
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("docs/hello"));
+    }
+
+    #[test]
+    fn test_asset_serialization() {
+        let asset = Asset {
+            key: "project-a/configs/nginx.conf".to_string(),
+            content_type: "application/octet-stream".to_string(),
+            size_bytes: 2048,
+            s3_key: "assets/project-a/configs/nginx.conf".to_string(),
+            uploaded_at: Utc::now(),
+            uploaded_by: "ci-pipeline".to_string(),
+            referenced_by: vec!["deployment-guide".to_string()],
+        };
+
+        let json = serde_json::to_string(&asset).unwrap();
+        let deserialized: Asset = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.key, "project-a/configs/nginx.conf");
+        assert_eq!(deserialized.size_bytes, 2048);
+        assert_eq!(deserialized.referenced_by.len(), 1);
+    }
+
+    #[test]
+    fn test_asset_default_referenced_by() {
+        let json = r###"{
+            "key": "logo.png",
+            "content_type": "image/png",
+            "size_bytes": 1024,
+            "s3_key": "assets/logo.png",
+            "uploaded_at": "2024-01-01T00:00:00Z",
+            "uploaded_by": "test"
+        }"###;
+
+        let asset: Asset = serde_json::from_str(json).unwrap();
+        assert!(asset.referenced_by.is_empty());
     }
 
     #[test]

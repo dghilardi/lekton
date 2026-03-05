@@ -9,10 +9,13 @@ use testcontainers_modules::minio::MinIO;
 use testcontainers_modules::mongo::Mongo;
 
 use lekton::app::AppState;
+use lekton::auth::token_service::TokenService;
+use lekton::db::access_level_repository::{AccessLevelRepository, MongoAccessLevelRepository};
 use lekton::db::asset_repository::{AssetRepository, MongoAssetRepository};
 use lekton::db::repository::{DocumentRepository, MongoDocumentRepository};
 use lekton::db::schema_repository::{MongoSchemaRepository, SchemaRepository};
 use lekton::db::settings_repository::{MongoSettingsRepository, SettingsRepository};
+use lekton::db::user_repository::{MongoUserRepository, UserRepository};
 use lekton::search::client::{MeilisearchService, SearchService};
 use lekton::storage::client::{S3StorageClient, StorageClient};
 
@@ -29,6 +32,8 @@ pub struct TestEnv {
     pub schema_repo: Arc<dyn SchemaRepository>,
     pub settings_repo: Arc<dyn SettingsRepository>,
     pub asset_repo: Arc<dyn AssetRepository>,
+    pub user_repo: Arc<dyn UserRepository>,
+    pub access_level_repo: Arc<dyn AccessLevelRepository>,
     pub storage: Arc<dyn StorageClient>,
     pub search: Arc<dyn SearchService>,
 }
@@ -64,6 +69,10 @@ impl TestEnv {
             Arc::new(MongoSettingsRepository::new(&mongo_db));
         let asset_repo: Arc<dyn AssetRepository> =
             Arc::new(MongoAssetRepository::new(&mongo_db));
+        let user_repo: Arc<dyn UserRepository> =
+            Arc::new(MongoUserRepository::new(&mongo_db));
+        let access_level_repo: Arc<dyn AccessLevelRepository> =
+            Arc::new(MongoAccessLevelRepository::new(&mongo_db));
 
         // --- MinIO (S3) ---
         let minio_port = minio_container
@@ -122,6 +131,12 @@ impl TestEnv {
             .output_name("lekton")
             .build();
 
+        let token_service = Arc::new(TokenService::new(
+            "test-secret-key-at-least-32-bytes!!",
+            3600,
+            30,
+        ));
+
         let app_state = AppState {
             document_repo: repo.clone(),
             schema_repo: schema_repo.clone(),
@@ -132,6 +147,10 @@ impl TestEnv {
             service_token: "test-token".to_string(),
             demo_mode: true,
             leptos_options,
+            user_repo: user_repo.clone(),
+            access_level_repo: access_level_repo.clone(),
+            token_service,
+            auth_provider: None,
         };
 
         // --- Build Router (API routes only, no Leptos SSR) ---
@@ -202,6 +221,8 @@ impl TestEnv {
             schema_repo,
             settings_repo,
             asset_repo,
+            user_repo,
+            access_level_repo,
             storage,
             search,
         }
@@ -263,6 +284,12 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
         .output_name("lekton")
         .build();
 
+    let token_service = Arc::new(TokenService::new(
+        "test-secret-key-at-least-32-bytes!!",
+        3600,
+        30,
+    ));
+
     let app_state = AppState {
         document_repo: env.repo.clone(),
         schema_repo: env.schema_repo.clone(),
@@ -273,6 +300,10 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
         service_token: "test-token".to_string(),
         demo_mode: true,
         leptos_options,
+        user_repo: env.user_repo.clone(),
+        access_level_repo: env.access_level_repo.clone(),
+        token_service,
+        auth_provider: None,
     };
 
     let router = Router::new()

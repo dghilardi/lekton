@@ -84,8 +84,9 @@ pub async fn save_doc_content(
         s3_key: s3_key.clone(),
         access_level: old_doc
             .as_ref()
-            .map(|d| d.access_level)
-            .unwrap_or(crate::auth::models::AccessLevel::Developer),
+            .map(|d| d.access_level.clone())
+            .unwrap_or_else(|| "public".to_string()),
+        is_draft: old_doc.as_ref().map(|d| d.is_draft).unwrap_or(false),
         service_owner: old_doc
             .as_ref()
             .map(|d| d.service_owner.clone())

@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::auth::models::AccessLevel;
 use crate::error::AppError;
 
 /// A document representation optimized for the search index.
@@ -11,8 +10,10 @@ pub struct SearchDocument {
     pub slug: String,
     /// Human-readable title.
     pub title: String,
-    /// Numeric access level for filtering (Public=0, Developer=1, Architect=2, Admin=3).
-    pub access_level: i32,
+    /// Access level name (e.g. `"public"`, `"internal"`).
+    pub access_level: String,
+    /// Whether the document is a draft.
+    pub is_draft: bool,
     /// The team/service that owns this document.
     pub service_owner: String,
     /// Tags for categorization.
@@ -41,11 +42,16 @@ pub trait SearchService: Send + Sync {
     /// Remove a document from the search index.
     async fn delete_document(&self, slug: &str) -> Result<(), AppError>;
 
-    /// Search documents, filtering by access level.
+    /// Search documents visible to the caller.
+    ///
+    /// - `allowed_levels`: the access level names the caller can read.
+    ///   `None` means admin (no level restriction).
+    /// - `include_draft`: whether to include draft documents.
     async fn search(
         &self,
         query: &str,
-        max_access_level: AccessLevel,
+        allowed_levels: Option<&[String]>,
+        include_draft: bool,
     ) -> Result<Vec<SearchHit>, AppError>;
 
     /// Configure the search index (filterable/searchable attributes).
@@ -118,16 +124,37 @@ impl SearchService for MeilisearchService {
     async fn search(
         &self,
         query: &str,
-        max_access_level: AccessLevel,
+        allowed_levels: Option<&[String]>,
+        include_draft: bool,
     ) -> Result<Vec<SearchHit>, AppError> {
-        let filter = format!("access_level <= {}", max_access_level as i32);
+        // Build a Meilisearch filter expression.
+        let mut filters: Vec<String> = Vec::new();
 
-        let results: meilisearch_sdk::search::SearchResults<SearchDocument> = self
-            .index()
-            .search()
-            .with_query(query)
-            .with_filter(&filter)
-            .with_limit(20)
+        if let Some(levels) = allowed_levels {
+            if levels.is_empty() {
+                // The caller has no readable levels → return nothing.
+                return Ok(vec![]);
+            }
+            // e.g. access_level IN ["public", "internal"]
+            let quoted: Vec<String> = levels.iter().map(|l| format!("\"{}\"", l)).collect();
+            filters.push(format!("access_level IN [{}]", quoted.join(", ")));
+        }
+
+        if !include_draft {
+            filters.push("is_draft = false".to_string());
+        }
+
+        let filter_str = filters.join(" AND ");
+
+        let index = self.index();
+        let mut search_query = index.search();
+        search_query.with_query(query).with_limit(20);
+
+        if !filter_str.is_empty() {
+            search_query.with_filter(&filter_str);
+        }
+
+        let results: meilisearch_sdk::search::SearchResults<SearchDocument> = search_query
             .execute()
             .await
             .map_err(|e| AppError::Internal(format!("Meilisearch search error: {e}")))?;
@@ -150,7 +177,7 @@ impl SearchService for MeilisearchService {
         let index = self.index();
 
         let _: meilisearch_sdk::task_info::TaskInfo = index
-            .set_filterable_attributes(["access_level", "service_owner", "tags"])
+            .set_filterable_attributes(["access_level", "is_draft", "service_owner", "tags"])
             .await
             .map_err(|e| AppError::Internal(format!("Meilisearch config error: {e}")))?;
 
@@ -178,7 +205,8 @@ pub fn build_search_document(
     SearchDocument {
         slug: doc.slug.clone(),
         title: doc.title.clone(),
-        access_level: doc.access_level as i32,
+        access_level: doc.access_level.clone(),
+        is_draft: doc.is_draft,
         service_owner: doc.service_owner.clone(),
         tags: doc.tags.clone(),
         content_preview: preview,
@@ -251,7 +279,8 @@ mod tests {
             slug: "getting-started".to_string(),
             title: "Getting Started".to_string(),
             s3_key: "docs/getting-started.md".to_string(),
-            access_level: AccessLevel::Public,
+            access_level: "public".to_string(),
+            is_draft: false,
             service_owner: "platform".to_string(),
             last_updated: Utc::now(),
             tags: vec!["intro".to_string()],
@@ -264,8 +293,34 @@ mod tests {
 
         let search_doc = build_search_document(&doc, "# Getting Started\n\nWelcome to Lekton.");
         assert_eq!(search_doc.slug, "getting-started");
-        assert_eq!(search_doc.access_level, 0);
+        assert_eq!(search_doc.access_level, "public");
+        assert!(!search_doc.is_draft);
         assert!(search_doc.content_preview.contains("Getting Started"));
         assert!(search_doc.content_preview.contains("Welcome to Lekton"));
+    }
+
+    #[test]
+    fn test_build_search_document_preserves_draft_flag() {
+        use chrono::Utc;
+
+        let doc = crate::db::models::Document {
+            slug: "wip-doc".to_string(),
+            title: "WIP".to_string(),
+            s3_key: "docs/wip.md".to_string(),
+            access_level: "internal".to_string(),
+            is_draft: true,
+            service_owner: "team".to_string(),
+            last_updated: Utc::now(),
+            tags: vec![],
+            links_out: vec![],
+            backlinks: vec![],
+            parent_slug: None,
+            order: 0,
+            is_hidden: false,
+        };
+
+        let search_doc = build_search_document(&doc, "# WIP content");
+        assert_eq!(search_doc.access_level, "internal");
+        assert!(search_doc.is_draft);
     }
 }

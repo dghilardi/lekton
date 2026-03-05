@@ -1,6 +1,5 @@
 use chrono::Utc;
 
-use crate::auth::models::AccessLevel;
 use crate::db::models::{Document, IngestRequest, IngestResponse};
 use crate::db::repository::DocumentRepository;
 use crate::error::AppError;
@@ -24,18 +23,21 @@ pub async fn process_ingest(
         return Err(AppError::Auth("Invalid service token".into()));
     }
 
-    // 2. Validate the slug (must not be empty, must be URL-safe)
+    // 2. Validate the slug (must not be empty)
     if request.slug.is_empty() {
         return Err(AppError::BadRequest("Slug cannot be empty".into()));
     }
 
-    // 3. Parse the access level
-    let access_level = AccessLevel::from_str_ci(&request.access_level).ok_or_else(|| {
-        AppError::BadRequest(format!(
-            "Invalid access level '{}'. Expected: public, developer, architect, admin",
-            request.access_level
-        ))
-    })?;
+    // 3. Validate the access_level name is non-empty.
+    //    Existence against the dynamic level list is checked at the service layer;
+    //    here we only reject obviously invalid input.
+    if request.access_level.trim().is_empty() {
+        return Err(AppError::BadRequest(
+            "Access level cannot be empty".into(),
+        ));
+    }
+    // Normalise to lowercase so "Public" and "public" are the same.
+    let access_level = request.access_level.to_lowercase();
 
     // 4. Extract internal links from content
     let links_out = extract_internal_links(&request.content);
@@ -64,12 +66,12 @@ pub async fn process_ingest(
         title: request.title,
         s3_key: s3_key.clone(),
         access_level,
+        is_draft: request.is_draft,
         service_owner: request.service_owner,
         last_updated: Utc::now(),
         tags: request.tags.clone(),
         links_out: links_out.clone(),
         backlinks: old_doc.as_ref().map(|d| d.backlinks.clone()).unwrap_or_default(),
-        // Use request values if provided, otherwise preserve from old doc or use defaults
         parent_slug: if request.parent_slug.is_some() {
             request.parent_slug.clone()
         } else {
@@ -207,16 +209,23 @@ mod tests {
                 .cloned())
         }
 
-        async fn list_accessible(
+        async fn list_by_access_levels(
             &self,
-            max_level: AccessLevel,
+            allowed_levels: Option<&[String]>,
+            include_draft: bool,
         ) -> Result<Vec<Document>, AppError> {
             Ok(self
                 .documents
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|d| d.access_level <= max_level)
+                .filter(|d| {
+                    let level_ok = allowed_levels
+                        .map(|lvls| lvls.contains(&d.access_level))
+                        .unwrap_or(true);
+                    let draft_ok = include_draft || !d.is_draft;
+                    level_ok && draft_ok
+                })
                 .cloned()
                 .collect())
         }
@@ -229,7 +238,6 @@ mod tests {
         ) -> Result<(), AppError> {
             let mut docs = self.documents.lock().unwrap();
 
-            // Remove source from backlinks of old targets no longer linked
             let removed: Vec<String> = old_links
                 .iter()
                 .filter(|l| !new_links.contains(l))
@@ -242,7 +250,6 @@ mod tests {
                 }
             }
 
-            // Add source to backlinks of new targets
             let added: Vec<String> = new_links
                 .iter()
                 .filter(|l| !old_links.contains(l))
@@ -265,7 +272,8 @@ mod tests {
             slug: slug.to_string(),
             title: "Test Doc".to_string(),
             content: "# Hello\nWorld".to_string(),
-            access_level: "developer".to_string(),
+            access_level: "internal".to_string(),
+            is_draft: false,
             service_owner: "test-team".to_string(),
             tags: vec!["test".to_string()],
             parent_slug: None,
@@ -300,12 +308,28 @@ mod tests {
             "# Hello\nWorld"
         );
 
-        // Verify metadata was saved
+        // Verify metadata was saved with access_level normalised to lowercase
         let doc = repo.find_by_slug("docs/hello").await.unwrap();
         assert!(doc.is_some());
         let doc = doc.unwrap();
         assert_eq!(doc.title, "Test Doc");
-        assert_eq!(doc.access_level, AccessLevel::Developer);
+        assert_eq!(doc.access_level, "internal");
+        assert!(!doc.is_draft);
+    }
+
+    #[tokio::test]
+    async fn test_ingest_draft_flag_preserved() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let mut request = make_request("valid-token", "docs/wip");
+        request.is_draft = true;
+
+        process_ingest(&repo, &storage, None, request, "valid-token")
+            .await
+            .unwrap();
+
+        let doc = repo.find_by_slug("docs/wip").await.unwrap().unwrap();
+        assert!(doc.is_draft);
     }
 
     #[tokio::test]
@@ -337,18 +361,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ingest_invalid_access_level() {
+    async fn test_ingest_empty_access_level() {
         let storage = MockStorage::new();
         let repo = MockRepo::new();
         let mut request = make_request("valid-token", "docs/hello");
-        request.access_level = "superadmin".to_string();
+        request.access_level = "  ".to_string();
 
         let result = process_ingest(&repo, &storage, None, request, "valid-token").await;
         assert!(result.is_err());
         match result.unwrap_err() {
-            AppError::BadRequest(msg) => assert!(msg.contains("Invalid access level")),
+            AppError::BadRequest(msg) => assert!(msg.contains("Access level cannot be empty")),
             other => panic!("Expected BadRequest error, got: {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn test_ingest_normalises_access_level_to_lowercase() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let mut request = make_request("valid-token", "docs/hello");
+        request.access_level = "Internal".to_string();
+
+        process_ingest(&repo, &storage, None, request, "valid-token")
+            .await
+            .unwrap();
+
+        let doc = repo.find_by_slug("docs/hello").await.unwrap().unwrap();
+        assert_eq!(doc.access_level, "internal");
     }
 
     #[tokio::test]
@@ -370,7 +409,10 @@ mod tests {
             .unwrap();
 
         // Should have only one document
-        let docs = repo.list_accessible(AccessLevel::Admin).await.unwrap();
+        let docs = repo
+            .list_by_access_levels(Some(&["internal".to_string()]), false)
+            .await
+            .unwrap();
         assert_eq!(docs.len(), 1);
         assert_eq!(docs[0].title, "Updated Doc");
     }

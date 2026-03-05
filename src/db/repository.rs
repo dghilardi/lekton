@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 
-use crate::auth::models::AccessLevel;
 use crate::db::models::Document;
 use crate::error::AppError;
 
@@ -15,8 +14,23 @@ pub trait DocumentRepository: Send + Sync {
     /// Find a document by its slug.
     async fn find_by_slug(&self, slug: &str) -> Result<Option<Document>, AppError>;
 
-    /// List all documents accessible at or below the given access level.
-    async fn list_accessible(&self, max_level: AccessLevel) -> Result<Vec<Document>, AppError>;
+    /// List documents the caller is allowed to see.
+    ///
+    /// - `allowed_levels`: the set of `access_level` names the caller can read
+    ///   (e.g. `["public", "internal"]`).
+    ///   Pass an empty slice to return only documents with no access-level restriction
+    ///   (i.e. only `"public"` level documents when the caller is unauthenticated).
+    ///   Admin callers should pass `None` to receive *all* documents.
+    /// - `include_draft`: when `true`, draft documents are included in the result.
+    ///   Admin callers and users with `can_read_draft` should set this to `true`.
+    ///
+    /// Hidden documents (`is_hidden = true`) are always excluded — they can only
+    /// be fetched by slug.
+    async fn list_by_access_levels(
+        &self,
+        allowed_levels: Option<&[String]>,
+        include_draft: bool,
+    ) -> Result<Vec<Document>, AppError>;
 
     /// Update backlinks when a document's outgoing links change.
     ///
@@ -75,39 +89,46 @@ impl DocumentRepository for MongoDocumentRepository {
             .map_err(|e| AppError::Database(e.to_string()))
     }
 
-    async fn list_accessible(&self, max_level: AccessLevel) -> Result<Vec<Document>, AppError> {
-        use mongodb::bson::doc;
+    async fn list_by_access_levels(
+        &self,
+        allowed_levels: Option<&[String]>,
+        include_draft: bool,
+    ) -> Result<Vec<Document>, AppError> {
+        use futures::TryStreamExt;
+        use mongodb::bson::{doc, Bson};
         use mongodb::options::FindOptions;
 
-        // AccessLevel is serialized by serde as PascalCase (e.g. "Public", "Developer").
-        // We must use the same format in the MongoDB filter.
-        let allowed_levels: Vec<String> = [
-            AccessLevel::Public,
-            AccessLevel::Developer,
-            AccessLevel::Architect,
-            AccessLevel::Admin,
-        ]
-        .iter()
-        .filter(|level| **level <= max_level)
-        .map(|level| {
-            serde_json::to_value(level)
-                .expect("AccessLevel serialization should not fail")
-                .as_str()
-                .expect("AccessLevel should serialize as a string")
-                .to_string()
-        })
-        .collect();
+        // Build the access-level filter.
+        // `None` means admin — no restriction on level.
+        let mut filter_parts: Vec<mongodb::bson::Document> = vec![
+            // Exclude hidden documents
+            doc! {
+                "$or": [
+                    { "is_hidden": { "$exists": false } },
+                    { "is_hidden": false }
+                ]
+            },
+        ];
 
-        let filter = doc! {
-            "access_level": { "$in": &allowed_levels },
-            // Exclude hidden documents from navigation
-            "$or": [
-                { "is_hidden": { "$exists": false } },
-                { "is_hidden": false }
-            ]
-        };
+        if let Some(levels) = allowed_levels {
+            let bson_levels: Vec<Bson> = levels
+                .iter()
+                .map(|l| Bson::String(l.clone()))
+                .collect();
+            filter_parts.push(doc! { "access_level": { "$in": bson_levels } });
+        }
 
-        // Sort by order field (ascending), then by slug (ascending)
+        if !include_draft {
+            filter_parts.push(doc! {
+                "$or": [
+                    { "is_draft": { "$exists": false } },
+                    { "is_draft": false }
+                ]
+            });
+        }
+
+        let filter = doc! { "$and": filter_parts };
+
         let options = FindOptions::builder()
             .sort(doc! { "order": 1, "slug": 1 })
             .build();
@@ -120,13 +141,12 @@ impl DocumentRepository for MongoDocumentRepository {
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let mut documents = Vec::new();
-        use futures::TryStreamExt;
-        while let Some(doc) = cursor
+        while let Some(document) = cursor
             .try_next()
             .await
             .map_err(|e| AppError::Database(e.to_string()))?
         {
-            documents.push(doc);
+            documents.push(document);
         }
 
         Ok(documents)

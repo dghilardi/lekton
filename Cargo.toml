@@ -62,6 +62,12 @@ futures = "0.3"
 # Encoding
 base64 = "0.22"
 
+# Unique ID generation
+uuid = { version = "1", features = ["v4"] }
+
+# Hashing (for refresh token storage)
+sha2 = { version = "0.10", optional = true }
+
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
@@ -74,6 +80,12 @@ console_error_panic_hook = { version = "0.1", optional = true }
 # HTTP client (for OIDC discovery)
 reqwest = { version = "0.12", features = ["json"], optional = true }
 
+# URL encoding (for OAuth2 query parameters)
+urlencoding = { version = "2", optional = true }
+
+# Cookie duration (re-exported by axum-extra transitively)
+time = { version = "0.3", optional = true }
+
 [build-dependencies]
 leptos-tiptap-build = "0.2"
 
@@ -83,7 +95,6 @@ mockall = "0.13"
 testcontainers = "0.27"
 testcontainers-modules = { version = "0.15", features = ["mongo", "minio", "meilisearch"] }
 axum-test = "18"
-uuid = { version = "1", features = ["v4"] }
 
 [features]
 hydrate = [
@@ -108,6 +119,9 @@ ssr = [
     "dep:reqwest",
     "dep:meilisearch-sdk",
     "dep:jsonwebtoken",
+    "dep:sha2",
+    "dep:urlencoding",
+    "dep:time",
     "leptos/ssr",
     "leptos_meta/ssr",
     "leptos_router/ssr",

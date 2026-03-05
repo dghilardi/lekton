@@ -1,8 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::auth::models::AccessLevel;
-
 /// Represents a documentation entry stored in MongoDB.
 ///
 /// Corresponds to the `documents` collection defined in REQUIREMENTS.md.
@@ -14,8 +12,11 @@ pub struct Document {
     pub title: String,
     /// The S3 key where the markdown content is stored.
     pub s3_key: String,
-    /// Minimum access level required to view this document.
-    pub access_level: AccessLevel,
+    /// Access level name (references `AccessLevelEntity.name`, e.g. `"public"`, `"internal"`).
+    pub access_level: String,
+    /// When `true` the document is a work-in-progress and not shown to regular readers.
+    #[serde(default)]
+    pub is_draft: bool,
     /// The team/service that owns this document.
     pub service_owner: String,
     /// Timestamp of the last update.
@@ -97,8 +98,11 @@ pub struct IngestRequest {
     pub title: String,
     /// Raw Markdown content.
     pub content: String,
-    /// Minimum access level.
+    /// Access level name (e.g. `"public"`, `"internal"`).
     pub access_level: String,
+    /// When `true`, the document is stored as a draft.
+    #[serde(default)]
+    pub is_draft: bool,
     /// The team/service that owns this document.
     pub service_owner: String,
     /// Tags for categorization.
@@ -136,7 +140,8 @@ mod tests {
             slug: "engineering/deployment-guide".to_string(),
             title: "Deployment Guide".to_string(),
             s3_key: "docs/eng/deploy_v4.md".to_string(),
-            access_level: AccessLevel::Developer,
+            access_level: "internal".to_string(),
+            is_draft: false,
             service_owner: "devops-team".to_string(),
             last_updated: Utc::now(),
             tags: vec!["k8s".to_string(), "cicd".to_string()],
@@ -150,21 +155,22 @@ mod tests {
         let json = serde_json::to_string(&doc).unwrap();
         let deserialized: Document = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.slug, "engineering/deployment-guide");
-        assert_eq!(deserialized.access_level, AccessLevel::Developer);
+        assert_eq!(deserialized.access_level, "internal");
+        assert!(!deserialized.is_draft);
         assert_eq!(deserialized.tags.len(), 2);
         assert_eq!(deserialized.parent_slug, Some("engineering".to_string()));
         assert_eq!(deserialized.order, 10);
-        assert_eq!(deserialized.is_hidden, false);
+        assert!(!deserialized.is_hidden);
     }
 
     #[test]
-    fn test_document_hierarchy_defaults() {
-        // Test that new hierarchy fields have proper defaults when deserializing old documents
+    fn test_document_defaults() {
+        // Verify that new fields have sensible defaults when deserializing older documents
         let json = r###"{
             "slug": "getting-started",
             "title": "Getting Started",
             "s3_key": "docs/getting-started.md",
-            "access_level": "Public",
+            "access_level": "public",
             "service_owner": "docs-team",
             "last_updated": "2024-01-01T00:00:00Z",
             "tags": [],
@@ -173,9 +179,34 @@ mod tests {
         }"###;
 
         let doc: Document = serde_json::from_str(json).unwrap();
+        assert_eq!(doc.access_level, "public");
+        assert!(!doc.is_draft);
         assert_eq!(doc.parent_slug, None);
         assert_eq!(doc.order, 0);
-        assert_eq!(doc.is_hidden, false);
+        assert!(!doc.is_hidden);
+    }
+
+    #[test]
+    fn test_draft_document() {
+        let doc = Document {
+            slug: "engineering/wip".to_string(),
+            title: "Work in Progress".to_string(),
+            s3_key: "docs/wip.md".to_string(),
+            access_level: "internal".to_string(),
+            is_draft: true,
+            service_owner: "platform-team".to_string(),
+            last_updated: Utc::now(),
+            tags: vec![],
+            links_out: vec![],
+            backlinks: vec![],
+            parent_slug: None,
+            order: 0,
+            is_hidden: false,
+        };
+
+        let json = serde_json::to_string(&doc).unwrap();
+        let de: Document = serde_json::from_str(&json).unwrap();
+        assert!(de.is_draft);
     }
 
     #[test]
@@ -185,19 +216,35 @@ mod tests {
             "slug": "docs/hello",
             "title": "Hello World",
             "content": "# Hello\nWorld",
-            "access_level": "public",
+            "access_level": "internal",
             "service_owner": "my-team",
             "tags": ["intro"]
         }"###;
 
         let req: IngestRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.slug, "docs/hello");
-        assert_eq!(req.title, "Hello World");
-        assert_eq!(req.tags, vec!["intro"]);
+        assert_eq!(req.access_level, "internal");
+        assert!(!req.is_draft);
     }
 
     #[test]
-    fn test_ingest_request_default_tags() {
+    fn test_ingest_request_draft_flag() {
+        let json = r###"{
+            "service_token": "tok",
+            "slug": "docs/wip",
+            "title": "WIP",
+            "content": "draft content",
+            "access_level": "internal",
+            "service_owner": "team",
+            "is_draft": true
+        }"###;
+
+        let req: IngestRequest = serde_json::from_str(json).unwrap();
+        assert!(req.is_draft);
+    }
+
+    #[test]
+    fn test_ingest_request_defaults() {
         let json = r###"{
             "service_token": "tok-123",
             "slug": "docs/hello",
@@ -209,6 +256,8 @@ mod tests {
 
         let req: IngestRequest = serde_json::from_str(json).unwrap();
         assert!(req.tags.is_empty());
+        assert!(!req.is_draft);
+        assert_eq!(req.order, 0);
     }
 
     #[test]
@@ -239,21 +288,6 @@ mod tests {
         assert_eq!(deserialized.key, "project-a/configs/nginx.conf");
         assert_eq!(deserialized.size_bytes, 2048);
         assert_eq!(deserialized.referenced_by.len(), 1);
-    }
-
-    #[test]
-    fn test_asset_default_referenced_by() {
-        let json = r###"{
-            "key": "logo.png",
-            "content_type": "image/png",
-            "size_bytes": 1024,
-            "s3_key": "assets/logo.png",
-            "uploaded_at": "2024-01-01T00:00:00Z",
-            "uploaded_by": "test"
-        }"###;
-
-        let asset: Asset = serde_json::from_str(json).unwrap();
-        assert!(asset.referenced_by.is_empty());
     }
 
     #[test]

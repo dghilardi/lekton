@@ -33,6 +33,7 @@ pub struct JwtClaims {
 
 /// Service for JWT access tokens and refresh token lifecycle.
 #[cfg(feature = "ssr")]
+#[derive(Clone)]
 pub struct TokenService {
     encoding_key: jsonwebtoken::EncodingKey,
     decoding_key: jsonwebtoken::DecodingKey,
@@ -116,6 +117,11 @@ impl TokenService {
         let raw = uuid::Uuid::new_v4().to_string();
         let hash = Self::hash_token(&raw);
         (raw, hash)
+    }
+
+    /// Return the access token lifetime in seconds (used for cookie max-age).
+    pub fn access_token_ttl_secs(&self) -> u64 {
+        self.access_token_ttl_secs
     }
 
     /// Return the refresh token lifetime in days (used when creating the DB record).

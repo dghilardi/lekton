@@ -1,4 +1,6 @@
 pub mod assets;
+#[cfg(feature = "ssr")]
+pub mod auth;
 pub mod errors;
 pub mod ingest;
 pub mod schemas;

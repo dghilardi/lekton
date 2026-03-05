@@ -83,6 +83,9 @@ reqwest = { version = "0.12", features = ["json"], optional = true }
 # URL encoding (for OAuth2 query parameters)
 urlencoding = { version = "2", optional = true }
 
+# Cookie duration (re-exported by axum-extra transitively)
+time = { version = "0.3", optional = true }
+
 [build-dependencies]
 leptos-tiptap-build = "0.2"
 
@@ -118,6 +121,7 @@ ssr = [
     "dep:jsonwebtoken",
     "dep:sha2",
     "dep:urlencoding",
+    "dep:time",
     "leptos/ssr",
     "leptos_meta/ssr",
     "leptos_router/ssr",

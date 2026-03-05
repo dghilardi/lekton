@@ -87,6 +87,7 @@ async fn request_document_visibility(
 
     let jar: CookieJar = leptos_axum::extract().await?;
 
+    // Try JWT access token first (normal OAuth2/OIDC flow).
     let maybe_user = jar
         .get(ACCESS_TOKEN_COOKIE)
         .and_then(|c| state.token_service.validate_access_token(c.value()).ok())
@@ -98,10 +99,25 @@ async fn request_document_visibility(
             .get_permissions(&auth_user.user_id)
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
-        Ok(UserContext { user: auth_user, permissions: perms }.document_visibility())
-    } else {
-        Ok((Some(vec!["public".to_string()]), false))
+        return Ok(UserContext { user: auth_user, permissions: perms }.document_visibility());
     }
+
+    // Fall back to demo session cookie when demo mode is active.
+    if state.demo_mode {
+        if let Some(cookie) = jar.get("lekton_demo_user") {
+            if let Ok(demo_user) = serde_json::from_str::<crate::auth::models::AuthenticatedUser>(cookie.value()) {
+                // Admins see everything; non-admins are treated as public readers.
+                if demo_user.is_admin {
+                    return Ok((None, true));
+                } else {
+                    return Ok((Some(vec!["public".to_string()]), false));
+                }
+            }
+        }
+    }
+
+    // Anonymous access: public, non-draft only.
+    Ok((Some(vec!["public".to_string()]), false))
 }
 
 /// Server function to search documents.

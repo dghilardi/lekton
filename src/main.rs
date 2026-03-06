@@ -104,13 +104,16 @@ async fn main() {
         std::env::var("SERVICE_TOKEN").unwrap_or_else(|_| "dev-token".to_string());
 
     // JWT token service
-    let token_service = Arc::new(
-        TokenService::from_env()
-            .unwrap_or_else(|_| {
-                tracing::warn!("JWT_SECRET not set — using insecure dev key. Set JWT_SECRET in production!");
-                TokenService::new("dev-insecure-secret-change-in-production!!", 900, 30)
-            })
-    );
+    let token_service = Arc::new(match TokenService::from_env() {
+        Ok(ts) => ts,
+        Err(_) if demo_mode => {
+            tracing::warn!("JWT_SECRET not set — using insecure dev key (demo mode only)");
+            TokenService::new("dev-insecure-secret-change-in-production!!", 900, 30)
+        }
+        Err(e) => {
+            panic!("JWT_SECRET environment variable is required in production: {e}");
+        }
+    });
 
     // OAuth2 / OIDC auth provider (optional — server starts without auth if not configured)
     let auth_provider = build_provider_from_env().await;

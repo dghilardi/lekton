@@ -1,0 +1,125 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main, next, 'phase-*']
+  pull_request:
+    branches: [main, next]
+
+env:
+  CARGO_TERM_COLOR: always
+  DEMO_MODE: "true"
+  SERVICE_TOKEN: "test-token"
+  MONGODB_URI: "mongodb://localhost:27017"
+  MONGODB_DATABASE: "lekton_e2e"
+  AWS_ACCESS_KEY_ID: "minioadmin"
+  AWS_SECRET_ACCESS_KEY: "minioadmin"
+  AWS_REGION: "us-east-1"
+  S3_BUCKET: "lekton-e2e"
+  S3_ENDPOINT: "http://localhost:9000"
+  MEILISEARCH_URL: "http://localhost:7700"
+  MEILISEARCH_API_KEY: ""
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      minio:
+        image: minio/minio:latest
+        ports:
+          - 9000:9000
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+        options: >-
+          --health-cmd "mc ready local || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          --entrypoint "minio server /data"
+
+      meilisearch:
+        image: getmeili/meilisearch:v1.13.3
+        ports:
+          - 7700:7700
+        env:
+          MEILI_NO_ANALYTICS: "true"
+          MEILI_MASTER_KEY: ""
+        options: >-
+          --health-cmd "curl -f http://localhost:7700/health || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-leptos
+        run: cargo install cargo-leptos --locked
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Create S3 bucket
+        run: |
+          pip install awscli
+          aws --endpoint-url http://localhost:9000 s3 mb s3://lekton-e2e
+
+      - name: Build application
+        run: cargo leptos build --release
+
+      - name: Run E2E tests
+        run: |
+          # Start the server in the background
+          cargo leptos serve --release &
+          SERVER_PID=$!
+
+          # Wait for the server to be ready
+          for i in $(seq 1 60); do
+            if curl -s http://localhost:3000 > /dev/null 2>&1; then
+              echo "Server is ready"
+              break
+            fi
+            echo "Waiting for server... ($i/60)"
+            sleep 2
+          done
+
+          # Run E2E tests
+          npx playwright test
+
+          # Cleanup
+          kill $SERVER_PID || true
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

@@ -1,0 +1,418 @@
+mod common;
+
+use serde_json::json;
+
+// ── Access Level Management ─────────────────────────────────────────────────
+
+#[tokio::test]
+async fn access_level_list_returns_seeded_defaults() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+
+    // Seed default levels
+    env.access_level_repo.seed_defaults().await.unwrap();
+
+    // Create admin user and get auth cookie
+    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
+
+    let response = server
+        .get("/api/v1/admin/access-levels")
+        .add_cookie(env.auth_cookie(&admin))
+        .await;
+
+    response.assert_status_ok();
+    let body: Vec<serde_json::Value> = response.json();
+    assert!(body.len() >= 4, "should have at least 4 default levels");
+
+    let names: Vec<&str> = body.iter().filter_map(|l| l["name"].as_str()).collect();
+    assert!(names.contains(&"public"));
+    assert!(names.contains(&"internal"));
+    assert!(names.contains(&"developer"));
+    assert!(names.contains(&"architect"));
+}
+
+#[tokio::test]
+async fn access_level_create_success() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
+
+    let response = server
+        .post("/api/v1/admin/access-levels")
+        .add_cookie(env.auth_cookie(&admin))
+        .json(&json!({
+            "name": "custom-level",
+            "label": "Custom Level",
+            "description": "A custom access level for testing",
+            "sort_order": 50
+        }))
+        .await;
+
+    response.assert_status(axum::http::StatusCode::CREATED);
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["name"].as_str(), Some("custom-level"));
+    assert_eq!(body["label"].as_str(), Some("Custom Level"));
+    assert!(!body["is_system"].as_bool().unwrap_or(true));
+}
+
+#[tokio::test]
+async fn access_level_create_duplicate_fails() {
+    let env = common::TestEnv::start().await;
+    let server = env.server_permissive();
+    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
+
+    let payload = json!({
+        "name": "duplicate-level",
+        "label": "Duplicate",
+        "description": "First creation",
+        "sort_order": 10
+    });
+
+    server
+        .post("/api/v1/admin/access-levels")
+        .add_cookie(env.auth_cookie(&admin))
+        .json(&payload)
+        .expect_success()
+        .await;
+
+    let response = server
+        .post("/api/v1/admin/access-levels")
+        .add_cookie(env.auth_cookie(&admin))
+        .json(&payload)
+        .await;
+
+    response.assert_status(axum::http::StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn access_level_create_empty_name_fails() {
+    let env = common::TestEnv::start().await;
+    let server = env.server_permissive();
+    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
+
+    let response = server
+        .post("/api/v1/admin/access-levels")
+        .add_cookie(env.auth_cookie(&admin))
+        .json(&json!({
+            "name": "   ",
+            "label": "Empty",
+            "description": "Should fail",
+            "sort_order": 10
+        }))
+        .await;
+
+    response.assert_status(axum::http::StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn access_level_update_success() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
+
+    // Create first
+    server
+        .post("/api/v1/admin/access-levels")
+        .add_cookie(env.auth_cookie(&admin))
+        .json(&json!({
+            "name": "updatable",
+            "label": "Original",
+            "description": "Original description",
+            "sort_order": 10
+        }))
+        .await;
+
+    // Update
+    let response = server
+        .put("/api/v1/admin/access-levels/updatable")
+        .add_cookie(env.auth_cookie(&admin))
+        .json(&json!({
+            "label": "Updated Label",
+            "description": "Updated description",
+            "sort_order": 20
+        }))
+        .await;
+
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["label"].as_str(), Some("Updated Label"));
+    assert_eq!(body["sort_order"].as_u64(), Some(20));
+}
+
+#[tokio::test]
+async fn access_level_update_not_found() {
+    let env = common::TestEnv::start().await;
+    let server = env.server_permissive();
+    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
+
+    let response = server
+        .put("/api/v1/admin/access-levels/nonexistent")
+        .add_cookie(env.auth_cookie(&admin))
+        .json(&json!({
+            "label": "Does not matter",
+            "description": "N/A",
+            "sort_order": 10
+        }))
+        .await;
+
+    response.assert_status(axum::http::StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn access_level_delete_success() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
+
+    // Create a custom level
+    server
+        .post("/api/v1/admin/access-levels")
+        .add_cookie(env.auth_cookie(&admin))
+        .json(&json!({
+            "name": "deletable",
+            "label": "Deletable",
+            "description": "Will be deleted",
+            "sort_order": 99
+        }))
+        .await;
+
+    // Delete it
+    let response = server
+        .delete("/api/v1/admin/access-levels/deletable")
+        .add_cookie(env.auth_cookie(&admin))
+        .await;
+
+    response.assert_status(axum::http::StatusCode::NO_CONTENT);
+
+    // Verify it's gone
+    let found = env.access_level_repo.find_by_name("deletable").await.unwrap();
+    assert!(found.is_none());
+}
+
+#[tokio::test]
+async fn access_level_delete_system_level_fails() {
+    let env = common::TestEnv::start().await;
+    let server = env.server_permissive();
+    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
+
+    // Seed defaults so "public" (is_system=true) exists
+    env.access_level_repo.seed_defaults().await.unwrap();
+
+    let response = server
+        .delete("/api/v1/admin/access-levels/public")
+        .add_cookie(env.auth_cookie(&admin))
+        .await;
+
+    response.assert_status(axum::http::StatusCode::FORBIDDEN);
+}
+
+// ── User Management ─────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn admin_list_users() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+
+    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
+    env.create_test_user("user-1", "user1@test.com", false).await;
+    env.create_test_user("user-2", "user2@test.com", false).await;
+
+    let response = server
+        .get("/api/v1/admin/users")
+        .add_cookie(env.auth_cookie(&admin))
+        .await;
+
+    response.assert_status_ok();
+    let users: Vec<serde_json::Value> = response.json();
+    assert_eq!(users.len(), 3);
+}
+
+#[tokio::test]
+async fn admin_get_user_permissions() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+
+    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
+    env.create_test_user("user-1", "user1@test.com", false).await;
+
+    // Set a permission for user-1
+    use lekton::db::auth_models::UserPermission;
+    env.user_repo
+        .upsert_permission(UserPermission {
+            id: uuid::Uuid::new_v4().to_string(),
+            user_id: "user-1".to_string(),
+            access_level_name: "public".to_string(),
+            can_read: true,
+            can_write: false,
+            can_read_draft: false,
+            can_write_draft: false,
+        })
+        .await
+        .unwrap();
+
+    let response = server
+        .get("/api/v1/admin/users/user-1/permissions")
+        .add_cookie(env.auth_cookie(&admin))
+        .await;
+
+    response.assert_status_ok();
+    let perms: Vec<serde_json::Value> = response.json();
+    assert_eq!(perms.len(), 1);
+    assert_eq!(perms[0]["access_level_name"].as_str(), Some("public"));
+    assert_eq!(perms[0]["can_read"].as_bool(), Some(true));
+}
+
+#[tokio::test]
+async fn admin_set_user_permissions() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+
+    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
+    env.create_test_user("user-1", "user1@test.com", false).await;
+
+    let response = server
+        .put("/api/v1/admin/users/user-1/permissions")
+        .add_cookie(env.auth_cookie(&admin))
+        .json(&json!({
+            "permissions": [
+                {
+                    "access_level_name": "public",
+                    "can_read": true,
+                    "can_write": true,
+                    "can_read_draft": false,
+                    "can_write_draft": false
+                },
+                {
+                    "access_level_name": "internal",
+                    "can_read": true,
+                    "can_write": false,
+                    "can_read_draft": true,
+                    "can_write_draft": false
+                }
+            ]
+        }))
+        .await;
+
+    response.assert_status_ok();
+    let perms: Vec<serde_json::Value> = response.json();
+    assert_eq!(perms.len(), 2);
+
+    // Verify persisted
+    let stored = env.user_repo.get_permissions("user-1").await.unwrap();
+    assert_eq!(stored.len(), 2);
+}
+
+#[tokio::test]
+async fn admin_delete_user_permission() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+
+    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
+    env.create_test_user("user-1", "user1@test.com", false).await;
+
+    // Set permissions first
+    use lekton::db::auth_models::UserPermission;
+    env.user_repo
+        .upsert_permission(UserPermission {
+            id: uuid::Uuid::new_v4().to_string(),
+            user_id: "user-1".to_string(),
+            access_level_name: "internal".to_string(),
+            can_read: true,
+            can_write: false,
+            can_read_draft: false,
+            can_write_draft: false,
+        })
+        .await
+        .unwrap();
+
+    let response = server
+        .delete("/api/v1/admin/users/user-1/permissions/internal")
+        .add_cookie(env.auth_cookie(&admin))
+        .await;
+
+    response.assert_status(axum::http::StatusCode::NO_CONTENT);
+
+    let remaining = env.user_repo.get_permissions("user-1").await.unwrap();
+    assert!(remaining.is_empty());
+}
+
+// ── Auth Guards ──────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn admin_endpoints_reject_unauthenticated() {
+    let env = common::TestEnv::start().await;
+    let server = env.server_permissive();
+
+    // All admin endpoints should return 401 without auth cookie
+    server
+        .get("/api/v1/admin/access-levels")
+        .await
+        .assert_status(axum::http::StatusCode::UNAUTHORIZED);
+
+    server
+        .post("/api/v1/admin/access-levels")
+        .json(&json!({"name": "x", "label": "X", "description": "", "sort_order": 0}))
+        .await
+        .assert_status(axum::http::StatusCode::UNAUTHORIZED);
+
+    server
+        .get("/api/v1/admin/users")
+        .await
+        .assert_status(axum::http::StatusCode::UNAUTHORIZED);
+
+    server
+        .get("/api/v1/admin/users/any-id/permissions")
+        .await
+        .assert_status(axum::http::StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn admin_endpoints_reject_non_admin() {
+    let env = common::TestEnv::start().await;
+    let server = env.server_permissive();
+
+    let regular = env.create_test_user("user-1", "user@test.com", false).await;
+
+    server
+        .get("/api/v1/admin/access-levels")
+        .add_cookie(env.auth_cookie(&regular))
+        .await
+        .assert_status(axum::http::StatusCode::FORBIDDEN);
+
+    server
+        .post("/api/v1/admin/access-levels")
+        .add_cookie(env.auth_cookie(&regular))
+        .json(&json!({"name": "x", "label": "X", "description": "", "sort_order": 0}))
+        .await
+        .assert_status(axum::http::StatusCode::FORBIDDEN);
+
+    server
+        .get("/api/v1/admin/users")
+        .add_cookie(env.auth_cookie(&regular))
+        .await
+        .assert_status(axum::http::StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn admin_set_permissions_nonexistent_user() {
+    let env = common::TestEnv::start().await;
+    let server = env.server_permissive();
+
+    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
+
+    let response = server
+        .put("/api/v1/admin/users/nonexistent-user/permissions")
+        .add_cookie(env.auth_cookie(&admin))
+        .json(&json!({
+            "permissions": [{
+                "access_level_name": "public",
+                "can_read": true,
+                "can_write": false,
+                "can_read_draft": false,
+                "can_write_draft": false
+            }]
+        }))
+        .await;
+
+    response.assert_status(axum::http::StatusCode::NOT_FOUND);
+}

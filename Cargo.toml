@@ -95,6 +95,7 @@ mockall = "0.13"
 testcontainers = "0.27"
 testcontainers-modules = { version = "0.15", features = ["mongo", "minio", "meilisearch"] }
 axum-test = "18"
+cookie = "0.18"
 
 [features]
 hydrate = [

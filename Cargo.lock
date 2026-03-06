@@ -2823,6 +2823,7 @@ dependencies = [
  "bson",
  "chrono",
  "console_error_panic_hook",
+ "cookie",
  "futures",
  "js-sys",
  "jsonwebtoken",

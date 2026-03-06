@@ -9,9 +9,11 @@ use testcontainers_modules::minio::MinIO;
 use testcontainers_modules::mongo::Mongo;
 
 use lekton::app::AppState;
+use lekton::auth::models::AuthenticatedUser;
 use lekton::auth::token_service::TokenService;
 use lekton::db::access_level_repository::{AccessLevelRepository, MongoAccessLevelRepository};
 use lekton::db::asset_repository::{AssetRepository, MongoAssetRepository};
+use lekton::db::auth_models::User;
 use lekton::db::repository::{DocumentRepository, MongoDocumentRepository};
 use lekton::db::schema_repository::{MongoSchemaRepository, SchemaRepository};
 use lekton::db::settings_repository::{MongoSettingsRepository, SettingsRepository};
@@ -36,6 +38,7 @@ pub struct TestEnv {
     pub access_level_repo: Arc<dyn AccessLevelRepository>,
     pub storage: Arc<dyn StorageClient>,
     pub search: Arc<dyn SearchService>,
+    pub token_service: Arc<TokenService>,
 }
 
 impl TestEnv {
@@ -149,7 +152,7 @@ impl TestEnv {
             leptos_options,
             user_repo: user_repo.clone(),
             access_level_repo: access_level_repo.clone(),
-            token_service,
+            token_service: token_service.clone(),
             auth_provider: None,
         };
 
@@ -198,6 +201,44 @@ impl TestEnv {
                     .get(lekton::api::assets::serve_asset_handler)
                     .delete(lekton::api::assets::delete_asset_handler),
             )
+            // Admin API
+            .route(
+                "/api/v1/admin/access-levels",
+                get(lekton::api::admin::list_access_levels_handler)
+                    .post(lekton::api::admin::create_access_level_handler),
+            )
+            .route(
+                "/api/v1/admin/access-levels/{name}",
+                axum::routing::put(lekton::api::admin::update_access_level_handler)
+                    .delete(lekton::api::admin::delete_access_level_handler),
+            )
+            .route(
+                "/api/v1/admin/users",
+                get(lekton::api::admin::list_users_handler),
+            )
+            .route(
+                "/api/v1/admin/users/{user_id}/permissions",
+                get(lekton::api::admin::get_user_permissions_handler)
+                    .put(lekton::api::admin::set_user_permissions_handler),
+            )
+            .route(
+                "/api/v1/admin/users/{user_id}/permissions/{level}",
+                axum::routing::delete(lekton::api::admin::delete_user_permission_handler),
+            )
+            // Auth OIDC routes (refresh, me, logout — work without auth_provider)
+            .route(
+                "/auth/refresh",
+                post(lekton::api::auth::refresh_handler),
+            )
+            .route(
+                "/auth/logout",
+                post(lekton::api::auth::logout_handler),
+            )
+            .route(
+                "/auth/me",
+                get(lekton::api::auth::me_handler),
+            )
+            // Demo auth routes
             .route(
                 "/api/auth/login",
                 post(lekton::auth::demo_auth::login_handler),
@@ -225,6 +266,7 @@ impl TestEnv {
             access_level_repo,
             storage,
             search,
+            token_service,
         }
     }
 
@@ -243,6 +285,55 @@ impl TestEnv {
             .save_cookies()
             .build(self.router.clone())
             .expect("Failed to build TestServer")
+    }
+
+    /// Create a test user in the database and return the AuthenticatedUser identity.
+    pub async fn create_test_user(
+        &self,
+        user_id: &str,
+        email: &str,
+        is_admin: bool,
+    ) -> AuthenticatedUser {
+        let user = User {
+            id: user_id.to_string(),
+            email: email.to_string(),
+            name: Some(format!("Test User {}", user_id)),
+            provider_sub: format!("sub-{}", user_id),
+            provider_type: "oidc".to_string(),
+            is_admin,
+            created_at: chrono::Utc::now(),
+            last_login_at: None,
+        };
+        self.user_repo
+            .create_user(user)
+            .await
+            .expect("Failed to create test user");
+
+        AuthenticatedUser {
+            user_id: user_id.to_string(),
+            email: email.to_string(),
+            name: Some(format!("Test User {}", user_id)),
+            is_admin,
+        }
+    }
+
+    /// Generate a JWT access token cookie value for an authenticated user.
+    ///
+    /// Use with `server.add_cookie(...)` or by adding the cookie header directly.
+    pub fn access_token_for(&self, user: &AuthenticatedUser) -> String {
+        self.token_service
+            .generate_access_token(user)
+            .expect("Failed to generate access token")
+    }
+
+    /// Build a `cookie::Cookie` with the access token for an authenticated user.
+    ///
+    /// Add it to a request with `.add_cookie(env.auth_cookie(&user))`.
+    pub fn auth_cookie(&self, user: &AuthenticatedUser) -> cookie::Cookie<'static> {
+        let token = self.access_token_for(user);
+        cookie::Cookie::build(("lekton_access_token", token))
+            .path("/")
+            .build()
     }
 
     /// Helper: ingest a document via the API.

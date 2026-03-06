@@ -1,6 +1,5 @@
 mod common;
 
-use lekton::auth::models::AccessLevel;
 use lekton::db::repository::DocumentRepository;
 use lekton::storage::client::StorageClient;
 
@@ -20,9 +19,10 @@ async fn ingest_then_search_then_retrieve() {
     env.wait_for_search_indexing().await;
 
     // 2. Search finds it
+    let allowed = ["public".to_string(), "internal".to_string(), "developer".to_string()];
     let results = env
         .search
-        .search(&keyword, AccessLevel::Developer)
+        .search(&keyword, Some(&allowed), false)
         .await
         .unwrap();
     assert!(
@@ -84,7 +84,7 @@ async fn document_hierarchy_navigation() {
         .await;
 
     // list_accessible should return them sorted by order
-    let docs = env.repo.list_accessible(AccessLevel::Admin).await.unwrap();
+    let docs = env.repo.list_by_access_levels(None, false).await.unwrap();
     let our_docs: Vec<_> = docs
         .iter()
         .filter(|d| d.slug.starts_with(&prefix))
@@ -134,7 +134,7 @@ async fn hidden_documents_excluded_from_listing() {
         .await;
 
     // list_accessible should NOT include the hidden doc
-    let docs = env.repo.list_accessible(AccessLevel::Admin).await.unwrap();
+    let docs = env.repo.list_by_access_levels(None, false).await.unwrap();
     let slugs: Vec<&str> = docs.iter().map(|d| d.slug.as_str()).collect();
 
     assert!(
@@ -207,33 +207,46 @@ async fn access_level_enforcement() {
 
     let public_slug = format!("acl-public-{}", uuid::Uuid::new_v4());
     let dev_slug = format!("acl-dev-{}", uuid::Uuid::new_v4());
-    let admin_slug = format!("acl-admin-{}", uuid::Uuid::new_v4());
+    let arch_slug = format!("acl-arch-{}", uuid::Uuid::new_v4());
 
     env.ingest(&server, &public_slug, "Public Doc", "# Public", "public")
         .await;
     env.ingest(&server, &dev_slug, "Dev Doc", "# Dev", "developer")
         .await;
-    env.ingest(&server, &admin_slug, "Admin Doc", "# Admin", "admin")
+    env.ingest(&server, &arch_slug, "Architect Doc", "# Architect", "architect")
         .await;
 
     // Public access: only sees public docs
-    let public_docs = env.repo.list_accessible(AccessLevel::Public).await.unwrap();
+    let public_docs = env
+        .repo
+        .list_by_access_levels(Some(&["public".to_string()]), false)
+        .await
+        .unwrap();
     let public_slugs: Vec<&str> = public_docs.iter().map(|d| d.slug.as_str()).collect();
     assert!(public_slugs.contains(&public_slug.as_str()));
     assert!(!public_slugs.contains(&dev_slug.as_str()));
-    assert!(!public_slugs.contains(&admin_slug.as_str()));
+    assert!(!public_slugs.contains(&arch_slug.as_str()));
 
-    // Developer access: sees public + developer
-    let dev_docs = env.repo.list_accessible(AccessLevel::Developer).await.unwrap();
+    // Developer access: sees public + internal + developer
+    let dev_allowed = ["public".to_string(), "internal".to_string(), "developer".to_string()];
+    let dev_docs = env
+        .repo
+        .list_by_access_levels(Some(&dev_allowed), false)
+        .await
+        .unwrap();
     let dev_slugs: Vec<&str> = dev_docs.iter().map(|d| d.slug.as_str()).collect();
     assert!(dev_slugs.contains(&public_slug.as_str()));
     assert!(dev_slugs.contains(&dev_slug.as_str()));
-    assert!(!dev_slugs.contains(&admin_slug.as_str()));
+    assert!(!dev_slugs.contains(&arch_slug.as_str()));
 
-    // Admin access: sees everything
-    let admin_docs = env.repo.list_accessible(AccessLevel::Admin).await.unwrap();
+    // Admin access (None = no restriction): sees everything
+    let admin_docs = env
+        .repo
+        .list_by_access_levels(None, false)
+        .await
+        .unwrap();
     let admin_slugs: Vec<&str> = admin_docs.iter().map(|d| d.slug.as_str()).collect();
     assert!(admin_slugs.contains(&public_slug.as_str()));
     assert!(admin_slugs.contains(&dev_slug.as_str()));
-    assert!(admin_slugs.contains(&admin_slug.as_str()));
+    assert!(admin_slugs.contains(&arch_slug.as_str()));
 }

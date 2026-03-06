@@ -1,6 +1,5 @@
 mod common;
 
-use lekton::auth::models::AccessLevel;
 use lekton::db::repository::DocumentRepository;
 use lekton::storage::client::StorageClient;
 
@@ -19,7 +18,7 @@ async fn ingest_creates_document() {
     assert!(doc.is_some(), "Document should exist in MongoDB");
     let doc = doc.unwrap();
     assert_eq!(doc.title, "Test Document");
-    assert_eq!(doc.access_level, AccessLevel::Developer);
+    assert_eq!(doc.access_level, "developer");
     assert_eq!(doc.service_owner, "test-team");
 
     // Verify content is stored in S3
@@ -241,7 +240,7 @@ async fn ingest_indexes_in_meilisearch() {
     // Search should find the document
     let results = env
         .search
-        .search("Unique Searchable", AccessLevel::Public)
+        .search("Unique Searchable", Some(&["public".to_string()]), false)
         .await
         .unwrap();
 

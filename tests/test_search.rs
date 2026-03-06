@@ -1,7 +1,5 @@
 mod common;
 
-use lekton::auth::models::AccessLevel;
-
 #[tokio::test]
 async fn search_returns_matching_documents() {
     let env = common::TestEnv::start().await;
@@ -23,7 +21,7 @@ async fn search_returns_matching_documents() {
     let response = server
         .get("/api/v1/search")
         .add_query_param("q", "Kubernetes Deployment")
-        .add_query_param("access_level", "public")
+        .add_query_param("access_levels", "public")
         .await;
 
     response.assert_status_ok();
@@ -41,9 +39,9 @@ async fn search_respects_access_level_filtering() {
     let server = env.server();
 
     let public_slug = format!("search-rbac-public-{}", uuid::Uuid::new_v4());
-    let admin_slug = format!("search-rbac-admin-{}", uuid::Uuid::new_v4());
+    let arch_slug = format!("search-rbac-arch-{}", uuid::Uuid::new_v4());
 
-    // Ingest a public doc and an admin-only doc with a shared keyword
+    // Ingest a public doc and an architect-only doc with a shared keyword
     let keyword = format!("rbacfilter{}", uuid::Uuid::new_v4().simple());
     env.ingest(
         &server,
@@ -56,10 +54,10 @@ async fn search_respects_access_level_filtering() {
 
     env.ingest(
         &server,
-        &admin_slug,
-        &format!("Admin {keyword}"),
-        &format!("# Admin {keyword}\n\nSecret admin content."),
-        "admin",
+        &arch_slug,
+        &format!("Architect {keyword}"),
+        &format!("# Architect {keyword}\n\nRestricted architect content."),
+        "architect",
     )
     .await;
 
@@ -69,7 +67,7 @@ async fn search_respects_access_level_filtering() {
     let response = server
         .get("/api/v1/search")
         .add_query_param("q", &keyword)
-        .add_query_param("access_level", "public")
+        .add_query_param("access_levels", "public")
         .await;
 
     let results: Vec<serde_json::Value> = response.json();
@@ -78,25 +76,25 @@ async fn search_respects_access_level_filtering() {
         "Public doc should appear in public search"
     );
     assert!(
-        !results.iter().any(|r| r["slug"].as_str() == Some(&admin_slug)),
-        "Admin doc should NOT appear in public search"
+        !results.iter().any(|r| r["slug"].as_str() == Some(&arch_slug)),
+        "Architect doc should NOT appear in public search"
     );
 
-    // Search as admin — should see both
+    // Search with all levels — should see both
     let response = server
         .get("/api/v1/search")
         .add_query_param("q", &keyword)
-        .add_query_param("access_level", "admin")
+        .add_query_param("access_levels", "public,internal,developer,architect")
         .await;
 
     let results: Vec<serde_json::Value> = response.json();
     assert!(
         results.iter().any(|r| r["slug"].as_str() == Some(&public_slug)),
-        "Public doc should appear in admin search"
+        "Public doc should appear in full-access search"
     );
     assert!(
-        results.iter().any(|r| r["slug"].as_str() == Some(&admin_slug)),
-        "Admin doc should appear in admin search"
+        results.iter().any(|r| r["slug"].as_str() == Some(&arch_slug)),
+        "Architect doc should appear in full-access search"
     );
 }
 
@@ -108,7 +106,7 @@ async fn search_returns_empty_for_no_match() {
     let response = server
         .get("/api/v1/search")
         .add_query_param("q", "xyznonexistent99999")
-        .add_query_param("access_level", "admin")
+        .add_query_param("access_levels", "public,internal,developer,architect")
         .await;
 
     response.assert_status_ok();
@@ -138,7 +136,7 @@ async fn search_returns_content_preview() {
     let response = server
         .get("/api/v1/search")
         .add_query_param("q", &keyword)
-        .add_query_param("access_level", "public")
+        .add_query_param("access_levels", "public")
         .await;
 
     let results: Vec<serde_json::Value> = response.json();

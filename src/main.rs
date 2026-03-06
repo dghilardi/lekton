@@ -259,11 +259,15 @@ async fn main() {
         tracing::info!("OAuth2/OIDC auth routes mounted: /auth/login, /auth/callback, /auth/refresh, /auth/logout, /auth/me");
     }
 
-    // Rate limiting: 50 requests burst, replenished at 1 per second
+    // Rate limiting: configurable via RATE_LIMIT_BURST (default 50), replenished at 1 per second
+    let burst_size: u32 = std::env::var("RATE_LIMIT_BURST")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50);
     let governor_conf = Arc::new(
         tower_governor::governor::GovernorConfigBuilder::default()
             .per_second(1)
-            .burst_size(50)
+            .burst_size(burst_size)
             .finish()
             .expect("Failed to build rate limiter configuration"),
     );

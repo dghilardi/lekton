@@ -10,6 +10,8 @@ export async function loginAs(page: Page, username: string, password: string) {
   await page.click('button[type="submit"]');
   // Wait for navigation back to home after successful login
   await page.waitForURL('/', { timeout: 10_000 });
+  // Wait for WASM hydration: user info is loaded via Leptos LocalResource (client-side only)
+  await page.waitForLoadState('networkidle', { timeout: 20_000 });
 }
 
 export async function loginAsDemo(page: Page) {

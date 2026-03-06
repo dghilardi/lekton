@@ -40,6 +40,7 @@ export default defineConfig({
     env: {
       DEMO_MODE: 'true',
       SERVICE_TOKEN: 'test-token',
+      RATE_LIMIT_BURST: '1000',
     },
   },
 });

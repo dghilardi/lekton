@@ -3,6 +3,7 @@ import { test, expect } from '@playwright/test';
 test.describe('Search', () => {
   test('Ctrl+K opens search modal', async ({ page }) => {
     await page.goto('/');
+    await page.waitForLoadState('networkidle');
     await page.keyboard.press('Control+k');
     // Search modal should appear with input
     const searchInput = page.locator('input[placeholder*="Search"]');
@@ -12,6 +13,7 @@ test.describe('Search', () => {
 
   test('search returns results', async ({ page }) => {
     await page.goto('/');
+    await page.waitForLoadState('networkidle');
     await page.keyboard.press('Control+k');
     const searchInput = page.locator('input[placeholder*="Search"]');
     await searchInput.fill('Getting Started');
@@ -23,6 +25,7 @@ test.describe('Search', () => {
 
   test('clicking search result navigates to document', async ({ page }) => {
     await page.goto('/');
+    await page.waitForLoadState('networkidle');
     await page.keyboard.press('Control+k');
     const searchInput = page.locator('input[placeholder*="Search"]');
     await searchInput.fill('Architecture');
@@ -35,6 +38,7 @@ test.describe('Search', () => {
 
   test('Escape closes search modal', async ({ page }) => {
     await page.goto('/');
+    await page.waitForLoadState('networkidle');
     await page.keyboard.press('Control+k');
     const searchInput = page.locator('input[placeholder*="Search"]');
     await expect(searchInput).toBeVisible();

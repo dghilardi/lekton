@@ -87,6 +87,10 @@ pub trait AuthProvider: Send + Sync {
 
 /// Decode a JWT payload (base64url) into a JSON value without verifying the
 /// signature.  Used to extract claims from an OIDC `id_token`.
+///
+/// Signature verification is intentionally omitted: the id_token arrives via
+/// TLS-protected back-channel (token endpoint response), not from the browser,
+/// so transport-level authenticity is guaranteed.  See module-level docs.
 fn decode_jwt_payload(token: &str) -> Result<serde_json::Value, AppError> {
     use base64::Engine;
     let parts: Vec<&str> = token.split('.').collect();

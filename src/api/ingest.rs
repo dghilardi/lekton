@@ -106,7 +106,10 @@ pub async fn process_ingest(
 
     repo.create_or_update(doc).await?;
 
-    // 10. Update backlinks on referenced documents
+    // 10. Update backlinks on referenced documents.
+    //     Note: this is not atomic with the create_or_update above.
+    //     Both operations are idempotent, so partial failure leaves
+    //     consistent (if stale) state that self-heals on re-ingest.
     repo.update_backlinks(&request.slug, &old_links, &links_out)
         .await?;
 

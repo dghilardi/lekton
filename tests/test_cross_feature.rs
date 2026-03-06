@@ -35,8 +35,7 @@ async fn ingest_with_custom_access_level_then_search() {
         .add_query_param("access_levels", "secret")
         .await;
 
-    let body: serde_json::Value = response.json();
-    let hits = body["hits"].as_array().unwrap();
+    let hits: Vec<serde_json::Value> = response.json();
     assert!(!hits.is_empty(), "admin should find the secret doc");
 
     // Search with only "public" access level should NOT find it
@@ -46,8 +45,7 @@ async fn ingest_with_custom_access_level_then_search() {
         .add_query_param("access_levels", "public")
         .await;
 
-    let body: serde_json::Value = response.json();
-    let hits = body["hits"].as_array().unwrap();
+    let hits: Vec<serde_json::Value> = response.json();
     assert!(hits.is_empty(), "public-only search should not find secret doc");
 }
 
@@ -99,8 +97,7 @@ async fn admin_creates_level_assigns_permission_user_sees_doc() {
         .add_query_param("access_levels", "team-alpha")
         .await;
 
-    let body: serde_json::Value = response.json();
-    let hits = body["hits"].as_array().unwrap();
+    let hits: Vec<serde_json::Value> = response.json();
     assert!(!hits.is_empty(), "should find doc with correct access level");
 
     // 5. Verify the permission was persisted
@@ -171,8 +168,7 @@ async fn ingest_doc_then_update_content() {
         .add_query_param("access_levels", "public")
         .await;
 
-    let body: serde_json::Value = response.json();
-    let hits = body["hits"].as_array().unwrap();
+    let hits: Vec<serde_json::Value> = response.json();
     assert!(!hits.is_empty(), "search should find the updated content");
 }
 

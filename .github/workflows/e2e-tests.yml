@@ -35,20 +35,6 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
-      minio:
-        image: minio/minio:latest
-        ports:
-          - 9000:9000
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-        options: >-
-          --health-cmd "mc ready local || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-          --entrypoint "minio server /data"
-
       meilisearch:
         image: getmeili/meilisearch:v1.13.3
         ports:
@@ -85,6 +71,23 @@ jobs:
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
+
+      - name: Start MinIO
+        run: |
+          curl -fsSL https://dl.min.io/server/minio/release/linux-amd64/minio \
+            -o /usr/local/bin/minio
+          chmod +x /usr/local/bin/minio
+          mkdir -p /tmp/minio-data
+          MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin \
+            minio server /tmp/minio-data --address :9000 &
+          # Wait for MinIO to be ready
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:9000/minio/health/live; then
+              echo "MinIO is ready"
+              break
+            fi
+            sleep 1
+          done
 
       - name: Create S3 bucket
         run: |

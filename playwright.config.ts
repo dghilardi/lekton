@@ -35,7 +35,7 @@ export default defineConfig({
   webServer: {
     command: 'cargo leptos serve',
     url: 'http://localhost:3000',
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: true,
     timeout: 120_000,
     env: {
       DEMO_MODE: 'true',

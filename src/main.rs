@@ -158,7 +158,28 @@ async fn main() {
     let routes = generate_route_list(App);
 
     // Build the Axum router
+    //
+    // Upload endpoints get a 50 MB body limit; all other routes use the
+    // default 2 MB limit provided by Axum.
+    let upload_routes = Router::new()
+        .route(
+            "/api/v1/upload-image",
+            axum::routing::post(api::upload::upload_image_handler),
+        )
+        .route(
+            "/api/v1/editor/upload-asset",
+            axum::routing::post(api::assets::editor_upload_asset_handler),
+        )
+        .route(
+            "/api/v1/assets/{*key}",
+            axum::routing::put(api::assets::upload_asset_handler)
+                .get(api::assets::serve_asset_handler)
+                .delete(api::assets::delete_asset_handler),
+        )
+        .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024)); // 50 MB
+
     let mut app = Router::new()
+        .merge(upload_routes)
         // API routes
         .route(
             "/api/v1/ingest",
@@ -167,10 +188,6 @@ async fn main() {
         .route(
             "/api/v1/search",
             axum::routing::get(api::search::search_handler),
-        )
-        .route(
-            "/api/v1/upload-image",
-            axum::routing::post(api::upload::upload_image_handler),
         )
         .route(
             "/api/v1/image/{filename}",
@@ -190,18 +207,8 @@ async fn main() {
             axum::routing::get(api::schemas::get_schema_version_handler),
         )
         .route(
-            "/api/v1/editor/upload-asset",
-            axum::routing::post(api::assets::editor_upload_asset_handler),
-        )
-        .route(
             "/api/v1/assets",
             axum::routing::get(api::assets::list_assets_handler),
-        )
-        .route(
-            "/api/v1/assets/{*key}",
-            axum::routing::put(api::assets::upload_asset_handler)
-                .get(api::assets::serve_asset_handler)
-                .delete(api::assets::delete_asset_handler),
         )
         // Admin API
         .route(

@@ -167,14 +167,16 @@ mod tests {
 
     #[test]
     fn test_document_defaults() {
-        // Verify that new fields have sensible defaults when deserializing older documents
+        // Verify that new fields have sensible defaults when deserializing older documents.
+        // last_updated uses BSON DateTime format (extended JSON) because of the
+        // `chrono_datetime_as_bson_datetime` serde helper.
         let json = r###"{
             "slug": "getting-started",
             "title": "Getting Started",
             "s3_key": "docs/getting-started.md",
             "access_level": "public",
             "service_owner": "docs-team",
-            "last_updated": "2024-01-01T00:00:00Z",
+            "last_updated": { "$date": { "$numberLong": "1704067200000" } },
             "tags": [],
             "links_out": [],
             "backlinks": []

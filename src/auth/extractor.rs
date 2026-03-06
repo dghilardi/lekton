@@ -102,29 +102,39 @@ fn cookies_secure() -> bool {
 }
 
 /// Build the access-token httpOnly cookie.
+///
+/// Uses `SameSite::Strict` for stronger CSRF protection — this cookie is only
+/// sent on same-site requests, which is fine for API calls from our own frontend.
 pub fn access_token_cookie(value: String, ttl_secs: u64) -> axum_extra::extract::cookie::Cookie<'static> {
     axum_extra::extract::cookie::Cookie::build((ACCESS_TOKEN_COOKIE, value))
         .path("/")
         .http_only(true)
         .secure(cookies_secure())
-        .same_site(axum_extra::extract::cookie::SameSite::Lax)
+        .same_site(axum_extra::extract::cookie::SameSite::Strict)
         .max_age(time::Duration::seconds(ttl_secs as i64))
         .build()
 }
 
 /// Build the refresh-token httpOnly cookie (path restricted to `/auth/refresh`
 /// to limit exposure).
+///
+/// Uses `SameSite::Strict` — the refresh endpoint is only called from our own
+/// frontend, never from a cross-site redirect.
 pub fn refresh_token_cookie(value: String, ttl_days: i64) -> axum_extra::extract::cookie::Cookie<'static> {
     axum_extra::extract::cookie::Cookie::build((REFRESH_TOKEN_COOKIE, value))
         .path("/auth/refresh")
         .http_only(true)
         .secure(cookies_secure())
-        .same_site(axum_extra::extract::cookie::SameSite::Lax)
+        .same_site(axum_extra::extract::cookie::SameSite::Strict)
         .max_age(time::Duration::days(ttl_days))
         .build()
 }
 
 /// Build the short-lived auth flow state cookie.
+///
+/// Must remain `SameSite::Lax` — after the OAuth provider redirects back to
+/// `/auth/callback`, the browser needs to send this cookie on the cross-site
+/// navigation.
 pub fn auth_state_cookie(value: String) -> axum_extra::extract::cookie::Cookie<'static> {
     axum_extra::extract::cookie::Cookie::build((AUTH_STATE_COOKIE, value))
         .path("/auth/callback")

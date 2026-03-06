@@ -246,7 +246,7 @@ pub async fn logout_user() -> Result<(), ServerFnError> {
     let response = expect_context::<ResponseOptions>();
 
     let clear_cookie = |name: &str, path: &str| -> String {
-        format!("{name}=; Path={path}; HttpOnly; SameSite=Lax; Max-Age=0")
+        format!("{name}=; Path={path}; HttpOnly; SameSite=Strict; Max-Age=0")
     };
 
     let set_clear_cookie = |name: &str, path: &str| -> Result<(), ServerFnError> {

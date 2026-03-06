@@ -94,7 +94,7 @@ pub async fn login_handler(
         .path("/")
         .http_only(true)
         .secure(secure)
-        .same_site(axum_extra::extract::cookie::SameSite::Lax)
+        .same_site(axum_extra::extract::cookie::SameSite::Strict)
         .build();
 
     let jar = jar.add(cookie);

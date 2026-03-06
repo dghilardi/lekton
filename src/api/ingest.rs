@@ -1,5 +1,6 @@
 use chrono::Utc;
 
+use crate::db::access_level_repository::AccessLevelRepository;
 use crate::db::models::{Document, IngestRequest, IngestResponse};
 use crate::db::repository::DocumentRepository;
 use crate::error::AppError;
@@ -15,6 +16,7 @@ pub async fn process_ingest(
     repo: &dyn DocumentRepository,
     storage: &dyn StorageClient,
     search: Option<&dyn SearchService>,
+    access_level_repo: &dyn AccessLevelRepository,
     request: IngestRequest,
     expected_token: &str,
 ) -> Result<IngestResponse, AppError> {
@@ -38,9 +40,7 @@ pub async fn process_ingest(
         ));
     }
 
-    // 3. Validate the access_level name is non-empty.
-    //    Existence against the dynamic level list is checked at the service layer;
-    //    here we only reject obviously invalid input.
+    // 3. Validate the access_level name exists in the registry.
     if request.access_level.trim().is_empty() {
         return Err(AppError::BadRequest(
             "Access level cannot be empty".into(),
@@ -48,6 +48,11 @@ pub async fn process_ingest(
     }
     // Normalise to lowercase so "Public" and "public" are the same.
     let access_level = request.access_level.to_lowercase();
+    if !access_level_repo.exists(&access_level).await? {
+        return Err(AppError::BadRequest(format!(
+            "Unknown access level: '{access_level}'"
+        )));
+    }
 
     // 4. Extract internal links from content
     let links_out = extract_internal_links(&request.content);
@@ -144,6 +149,7 @@ pub async fn ingest_handler(
         state.document_repo.as_ref(),
         state.storage_client.as_ref(),
         search,
+        state.access_level_repo.as_ref(),
         request,
         &state.service_token,
     )
@@ -158,7 +164,23 @@ mod tests {
     use async_trait::async_trait;
     use std::sync::Mutex;
 
+    use crate::db::access_level_repository::AccessLevelRepository;
+    use crate::db::auth_models::AccessLevelEntity;
     use crate::test_utils::MockStorage;
+
+    /// A mock access level repo that accepts any non-empty level name.
+    struct MockAccessLevelRepo;
+
+    #[async_trait]
+    impl AccessLevelRepository for MockAccessLevelRepo {
+        async fn create(&self, _level: AccessLevelEntity) -> Result<(), AppError> { Ok(()) }
+        async fn find_by_name(&self, _name: &str) -> Result<Option<AccessLevelEntity>, AppError> { Ok(None) }
+        async fn list_all(&self) -> Result<Vec<AccessLevelEntity>, AppError> { Ok(vec![]) }
+        async fn update(&self, _level: AccessLevelEntity) -> Result<(), AppError> { Ok(()) }
+        async fn delete(&self, _name: &str) -> Result<(), AppError> { Ok(()) }
+        async fn exists(&self, _name: &str) -> Result<bool, AppError> { Ok(true) }
+        async fn seed_defaults(&self) -> Result<(), AppError> { Ok(()) }
+    }
 
     struct MockRepo {
         documents: Mutex<Vec<Document>>,
@@ -270,7 +292,7 @@ mod tests {
         let repo = MockRepo::new();
         let request = make_request("valid-token", "docs/hello");
 
-        let result = process_ingest(&repo, &storage, None, request, "valid-token").await;
+        let result = process_ingest(&repo, &storage, None, &MockAccessLevelRepo, request, "valid-token").await;
         assert!(result.is_ok());
 
         let response = result.unwrap();
@@ -306,7 +328,7 @@ mod tests {
         let mut request = make_request("valid-token", "docs/wip");
         request.is_draft = true;
 
-        process_ingest(&repo, &storage, None, request, "valid-token")
+        process_ingest(&repo, &storage, None, &MockAccessLevelRepo, request, "valid-token")
             .await
             .unwrap();
 
@@ -320,7 +342,7 @@ mod tests {
         let repo = MockRepo::new();
         let request = make_request("wrong-token", "docs/hello");
 
-        let result = process_ingest(&repo, &storage, None, request, "valid-token").await;
+        let result = process_ingest(&repo, &storage, None, &MockAccessLevelRepo, request, "valid-token").await;
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::Auth(msg) => assert!(msg.contains("Invalid service token")),
@@ -334,7 +356,7 @@ mod tests {
         let repo = MockRepo::new();
         let request = make_request("valid-token", "");
 
-        let result = process_ingest(&repo, &storage, None, request, "valid-token").await;
+        let result = process_ingest(&repo, &storage, None, &MockAccessLevelRepo, request, "valid-token").await;
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::BadRequest(msg) => assert!(msg.contains("Slug cannot be empty")),
@@ -349,7 +371,7 @@ mod tests {
         let mut request = make_request("valid-token", "docs/hello");
         request.access_level = "  ".to_string();
 
-        let result = process_ingest(&repo, &storage, None, request, "valid-token").await;
+        let result = process_ingest(&repo, &storage, None, &MockAccessLevelRepo, request, "valid-token").await;
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::BadRequest(msg) => assert!(msg.contains("Access level cannot be empty")),
@@ -364,7 +386,7 @@ mod tests {
         let mut request = make_request("valid-token", "docs/hello");
         request.access_level = "Internal".to_string();
 
-        process_ingest(&repo, &storage, None, request, "valid-token")
+        process_ingest(&repo, &storage, None, &MockAccessLevelRepo, request, "valid-token")
             .await
             .unwrap();
 
@@ -379,14 +401,14 @@ mod tests {
 
         // First ingest
         let request1 = make_request("valid-token", "docs/hello");
-        process_ingest(&repo, &storage, None, request1, "valid-token")
+        process_ingest(&repo, &storage, None, &MockAccessLevelRepo, request1, "valid-token")
             .await
             .unwrap();
 
         // Second ingest (update)
         let mut request2 = make_request("valid-token", "docs/hello");
         request2.title = "Updated Doc".to_string();
-        process_ingest(&repo, &storage, None, request2, "valid-token")
+        process_ingest(&repo, &storage, None, &MockAccessLevelRepo, request2, "valid-token")
             .await
             .unwrap();
 
@@ -405,7 +427,7 @@ mod tests {
         let repo = MockRepo::new();
 
         let request = make_request("valid-token", "../etc/passwd");
-        let result = process_ingest(&repo, &storage, None, request, "valid-token").await;
+        let result = process_ingest(&repo, &storage, None, &MockAccessLevelRepo, request, "valid-token").await;
         assert!(result.is_err());
     }
 
@@ -415,7 +437,7 @@ mod tests {
         let repo = MockRepo::new();
 
         let request = make_request("valid-token", "/absolute/path");
-        let result = process_ingest(&repo, &storage, None, request, "valid-token").await;
+        let result = process_ingest(&repo, &storage, None, &MockAccessLevelRepo, request, "valid-token").await;
         assert!(result.is_err());
     }
 }

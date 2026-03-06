@@ -86,9 +86,14 @@ pub async fn login_handler(
     let user_json = serde_json::to_string(&user)
         .map_err(|e| AppError::Internal(format!("Failed to serialize user: {}", e)))?;
 
+    let secure = !std::env::var("INSECURE_COOKIES")
+        .map(|v| v == "true" || v == "1" || v == "yes")
+        .unwrap_or(false);
+
     let cookie = axum_extra::extract::cookie::Cookie::build(("lekton_demo_user", user_json))
         .path("/")
         .http_only(true)
+        .secure(secure)
         .same_site(axum_extra::extract::cookie::SameSite::Lax)
         .build();
 

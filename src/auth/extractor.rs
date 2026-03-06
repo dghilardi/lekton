@@ -94,11 +94,19 @@ where
 
 // ── Cookie builders ───────────────────────────────────────────────────────────
 
+/// Returns `true` unless `INSECURE_COOKIES=true` is set (for local dev over HTTP).
+fn cookies_secure() -> bool {
+    !std::env::var("INSECURE_COOKIES")
+        .map(|v| v == "true" || v == "1" || v == "yes")
+        .unwrap_or(false)
+}
+
 /// Build the access-token httpOnly cookie.
 pub fn access_token_cookie(value: String, ttl_secs: u64) -> axum_extra::extract::cookie::Cookie<'static> {
     axum_extra::extract::cookie::Cookie::build((ACCESS_TOKEN_COOKIE, value))
         .path("/")
         .http_only(true)
+        .secure(cookies_secure())
         .same_site(axum_extra::extract::cookie::SameSite::Lax)
         .max_age(time::Duration::seconds(ttl_secs as i64))
         .build()
@@ -110,6 +118,7 @@ pub fn refresh_token_cookie(value: String, ttl_days: i64) -> axum_extra::extract
     axum_extra::extract::cookie::Cookie::build((REFRESH_TOKEN_COOKIE, value))
         .path("/auth/refresh")
         .http_only(true)
+        .secure(cookies_secure())
         .same_site(axum_extra::extract::cookie::SameSite::Lax)
         .max_age(time::Duration::days(ttl_days))
         .build()
@@ -120,6 +129,7 @@ pub fn auth_state_cookie(value: String) -> axum_extra::extract::cookie::Cookie<'
     axum_extra::extract::cookie::Cookie::build((AUTH_STATE_COOKIE, value))
         .path("/auth/callback")
         .http_only(true)
+        .secure(cookies_secure())
         .same_site(axum_extra::extract::cookie::SameSite::Lax)
         .max_age(time::Duration::minutes(10))
         .build()

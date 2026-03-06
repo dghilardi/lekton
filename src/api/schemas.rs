@@ -311,39 +311,7 @@ mod tests {
     use async_trait::async_trait;
     use std::sync::Mutex;
 
-    // -- Mock implementations --
-
-    struct MockStorage {
-        objects: Mutex<std::collections::HashMap<String, Vec<u8>>>,
-    }
-
-    impl MockStorage {
-        fn new() -> Self {
-            Self {
-                objects: Mutex::new(std::collections::HashMap::new()),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl StorageClient for MockStorage {
-        async fn put_object(&self, key: &str, content: Vec<u8>) -> Result<(), AppError> {
-            self.objects
-                .lock()
-                .unwrap()
-                .insert(key.to_string(), content);
-            Ok(())
-        }
-
-        async fn get_object(&self, key: &str) -> Result<Option<Vec<u8>>, AppError> {
-            Ok(self.objects.lock().unwrap().get(key).cloned())
-        }
-
-        async fn delete_object(&self, key: &str) -> Result<(), AppError> {
-            self.objects.lock().unwrap().remove(key);
-            Ok(())
-        }
-    }
+    use crate::test_utils::MockStorage;
 
     struct MockSchemaRepo {
         schemas: Mutex<Vec<Schema>>,

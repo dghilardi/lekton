@@ -10,6 +10,8 @@ pub mod rendering;
 pub mod schema;
 pub mod search;
 pub mod storage;
+#[cfg(test)]
+pub mod test_utils;
 
 /// Client-side hydration entry point.
 ///

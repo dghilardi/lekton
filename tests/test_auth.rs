@@ -37,7 +37,7 @@ async fn login_returns_user_info() {
     let user = &body["user"];
     assert_eq!(user["user_id"].as_str(), Some("demo-demo"));
     assert_eq!(user["email"].as_str(), Some("demo@demo.lekton.dev"));
-    assert_eq!(user["access_level"].as_str(), Some("Developer"));
+    assert_eq!(user["is_admin"].as_bool(), Some(false));
 }
 
 #[tokio::test]
@@ -76,7 +76,7 @@ async fn me_with_valid_cookie() {
 
     let user: serde_json::Value = response.json();
     assert_eq!(user["user_id"].as_str(), Some("demo-admin"));
-    assert_eq!(user["access_level"].as_str(), Some("Admin"));
+    assert_eq!(user["is_admin"].as_bool(), Some(true));
 }
 
 #[tokio::test]
@@ -134,13 +134,15 @@ async fn full_auth_flow() {
         .await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
-    assert_eq!(body["user"]["access_level"].as_str(), Some("Public"));
+    assert_eq!(body["user"]["user_id"].as_str(), Some("demo-public"));
+    assert_eq!(body["user"]["is_admin"].as_bool(), Some(false));
 
     // 3. Verify session
     let response = server.get("/api/auth/me").await;
     response.assert_status_ok();
     let user: serde_json::Value = response.json();
-    assert_eq!(user["access_level"].as_str(), Some("Public"));
+    assert_eq!(user["user_id"].as_str(), Some("demo-public"));
+    assert_eq!(user["is_admin"].as_bool(), Some(false));
 
     // 4. Logout
     server.post("/api/auth/logout").await;

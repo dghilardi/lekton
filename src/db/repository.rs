@@ -74,8 +74,7 @@ impl DocumentRepository for MongoDocumentRepository {
         self.collection
             .replace_one(filter, &doc)
             .with_options(options)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
 
         Ok(())
     }
@@ -83,10 +82,9 @@ impl DocumentRepository for MongoDocumentRepository {
     async fn find_by_slug(&self, slug: &str) -> Result<Option<Document>, AppError> {
         use mongodb::bson::doc;
 
-        self.collection
+        Ok(self.collection
             .find_one(doc! { "slug": slug })
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .await?)
     }
 
     async fn list_by_access_levels(
@@ -137,14 +135,12 @@ impl DocumentRepository for MongoDocumentRepository {
             .collection
             .find(filter)
             .with_options(options)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
 
         let mut documents = Vec::new();
         while let Some(document) = cursor
             .try_next()
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?
+            .await?
         {
             documents.push(document);
         }
@@ -178,8 +174,7 @@ impl DocumentRepository for MongoDocumentRepository {
                     doc! { "slug": slug },
                     doc! { "$pull": { "backlinks": source_slug } },
                 )
-                .await
-                .map_err(|e| AppError::Database(e.to_string()))?;
+                .await?;
         }
 
         for slug in added {
@@ -188,8 +183,7 @@ impl DocumentRepository for MongoDocumentRepository {
                     doc! { "slug": slug },
                     doc! { "$addToSet": { "backlinks": source_slug } },
                 )
-                .await
-                .map_err(|e| AppError::Database(e.to_string()))?;
+                .await?;
         }
 
         Ok(())

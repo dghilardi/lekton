@@ -52,8 +52,7 @@ impl AssetRepository for MongoAssetRepository {
         self.collection
             .replace_one(filter, &asset)
             .with_options(options)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
 
         Ok(())
     }
@@ -61,10 +60,9 @@ impl AssetRepository for MongoAssetRepository {
     async fn find_by_key(&self, key: &str) -> Result<Option<Asset>, AppError> {
         use mongodb::bson::doc;
 
-        self.collection
+        Ok(self.collection
             .find_one(doc! { "key": key })
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .await?)
     }
 
     async fn list_all(&self) -> Result<Vec<Asset>, AppError> {
@@ -79,15 +77,13 @@ impl AssetRepository for MongoAssetRepository {
             .collection
             .find(doc! {})
             .with_options(options)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
 
         let mut assets = Vec::new();
         use futures::TryStreamExt;
         while let Some(asset) = cursor
             .try_next()
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?
+            .await?
         {
             assets.push(asset);
         }
@@ -123,15 +119,13 @@ impl AssetRepository for MongoAssetRepository {
             .collection
             .find(doc! { "key": regex })
             .with_options(options)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
 
         let mut assets = Vec::new();
         use futures::TryStreamExt;
         while let Some(asset) = cursor
             .try_next()
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?
+            .await?
         {
             assets.push(asset);
         }
@@ -145,8 +139,7 @@ impl AssetRepository for MongoAssetRepository {
         let result = self
             .collection
             .delete_one(doc! { "key": key })
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
 
         if result.deleted_count == 0 {
             return Err(AppError::NotFound(format!(

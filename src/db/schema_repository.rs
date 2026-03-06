@@ -57,8 +57,7 @@ impl SchemaRepository for MongoSchemaRepository {
         self.collection
             .replace_one(filter, &schema)
             .with_options(options)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
 
         Ok(())
     }
@@ -66,10 +65,9 @@ impl SchemaRepository for MongoSchemaRepository {
     async fn find_by_name(&self, name: &str) -> Result<Option<Schema>, AppError> {
         use mongodb::bson::doc;
 
-        self.collection
+        Ok(self.collection
             .find_one(doc! { "name": name })
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .await?)
     }
 
     async fn list_all(&self) -> Result<Vec<Schema>, AppError> {
@@ -84,15 +82,13 @@ impl SchemaRepository for MongoSchemaRepository {
             .collection
             .find(doc! {})
             .with_options(options)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
 
         let mut schemas = Vec::new();
         use futures::TryStreamExt;
         while let Some(schema) = cursor
             .try_next()
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?
+            .await?
         {
             schemas.push(schema);
         }
@@ -129,15 +125,14 @@ impl SchemaRepository for MongoSchemaRepository {
         }
 
         let version_bson =
-            to_bson(&version).map_err(|e| AppError::Database(e.to_string()))?;
+            to_bson(&version)?;
 
         self.collection
             .update_one(
                 doc! { "name": schema_name },
                 doc! { "$push": { "versions": version_bson } },
             )
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
 
         Ok(())
     }
@@ -148,8 +143,7 @@ impl SchemaRepository for MongoSchemaRepository {
         let result = self
             .collection
             .delete_one(doc! { "name": name })
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
 
         if result.deleted_count == 0 {
             return Err(AppError::NotFound(format!(

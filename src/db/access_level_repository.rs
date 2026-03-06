@@ -73,8 +73,7 @@ impl AccessLevelRepository for MongoAccessLevelRepository {
 
         self.collection
             .insert_one(&level)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
 
         Ok(())
     }
@@ -82,10 +81,9 @@ impl AccessLevelRepository for MongoAccessLevelRepository {
     async fn find_by_name(&self, name: &str) -> Result<Option<AccessLevelEntity>, AppError> {
         use mongodb::bson::doc;
 
-        self.collection
+        Ok(self.collection
             .find_one(doc! { "name": name })
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .await?)
     }
 
     async fn list_all(&self) -> Result<Vec<AccessLevelEntity>, AppError> {
@@ -100,14 +98,12 @@ impl AccessLevelRepository for MongoAccessLevelRepository {
             .collection
             .find(mongodb::bson::doc! {})
             .with_options(options)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
 
         let mut levels = Vec::new();
         while let Some(level) = cursor
             .try_next()
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?
+            .await?
         {
             levels.push(level);
         }
@@ -125,8 +121,7 @@ impl AccessLevelRepository for MongoAccessLevelRepository {
             .collection
             .replace_one(filter, &level)
             .with_options(options)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
 
         if result.matched_count == 0 {
             return Err(AppError::NotFound(format!(
@@ -155,8 +150,7 @@ impl AccessLevelRepository for MongoAccessLevelRepository {
 
         self.collection
             .delete_one(doc! { "name": name })
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
 
         Ok(())
     }
@@ -167,8 +161,7 @@ impl AccessLevelRepository for MongoAccessLevelRepository {
         let count = self
             .collection
             .count_documents(doc! { "name": name })
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
 
         Ok(count > 0)
     }
@@ -179,8 +172,7 @@ impl AccessLevelRepository for MongoAccessLevelRepository {
         let count = self
             .collection
             .count_documents(doc! {})
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
 
         if count > 0 {
             return Ok(());
@@ -197,8 +189,7 @@ impl AccessLevelRepository for MongoAccessLevelRepository {
             };
             self.collection
                 .insert_one(&level)
-                .await
-                .map_err(|e| AppError::Database(e.to_string()))?;
+                .await?;
         }
 
         Ok(())

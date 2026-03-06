@@ -97,25 +97,22 @@ impl UserRepository for MongoUserRepository {
     async fn create_user(&self, user: User) -> Result<(), AppError> {
         self.users
             .insert_one(&user)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
         Ok(())
     }
 
     async fn find_user_by_id(&self, id: &str) -> Result<Option<User>, AppError> {
         use mongodb::bson::doc;
-        self.users
+        Ok(self.users
             .find_one(doc! { "id": id })
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .await?)
     }
 
     async fn find_user_by_email(&self, email: &str) -> Result<Option<User>, AppError> {
         use mongodb::bson::doc;
-        self.users
+        Ok(self.users
             .find_one(doc! { "email": email })
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .await?)
     }
 
     async fn find_user_by_provider_sub(
@@ -124,10 +121,9 @@ impl UserRepository for MongoUserRepository {
         provider_type: &str,
     ) -> Result<Option<User>, AppError> {
         use mongodb::bson::doc;
-        self.users
+        Ok(self.users
             .find_one(doc! { "provider_sub": sub, "provider_type": provider_type })
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .await?)
     }
 
     async fn touch_last_login(&self, user_id: &str) -> Result<(), AppError> {
@@ -139,8 +135,7 @@ impl UserRepository for MongoUserRepository {
                 doc! { "id": user_id },
                 doc! { "$set": { "last_login_at": now } },
             )
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
         Ok(())
     }
 
@@ -150,14 +145,12 @@ impl UserRepository for MongoUserRepository {
         let mut cursor = self
             .users
             .find(mongodb::bson::doc! {})
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
 
         let mut users = Vec::new();
         while let Some(u) = cursor
             .try_next()
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?
+            .await?
         {
             users.push(u);
         }
@@ -179,8 +172,7 @@ impl UserRepository for MongoUserRepository {
         self.permissions
             .replace_one(filter, &perm)
             .with_options(options)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
         Ok(())
     }
 
@@ -191,14 +183,12 @@ impl UserRepository for MongoUserRepository {
         let mut cursor = self
             .permissions
             .find(doc! { "user_id": user_id })
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
 
         let mut perms = Vec::new();
         while let Some(p) = cursor
             .try_next()
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?
+            .await?
         {
             perms.push(p);
         }
@@ -214,8 +204,7 @@ impl UserRepository for MongoUserRepository {
 
         self.permissions
             .delete_one(doc! { "user_id": user_id, "access_level_name": access_level_name })
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
         Ok(())
     }
 
@@ -224,8 +213,7 @@ impl UserRepository for MongoUserRepository {
     async fn create_refresh_token(&self, token: RefreshToken) -> Result<(), AppError> {
         self.refresh_tokens
             .insert_one(&token)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
         Ok(())
     }
 
@@ -235,10 +223,9 @@ impl UserRepository for MongoUserRepository {
     ) -> Result<Option<RefreshToken>, AppError> {
         use mongodb::bson::doc;
 
-        self.refresh_tokens
+        Ok(self.refresh_tokens
             .find_one(doc! { "token_hash": hash })
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .await?)
     }
 
     async fn revoke_refresh_token(&self, token_id: &str) -> Result<(), AppError> {
@@ -250,8 +237,7 @@ impl UserRepository for MongoUserRepository {
                 doc! { "id": token_id },
                 doc! { "$set": { "revoked_at": now } },
             )
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
         Ok(())
     }
 
@@ -264,8 +250,7 @@ impl UserRepository for MongoUserRepository {
                 doc! { "user_id": user_id, "revoked_at": { "$exists": false } },
                 doc! { "$set": { "revoked_at": now } },
             )
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
         Ok(())
     }
 }

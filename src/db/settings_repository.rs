@@ -56,8 +56,7 @@ impl SettingsRepository for MongoSettingsRepository {
         let result = self
             .collection
             .find_one(doc! { "key": "global" })
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
 
         Ok(result.unwrap_or_default())
     }
@@ -74,8 +73,7 @@ impl SettingsRepository for MongoSettingsRepository {
                 doc! { "$set": { "key": "global", "custom_css": css } },
             )
             .with_options(options)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
 
         Ok(())
     }

@@ -6,6 +6,37 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+/// Custom serde helper for Option<DateTime<Utc>> with BSON DateTime format.
+mod option_bson_datetime {
+    use chrono::{DateTime, Utc};
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S>(date: &Option<DateTime<Utc>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match date {
+            Some(dt) => {
+                bson::serde_helpers::chrono_datetime_as_bson_datetime::serialize(dt, serializer)
+            }
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<DateTime<Utc>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct Helper(
+            #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")] DateTime<Utc>,
+        );
+
+        use serde::Deserialize;
+        Option::<Helper>::deserialize(deserializer).map(|opt| opt.map(|h| h.0))
+    }
+}
+
 /// A configurable content access level stored in MongoDB.
 ///
 /// Unlike the old hardcoded enum, access levels are fully dynamic: admins can
@@ -25,6 +56,7 @@ pub struct AccessLevelEntity {
     /// System levels cannot be deleted (protects `"public"`).
     pub is_system: bool,
     /// Creation timestamp.
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub created_at: DateTime<Utc>,
 }
 
@@ -44,8 +76,14 @@ pub struct User {
     /// Full administrative access bypasses all per-level permission checks.
     pub is_admin: bool,
     /// When this user record was first created (first login).
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub created_at: DateTime<Utc>,
     /// Updated on every successful authentication.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "option_bson_datetime"
+    )]
     pub last_login_at: Option<DateTime<Utc>>,
 }
 
@@ -84,10 +122,17 @@ pub struct RefreshToken {
     /// SHA-256 (base64url, no padding) of the raw token string.
     pub token_hash: String,
     /// Token expiry; after this instant the token is no longer valid.
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub expires_at: DateTime<Utc>,
     /// Set when the token is explicitly revoked via logout.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "option_bson_datetime"
+    )]
     pub revoked_at: Option<DateTime<Utc>>,
     /// When the token was issued.
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub created_at: DateTime<Utc>,
 }
 

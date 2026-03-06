@@ -20,6 +20,7 @@ pub struct Document {
     /// The team/service that owns this document.
     pub service_owner: String,
     /// Timestamp of the last update.
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub last_updated: DateTime<Utc>,
     /// Tags for categorization and search.
     pub tags: Vec<String>,
@@ -79,6 +80,7 @@ pub struct Asset {
     /// S3 key where the asset content is stored.
     pub s3_key: String,
     /// When the asset was last uploaded or replaced.
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub uploaded_at: DateTime<Utc>,
     /// Identifier of who uploaded the asset.
     pub uploaded_by: String,

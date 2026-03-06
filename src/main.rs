@@ -278,6 +278,30 @@ async fn main() {
         }
     });
 
+    // CORS: same-origin by default; set CORS_ALLOWED_ORIGINS for cross-origin access.
+    let cors = match std::env::var("CORS_ALLOWED_ORIGINS") {
+        Ok(origins) => {
+            let allowed: Vec<_> = origins
+                .split(',')
+                .filter_map(|s| s.trim().parse().ok())
+                .collect();
+            tower_http::cors::CorsLayer::new()
+                .allow_origin(allowed)
+                .allow_methods([
+                    axum::http::Method::GET,
+                    axum::http::Method::POST,
+                    axum::http::Method::PUT,
+                    axum::http::Method::DELETE,
+                ])
+                .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::AUTHORIZATION])
+                .allow_credentials(true)
+        }
+        Err(_) => {
+            // Default: no CORS headers (same-origin only)
+            tower_http::cors::CorsLayer::new()
+        }
+    };
+
     let app = app
         // Leptos SSR routes
         .leptos_routes(&app_state, routes, {
@@ -288,6 +312,7 @@ async fn main() {
         })
         // Static files (including custom.css)
         .fallback_service(ServeDir::new(&site_root))
+        .layer(cors)
         .layer(tower_governor::GovernorLayer::new(governor_conf))
         .with_state(app_state);
 

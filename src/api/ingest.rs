@@ -54,10 +54,11 @@ pub async fn process_ingest(
 
     // 5. Get old document to diff backlinks
     let old_doc = repo.find_by_slug(&request.slug).await?;
-    let old_links = old_doc
-        .as_ref()
-        .map(|d| d.links_out.clone())
-        .unwrap_or_default();
+
+    let (old_links, old_backlinks, old_parent_slug, old_order, old_is_hidden) = match old_doc {
+        Some(d) => (d.links_out, d.backlinks, d.parent_slug, d.order, d.is_hidden),
+        None => (vec![], vec![], None, 0, false),
+    };
 
     // 6. Build the S3 key
     let s3_key = format!("docs/{}.md", request.slug.replace('/', "_"));
@@ -79,23 +80,23 @@ pub async fn process_ingest(
         is_draft: request.is_draft,
         service_owner: request.service_owner,
         last_updated: Utc::now(),
-        tags: request.tags.clone(),
+        tags: request.tags,
         links_out: links_out.clone(),
-        backlinks: old_doc.as_ref().map(|d| d.backlinks.clone()).unwrap_or_default(),
+        backlinks: old_backlinks,
         parent_slug: if request.parent_slug.is_some() {
-            request.parent_slug.clone()
+            request.parent_slug
         } else {
-            old_doc.as_ref().and_then(|d| d.parent_slug.clone())
+            old_parent_slug
         },
         order: if request.order > 0 {
             request.order
         } else {
-            old_doc.as_ref().map(|d| d.order).unwrap_or(0)
+            old_order
         },
         is_hidden: if request.is_hidden {
             true
         } else {
-            old_doc.as_ref().map(|d| d.is_hidden).unwrap_or(false)
+            old_is_hidden
         },
     };
 

@@ -65,51 +65,62 @@ pub async fn save_doc_content(
         return Err(ServerFnError::new("Invalid slug"));
     }
 
-    let content = html_content.clone();
-    let links_out = crate::rendering::links::extract_internal_links_from_html(&content);
+    let links_out = crate::rendering::links::extract_internal_links_from_html(&html_content);
 
     let old_doc = state.document_repo.find_by_slug(&slug).await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
-    let old_links = old_doc
-        .as_ref()
-        .map(|d| d.links_out.clone())
-        .unwrap_or_default();
+
+    let (old_links, access_level, is_draft, service_owner, tags, backlinks, parent_slug, order, is_hidden) =
+        match old_doc {
+            Some(d) => (
+                d.links_out,
+                d.access_level,
+                d.is_draft,
+                d.service_owner,
+                d.tags,
+                d.backlinks,
+                d.parent_slug,
+                d.order,
+                d.is_hidden,
+            ),
+            None => (
+                vec![],
+                "public".to_string(),
+                false,
+                "web-editor".to_string(),
+                vec![],
+                vec![],
+                None,
+                0,
+                false,
+            ),
+        };
 
     let s3_key = format!("docs/{}.md", slug.replace('/', "_"));
 
     state.storage_client
-        .put_object(&s3_key, content.clone().into_bytes())
+        .put_object(&s3_key, html_content.clone().into_bytes())
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let doc = crate::db::models::Document {
         slug: slug.clone(),
-        title: title.clone(),
-        s3_key: s3_key.clone(),
-        access_level: old_doc
-            .as_ref()
-            .map(|d| d.access_level.clone())
-            .unwrap_or_else(|| "public".to_string()),
-        is_draft: old_doc.as_ref().map(|d| d.is_draft).unwrap_or(false),
-        service_owner: old_doc
-            .as_ref()
-            .map(|d| d.service_owner.clone())
-            .unwrap_or_else(|| "web-editor".to_string()),
+        title,
+        s3_key,
+        access_level,
+        is_draft,
+        service_owner,
         last_updated: Utc::now(),
-        tags: old_doc
-            .as_ref()
-            .map(|d| d.tags.clone())
-            .unwrap_or_default(),
+        tags,
         links_out: links_out.clone(),
-        backlinks: old_doc.as_ref().map(|d| d.backlinks.clone()).unwrap_or_default(),
-        // Preserve hierarchy fields from existing document, or use defaults
-        parent_slug: old_doc.as_ref().and_then(|d| d.parent_slug.clone()),
-        order: old_doc.as_ref().map(|d| d.order).unwrap_or(0),
-        is_hidden: old_doc.as_ref().map(|d| d.is_hidden).unwrap_or(false),
+        backlinks,
+        parent_slug,
+        order,
+        is_hidden,
     };
 
     let search_doc = state.search_service.as_ref().map(|_| {
-        crate::search::client::build_search_document(&doc, &content)
+        crate::search::client::build_search_document(&doc, &html_content)
     });
 
     state.document_repo.create_or_update(doc).await

@@ -20,8 +20,8 @@ Thumbs.db
 *.swp
 *.swo
 
-# Lock files (npm - we only use daisyui as dev dep, lock is not critical)
-package-lock.json
+# Lock files (npm)
+# Note: package-lock.json is now tracked for reproducible builds and CI caching
 
 *.log
 *_log.txt

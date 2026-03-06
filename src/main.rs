@@ -35,6 +35,17 @@ async fn main() {
         .unwrap_or(false);
 
     if demo_mode {
+        let allow_demo_prod = std::env::var("ALLOW_DEMO_IN_PRODUCTION")
+            .map(|v| v == "true" || v == "1" || v == "yes")
+            .unwrap_or(false);
+
+        if std::env::var("JWT_SECRET").is_ok() && !allow_demo_prod {
+            panic!(
+                "DEMO_MODE is enabled but JWT_SECRET is set, which suggests a production \
+                 environment. Set ALLOW_DEMO_IN_PRODUCTION=true to override this safety check."
+            );
+        }
+
         tracing::warn!("⚠️  DEMO MODE ENABLED — built-in credentials are active. Do NOT use in production!");
     }
 

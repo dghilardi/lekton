@@ -76,6 +76,10 @@ impl TestEnv {
             Arc::new(MongoUserRepository::new(&mongo_db));
         let access_level_repo: Arc<dyn AccessLevelRepository> =
             Arc::new(MongoAccessLevelRepository::new(&mongo_db));
+        access_level_repo
+            .seed_defaults()
+            .await
+            .expect("Failed to seed access level defaults");
 
         // --- MinIO (S3) ---
         let minio_port = minio_container

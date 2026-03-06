@@ -32,11 +32,32 @@ pub fn extract_internal_links(markdown: &str) -> Vec<String> {
     links
 }
 
+/// Extract internal link slugs from rendered HTML content.
+///
+/// Unlike [`extract_internal_links`], this operates on HTML (e.g. from TipTap)
+/// rather than raw markdown.  Reuses the same [`is_internal_link`] and
+/// [`normalize_link`] helpers so that normalization stays consistent.
+pub fn extract_internal_links_from_html(html: &str) -> Vec<String> {
+    let mut links = Vec::new();
+    for segment in html.split("href=\"") {
+        if let Some(end) = segment.find('"') {
+            let url = &segment[..end];
+            if is_internal_link(url) {
+                let normalized = normalize_link(url);
+                if !normalized.is_empty() && !links.contains(&normalized) {
+                    links.push(normalized);
+                }
+            }
+        }
+    }
+    links
+}
+
 /// Determine if a link is internal (points to another Lekton document).
 ///
 /// External links (`http://`, `https://`), anchors (`#heading`),
 /// and mailto links are excluded.
-fn is_internal_link(url: &str) -> bool {
+pub fn is_internal_link(url: &str) -> bool {
     !url.starts_with("http://")
         && !url.starts_with("https://")
         && !url.starts_with('#')
@@ -46,7 +67,7 @@ fn is_internal_link(url: &str) -> bool {
 /// Normalize a link to a slug format.
 ///
 /// Strips the `/docs/` prefix, removes anchor fragments and trailing slashes.
-fn normalize_link(url: &str) -> String {
+pub fn normalize_link(url: &str) -> String {
     let stripped = url
         .trim_start_matches('/')
         .trim_start_matches("docs/");
@@ -208,5 +229,26 @@ Also see [internal](/docs/internal-doc).
         assert!(!is_internal_link("http://example.com"));
         assert!(!is_internal_link("#anchor"));
         assert!(!is_internal_link("mailto:test@example.com"));
+    }
+
+    #[test]
+    fn test_extract_internal_links_from_html() {
+        let html = r#"<p>See <a href="/docs/getting-started">Getting Started</a> and <a href="https://example.com">External</a>.</p>"#;
+        let links = extract_internal_links_from_html(html);
+        assert_eq!(links, vec!["getting-started"]);
+    }
+
+    #[test]
+    fn test_extract_html_links_with_anchors() {
+        let html = r#"<a href="/docs/guide#section">Guide</a>"#;
+        let links = extract_internal_links_from_html(html);
+        assert_eq!(links, vec!["guide"]);
+    }
+
+    #[test]
+    fn test_extract_html_links_deduplication() {
+        let html = r#"<a href="/docs/arch">A</a> and <a href="/docs/arch">B</a>"#;
+        let links = extract_internal_links_from_html(html);
+        assert_eq!(links, vec!["arch"]);
     }
 }

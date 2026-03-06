@@ -62,7 +62,7 @@ pub async fn save_doc_content(
     let state = expect_context::<crate::app::AppState>();
 
     let content = html_content.clone();
-    let links_out = extract_links_from_html(&content);
+    let links_out = crate::rendering::links::extract_internal_links_from_html(&content);
 
     let old_doc = state.document_repo.find_by_slug(&slug).await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -121,29 +121,6 @@ pub async fn save_doc_content(
     }
 
     Ok(format!("Document '{}' saved successfully", slug))
-}
-
-/// Extract internal link slugs from HTML content.
-#[cfg(feature = "ssr")]
-fn extract_links_from_html(html: &str) -> Vec<String> {
-    let mut links = Vec::new();
-    for segment in html.split("href=\"") {
-        if let Some(end) = segment.find('"') {
-            let url = &segment[..end];
-            if url.starts_with("/docs/") {
-                let slug = url
-                    .trim_start_matches("/docs/")
-                    .split('#')
-                    .next()
-                    .unwrap_or("")
-                    .trim_end_matches('/');
-                if !slug.is_empty() && !links.contains(&slug.to_string()) {
-                    links.push(slug.to_string());
-                }
-            }
-        }
-    }
-    links
 }
 
 /// The editor page component.

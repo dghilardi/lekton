@@ -23,9 +23,19 @@ pub async fn process_ingest(
         return Err(AppError::Auth("Invalid service token".into()));
     }
 
-    // 2. Validate the slug (must not be empty)
+    // 2. Validate the slug
     if request.slug.is_empty() {
         return Err(AppError::BadRequest("Slug cannot be empty".into()));
+    }
+    if request.slug.contains("..") {
+        return Err(AppError::BadRequest(
+            "Slug must not contain '..'".into(),
+        ));
+    }
+    if request.slug.starts_with('/') {
+        return Err(AppError::BadRequest(
+            "Slug must not start with '/'".into(),
+        ));
     }
 
     // 3. Validate the access_level name is non-empty.
@@ -383,5 +393,25 @@ mod tests {
             .unwrap();
         assert_eq!(docs.len(), 1);
         assert_eq!(docs[0].title, "Updated Doc");
+    }
+
+    #[tokio::test]
+    async fn test_ingest_rejects_path_traversal() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+
+        let request = make_request("valid-token", "../etc/passwd");
+        let result = process_ingest(&repo, &storage, None, request, "valid-token").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_ingest_rejects_absolute_slug() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+
+        let request = make_request("valid-token", "/absolute/path");
+        let result = process_ingest(&repo, &storage, None, request, "valid-token").await;
+        assert!(result.is_err());
     }
 }

@@ -61,6 +61,10 @@ pub async fn save_doc_content(
 
     let state = expect_context::<crate::app::AppState>();
 
+    if slug.contains("..") || slug.starts_with('/') {
+        return Err(ServerFnError::new("Invalid slug"));
+    }
+
     let content = html_content.clone();
     let links_out = crate::rendering::links::extract_internal_links_from_html(&content);
 

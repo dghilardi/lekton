@@ -50,7 +50,7 @@ async fn main() {
     }
 
     // Load Leptos options from Cargo.toml metadata
-    let conf = get_configuration(None).unwrap();
+    let conf = get_configuration(None).expect("Failed to load Leptos configuration from Cargo.toml");
     let leptos_options = conf.leptos_options;
     let addr = leptos_options.site_addr;
     let site_root = leptos_options.site_root.to_string();
@@ -265,10 +265,12 @@ async fn main() {
 
     // Start the server
     tracing::info!("Listening on http://{}", addr);
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
+        .expect("Failed to bind TCP listener");
     axum::serve(listener, app.into_make_service())
         .await
-        .unwrap();
+        .expect("Server exited with error");
 }
 
 // When compiled for WASM (client-side), there's no main function.

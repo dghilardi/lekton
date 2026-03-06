@@ -252,20 +252,18 @@ pub async fn logout_user() -> Result<(), ServerFnError> {
         format!("{name}=; Path={path}; HttpOnly; SameSite=Lax; Max-Age=0")
     };
 
+    let set_clear_cookie = |name: &str, path: &str| -> Result<(), ServerFnError> {
+        let value = axum::http::HeaderValue::from_str(&clear_cookie(name, path))
+            .map_err(|e| ServerFnError::new(format!("Invalid cookie header: {e}")))?;
+        response.append_header(axum::http::header::SET_COOKIE, value);
+        Ok(())
+    };
+
     if state.demo_mode {
-        response.append_header(
-            axum::http::header::SET_COOKIE,
-            axum::http::HeaderValue::from_str(&clear_cookie("lekton_demo_user", "/")).unwrap(),
-        );
+        set_clear_cookie("lekton_demo_user", "/")?;
     } else {
-        response.append_header(
-            axum::http::header::SET_COOKIE,
-            axum::http::HeaderValue::from_str(&clear_cookie("lekton_access_token", "/")).unwrap(),
-        );
-        response.append_header(
-            axum::http::header::SET_COOKIE,
-            axum::http::HeaderValue::from_str(&clear_cookie("lekton_refresh_token", "/auth/refresh")).unwrap(),
-        );
+        set_clear_cookie("lekton_access_token", "/")?;
+        set_clear_cookie("lekton_refresh_token", "/auth/refresh")?;
     }
 
     Ok(())

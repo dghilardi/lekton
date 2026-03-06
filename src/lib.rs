@@ -1,9 +1,11 @@
 pub mod api;
 pub mod app;
 pub mod auth;
+pub mod components;
 pub mod db;
 pub mod editor;
 pub mod error;
+pub mod pages;
 pub mod rendering;
 pub mod schema;
 pub mod search;

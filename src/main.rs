@@ -100,8 +100,16 @@ async fn main() {
         };
 
     // Service token for API authentication
-    let service_token =
-        std::env::var("SERVICE_TOKEN").unwrap_or_else(|_| "dev-token".to_string());
+    let service_token = match std::env::var("SERVICE_TOKEN") {
+        Ok(token) => token,
+        Err(_) if demo_mode => {
+            tracing::warn!("SERVICE_TOKEN not set — using insecure default (demo mode only)");
+            "dev-token".to_string()
+        }
+        Err(_) => {
+            panic!("SERVICE_TOKEN environment variable is required in production");
+        }
+    };
 
     // JWT token service
     let token_service = Arc::new(match TokenService::from_env() {

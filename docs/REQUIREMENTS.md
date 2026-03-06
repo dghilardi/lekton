@@ -102,14 +102,17 @@ The system supports two methods of ingestion:
   "slug": "engineering/deployment-guide",
   "title": "Deployment Guide",
   "s3_key": "docs/eng/deploy_v4.md",
-  "access_level": "developer", // [public, developer, admin]
+  "access_level": "developer",
+  "is_draft": false,
   "service_owner": "devops-team",
   "last_updated": "ISO8601",
   "tags": ["k8s", "cicd"],
-  "links_out": ["/docs/setup", "/schemas/api-v1"], // For backlink tracking
-  "backlinks": [] // Populated via trigger/logic
+  "links_out": ["/docs/setup", "/schemas/api-v1"],
+  "backlinks": [],
+  "parent_slug": "engineering",
+  "order": 10,
+  "is_hidden": false
 }
-
 ```
 
 ### Collection: `schemas`
@@ -132,7 +135,92 @@ The system supports two methods of ingestion:
     }
   ]
 }
+```
 
+### Collection: `users`
+
+```json
+{
+  "_id": "ObjectId(...)",
+  "id": "uuid-v4",
+  "email": "user@example.com",
+  "name": "Jane Doe",
+  "provider_sub": "google-oauth2|12345",
+  "provider_type": "oidc",
+  "is_admin": false,
+  "created_at": "ISO8601",
+  "last_login_at": "ISO8601"
+}
+```
+
+### Collection: `access_levels`
+
+```json
+{
+  "_id": "ObjectId(...)",
+  "name": "internal",
+  "label": "Internal",
+  "description": "Internal company documentation",
+  "sort_order": 10,
+  "is_system": false,
+  "created_at": "ISO8601"
+}
+```
+
+Default levels seeded on first startup: `public` (system), `internal`,
+`developer`, `architect`.
+
+### Collection: `user_permissions`
+
+```json
+{
+  "_id": "ObjectId(...)",
+  "id": "uuid-v4",
+  "user_id": "references users.id",
+  "access_level_name": "references access_levels.name",
+  "can_read": true,
+  "can_write": false,
+  "can_read_draft": false,
+  "can_write_draft": false
+}
+```
+
+### Collection: `refresh_tokens`
+
+```json
+{
+  "_id": "ObjectId(...)",
+  "id": "uuid-v4",
+  "user_id": "references users.id",
+  "token_hash": "sha256-base64url",
+  "expires_at": "ISO8601",
+  "revoked_at": null,
+  "created_at": "ISO8601"
+}
+```
+
+### Collection: `assets`
+
+```json
+{
+  "_id": "ObjectId(...)",
+  "key": "project-a/configs/nginx.conf",
+  "content_type": "application/octet-stream",
+  "size_bytes": 2048,
+  "s3_key": "assets/project-a/configs/nginx.conf",
+  "uploaded_at": "ISO8601",
+  "uploaded_by": "devops-bot"
+}
+```
+
+### Collection: `settings`
+
+```json
+{
+  "_id": "ObjectId(...)",
+  "key": "global",
+  "custom_css": ":root { --lekton-font-family: monospace; }"
+}
 ```
 
 ---

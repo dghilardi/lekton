@@ -347,13 +347,57 @@ Start with one of the example themes and modify it to match your brand:
 
 For more details, see [DaisyUI Themes Documentation](https://daisyui.com/docs/themes/).
 
-## 🏗️ Architecture
+## API
+
+### Ingestion
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `POST` | `/api/v1/ingest` | Service token | Create/update a document |
+| `POST` | `/api/v1/schemas` | Service token | Create/update a schema |
+| `POST` | `/api/v1/schemas/{name}/versions` | Service token | Add a schema version |
+| `POST` | `/api/v1/upload/{*key}` | Service token | Upload an asset |
+
+### Search
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/v1/search?q=...` | Public (scoped) | Search documents |
+
+### Admin
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/v1/admin/access-levels` | Admin | List all access levels |
+| `POST` | `/api/v1/admin/access-levels` | Admin | Create an access level |
+| `PUT` | `/api/v1/admin/access-levels/{name}` | Admin | Update an access level |
+| `DELETE` | `/api/v1/admin/access-levels/{name}` | Admin | Delete an access level |
+| `GET` | `/api/v1/admin/users` | Admin | List all users |
+| `GET` | `/api/v1/admin/user-permissions/{user_id}` | Admin | List user permissions |
+| `POST` | `/api/v1/admin/user-permissions` | Admin | Grant/update a permission |
+| `DELETE` | `/api/v1/admin/user-permissions/{user_id}/{level}` | Admin | Revoke a permission |
+
+## Demo Mode
+
+Set `DEMO_MODE=true` to enable built-in demo authentication without an external
+OAuth/OIDC provider. This creates three predefined users:
+
+| Username | Password | Role |
+|----------|----------|------|
+| `admin` | `admin` | Admin (full access) |
+| `demo` | `demo` | Regular authenticated user |
+| `public` | `public` | Public-level access only |
+
+Demo mode is intended for local development and evaluation only. In production,
+configure a real OIDC or OAuth2 provider via `AUTH_PROVIDER_*` environment variables.
+
+## Architecture
 
 Lekton follows a Headless CMS architecture:
 -   **Storage Layer:** S3 for content, MongoDB for metadata.
 -   **Service Layer:** Axum handles auth, ingestion, and search scoped by user roles.
 -   **Presentation Layer:** Leptos for high-performance rendering.
 
-## 📝 License
+## License
 
 Distributed under the MIT License. See `LICENSE` for more information.

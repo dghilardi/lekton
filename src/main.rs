@@ -8,6 +8,7 @@ async fn main() {
     use lekton::app::App;
     use lekton::auth::provider::build_provider_from_env;
     use lekton::auth::token_service::TokenService;
+    use std::net::SocketAddr;
     use lekton::db::access_level_repository::MongoAccessLevelRepository;
     use lekton::db::asset_repository::MongoAssetRepository;
     use lekton::db::repository::MongoDocumentRepository;
@@ -258,6 +259,25 @@ async fn main() {
         tracing::info!("OAuth2/OIDC auth routes mounted: /auth/login, /auth/callback, /auth/refresh, /auth/logout, /auth/me");
     }
 
+    // Rate limiting: 50 requests burst, replenished at 1 per second
+    let governor_conf = Arc::new(
+        tower_governor::governor::GovernorConfigBuilder::default()
+            .per_second(1)
+            .burst_size(50)
+            .finish()
+            .expect("Failed to build rate limiter configuration"),
+    );
+    let governor_limiter = governor_conf.limiter().clone();
+
+    // Background task to clean up expired rate limit entries
+    let interval = std::time::Duration::from_secs(60);
+    tokio::task::spawn(async move {
+        loop {
+            tokio::time::sleep(interval).await;
+            governor_limiter.retain_recent();
+        }
+    });
+
     let app = app
         // Leptos SSR routes
         .leptos_routes(&app_state, routes, {
@@ -268,6 +288,7 @@ async fn main() {
         })
         // Static files (including custom.css)
         .fallback_service(ServeDir::new(&site_root))
+        .layer(tower_governor::GovernorLayer::new(governor_conf))
         .with_state(app_state);
 
     // Start the server
@@ -275,7 +296,7 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .expect("Failed to bind TCP listener");
-    axum::serve(listener, app.into_make_service())
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
         .await
         .expect("Server exited with error");
 }

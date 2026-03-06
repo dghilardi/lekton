@@ -14,15 +14,18 @@ impl IntoResponse for AppError {
             AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             AppError::Auth(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
-            AppError::Database(msg) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Database error: {}", msg),
-            ),
-            AppError::Storage(msg) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Storage error: {}", msg),
-            ),
-            AppError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
+            AppError::Database(msg) => {
+                tracing::error!("Database error: {msg}");
+                (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string())
+            }
+            AppError::Storage(msg) => {
+                tracing::error!("Storage error: {msg}");
+                (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string())
+            }
+            AppError::Internal(msg) => {
+                tracing::error!("Internal error: {msg}");
+                (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string())
+            }
         };
 
         let body = serde_json::json!({

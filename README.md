@@ -206,9 +206,54 @@ docker-compose down
 
 ### Running Tests
 
+The project has three test suites. A [`justfile`](./justfile) is provided for convenience — it loads `.env` automatically so you don't need to `source` it manually.
+
+| Suite | What it tests | Requirements |
+|---|---|---|
+| Unit | Pure logic (no I/O) | None |
+| Integration | DB, S3, search via real containers | Docker |
+| E2E | Full browser flows via Playwright | Docker + built app |
+
+#### With `just` (recommended)
+
 ```bash
-cargo test --features ssr
+# Unit tests only (fast)
+just test
+
+# Integration tests (starts testcontainers automatically)
+just test-integration
+
+# E2E tests (starts the server on :3000 if not already running)
+just test-e2e
+
+# Run a specific spec file or test name
+just test-e2e e2e/search.spec.ts
+just test-e2e --grep "Ctrl\+K"
+
+# Interactive Playwright UI for debugging e2e tests
+just test-e2e-ui
+
+# All suites in sequence
+just test-all
 ```
+
+#### Without `just`
+
+```bash
+# Unit tests
+cargo test --features ssr --lib
+
+# Integration tests (single-threaded to avoid container conflicts)
+cargo test --features ssr --test '*' -- --test-threads=1
+
+# E2E tests — server must be running on :3000 first
+source .env
+MONGODB_DATABASE=lekton_e2e SERVICE_TOKEN=test-token RATE_LIMIT_BURST=1000 DEMO_MODE=true \
+    cargo leptos serve &
+npx playwright test
+```
+
+> **Tip:** Run `just e2e-logs` to inspect the server log if an e2e run fails at startup.
 
 ## ⚙️ Configuration
 

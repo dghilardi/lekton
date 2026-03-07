@@ -11,19 +11,20 @@ test.describe('Authentication', () => {
 
   test('demo login succeeds', async ({ page }) => {
     await loginAsDemo(page);
-    // User menu should show the user's name
-    await expect(page.locator('text=Demo User')).toBeVisible();
+    // User menu should show the user's name (rendered by WASM LocalResource)
+    await expect(page.locator('text=Demo User')).toBeVisible({ timeout: 15_000 });
   });
 
   test('admin login shows admin badge', async ({ page }) => {
     await loginAsAdmin(page);
-    // Should show "Admin" badge in user menu area
-    await expect(page.locator('text=Admin').first()).toBeVisible();
+    // Should show "Admin" badge in user menu area (rendered by WASM LocalResource)
+    await expect(page.locator('text=Admin').first()).toBeVisible({ timeout: 15_000 });
   });
 
   test('logout clears session', async ({ page }) => {
     await loginAsDemo(page);
-    await expect(page.locator('text=Demo User')).toBeVisible();
+    // Wait for WASM to render the user name before proceeding
+    await expect(page.locator('text=Demo User')).toBeVisible({ timeout: 15_000 });
     await logout(page);
     // "Log In" link should reappear
     await expect(page.locator('a[href="/login"]')).toBeVisible();
@@ -31,11 +32,11 @@ test.describe('Authentication', () => {
 
   test('invalid credentials shows error', async ({ page }) => {
     await page.goto('/login');
+    await page.waitForLoadState('load'); // ensure login.js defer script ran
     await page.fill('#login-username', 'demo');
     await page.fill('#login-password', 'wrongpassword');
     await page.click('button[type="submit"]');
-    // Error message should appear
-    const errorAlert = page.locator('#login-error, .alert-error');
-    await expect(errorAlert).toBeVisible({ timeout: 5_000 });
+    // Error message: login.js removes 'hidden' class on failed fetch
+    await expect(page.locator('#login-error')).toBeVisible({ timeout: 10_000 });
   });
 });

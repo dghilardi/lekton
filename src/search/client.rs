@@ -74,7 +74,9 @@ impl MeilisearchService {
     pub fn from_env() -> Result<Self, AppError> {
         let url = std::env::var("MEILISEARCH_URL")
             .map_err(|_| AppError::Internal("MEILISEARCH_URL not set".into()))?;
-        let api_key = std::env::var("MEILISEARCH_API_KEY").ok();
+        let api_key = std::env::var("MEILISEARCH_API_KEY")
+            .ok()
+            .filter(|k| !k.is_empty());
 
         Self::new(url, api_key)
     }

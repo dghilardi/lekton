@@ -41,7 +41,6 @@ jobs:
           - 7700:7700
         env:
           MEILI_NO_ANALYTICS: "true"
-          MEILI_MASTER_KEY: ""
         options: >-
           --health-cmd "curl -f http://localhost:7700/health || exit 1"
           --health-interval 10s
@@ -99,8 +98,9 @@ jobs:
 
       - name: Run E2E tests
         run: |
-          # Start the server in the background
-          cargo leptos serve --release &
+          # Start the server in the background.
+          # RATE_LIMIT_BURST=1000 prevents 429s from parallel page loads during tests.
+          RATE_LIMIT_BURST=1000 cargo leptos serve --release &
           SERVER_PID=$!
 
           # Wait for the server to be ready

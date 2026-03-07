@@ -7,6 +7,32 @@
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 const SERVICE_TOKEN = process.env.SERVICE_TOKEN || 'test-token';
+const MEILISEARCH_URL = process.env.MEILISEARCH_URL || 'http://localhost:7700';
+const MEILISEARCH_API_KEY = process.env.MEILISEARCH_API_KEY || '';
+
+/**
+ * Poll Meilisearch until all pending/processing tasks are done (or timeout).
+ * This ensures configure_index() attribute tasks complete before tests search.
+ */
+async function waitForMeilisearchTasks(timeoutMs = 15_000): Promise<void> {
+  const headers: Record<string, string> = {};
+  if (MEILISEARCH_API_KEY) headers['Authorization'] = `Bearer ${MEILISEARCH_API_KEY}`;
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const resp = await fetch(`${MEILISEARCH_URL}/tasks?statuses=processing,enqueued`, { headers });
+      if (resp.ok) {
+        const body = await resp.json() as { results: unknown[] };
+        if (body.results.length === 0) return;
+      }
+    } catch {
+      // Meilisearch not reachable yet — keep waiting
+    }
+    await new Promise(r => setTimeout(r, 300));
+  }
+  console.warn('waitForMeilisearchTasks: timed out after 15s');
+}
 
 async function ingestDocument(
   slug: string,
@@ -134,8 +160,10 @@ export default async function globalSetup() {
     paths: {},
   }), 'beta');
 
-  // Wait for Meilisearch indexing
-  await new Promise(resolve => setTimeout(resolve, 2000));
+  // Wait for all Meilisearch tasks (indexing + attribute configuration) to complete.
+  // configure_index() submits tasks asynchronously; if we search before they complete,
+  // the access_level filter fails with "attribute is not filterable".
+  await waitForMeilisearchTasks();
 
   console.log('Test data seeded successfully.');
 }

@@ -1,4 +1,4 @@
-name: Docker Publish
+name: Publish
 
 on:
   push:
@@ -6,7 +6,14 @@ on:
       - '[0-9]+.[0-9]+.[0-9]+'
 
 jobs:
-  publish:
+  integration-tests:
+    uses: ./.github/workflows/integration-tests.yml
+
+  e2e-tests:
+    uses: ./.github/workflows/e2e-tests.yml
+
+  docker:
+    needs: [integration-tests, e2e-tests]
     runs-on: ubuntu-latest
 
     steps:
@@ -41,7 +48,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   publish-cli:
-    needs: publish
+    needs: docker
     runs-on: ubuntu-latest
 
     steps:

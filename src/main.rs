@@ -14,6 +14,7 @@ async fn main() {
     use lekton::db::repository::MongoDocumentRepository;
     use lekton::db::schema_repository::MongoSchemaRepository;
     use lekton::db::settings_repository::MongoSettingsRepository;
+    use lekton::db::service_token_repository::MongoServiceTokenRepository;
     use lekton::db::user_repository::MongoUserRepository;
     use lekton::search::client::SearchService;
     use lekton::storage::client::S3StorageClient;
@@ -78,6 +79,8 @@ async fn main() {
         Arc::new(MongoUserRepository::new(&mongo_db));
     let access_level_repo: Arc<dyn lekton::db::access_level_repository::AccessLevelRepository> =
         Arc::new(MongoAccessLevelRepository::new(&mongo_db));
+    let service_token_repo: Arc<dyn lekton::db::service_token_repository::ServiceTokenRepository> =
+        Arc::new(MongoServiceTokenRepository::new(&mongo_db));
 
     // Seed default access levels (no-op if already present).
     if let Err(e) = access_level_repo.seed_defaults().await {
@@ -148,6 +151,7 @@ async fn main() {
         search_service,
         leptos_options: leptos_options.clone(),
         service_token,
+        service_token_repo,
         demo_mode,
         user_repo,
         access_level_repo,

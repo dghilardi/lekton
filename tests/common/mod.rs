@@ -16,6 +16,7 @@ use lekton::db::asset_repository::{AssetRepository, MongoAssetRepository};
 use lekton::db::auth_models::User;
 use lekton::db::repository::{DocumentRepository, MongoDocumentRepository};
 use lekton::db::schema_repository::{MongoSchemaRepository, SchemaRepository};
+use lekton::db::service_token_repository::{MongoServiceTokenRepository, ServiceTokenRepository};
 use lekton::db::settings_repository::{MongoSettingsRepository, SettingsRepository};
 use lekton::db::user_repository::{MongoUserRepository, UserRepository};
 use lekton::search::client::{MeilisearchService, SearchService};
@@ -36,6 +37,7 @@ pub struct TestEnv {
     pub asset_repo: Arc<dyn AssetRepository>,
     pub user_repo: Arc<dyn UserRepository>,
     pub access_level_repo: Arc<dyn AccessLevelRepository>,
+    pub service_token_repo: Arc<dyn ServiceTokenRepository>,
     pub storage: Arc<dyn StorageClient>,
     pub search: Arc<dyn SearchService>,
     pub token_service: Arc<TokenService>,
@@ -76,6 +78,8 @@ impl TestEnv {
             Arc::new(MongoUserRepository::new(&mongo_db));
         let access_level_repo: Arc<dyn AccessLevelRepository> =
             Arc::new(MongoAccessLevelRepository::new(&mongo_db));
+        let service_token_repo: Arc<dyn ServiceTokenRepository> =
+            Arc::new(MongoServiceTokenRepository::new(&mongo_db));
         access_level_repo
             .seed_defaults()
             .await
@@ -152,6 +156,7 @@ impl TestEnv {
             storage_client: storage.clone(),
             search_service: Some(search.clone()),
             service_token: "test-token".to_string(),
+            service_token_repo: service_token_repo.clone(),
             demo_mode: true,
             leptos_options,
             user_repo: user_repo.clone(),
@@ -268,6 +273,7 @@ impl TestEnv {
             asset_repo,
             user_repo,
             access_level_repo,
+            service_token_repo,
             storage,
             search,
             token_service,
@@ -340,6 +346,32 @@ impl TestEnv {
             .build()
     }
 
+    /// Create a scoped service token and return the raw token string.
+    pub async fn create_service_token(
+        &self,
+        name: &str,
+        scopes: Vec<String>,
+        can_write: bool,
+    ) -> String {
+        let raw_token = uuid::Uuid::new_v4().to_string();
+        let token = lekton::db::service_token_models::ServiceToken {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.to_string(),
+            token_hash: TokenService::hash_token(&raw_token),
+            allowed_scopes: scopes,
+            can_write,
+            created_by: "test-admin".to_string(),
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            is_active: true,
+        };
+        self.service_token_repo
+            .create(token)
+            .await
+            .expect("Failed to create service token");
+        raw_token
+    }
+
     /// Helper: ingest a document via the API.
     pub async fn ingest(
         &self,
@@ -393,6 +425,7 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
         storage_client: env.storage.clone(),
         search_service: None,
         service_token: "test-token".to_string(),
+        service_token_repo: env.service_token_repo.clone(),
         demo_mode: true,
         leptos_options,
         user_repo: env.user_repo.clone(),

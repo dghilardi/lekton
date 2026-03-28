@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.0] 2026-03-28
+
 ### Added — `lekton-sync` CLI
 
 - **`lekton-sync` publish workflow**: `docker-publish.yml` now has a `publish-cli` job (requires `needs: publish`) that runs `cargo publish -p lekton-sync` after a successful Docker Hub push. Requires a `CARGO_REGISTRY_TOKEN` secret in the repository settings.

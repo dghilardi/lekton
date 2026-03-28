@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.0] 2026-03-28
+
 ### Added — CI-Driven Document Sync
 
 - **Scoped service tokens**: Per-pipeline API keys with `allowed_scopes` (exact slugs or prefix patterns like `protocols/*`). Scope overlap between tokens is rejected at creation time. Replaces the single global `SERVICE_TOKEN` for fine-grained access control while preserving backward compatibility via legacy token fallback.

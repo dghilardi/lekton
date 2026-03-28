@@ -1,0 +1,11 @@
+[vcs]
+software = "Git"
+
+[modules.root]
+main = true
+path = "."
+packageManager = "Cargo"
+
+[modules.cli]
+path = "cli"
+packageManager = "Cargo"

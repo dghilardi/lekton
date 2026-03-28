@@ -8,6 +8,8 @@ use crate::db::access_level_repository::AccessLevelRepository;
 #[cfg(feature = "ssr")]
 use crate::db::models::Document;
 #[cfg(feature = "ssr")]
+use crate::db::document_version_repository::DocumentVersionRepository;
+#[cfg(feature = "ssr")]
 use crate::db::repository::DocumentRepository;
 #[cfg(feature = "ssr")]
 use crate::db::service_token_repository::ServiceTokenRepository;
@@ -26,6 +28,7 @@ pub struct IngestContext<'a> {
     pub search: Option<&'a dyn SearchService>,
     pub access_level_repo: &'a dyn AccessLevelRepository,
     pub service_token_repo: &'a dyn ServiceTokenRepository,
+    pub version_repo: &'a dyn DocumentVersionRepository,
     /// The legacy global token from the `SERVICE_TOKEN` env var (if set).
     pub legacy_token: Option<&'a str>,
 }
@@ -145,8 +148,45 @@ pub async fn process_ingest(
     // Keep raw content for search indexing
     let raw_content = request.content.clone();
 
-    // 8. Upload content to S3 only if content changed
+    // 8. Create version history before overwriting (only when content changed and old doc exists)
     if content_changed {
+        if let Some(ref old) = old_doc {
+            if let Some(ref old_content_hash) = old.content_hash {
+                // Copy old content to history
+                let version_num = ctx.version_repo.next_version_number(&request.slug).await?;
+                let history_key = format!(
+                    "docs/history/{}/{}.md",
+                    request.slug.replace('/', "_"),
+                    version_num
+                );
+
+                // Read old content from S3 and copy to history
+                if let Ok(Some(old_content)) = ctx.storage.get_object(&old.s3_key).await {
+                    if let Err(e) = ctx.storage.put_object(&history_key, old_content).await {
+                        tracing::warn!("Failed to archive old version to S3: {e}");
+                    }
+                }
+
+                // Determine who is updating (token name or "legacy")
+                let updated_by = resolve_token_name(ctx, &request.service_token).await;
+
+                let version = crate::db::document_version_repository::DocumentVersion {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    slug: request.slug.clone(),
+                    version: version_num,
+                    content_hash: old_content_hash.clone(),
+                    s3_key: history_key,
+                    updated_by,
+                    created_at: Utc::now(),
+                };
+
+                if let Err(e) = ctx.version_repo.create(version).await {
+                    tracing::warn!("Failed to create version record: {e}");
+                }
+            }
+        }
+
+        // 9. Upload new content to S3
         ctx.storage
             .put_object(&s3_key, request.content.into_bytes())
             .await?;
@@ -248,6 +288,21 @@ async fn validate_token(
     Ok(())
 }
 
+/// Resolve the human-readable name for the token used in this request.
+#[cfg(feature = "ssr")]
+async fn resolve_token_name(ctx: &IngestContext<'_>, raw_token: &str) -> String {
+    if let Some(legacy) = ctx.legacy_token {
+        if !legacy.is_empty() && raw_token == legacy {
+            return "legacy".to_string();
+        }
+    }
+    let hash = crate::auth::token_service::TokenService::hash_token(raw_token);
+    match ctx.service_token_repo.find_by_hash(&hash).await {
+        Ok(Some(token)) => token.name,
+        _ => "unknown".to_string(),
+    }
+}
+
 /// Axum handler for `POST /api/v1/ingest`.
 ///
 /// Only available when the `ssr` feature is enabled.
@@ -262,6 +317,7 @@ pub async fn ingest_handler(
         search: state.search_service.as_deref(),
         access_level_repo: state.access_level_repo.as_ref(),
         service_token_repo: state.service_token_repo.as_ref(),
+        version_repo: state.document_version_repo.as_ref(),
         legacy_token: Some(&state.service_token),
     };
 
@@ -475,6 +531,16 @@ mod tests {
         }
     }
 
+    struct MockVersionRepo;
+
+    #[async_trait]
+    impl crate::db::document_version_repository::DocumentVersionRepository for MockVersionRepo {
+        async fn create(&self, _: crate::db::document_version_repository::DocumentVersion) -> Result<(), AppError> { Ok(()) }
+        async fn find_latest(&self, _: &str) -> Result<Option<crate::db::document_version_repository::DocumentVersion>, AppError> { Ok(None) }
+        async fn list_by_slug(&self, _: &str) -> Result<Vec<crate::db::document_version_repository::DocumentVersion>, AppError> { Ok(vec![]) }
+        async fn next_version_number(&self, _: &str) -> Result<u64, AppError> { Ok(1) }
+    }
+
     fn make_ctx<'a>(
         repo: &'a MockRepo,
         storage: &'a MockStorage,
@@ -487,6 +553,7 @@ mod tests {
             search: None,
             access_level_repo: &MockAccessLevelRepo,
             service_token_repo: token_repo,
+            version_repo: &MockVersionRepo,
             legacy_token,
         }
     }
@@ -791,7 +858,8 @@ mod tests {
         request2.content = "# Updated\nNew content".to_string();
         let r2 = process_ingest(&ctx, request2).await.unwrap();
         assert!(r2.changed);
-        assert_eq!(storage.put_count.load(std::sync::atomic::Ordering::Relaxed), 2);
+        // 3 puts: initial upload + history copy + new upload
+        assert_eq!(storage.put_count.load(std::sync::atomic::Ordering::Relaxed), 3);
     }
 
     #[tokio::test]

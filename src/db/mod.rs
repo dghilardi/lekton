@@ -1,6 +1,7 @@
 pub mod access_level_repository;
 pub mod asset_repository;
 pub mod auth_models;
+pub mod document_version_repository;
 pub mod models;
 pub mod repository;
 pub mod schema_repository;

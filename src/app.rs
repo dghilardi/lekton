@@ -25,6 +25,7 @@ pub struct AppState {
     pub search_service: Option<Arc<dyn crate::search::client::SearchService>>,
     pub service_token: String,
     pub service_token_repo: Arc<dyn crate::db::service_token_repository::ServiceTokenRepository>,
+    pub document_version_repo: Arc<dyn crate::db::document_version_repository::DocumentVersionRepository>,
     pub demo_mode: bool,
     pub leptos_options: LeptosOptions,
     // ── Auth (phase 5) ────────────────────────────────────────────────────────

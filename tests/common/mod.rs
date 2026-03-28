@@ -14,6 +14,7 @@ use lekton::auth::token_service::TokenService;
 use lekton::db::access_level_repository::{AccessLevelRepository, MongoAccessLevelRepository};
 use lekton::db::asset_repository::{AssetRepository, MongoAssetRepository};
 use lekton::db::auth_models::User;
+use lekton::db::document_version_repository::{DocumentVersionRepository, MongoDocumentVersionRepository};
 use lekton::db::repository::{DocumentRepository, MongoDocumentRepository};
 use lekton::db::schema_repository::{MongoSchemaRepository, SchemaRepository};
 use lekton::db::service_token_repository::{MongoServiceTokenRepository, ServiceTokenRepository};
@@ -38,6 +39,7 @@ pub struct TestEnv {
     pub user_repo: Arc<dyn UserRepository>,
     pub access_level_repo: Arc<dyn AccessLevelRepository>,
     pub service_token_repo: Arc<dyn ServiceTokenRepository>,
+    pub document_version_repo: Arc<dyn DocumentVersionRepository>,
     pub storage: Arc<dyn StorageClient>,
     pub search: Arc<dyn SearchService>,
     pub token_service: Arc<TokenService>,
@@ -80,6 +82,8 @@ impl TestEnv {
             Arc::new(MongoAccessLevelRepository::new(&mongo_db));
         let service_token_repo: Arc<dyn ServiceTokenRepository> =
             Arc::new(MongoServiceTokenRepository::new(&mongo_db));
+        let document_version_repo: Arc<dyn DocumentVersionRepository> =
+            Arc::new(MongoDocumentVersionRepository::new(&mongo_db));
         access_level_repo
             .seed_defaults()
             .await
@@ -157,6 +161,7 @@ impl TestEnv {
             search_service: Some(search.clone()),
             service_token: "test-token".to_string(),
             service_token_repo: service_token_repo.clone(),
+            document_version_repo: document_version_repo.clone(),
             demo_mode: true,
             leptos_options,
             user_repo: user_repo.clone(),
@@ -278,6 +283,7 @@ impl TestEnv {
             user_repo,
             access_level_repo,
             service_token_repo,
+            document_version_repo,
             storage,
             search,
             token_service,

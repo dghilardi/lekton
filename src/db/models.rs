@@ -40,6 +40,11 @@ pub struct Document {
     /// Hidden documents can still be accessed directly via URL.
     #[serde(default)]
     pub is_hidden: bool,
+    /// SHA-256 hash of the markdown content (format: `"sha256:<base64url>"`).
+    /// Used for diffing during sync. `None` for documents ingested before
+    /// content hashing was introduced.
+    #[serde(default)]
+    pub content_hash: Option<String>,
 }
 
 /// Represents an API schema entry stored in MongoDB.
@@ -130,6 +135,14 @@ pub struct IngestResponse {
     pub slug: String,
     /// The S3 key where content was stored.
     pub s3_key: String,
+    /// Whether the document content or metadata actually changed.
+    /// `false` when the content hash and all metadata fields match the existing document.
+    #[serde(default = "default_true")]
+    pub changed: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[cfg(test)]
@@ -152,6 +165,7 @@ mod tests {
             parent_slug: Some("engineering".to_string()),
             order: 10,
             is_hidden: false,
+            content_hash: Some("sha256:abc123".to_string()),
         };
 
         let json = serde_json::to_string(&doc).unwrap();
@@ -163,6 +177,7 @@ mod tests {
         assert_eq!(deserialized.parent_slug, Some("engineering".to_string()));
         assert_eq!(deserialized.order, 10);
         assert!(!deserialized.is_hidden);
+        assert_eq!(deserialized.content_hash, Some("sha256:abc123".to_string()));
     }
 
     #[test]
@@ -188,6 +203,7 @@ mod tests {
         assert_eq!(doc.parent_slug, None);
         assert_eq!(doc.order, 0);
         assert!(!doc.is_hidden);
+        assert_eq!(doc.content_hash, None); // backward compat
     }
 
     #[test]
@@ -206,6 +222,7 @@ mod tests {
             parent_slug: None,
             order: 0,
             is_hidden: false,
+            content_hash: None,
         };
 
         let json = serde_json::to_string(&doc).unwrap();
@@ -270,6 +287,7 @@ mod tests {
             message: "Document ingested successfully".to_string(),
             slug: "docs/hello".to_string(),
             s3_key: "docs/hello/v1.md".to_string(),
+            changed: true,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("docs/hello"));

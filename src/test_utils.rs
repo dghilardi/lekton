@@ -14,12 +14,15 @@ use crate::error::AppError;
 /// In-memory mock for [`StorageClient`](crate::storage::client::StorageClient).
 pub struct MockStorage {
     pub objects: Mutex<HashMap<String, Vec<u8>>>,
+    /// Number of `put_object` calls (for verifying upload was skipped/performed).
+    pub put_count: std::sync::atomic::AtomicU32,
 }
 
 impl MockStorage {
     pub fn new() -> Self {
         Self {
             objects: Mutex::new(HashMap::new()),
+            put_count: std::sync::atomic::AtomicU32::new(0),
         }
     }
 }
@@ -27,6 +30,8 @@ impl MockStorage {
 #[async_trait]
 impl crate::storage::client::StorageClient for MockStorage {
     async fn put_object(&self, key: &str, content: Vec<u8>) -> Result<(), AppError> {
+        self.put_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.objects
             .lock()
             .unwrap()

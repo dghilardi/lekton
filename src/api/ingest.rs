@@ -71,29 +71,88 @@ pub async fn process_ingest(
         )));
     }
 
-    // 4. Extract internal links from content
+    // 4. Compute content hash
+    let new_hash = format!(
+        "sha256:{}",
+        crate::auth::token_service::TokenService::hash_token(&request.content)
+    );
+
+    // 5. Extract internal links from content
     let links_out = extract_internal_links(&request.content);
 
-    // 5. Get old document to diff backlinks
+    // 6. Get old document to diff backlinks and detect changes
     let old_doc = ctx.repo.find_by_slug(&request.slug).await?;
 
-    let (old_links, old_backlinks, old_parent_slug, old_order, old_is_hidden) = match old_doc {
-        Some(d) => (d.links_out, d.backlinks, d.parent_slug, d.order, d.is_hidden),
-        None => (vec![], vec![], None, 0, false),
+    let (old_links, old_backlinks, old_parent_slug, old_order, old_is_hidden, old_hash) =
+        match &old_doc {
+            Some(d) => (
+                d.links_out.clone(),
+                d.backlinks.clone(),
+                d.parent_slug.clone(),
+                d.order,
+                d.is_hidden,
+                d.content_hash.clone(),
+            ),
+            None => (vec![], vec![], None, 0, false, None),
+        };
+
+    let content_changed = old_hash.as_deref() != Some(&new_hash);
+
+    // Determine effective metadata values
+    let effective_parent_slug = if request.parent_slug.is_some() {
+        request.parent_slug.clone()
+    } else {
+        old_parent_slug
+    };
+    let effective_order = if request.order > 0 {
+        request.order
+    } else {
+        old_order
+    };
+    let effective_is_hidden = if request.is_hidden {
+        true
+    } else {
+        old_is_hidden
     };
 
-    // 6. Build the S3 key
+    // Check if metadata changed (compared to existing doc)
+    let metadata_changed = old_doc.as_ref().map_or(true, |d| {
+        d.title != request.title
+            || d.access_level != access_level
+            || d.is_draft != request.is_draft
+            || d.service_owner != request.service_owner
+            || d.tags != request.tags
+            || d.parent_slug != effective_parent_slug
+            || d.order != effective_order
+            || d.is_hidden != effective_is_hidden
+            || d.links_out != links_out
+    });
+
+    // If nothing changed, return early
+    if !content_changed && !metadata_changed {
+        let s3_key = format!("docs/{}.md", request.slug.replace('/', "_"));
+        return Ok(IngestResponse {
+            message: "Document unchanged".to_string(),
+            slug: request.slug,
+            s3_key,
+            changed: false,
+        });
+    }
+
+    // 7. Build the S3 key
     let s3_key = format!("docs/{}.md", request.slug.replace('/', "_"));
 
-    // Keep raw content for search indexing before uploading
+    // Keep raw content for search indexing
     let raw_content = request.content.clone();
 
-    // 7. Upload content to S3
-    ctx.storage
-        .put_object(&s3_key, request.content.into_bytes())
-        .await?;
+    // 8. Upload content to S3 only if content changed
+    if content_changed {
+        ctx.storage
+            .put_object(&s3_key, request.content.into_bytes())
+            .await?;
+    }
 
-    // 8. Upsert document metadata in MongoDB
+    // 9. Upsert document metadata in MongoDB
     let doc = Document {
         slug: request.slug.clone(),
         title: request.title,
@@ -105,38 +164,27 @@ pub async fn process_ingest(
         tags: request.tags,
         links_out: links_out.clone(),
         backlinks: old_backlinks,
-        parent_slug: if request.parent_slug.is_some() {
-            request.parent_slug
-        } else {
-            old_parent_slug
-        },
-        order: if request.order > 0 {
-            request.order
-        } else {
-            old_order
-        },
-        is_hidden: if request.is_hidden {
-            true
-        } else {
-            old_is_hidden
-        },
+        parent_slug: effective_parent_slug,
+        order: effective_order,
+        is_hidden: effective_is_hidden,
+        content_hash: Some(new_hash),
     };
 
-    // 9. Build search document before ownership transfer
+    // 10. Build search document before ownership transfer
     let search_doc = ctx.search
         .as_ref()
         .map(|_| crate::search::client::build_search_document(&doc, &raw_content));
 
     ctx.repo.create_or_update(doc).await?;
 
-    // 10. Update backlinks on referenced documents.
+    // 11. Update backlinks on referenced documents.
     //     Note: this is not atomic with the create_or_update above.
     //     Both operations are idempotent, so partial failure leaves
     //     consistent (if stale) state that self-heals on re-ingest.
     ctx.repo.update_backlinks(&request.slug, &old_links, &links_out)
         .await?;
 
-    // 11. Index in Meilisearch (if available)
+    // 12. Index in Meilisearch (if available)
     if let (Some(search_svc), Some(search_doc)) = (ctx.search, search_doc) {
         if let Err(e) = search_svc.index_document(&search_doc).await {
             tracing::warn!("Failed to index document in search: {e}");
@@ -147,6 +195,7 @@ pub async fn process_ingest(
         message: "Document ingested successfully".to_string(),
         slug: request.slug,
         s3_key,
+        changed: true,
     })
 }
 
@@ -676,5 +725,86 @@ mod tests {
             AppError::Forbidden(msg) => assert!(msg.contains("write permission")),
             other => panic!("Expected Forbidden error, got: {:?}", other),
         }
+    }
+
+    // ── Content hash tests ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_ingest_unchanged_content_skips_upload() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+
+        // First ingest
+        let request1 = make_request("valid-token", "docs/hello");
+        let r1 = process_ingest(&ctx, request1).await.unwrap();
+        assert!(r1.changed);
+        assert_eq!(storage.put_count.load(std::sync::atomic::Ordering::Relaxed), 1);
+
+        // Second ingest with identical content and metadata
+        let request2 = make_request("valid-token", "docs/hello");
+        let r2 = process_ingest(&ctx, request2).await.unwrap();
+        assert!(!r2.changed);
+        // S3 upload should NOT have happened again
+        assert_eq!(storage.put_count.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn test_ingest_changed_content_uploads() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+
+        // First ingest
+        let request1 = make_request("valid-token", "docs/hello");
+        process_ingest(&ctx, request1).await.unwrap();
+
+        // Second ingest with different content
+        let mut request2 = make_request("valid-token", "docs/hello");
+        request2.content = "# Updated\nNew content".to_string();
+        let r2 = process_ingest(&ctx, request2).await.unwrap();
+        assert!(r2.changed);
+        assert_eq!(storage.put_count.load(std::sync::atomic::Ordering::Relaxed), 2);
+    }
+
+    #[tokio::test]
+    async fn test_ingest_same_content_different_metadata_updates_db() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+
+        // First ingest
+        let request1 = make_request("valid-token", "docs/hello");
+        process_ingest(&ctx, request1).await.unwrap();
+
+        // Second ingest: same content, different title
+        let mut request2 = make_request("valid-token", "docs/hello");
+        request2.title = "New Title".to_string();
+        let r2 = process_ingest(&ctx, request2).await.unwrap();
+        assert!(r2.changed);
+        // S3 upload should NOT happen (content is the same)
+        assert_eq!(storage.put_count.load(std::sync::atomic::Ordering::Relaxed), 1);
+
+        // But DB should be updated with new title
+        let doc = repo.find_by_slug("docs/hello").await.unwrap().unwrap();
+        assert_eq!(doc.title, "New Title");
+    }
+
+    #[tokio::test]
+    async fn test_ingest_stores_content_hash() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+
+        let request = make_request("valid-token", "docs/hello");
+        process_ingest(&ctx, request).await.unwrap();
+
+        let doc = repo.find_by_slug("docs/hello").await.unwrap().unwrap();
+        assert!(doc.content_hash.is_some());
+        assert!(doc.content_hash.unwrap().starts_with("sha256:"));
     }
 }

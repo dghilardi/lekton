@@ -243,6 +243,15 @@ impl TestEnv {
                 "/api/v1/admin/users/{user_id}/permissions/{level}",
                 axum::routing::delete(lekton::api::admin::delete_user_permission_handler),
             )
+            .route(
+                "/api/v1/admin/service-tokens",
+                get(lekton::api::admin::list_service_tokens_handler)
+                    .post(lekton::api::admin::create_service_token_handler),
+            )
+            .route(
+                "/api/v1/admin/service-tokens/{id}",
+                axum::routing::delete(lekton::api::admin::deactivate_service_token_handler),
+            )
             // Auth OIDC routes (refresh, me, logout — work without auth_provider)
             .route(
                 "/auth/refresh",

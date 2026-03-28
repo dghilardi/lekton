@@ -246,6 +246,15 @@ async fn main() {
         .route(
             "/api/v1/admin/users/{user_id}/permissions/{level}",
             axum::routing::delete(api::admin::delete_user_permission_handler),
+        )
+        .route(
+            "/api/v1/admin/service-tokens",
+            axum::routing::get(api::admin::list_service_tokens_handler)
+                .post(api::admin::create_service_token_handler),
+        )
+        .route(
+            "/api/v1/admin/service-tokens/{id}",
+            axum::routing::delete(api::admin::deactivate_service_token_handler),
         );
 
     // Mount demo auth routes when demo mode is enabled, OAuth2/OIDC routes otherwise

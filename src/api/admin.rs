@@ -220,6 +220,134 @@ pub async fn delete_user_permission_handler(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// ── Service token management ─────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct CreateServiceTokenRequest {
+    pub name: String,
+    pub allowed_scopes: Vec<String>,
+    #[serde(default)]
+    pub can_write: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateServiceTokenResponse {
+    pub id: String,
+    pub name: String,
+    /// The raw token value — returned only once, never stored or retrievable again.
+    pub raw_token: String,
+    pub allowed_scopes: Vec<String>,
+    pub can_write: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ServiceTokenSummary {
+    pub id: String,
+    pub name: String,
+    pub allowed_scopes: Vec<String>,
+    pub can_write: bool,
+    pub created_by: String,
+    pub created_at: chrono::DateTime<Utc>,
+    pub last_used_at: Option<chrono::DateTime<Utc>>,
+    pub is_active: bool,
+}
+
+/// `POST /api/v1/admin/service-tokens`
+///
+/// Creates a new scoped service token. Returns the raw token value once.
+pub async fn create_service_token_handler(
+    State(state): State<AppState>,
+    RequiredAuthUser(user): RequiredAuthUser,
+    Json(req): Json<CreateServiceTokenRequest>,
+) -> Result<(StatusCode, Json<CreateServiceTokenResponse>), AppError> {
+    require_admin(&user)?;
+
+    let name = req.name.trim().to_string();
+    if name.is_empty() {
+        return Err(AppError::BadRequest("Token name cannot be empty".into()));
+    }
+    if req.allowed_scopes.is_empty() {
+        return Err(AppError::BadRequest("At least one scope is required".into()));
+    }
+
+    // Check for scope overlap with existing tokens
+    let has_overlap = state
+        .service_token_repo
+        .check_scope_overlap(&req.allowed_scopes, None)
+        .await?;
+    if has_overlap {
+        return Err(AppError::BadRequest(
+            "Scopes overlap with an existing service token".into(),
+        ));
+    }
+
+    // Generate raw token and hash it
+    let raw_token = uuid::Uuid::new_v4().to_string();
+    let token_hash = crate::auth::token_service::TokenService::hash_token(&raw_token);
+    let id = uuid::Uuid::new_v4().to_string();
+
+    let token = crate::db::service_token_models::ServiceToken {
+        id: id.clone(),
+        name: name.clone(),
+        token_hash,
+        allowed_scopes: req.allowed_scopes.clone(),
+        can_write: req.can_write,
+        created_by: user.user_id,
+        created_at: Utc::now(),
+        last_used_at: None,
+        is_active: true,
+    };
+
+    state.service_token_repo.create(token).await?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(CreateServiceTokenResponse {
+            id,
+            name,
+            raw_token,
+            allowed_scopes: req.allowed_scopes,
+            can_write: req.can_write,
+        }),
+    ))
+}
+
+/// `GET /api/v1/admin/service-tokens`
+pub async fn list_service_tokens_handler(
+    State(state): State<AppState>,
+    RequiredAuthUser(user): RequiredAuthUser,
+) -> Result<Json<Vec<ServiceTokenSummary>>, AppError> {
+    require_admin(&user)?;
+
+    let tokens = state.service_token_repo.list_all().await?;
+    let summaries = tokens
+        .into_iter()
+        .map(|t| ServiceTokenSummary {
+            id: t.id,
+            name: t.name,
+            allowed_scopes: t.allowed_scopes,
+            can_write: t.can_write,
+            created_by: t.created_by,
+            created_at: t.created_at,
+            last_used_at: t.last_used_at,
+            is_active: t.is_active,
+        })
+        .collect();
+
+    Ok(Json(summaries))
+}
+
+/// `DELETE /api/v1/admin/service-tokens/{id}`
+pub async fn deactivate_service_token_handler(
+    State(state): State<AppState>,
+    RequiredAuthUser(user): RequiredAuthUser,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    require_admin(&user)?;
+    state.service_token_repo.deactivate(&id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

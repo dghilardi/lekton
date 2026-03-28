@@ -445,6 +445,7 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
         search_service: None,
         service_token: "test-token".to_string(),
         service_token_repo: env.service_token_repo.clone(),
+        document_version_repo: env.document_version_repo.clone(),
         demo_mode: true,
         leptos_options,
         user_repo: env.user_repo.clone(),

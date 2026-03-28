@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **Direct document access enforces access control**: `get_doc_html` now checks the caller's permissions before returning document content. Previously a user who knew a document's slug could access restricted content directly by URL, bypassing the navigation and search filters. Unauthorized access returns `None` (→ 404) to avoid leaking the existence of restricted documents. Draft documents are also gated by `include_draft` permission.
 - **Archived documents deindexed from search**: When the sync API archives a document (`archive_missing: true`), it now calls `delete_document` on the search service so the document is removed from the Meilisearch index immediately. Previously archived documents remained searchable indefinitely.
 
 ## [0.5.0] 2026-03-28

@@ -286,6 +286,24 @@ pub async fn save_custom_css(css: String) -> Result<String, ServerFnError> {
     Ok("Custom CSS saved successfully".to_string())
 }
 
+/// Returns `true` if a document with the given `access_level` / `is_draft` state
+/// is readable by a caller whose visibility is described by `allowed_levels` and
+/// `include_draft`.
+///
+/// `allowed_levels = None` means admin (unrestricted).
+pub fn doc_is_accessible(
+    access_level: &str,
+    is_draft: bool,
+    allowed_levels: Option<&[String]>,
+    include_draft: bool,
+) -> bool {
+    let level_ok = match allowed_levels {
+        None => true,
+        Some(levels) => levels.iter().any(|l| l == access_level),
+    };
+    level_ok && (!is_draft || include_draft)
+}
+
 /// Server function to fetch a document's rendered HTML content, TOC, and metadata.
 #[server(GetDocHtml, "/api")]
 pub async fn get_doc_html(
@@ -303,6 +321,14 @@ pub async fn get_doc_html(
     let Some(doc) = doc else {
         return Ok(None);
     };
+
+    // Enforce access control: return None (→ 404) when the caller does not have
+    // permission to read this document.  Returning None instead of an error
+    // avoids leaking the existence of restricted documents.
+    let (allowed_levels, include_draft) = request_document_visibility(&state).await?;
+    if !doc_is_accessible(&doc.access_level, doc.is_draft, allowed_levels.as_deref(), include_draft) {
+        return Ok(None);
+    }
 
     let content_bytes = state.storage_client.get_object(&doc.s3_key).await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -508,5 +534,59 @@ pub fn App() -> impl IntoView {
                 </Routes>
             </Layout>
         </Router>
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::doc_is_accessible;
+
+    fn levels(s: &[&str]) -> Vec<String> {
+        s.iter().map(|l| l.to_string()).collect()
+    }
+
+    #[test]
+    fn admin_can_read_any_level() {
+        assert!(doc_is_accessible("architect", false, None, false));
+        assert!(doc_is_accessible("cloud-internal", false, None, false));
+    }
+
+    #[test]
+    fn user_can_read_allowed_level() {
+        let allowed = levels(&["public", "internal"]);
+        assert!(doc_is_accessible("public", false, Some(&allowed), false));
+        assert!(doc_is_accessible("internal", false, Some(&allowed), false));
+    }
+
+    #[test]
+    fn user_cannot_read_restricted_level() {
+        let allowed = levels(&["public"]);
+        assert!(!doc_is_accessible("internal", false, Some(&allowed), false));
+        assert!(!doc_is_accessible("architect", false, Some(&allowed), false));
+        assert!(!doc_is_accessible("cloud-internal", false, Some(&allowed), false));
+    }
+
+    #[test]
+    fn draft_hidden_without_draft_permission() {
+        let allowed = levels(&["internal"]);
+        assert!(!doc_is_accessible("internal", true, Some(&allowed), false));
+    }
+
+    #[test]
+    fn draft_visible_with_draft_permission() {
+        let allowed = levels(&["internal"]);
+        assert!(doc_is_accessible("internal", true, Some(&allowed), true));
+    }
+
+    #[test]
+    fn admin_can_read_draft() {
+        assert!(doc_is_accessible("architect", true, None, true));
+    }
+
+    #[test]
+    fn wrong_level_blocks_even_with_draft_permission() {
+        let allowed = levels(&["public"]);
+        assert!(!doc_is_accessible("architect", true, Some(&allowed), true));
     }
 }

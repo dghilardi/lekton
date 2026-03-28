@@ -168,6 +168,7 @@ pub async fn process_ingest(
         order: effective_order,
         is_hidden: effective_is_hidden,
         content_hash: Some(new_hash),
+        is_archived: false,
     };
 
     // 10. Build search document before ownership transfer
@@ -430,6 +431,30 @@ mod tests {
                 }
             }
 
+            Ok(())
+        }
+
+        async fn find_by_slug_prefix(&self, prefix: &str) -> Result<Vec<Document>, AppError> {
+            Ok(self
+                .documents
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|d| {
+                    !d.is_archived
+                        && (prefix.is_empty()
+                            || d.slug == prefix
+                            || d.slug.starts_with(&format!("{prefix}/")))
+                })
+                .cloned()
+                .collect())
+        }
+
+        async fn set_archived(&self, slug: &str, archived: bool) -> Result<(), AppError> {
+            let mut docs = self.documents.lock().unwrap();
+            if let Some(doc) = docs.iter_mut().find(|d| d.slug == slug) {
+                doc.is_archived = archived;
+            }
             Ok(())
         }
     }

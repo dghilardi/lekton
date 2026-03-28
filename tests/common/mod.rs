@@ -201,6 +201,10 @@ impl TestEnv {
                 post(lekton::api::assets::editor_upload_asset_handler),
             )
             .route(
+                "/api/v1/sync",
+                post(lekton::api::sync::sync_handler),
+            )
+            .route(
                 "/api/v1/assets",
                 get(lekton::api::assets::list_assets_handler),
             )

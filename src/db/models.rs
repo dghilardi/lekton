@@ -45,6 +45,11 @@ pub struct Document {
     /// content hashing was introduced.
     #[serde(default)]
     pub content_hash: Option<String>,
+    /// Whether this document has been archived (removed from source but kept
+    /// for historical reference). Archived documents are excluded from
+    /// navigation and search.
+    #[serde(default)]
+    pub is_archived: bool,
 }
 
 /// Represents an API schema entry stored in MongoDB.
@@ -166,6 +171,7 @@ mod tests {
             order: 10,
             is_hidden: false,
             content_hash: Some("sha256:abc123".to_string()),
+            is_archived: false,
         };
 
         let json = serde_json::to_string(&doc).unwrap();
@@ -223,6 +229,7 @@ mod tests {
             order: 0,
             is_hidden: false,
             content_hash: None,
+            is_archived: false,
         };
 
         let json = serde_json::to_string(&doc).unwrap();

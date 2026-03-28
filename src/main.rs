@@ -212,6 +212,10 @@ async fn main() {
             axum::routing::get(api::schemas::get_schema_version_handler),
         )
         .route(
+            "/api/v1/sync",
+            axum::routing::post(api::sync::sync_handler),
+        )
+        .route(
             "/api/v1/assets",
             axum::routing::get(api::assets::list_assets_handler),
         )

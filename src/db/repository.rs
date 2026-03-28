@@ -42,6 +42,14 @@ pub trait DocumentRepository: Send + Sync {
         old_links: &[String],
         new_links: &[String],
     ) -> Result<(), AppError>;
+
+    /// Find all non-archived documents whose slug starts with `prefix`.
+    ///
+    /// If `prefix` is empty, returns all non-archived documents.
+    async fn find_by_slug_prefix(&self, prefix: &str) -> Result<Vec<Document>, AppError>;
+
+    /// Set the `is_archived` flag on a document.
+    async fn set_archived(&self, slug: &str, archived: bool) -> Result<(), AppError>;
 }
 
 /// MongoDB implementation of the DocumentRepository.
@@ -188,4 +196,68 @@ impl DocumentRepository for MongoDocumentRepository {
 
         Ok(())
     }
+
+    async fn find_by_slug_prefix(&self, prefix: &str) -> Result<Vec<Document>, AppError> {
+        use futures::TryStreamExt;
+        use mongodb::bson::doc;
+
+        let filter = if prefix.is_empty() {
+            doc! {
+                "$or": [
+                    { "is_archived": { "$exists": false } },
+                    { "is_archived": false }
+                ]
+            }
+        } else {
+            doc! {
+                "$and": [
+                    {
+                        "$or": [
+                            { "slug": prefix },
+                            { "slug": { "$regex": format!("^{}/", regex_escape(prefix)) } }
+                        ]
+                    },
+                    {
+                        "$or": [
+                            { "is_archived": { "$exists": false } },
+                            { "is_archived": false }
+                        ]
+                    }
+                ]
+            }
+        };
+
+        let mut cursor = self.collection.find(filter).await?;
+        let mut documents = Vec::new();
+        while let Some(document) = cursor.try_next().await? {
+            documents.push(document);
+        }
+        Ok(documents)
+    }
+
+    async fn set_archived(&self, slug: &str, archived: bool) -> Result<(), AppError> {
+        use mongodb::bson::doc;
+
+        self.collection
+            .update_one(
+                doc! { "slug": slug },
+                doc! { "$set": { "is_archived": archived } },
+            )
+            .await?;
+        Ok(())
+    }
+}
+
+/// Escape special regex characters in a string for use in MongoDB regex queries.
+#[cfg(feature = "ssr")]
+fn regex_escape(s: &str) -> String {
+    let special = ['.', '*', '+', '?', '(', ')', '[', ']', '{', '}', '\\', '^', '$', '|'];
+    let mut escaped = String::with_capacity(s.len());
+    for c in s.chars() {
+        if special.contains(&c) {
+            escaped.push('\\');
+        }
+        escaped.push(c);
+    }
+    escaped
 }

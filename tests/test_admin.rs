@@ -416,3 +416,151 @@ async fn admin_set_permissions_nonexistent_user() {
 
     response.assert_status(axum::http::StatusCode::NOT_FOUND);
 }
+
+// ── Service Token Management ─────────────────────────────────────────────────
+
+#[tokio::test]
+async fn admin_create_service_token_returns_raw_token() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+
+    let admin = env.create_test_user("st-admin-1", "st-admin@test.com", true).await;
+
+    let response = server
+        .post("/api/v1/admin/service-tokens")
+        .add_cookie(env.auth_cookie(&admin))
+        .json(&json!({
+            "name": "ci-pipeline-token",
+            "allowed_scopes": ["docs/*"],
+            "can_write": true
+        }))
+        .await;
+
+    let body: serde_json::Value = response.json();
+    assert!(body["raw_token"].is_string());
+    assert!(!body["raw_token"].as_str().unwrap().is_empty());
+    assert_eq!(body["name"], "ci-pipeline-token");
+    assert_eq!(body["allowed_scopes"], json!(["docs/*"]));
+}
+
+#[tokio::test]
+async fn admin_list_service_tokens_hides_hash() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+
+    let admin = env.create_test_user("st-admin-2", "st-admin2@test.com", true).await;
+
+    // Create a token first
+    server
+        .post("/api/v1/admin/service-tokens")
+        .add_cookie(env.auth_cookie(&admin))
+        .json(&json!({
+            "name": "list-test-token",
+            "allowed_scopes": ["list-test/*"],
+            "can_write": true
+        }))
+        .await;
+
+    // List tokens
+    let response = server
+        .get("/api/v1/admin/service-tokens")
+        .add_cookie(env.auth_cookie(&admin))
+        .await;
+
+    let body: serde_json::Value = response.json();
+    let tokens = body.as_array().unwrap();
+    assert!(!tokens.is_empty());
+
+    // No token_hash or raw_token should be present
+    let token = &tokens[0];
+    assert!(token.get("token_hash").is_none());
+    assert!(token.get("raw_token").is_none());
+    assert!(token["name"].is_string());
+    assert!(token["is_active"].is_boolean());
+}
+
+#[tokio::test]
+async fn admin_deactivate_service_token() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+
+    let admin = env.create_test_user("st-admin-3", "st-admin3@test.com", true).await;
+
+    // Create
+    let create_resp = server
+        .post("/api/v1/admin/service-tokens")
+        .add_cookie(env.auth_cookie(&admin))
+        .json(&json!({
+            "name": "deact-test-token",
+            "allowed_scopes": ["deact/*"],
+            "can_write": true
+        }))
+        .await;
+
+    let create_body: serde_json::Value = create_resp.json();
+    let id = create_body["id"].as_str().unwrap();
+
+    // Deactivate
+    server
+        .delete(&format!("/api/v1/admin/service-tokens/{id}"))
+        .add_cookie(env.auth_cookie(&admin))
+        .await;
+
+    // Verify via list
+    let list_resp = server
+        .get("/api/v1/admin/service-tokens")
+        .add_cookie(env.auth_cookie(&admin))
+        .await;
+
+    let tokens: Vec<serde_json::Value> = list_resp.json();
+    let deactivated = tokens.iter().find(|t| t["name"] == "deact-test-token");
+    assert!(deactivated.is_some());
+    assert_eq!(deactivated.unwrap()["is_active"], false);
+}
+
+#[tokio::test]
+async fn admin_create_token_rejects_overlapping_scopes() {
+    let env = common::TestEnv::start().await;
+    let server = env.server_permissive();
+
+    let admin = env.create_test_user("st-admin-4", "st-admin4@test.com", true).await;
+
+    // Create first token
+    server
+        .post("/api/v1/admin/service-tokens")
+        .add_cookie(env.auth_cookie(&admin))
+        .json(&json!({
+            "name": "first-overlap",
+            "allowed_scopes": ["overlap/*"],
+            "can_write": true
+        }))
+        .await;
+
+    // Try to create second with overlapping scope
+    let response = server
+        .post("/api/v1/admin/service-tokens")
+        .add_cookie(env.auth_cookie(&admin))
+        .json(&json!({
+            "name": "second-overlap",
+            "allowed_scopes": ["overlap/sub/*"],
+            "can_write": true
+        }))
+        .await;
+
+    response.assert_status_bad_request();
+}
+
+#[tokio::test]
+async fn admin_non_admin_cannot_manage_tokens() {
+    let env = common::TestEnv::start().await;
+    let server = env.server_permissive();
+
+    let user = env.create_test_user("st-nonadmin", "nonadmin@test.com", false).await;
+
+    let response = server
+        .get("/api/v1/admin/service-tokens")
+        .add_cookie(env.auth_cookie(&user))
+        .await;
+
+    response.assert_status_forbidden();
+}

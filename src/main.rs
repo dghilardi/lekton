@@ -14,6 +14,8 @@ async fn main() {
     use lekton::db::repository::MongoDocumentRepository;
     use lekton::db::schema_repository::MongoSchemaRepository;
     use lekton::db::settings_repository::MongoSettingsRepository;
+    use lekton::db::document_version_repository::MongoDocumentVersionRepository;
+    use lekton::db::service_token_repository::MongoServiceTokenRepository;
     use lekton::db::user_repository::MongoUserRepository;
     use lekton::search::client::SearchService;
     use lekton::storage::client::S3StorageClient;
@@ -78,6 +80,10 @@ async fn main() {
         Arc::new(MongoUserRepository::new(&mongo_db));
     let access_level_repo: Arc<dyn lekton::db::access_level_repository::AccessLevelRepository> =
         Arc::new(MongoAccessLevelRepository::new(&mongo_db));
+    let service_token_repo: Arc<dyn lekton::db::service_token_repository::ServiceTokenRepository> =
+        Arc::new(MongoServiceTokenRepository::new(&mongo_db));
+    let document_version_repo: Arc<dyn lekton::db::document_version_repository::DocumentVersionRepository> =
+        Arc::new(MongoDocumentVersionRepository::new(&mongo_db));
 
     // Seed default access levels (no-op if already present).
     if let Err(e) = access_level_repo.seed_defaults().await {
@@ -148,6 +154,8 @@ async fn main() {
         search_service,
         leptos_options: leptos_options.clone(),
         service_token,
+        service_token_repo,
+        document_version_repo,
         demo_mode,
         user_repo,
         access_level_repo,
@@ -208,6 +216,10 @@ async fn main() {
             axum::routing::get(api::schemas::get_schema_version_handler),
         )
         .route(
+            "/api/v1/sync",
+            axum::routing::post(api::sync::sync_handler),
+        )
+        .route(
             "/api/v1/assets",
             axum::routing::get(api::assets::list_assets_handler),
         )
@@ -234,6 +246,15 @@ async fn main() {
         .route(
             "/api/v1/admin/users/{user_id}/permissions/{level}",
             axum::routing::delete(api::admin::delete_user_permission_handler),
+        )
+        .route(
+            "/api/v1/admin/service-tokens",
+            axum::routing::get(api::admin::list_service_tokens_handler)
+                .post(api::admin::create_service_token_handler),
+        )
+        .route(
+            "/api/v1/admin/service-tokens/{id}",
+            axum::routing::delete(api::admin::deactivate_service_token_handler),
         );
 
     // Mount demo auth routes when demo mode is enabled, OAuth2/OIDC routes otherwise

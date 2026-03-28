@@ -117,6 +117,8 @@ pub async fn save_doc_content(
         parent_slug,
         order,
         is_hidden,
+        content_hash: None, // Editor saves don't compute content hash (use ingest API for CI flows)
+        is_archived: false,
     };
 
     let search_doc = state.search_service.as_ref().map(|_| {

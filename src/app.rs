@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::components::Layout;
 use crate::editor::component::EditorPage;
-use crate::pages::{DocPage, HomePage, LoginPage, NotFound};
+use crate::pages::{AdminSettingsPage, DocPage, HomePage, LoginPage, NotFound};
 use crate::schema::component::{SchemaListPage, SchemaViewerPage};
 use crate::search::client::SearchHit;
 
@@ -24,6 +24,8 @@ pub struct AppState {
     pub storage_client: Arc<dyn crate::storage::client::StorageClient>,
     pub search_service: Option<Arc<dyn crate::search::client::SearchService>>,
     pub service_token: String,
+    pub service_token_repo: Arc<dyn crate::db::service_token_repository::ServiceTokenRepository>,
+    pub document_version_repo: Arc<dyn crate::db::document_version_repository::DocumentVersionRepository>,
     pub demo_mode: bool,
     pub leptos_options: LeptosOptions,
     // ── Auth (phase 5) ────────────────────────────────────────────────────────
@@ -325,6 +327,157 @@ pub async fn get_doc_html(
     }))
 }
 
+// ── Service token management (admin) ─────────────────────────────────────────
+
+/// Summary of a service token for the admin UI.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ServiceTokenInfo {
+    pub id: String,
+    pub name: String,
+    pub allowed_scopes: Vec<String>,
+    pub can_write: bool,
+    pub is_active: bool,
+    pub created_at: String,
+    pub last_used_at: Option<String>,
+}
+
+/// Result of creating a new service token.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreateTokenResult {
+    pub id: String,
+    pub name: String,
+    pub raw_token: String,
+    pub allowed_scopes: Vec<String>,
+}
+
+/// Helper: extract the current user and verify admin.
+#[cfg(feature = "ssr")]
+async fn require_admin_user(state: &AppState) -> Result<crate::auth::models::AuthenticatedUser, ServerFnError> {
+    use axum_extra::extract::CookieJar;
+    use crate::auth::extractor::ACCESS_TOKEN_COOKIE;
+    use crate::auth::token_service::TokenService;
+
+    let jar: CookieJar = leptos_axum::extract().await?;
+
+    // Try JWT first
+    if let Some(user) = jar
+        .get(ACCESS_TOKEN_COOKIE)
+        .and_then(|c| state.token_service.validate_access_token(c.value()).ok())
+        .map(|claims| TokenService::claims_to_user(&claims))
+    {
+        if user.is_admin {
+            return Ok(user);
+        }
+        return Err(ServerFnError::new("Admin privileges required"));
+    }
+
+    // Demo mode fallback
+    if state.demo_mode {
+        if let Some(cookie) = jar.get("lekton_demo_user") {
+            if let Ok(user) = serde_json::from_str::<crate::auth::models::AuthenticatedUser>(cookie.value()) {
+                if user.is_admin {
+                    return Ok(user);
+                }
+            }
+        }
+    }
+
+    Err(ServerFnError::new("Admin privileges required"))
+}
+
+/// List all service tokens (admin only).
+#[server(ListServiceTokens, "/api")]
+pub async fn list_service_tokens() -> Result<Vec<ServiceTokenInfo>, ServerFnError> {
+    let state = expect_context::<AppState>();
+    require_admin_user(&state).await?;
+
+    let tokens = state.service_token_repo.list_all().await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(tokens.into_iter().map(|t| ServiceTokenInfo {
+        id: t.id,
+        name: t.name,
+        allowed_scopes: t.allowed_scopes,
+        can_write: t.can_write,
+        is_active: t.is_active,
+        created_at: t.created_at.format("%Y-%m-%d %H:%M").to_string(),
+        last_used_at: t.last_used_at.map(|d| d.format("%Y-%m-%d %H:%M").to_string()),
+    }).collect())
+}
+
+/// Create a new scoped service token (admin only).
+/// `scopes` is newline-separated.
+#[server(CreateServiceToken, "/api")]
+pub async fn create_service_token(
+    name: String,
+    scopes: String,
+    can_write: bool,
+) -> Result<CreateTokenResult, ServerFnError> {
+    use crate::auth::token_service::TokenService;
+
+    let state = expect_context::<AppState>();
+    let user = require_admin_user(&state).await?;
+
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err(ServerFnError::new("Token name cannot be empty"));
+    }
+
+    let allowed_scopes: Vec<String> = scopes
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+    if allowed_scopes.is_empty() {
+        return Err(ServerFnError::new("At least one scope is required"));
+    }
+
+    let has_overlap = state.service_token_repo
+        .check_scope_overlap(&allowed_scopes, None)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    if has_overlap {
+        return Err(ServerFnError::new("Scopes overlap with an existing service token"));
+    }
+
+    let raw_token = uuid::Uuid::new_v4().to_string();
+    let token_hash = TokenService::hash_token(&raw_token);
+
+    let token = crate::db::service_token_models::ServiceToken {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: name.clone(),
+        token_hash,
+        allowed_scopes: allowed_scopes.clone(),
+        can_write,
+        created_by: user.user_id,
+        created_at: chrono::Utc::now(),
+        last_used_at: None,
+        is_active: true,
+    };
+
+    state.service_token_repo.create(token).await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(CreateTokenResult {
+        id: uuid::Uuid::new_v4().to_string(),
+        name,
+        raw_token,
+        allowed_scopes,
+    })
+}
+
+/// Deactivate a service token (admin only).
+#[server(DeactivateServiceToken, "/api")]
+pub async fn deactivate_service_token(id: String) -> Result<(), ServerFnError> {
+    let state = expect_context::<AppState>();
+    require_admin_user(&state).await?;
+
+    state.service_token_repo.deactivate(&id).await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(())
+}
+
 /// Root application component.
 #[component]
 pub fn App() -> impl IntoView {
@@ -351,6 +504,7 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/edit/:slug") view=EditorPage />
                     <Route path=path!("/schemas") view=SchemaListPage />
                     <Route path=path!("/schemas/:name") view=SchemaViewerPage />
+                    <Route path=path!("/admin/settings") view=AdminSettingsPage />
                 </Routes>
             </Layout>
         </Router>

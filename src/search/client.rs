@@ -291,6 +291,8 @@ mod tests {
             parent_slug: None,
             order: 0,
             is_hidden: false,
+            content_hash: None,
+            is_archived: false,
         };
 
         let search_doc = build_search_document(&doc, "# Getting Started\n\nWelcome to Lekton.");
@@ -319,6 +321,8 @@ mod tests {
             parent_slug: None,
             order: 0,
             is_hidden: false,
+            content_hash: None,
+            is_archived: false,
         };
 
         let search_doc = build_search_document(&doc, "# WIP content");

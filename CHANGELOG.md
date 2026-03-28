@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+## [0.4.1] 2026-03-28
 ## [0.4.0] - 2026-02-21
 
 ### Added — Phase 4: Theme, Polish & Accessibility

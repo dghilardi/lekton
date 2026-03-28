@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added — `lekton-sync` CLI
+
+- **`lekton-sync` publish workflow**: `docker-publish.yml` now has a `publish-cli` job (requires `needs: publish`) that runs `cargo publish -p lekton-sync` after a successful Docker Hub push. Requires a `CARGO_REGISTRY_TOKEN` secret in the repository settings.
+- **`lekton-sync` CLI** (`cli/`): standalone binary that acts as the CI-side client for the Lekton ingestion API. Accepts `LEKTON_TOKEN` and `LEKTON_URL` environment variables plus a root path argument. Scans all `.md` files in the tree, reads YAML front matter (`title`, `slug`, `access_level`, `service_owner`, `tags`, `order`, `is_hidden`), computes SHA-256 content hashes, calls `POST /api/v1/sync` to get the delta, then calls `POST /api/v1/ingest` only for documents that need uploading. Supports a `.lekton.yml` project config file (server URL, default access level, service owner, slug prefix, `archive_missing` flag). Flags: `--archive-missing`, `--dry-run`, `--verbose`, `--config`. Files without a `title` or `slug` in their front matter are silently skipped. 9 unit tests covering hashing, front matter parsing, path-to-slug derivation, and file scanning.
+
 ## [0.5.1] 2026-03-28
 
 ### Fixed

@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
+#[cfg(feature = "ssr")]
+use crate::search::client::SearchService;
 
 /// A single document entry in a sync request.
 #[derive(Debug, Clone, Deserialize)]
@@ -38,6 +40,7 @@ pub struct SyncResponse {
 pub async fn process_sync(
     repo: &dyn crate::db::repository::DocumentRepository,
     service_token_repo: &dyn crate::db::service_token_repository::ServiceTokenRepository,
+    search: Option<&dyn SearchService>,
     legacy_token: Option<&str>,
     request: SyncRequest,
 ) -> Result<SyncResponse, AppError> {
@@ -122,6 +125,11 @@ pub async fn process_sync(
     if request.archive_missing {
         for slug in &to_archive {
             repo.set_archived(slug, true).await?;
+            if let Some(svc) = search {
+                if let Err(e) = svc.delete_document(slug).await {
+                    tracing::warn!("Failed to deindex archived document '{slug}' from search: {e}");
+                }
+            }
         }
     }
 
@@ -196,6 +204,7 @@ pub async fn sync_handler(
     let response = process_sync(
         state.document_repo.as_ref(),
         state.service_token_repo.as_ref(),
+        state.search_service.as_deref(),
         Some(&state.service_token),
         request,
     )
@@ -216,6 +225,31 @@ mod tests {
     use chrono::Utc;
 
     // ── Mocks ────────────────────────────────────────────────────────────
+
+    struct MockSearchService {
+        deleted: Mutex<Vec<String>>,
+    }
+
+    impl MockSearchService {
+        fn new() -> Self {
+            Self { deleted: Mutex::new(vec![]) }
+        }
+
+        fn deleted_slugs(&self) -> Vec<String> {
+            self.deleted.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl crate::search::client::SearchService for MockSearchService {
+        async fn index_document(&self, _: &crate::search::client::SearchDocument) -> Result<(), AppError> { Ok(()) }
+        async fn delete_document(&self, slug: &str) -> Result<(), AppError> {
+            self.deleted.lock().unwrap().push(slug.to_string());
+            Ok(())
+        }
+        async fn search(&self, _: &str, _: Option<&[String]>, _: bool) -> Result<Vec<crate::search::client::SearchHit>, AppError> { Ok(vec![]) }
+        async fn configure_index(&self) -> Result<(), AppError> { Ok(()) }
+    }
 
     struct MockRepo {
         documents: Mutex<Vec<Document>>,
@@ -325,7 +359,7 @@ mod tests {
             archive_missing: false,
         };
 
-        let result = process_sync(&repo, &token_repo, Some("legacy"), request)
+        let result = process_sync(&repo, &token_repo, None, Some("legacy"), request)
             .await
             .unwrap();
         assert_eq!(result.to_upload, vec!["docs/new"]);
@@ -346,7 +380,7 @@ mod tests {
             archive_missing: false,
         };
 
-        let result = process_sync(&repo, &token_repo, Some("legacy"), request)
+        let result = process_sync(&repo, &token_repo, None, Some("legacy"), request)
             .await
             .unwrap();
         assert!(result.to_upload.is_empty());
@@ -367,7 +401,7 @@ mod tests {
             archive_missing: false,
         };
 
-        let result = process_sync(&repo, &token_repo, Some("legacy"), request)
+        let result = process_sync(&repo, &token_repo, None, Some("legacy"), request)
             .await
             .unwrap();
         assert_eq!(result.to_upload, vec!["docs/a"]);
@@ -390,7 +424,7 @@ mod tests {
             archive_missing: false,
         };
 
-        let result = process_sync(&repo, &token_repo, Some("legacy"), request)
+        let result = process_sync(&repo, &token_repo, None, Some("legacy"), request)
             .await
             .unwrap();
         assert_eq!(result.unchanged, vec!["docs/a"]);
@@ -413,7 +447,7 @@ mod tests {
             archive_missing: true,
         };
 
-        process_sync(&repo, &token_repo, Some("legacy"), request)
+        process_sync(&repo, &token_repo, None, Some("legacy"), request)
             .await
             .unwrap();
 
@@ -468,11 +502,59 @@ mod tests {
             archive_missing: false,
         };
 
-        let result = process_sync(&repo, &token_repo, Some("other-legacy"), request).await;
+        let result = process_sync(&repo, &token_repo, None, Some("other-legacy"), request).await;
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::Forbidden(msg) => assert!(msg.contains("docs/outside")),
             other => panic!("Expected Forbidden, got: {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn test_sync_archive_deindexes_from_search() {
+        let repo = MockRepo::with_docs(vec![
+            make_doc("docs/a", "sha256:abc"),
+            make_doc("docs/old", "sha256:def"),
+        ]);
+        let token_repo = MockServiceTokenRepo;
+        let search = MockSearchService::new();
+        let request = SyncRequest {
+            service_token: "legacy".to_string(),
+            documents: vec![SyncDocumentEntry {
+                slug: "docs/a".to_string(),
+                content_hash: "sha256:abc".to_string(),
+            }],
+            archive_missing: true,
+        };
+
+        process_sync(&repo, &token_repo, Some(&search), Some("legacy"), request)
+            .await
+            .unwrap();
+
+        assert_eq!(search.deleted_slugs(), vec!["docs/old"]);
+    }
+
+    #[tokio::test]
+    async fn test_sync_no_archive_does_not_deindex() {
+        let repo = MockRepo::with_docs(vec![
+            make_doc("docs/a", "sha256:abc"),
+            make_doc("docs/old", "sha256:def"),
+        ]);
+        let token_repo = MockServiceTokenRepo;
+        let search = MockSearchService::new();
+        let request = SyncRequest {
+            service_token: "legacy".to_string(),
+            documents: vec![SyncDocumentEntry {
+                slug: "docs/a".to_string(),
+                content_hash: "sha256:abc".to_string(),
+            }],
+            archive_missing: false,
+        };
+
+        process_sync(&repo, &token_repo, Some(&search), Some("legacy"), request)
+            .await
+            .unwrap();
+
+        assert!(search.deleted_slugs().is_empty());
     }
 }

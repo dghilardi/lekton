@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - **Sync API**: `POST /api/v1/sync` accepts a list of `{slug, content_hash}` entries from the CI client and returns `{to_upload, to_archive, unchanged}`. Supports `archive_missing: true` to automatically soft-archive documents removed from the source repository. Token scopes are validated for all slugs in the request.
 - **Document versioning**: When content changes during ingest, the previous version is copied to `docs/history/{slug}/{version}.md` in S3 and a `DocumentVersion` record (slug, version number, content hash, updated_by) is stored in the `document_versions` MongoDB collection. Version numbers auto-increment per slug.
 - **Document archival**: `is_archived` field on documents, used by the sync API for soft-deleting documents no longer present in the source repo.
+- **Admin settings page**: New `/admin/settings` page (admin-only, with sidebar link) for managing service tokens via the UI. Token list table with scopes, permissions, status, and deactivate button. Create form with name, scopes (one per line), and write permission toggle. One-time raw token display modal with clipboard copy.
 - **Tests**: 30+ new unit tests covering scope matching, scope overlap detection, scoped/legacy token validation, content hash diffing, sync scenarios (upload/unchanged/archive), and token lifecycle.
 
 ## [0.4.2] 2026-03-28

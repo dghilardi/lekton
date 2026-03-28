@@ -157,6 +157,64 @@ async fn search_returns_content_preview() {
 }
 
 #[tokio::test]
+async fn search_excludes_archived_documents() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+
+    let slug = format!("search-archive-{}", uuid::Uuid::new_v4());
+    let keyword = format!("archivekw{}", uuid::Uuid::new_v4().simple());
+
+    // Ingest the document so it appears in search
+    env.ingest(
+        &server,
+        &slug,
+        &format!("Archive test {keyword}"),
+        &format!("# Archive test {keyword}\n\nThis document will be archived."),
+        "public",
+    )
+    .await;
+
+    env.wait_for_search_indexing().await;
+
+    // Confirm it's searchable before archiving
+    let response = server
+        .get("/api/v1/search")
+        .add_query_param("q", &keyword)
+        .add_query_param("access_levels", "public")
+        .await;
+    let results: Vec<serde_json::Value> = response.json();
+    assert!(
+        results.iter().any(|r| r["slug"].as_str() == Some(&slug)),
+        "Document should appear in search before archiving"
+    );
+
+    // Archive via sync with archive_missing: true and an empty client list
+    let sync_response = server
+        .post("/api/v1/sync")
+        .json(&serde_json::json!({
+            "service_token": "test-token",
+            "documents": [],
+            "archive_missing": true
+        }))
+        .await;
+    sync_response.assert_status_ok();
+
+    env.wait_for_search_indexing().await;
+
+    // Document should no longer appear in search results
+    let response = server
+        .get("/api/v1/search")
+        .add_query_param("q", &keyword)
+        .add_query_param("access_levels", "public")
+        .await;
+    let results: Vec<serde_json::Value> = response.json();
+    assert!(
+        !results.iter().any(|r| r["slug"].as_str() == Some(&slug)),
+        "Archived document must not appear in search results"
+    );
+}
+
+#[tokio::test]
 async fn search_fails_when_service_unavailable() {
     let env = common::TestEnv::start().await;
     let server = common::server_without_search(&env);

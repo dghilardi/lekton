@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Archived documents deindexed from search**: When the sync API archives a document (`archive_missing: true`), it now calls `delete_document` on the search service so the document is removed from the Meilisearch index immediately. Previously archived documents remained searchable indefinitely.
+
 ## [0.5.0] 2026-03-28
 
 ### Added — CI-Driven Document Sync

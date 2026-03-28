@@ -105,6 +105,29 @@ pub fn Layout(children: Children) -> impl IntoView {
                                 </a>
                             </li>
                         </ul>
+                        // Admin section (visible only to admin users)
+                        {move || {
+                            let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
+                            let is_admin = current_user
+                                .and_then(|sig| sig.get())
+                                .map(|u| u.is_admin)
+                                .unwrap_or(false);
+                            if is_admin {
+                                view! {
+                                    <ul class="flex flex-col gap-1 mt-6">
+                                        <li class="menu-title text-xs font-semibold tracking-wider text-base-content/60 uppercase mb-1">"Admin"</li>
+                                        <li>
+                                            <a href="/admin/settings" class="gap-3 group data-[active]:bg-primary/10 data-[active]:text-primary data-[active]:font-medium transition-colors">
+                                                <svg class="w-4 h-4 opacity-70 group-hover:opacity-100 transition-opacity" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                                                "Settings"
+                                            </a>
+                                        </li>
+                                    </ul>
+                                }.into_any()
+                            } else {
+                                view! { <span></span> }.into_any()
+                            }
+                        }}
                     </div>
                 </div>
             </div>

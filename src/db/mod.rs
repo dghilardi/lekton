@@ -4,5 +4,7 @@ pub mod auth_models;
 pub mod models;
 pub mod repository;
 pub mod schema_repository;
+pub mod service_token_models;
+pub mod service_token_repository;
 pub mod settings_repository;
 pub mod user_repository;

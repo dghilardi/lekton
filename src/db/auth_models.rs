@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Custom serde helper for Option<DateTime<Utc>> with BSON DateTime format.
-mod option_bson_datetime {
+pub mod option_bson_datetime {
     use chrono::{DateTime, Utc};
     use serde::{Deserializer, Serializer};
 

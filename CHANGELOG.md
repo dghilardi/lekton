@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.1] 2026-03-28
+
 ### Fixed
 
 - **Direct document access enforces access control**: `get_doc_html` now checks the caller's permissions before returning document content. Previously a user who knew a document's slug could access restricted content directly by URL, bypassing the navigation and search filters. Unauthorized access returns `None` (→ 404) to avoid leaking the existence of restricted documents. Draft documents are also gated by `include_draft` permission.

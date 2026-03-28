@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added — CI-Driven Document Sync
+
+- **Scoped service tokens**: Per-pipeline API keys with `allowed_scopes` (exact slugs or prefix patterns like `protocols/*`). Scope overlap between tokens is rejected at creation time. Replaces the single global `SERVICE_TOKEN` for fine-grained access control while preserving backward compatibility via legacy token fallback.
+- **Admin token management**: `POST /api/v1/admin/service-tokens` creates a scoped token (raw value returned once), `GET /api/v1/admin/service-tokens` lists all tokens (hash never exposed), `DELETE /api/v1/admin/service-tokens/{id}` deactivates a token. All endpoints require admin authentication.
+- **Content hashing**: SHA-256 hash (`sha256:<base64url>`) computed and stored on every document. Ingest API skips S3 upload when content is unchanged, and skips DB update too when metadata also matches. `IngestResponse` gains a `changed` boolean field.
+- **Sync API**: `POST /api/v1/sync` accepts a list of `{slug, content_hash}` entries from the CI client and returns `{to_upload, to_archive, unchanged}`. Supports `archive_missing: true` to automatically soft-archive documents removed from the source repository. Token scopes are validated for all slugs in the request.
+- **Document versioning**: When content changes during ingest, the previous version is copied to `docs/history/{slug}/{version}.md` in S3 and a `DocumentVersion` record (slug, version number, content hash, updated_by) is stored in the `document_versions` MongoDB collection. Version numbers auto-increment per slug.
+- **Document archival**: `is_archived` field on documents, used by the sync API for soft-deleting documents no longer present in the source repo.
+- **Tests**: 30+ new unit tests covering scope matching, scope overlap detection, scoped/legacy token validation, content hash diffing, sync scenarios (upload/unchanged/archive), and token lifecycle.
+
 ## [0.4.2] 2026-03-28
 
 ## [0.4.1] 2026-03-28

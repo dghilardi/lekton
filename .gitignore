@@ -25,3 +25,6 @@ Thumbs.db
 
 *.log
 *_log.txt
+
+/playwright-report
+/test-results

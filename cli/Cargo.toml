@@ -3,6 +3,11 @@ name = "lekton-sync"
 version = "0.6.0"
 edition = "2021"
 description = "CLI tool to sync markdown documents to a Lekton instance"
+license = "MIT"
+repository = "https://github.com/dghilardi/lekton"
+readme = "README.md"
+keywords = ["lekton", "docs", "sync", "markdown", "cli"]
+categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "lekton-sync"

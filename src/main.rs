@@ -64,6 +64,30 @@ async fn main() {
     let mongo_db_name =
         std::env::var("MONGODB_DATABASE").unwrap_or_else(|_| "lekton".to_string());
 
+    // Inject credentials into the URI if provided separately
+    let mongo_uri = match (
+        std::env::var("MONGODB_USERNAME"),
+        std::env::var("MONGODB_PASSWORD"),
+    ) {
+        (Ok(user), Ok(pass)) => {
+            let encoded_user = urlencoding::encode(&user);
+            let encoded_pass = urlencoding::encode(&pass);
+            // Insert credentials after the scheme (mongodb:// or mongodb+srv://)
+            if let Some(rest) = mongo_uri
+                .strip_prefix("mongodb+srv://")
+                .map(|r| ("mongodb+srv://", r))
+                .or_else(|| mongo_uri.strip_prefix("mongodb://").map(|r| ("mongodb://", r)))
+            {
+                // Strip any existing credentials (user:pass@host → host)
+                let host_part = rest.1.find('@').map_or(rest.1, |i| &rest.1[i + 1..]);
+                format!("{}{}:{}@{}", rest.0, encoded_user, encoded_pass, host_part)
+            } else {
+                mongo_uri
+            }
+        }
+        _ => mongo_uri,
+    };
+
     let mongo_client = mongodb::Client::with_uri_str(&mongo_uri)
         .await
         .expect("Failed to connect to MongoDB");

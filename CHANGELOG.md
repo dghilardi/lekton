@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.2] 2026-04-01
+
 ### Added
 
 - **`MONGODB_USERNAME` / `MONGODB_PASSWORD` env vars**: MongoDB credentials can now be provided as separate environment variables in addition to (or instead of) embedding them in `MONGODB_URI`. When both are set, they are percent-encoded and injected into the URI after the scheme, replacing any existing inline credentials.

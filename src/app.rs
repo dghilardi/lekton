@@ -526,8 +526,8 @@ pub fn App() -> impl IntoView {
                 <Routes fallback=|| view! { <NotFound /> }>
                     <Route path=path!("/") view=HomePage />
                     <Route path=path!("/login") view=LoginPage />
-                    <Route path=path!("/docs/:slug") view=DocPage />
-                    <Route path=path!("/edit/:slug") view=EditorPage />
+                    <Route path=path!("/docs/*slug") view=DocPage />
+                    <Route path=path!("/edit/*slug") view=EditorPage />
                     <Route path=path!("/schemas") view=SchemaListPage />
                     <Route path=path!("/schemas/:name") view=SchemaViewerPage />
                     <Route path=path!("/admin/settings") view=AdminSettingsPage />

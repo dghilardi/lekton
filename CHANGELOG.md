@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Local attachment sync**: `lekton-sync` now detects local file references in markdown (`![](path)`, `[](path)`, `<img src="path">`) and automatically uploads them as assets before ingesting the document. Paths are rewritten in the uploaded content to server URLs (`/api/v1/assets/attachments/{slug}/{filename}`), while local files remain untouched. Supports all relative paths including `../`. Configurable via `max_attachment_size_mb` in `.lekton.yml` (default: 10 MB). Dry-run mode shows attachment upload plan.
+- **Asset content hash deduplication**: `POST /api/v1/assets/check-hashes` endpoint accepts a list of asset keys with their SHA-256 hashes and returns which ones need uploading. Used by `lekton-sync` to skip unchanged attachments.
+- **Server-side attachment size limit**: `MAX_ATTACHMENT_SIZE_MB` environment variable (default: 25 MB) rejects oversized asset uploads with a clear error message.
+- **`content_hash` field on Asset model**: SHA-256 hash stored on every asset upload for deduplication support.
+
 ### Changed
 
 - **`lekton-sync` requires `lekton-import: true`**: only files with this flag in their YAML front matter are synced. Prevents accidental ingestion of READMEs, dependency docs, or other non-portal markdown files.

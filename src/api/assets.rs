@@ -48,6 +48,19 @@ pub struct ListAssetsQuery {
     pub prefix: Option<String>,
 }
 
+/// Default maximum attachment size in bytes (25 MB).
+const DEFAULT_MAX_ATTACHMENT_SIZE: u64 = 25 * 1024 * 1024;
+
+/// Read the maximum attachment size from the `MAX_ATTACHMENT_SIZE_MB` env var.
+/// Returns the limit in bytes, defaulting to 25 MB.
+pub fn max_attachment_size_bytes() -> u64 {
+    std::env::var("MAX_ATTACHMENT_SIZE_MB")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(|mb| mb * 1024 * 1024)
+        .unwrap_or(DEFAULT_MAX_ATTACHMENT_SIZE)
+}
+
 /// Core upload logic — separated from HTTP layer for testability.
 pub async fn process_upload_asset(
     asset_repo: &dyn AssetRepository,
@@ -80,6 +93,14 @@ pub async fn process_upload_asset(
     }
 
     let size_bytes = data.len() as u64;
+    let max_size = max_attachment_size_bytes();
+    if size_bytes > max_size {
+        return Err(AppError::BadRequest(format!(
+            "File size ({:.1} MB) exceeds maximum allowed size ({:.1} MB)",
+            size_bytes as f64 / (1024.0 * 1024.0),
+            max_size as f64 / (1024.0 * 1024.0),
+        )));
+    }
     let s3_key = format!("assets/{}", key);
     let content_hash = Some(compute_content_hash(&data));
 

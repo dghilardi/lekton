@@ -74,6 +74,9 @@ struct FrontMatter {
     tags: Option<Vec<String>>,
     order: Option<i32>,
     is_hidden: Option<bool>,
+    /// Must be `true` for the file to be synced to Lekton.
+    #[serde(rename = "lekton-import", default)]
+    lekton_import: bool,
 }
 
 // ── API types ─────────────────────────────────────────────────────────────────
@@ -199,8 +202,8 @@ fn scan_documents(root: &Path, config: &LektonConfig) -> Result<HashMap<String, 
 
         let (fm, body) = parse_front_matter(&source);
 
-        // Skip files with no front matter (no title and no slug)
-        if fm.title.is_none() && fm.slug.is_none() {
+        // Skip files not explicitly marked for import
+        if !fm.lekton_import {
             continue;
         }
 
@@ -291,7 +294,7 @@ async fn main() -> Result<()> {
     let docs = scan_documents(&root, &config)?;
 
     if docs.is_empty() {
-        println!("No documents found (files must have YAML front matter with a title or slug).");
+        println!("No documents found (files must have `lekton-import: true` in their YAML front matter).");
         return Ok(());
     }
 
@@ -516,7 +519,7 @@ mod tests {
         let path = dir.path().join("guide.md");
         std::fs::File::create(&path)
             .unwrap()
-            .write_all(b"---\ntitle: Guide\naccess_level: public\n---\n# Guide body\n")
+            .write_all(b"---\ntitle: Guide\naccess_level: public\nlekton-import: true\n---\n# Guide body\n")
             .unwrap();
         let docs = scan_documents(dir.path(), &LektonConfig::default()).unwrap();
         assert_eq!(docs.len(), 1);
@@ -524,5 +527,18 @@ mod tests {
         assert_eq!(doc.title, "Guide");
         assert_eq!(doc.access_level, "public");
         assert!(doc.content_hash.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn scan_skips_file_without_lekton_import() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("readme.md");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(b"---\ntitle: README\n---\n# Not for Lekton\n")
+            .unwrap();
+        let docs = scan_documents(dir.path(), &LektonConfig::default()).unwrap();
+        assert!(docs.is_empty());
     }
 }

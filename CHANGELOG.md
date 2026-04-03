@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **`lekton-sync` requires `lekton-import: true`**: only files with this flag in their YAML front matter are synced. Prevents accidental ingestion of READMEs, dependency docs, or other non-portal markdown files.
+
 ## [0.6.2] 2026-04-01
 
 ### Added

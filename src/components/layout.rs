@@ -5,6 +5,73 @@ use super::search::SearchModal;
 use super::theme::ThemeToggle;
 use super::user_menu::UserMenu;
 use super::custom_css::RuntimeCustomCss;
+use crate::app::{get_navigation, get_navbar_groups};
+
+#[component]
+pub fn TopNavbarLinks() -> impl IntoView {
+    let nav_resource = Resource::new(|| (), |_| get_navigation());
+    let groups_resource = Resource::new(|| (), |_| get_navbar_groups());
+
+    view! {
+        <Suspense fallback=move || view! { <span class="loading loading-spinner loading-sm"></span> }>
+            {move || {
+                let nav_res = nav_resource.get();
+                let groups_res = groups_resource.get();
+                
+                if let (Some(Ok(items)), Some(Ok(groups))) = (nav_res, groups_res) {
+                    let mut standalone = vec![];
+                    
+                    for item in &items {
+                        let mut in_group = false;
+                        for group in &groups {
+                            if group.items.contains(&item.slug) {
+                                in_group = true;
+                                break;
+                            }
+                        }
+                        if !in_group {
+                            standalone.push(item.clone());
+                        }
+                    }
+
+                    view! {
+                        {standalone.into_iter().map(|item| {
+                            view! {
+                                <a href=format!("/docs/{}", item.slug) class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">
+                                    {item.title}
+                                </a>
+                            }
+                        }).collect::<Vec<_>>()}
+
+                        {groups.into_iter().map(|group| {
+                            let group_items: Vec<_> = items.iter().filter(|i| group.items.contains(&i.slug)).collect();
+                            if group_items.is_empty() {
+                                return view! { <span></span> }.into_any();
+                            }
+                            view! {
+                                <div class="dropdown dropdown-hover dropdown-bottom">
+                                    <div tabindex="0" role="button" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50 m-1">
+                                        {group.title.clone()}
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="ml-1 opacity-60"><path d="m6 9 6 6 6-6"/></svg>
+                                    </div>
+                                    <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52 border border-base-200">
+                                        {group_items.into_iter().map(|i| {
+                                            view! {
+                                                <li><a href=format!("/docs/{}", i.slug) class="active:!bg-primary active:!text-primary-content">{i.title.clone()}</a></li>
+                                            }
+                                        }).collect::<Vec<_>>()}
+                                    </ul>
+                                </div>
+                            }.into_any()
+                        }).collect::<Vec<_>>()}
+                    }.into_any()
+                } else {
+                    view! { <span></span> }.into_any()
+                }
+            }}
+        </Suspense>
+    }
+}
 
 /// Main layout: navbar + sidebar + content area.
 #[component]
@@ -36,6 +103,9 @@ pub fn Layout(children: Children) -> impl IntoView {
                         <svg class="w-6 h-6 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5Z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
                         <span class="truncate">"Lekton"</span>
                     </a>
+                    <div class="hidden lg:flex items-center gap-1 ml-4 pl-4 border-l border-base-300">
+                        <TopNavbarLinks />
+                    </div>
                 </div>
                 // Center (Absolutey Centered)
                 <div class="hidden sm:flex absolute inset-0 pointer-events-none items-center justify-center">

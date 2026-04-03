@@ -72,6 +72,7 @@ struct FrontMatter {
     service_owner: Option<String>,
     #[serde(default)]
     tags: Option<Vec<String>>,
+    parent_slug: Option<String>,
     order: Option<i32>,
     is_hidden: Option<bool>,
     /// Must be `true` for the file to be synced to Lekton.
@@ -110,6 +111,7 @@ struct IngestRequest {
     access_level: String,
     service_owner: String,
     tags: Vec<String>,
+    parent_slug: Option<String>,
     order: i32,
     is_hidden: bool,
 }
@@ -129,6 +131,7 @@ struct DocumentInfo {
     access_level: String,
     service_owner: String,
     tags: Vec<String>,
+    parent_slug: Option<String>,
     order: i32,
     is_hidden: bool,
 }
@@ -208,10 +211,31 @@ fn scan_documents(root: &Path, config: &LektonConfig) -> Result<HashMap<String, 
         }
 
         let derived_slug = slug_from_path(path, root);
-        let slug_raw = fm.slug.unwrap_or(derived_slug);
+        let slug_raw = fm.slug.clone().unwrap_or_else(|| derived_slug.clone());
+
+        let parsed_parent = if let Some(p) = fm.parent_slug {
+            Some(p)
+        } else {
+            if let Some((parent, _)) = derived_slug.rsplit_once('/') {
+                Some(parent.to_string())
+            } else {
+                None
+            }
+        };
+
         let slug = match &config.slug_prefix {
             Some(prefix) if !prefix.is_empty() => format!("{prefix}/{slug_raw}"),
             _ => slug_raw,
+        };
+
+        let parent_slug = match &config.slug_prefix {
+            Some(prefix) if !prefix.is_empty() => {
+                match parsed_parent {
+                    Some(ref p) => Some(format!("{prefix}/{p}")),
+                    None => Some(prefix.clone()),
+                }
+            }
+            _ => parsed_parent,
         };
 
         let title = fm.title.unwrap_or_else(|| slug.clone());
@@ -238,6 +262,7 @@ fn scan_documents(root: &Path, config: &LektonConfig) -> Result<HashMap<String, 
                 access_level,
                 service_owner,
                 tags,
+                parent_slug,
                 order,
                 is_hidden,
             },
@@ -394,6 +419,7 @@ async fn main() -> Result<()> {
                 access_level: doc.access_level.clone(),
                 service_owner: doc.service_owner.clone(),
                 tags: doc.tags.clone(),
+                parent_slug: doc.parent_slug.clone(),
                 order: doc.order,
                 is_hidden: doc.is_hidden,
             })

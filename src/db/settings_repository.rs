@@ -11,6 +11,15 @@ pub struct AppSettings {
     /// Custom CSS to inject at runtime.
     #[serde(default)]
     pub custom_css: String,
+    /// Groups for the top-level navbar.
+    #[serde(default)]
+    pub navbar_groups: Vec<NavGroup>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct NavGroup {
+    pub title: String,
+    pub items: Vec<String>,
 }
 
 impl Default for AppSettings {
@@ -18,6 +27,7 @@ impl Default for AppSettings {
         Self {
             key: "global".to_string(),
             custom_css: String::new(),
+            navbar_groups: vec![],
         }
     }
 }
@@ -95,6 +105,7 @@ mod tests {
         let settings = AppSettings {
             key: "global".to_string(),
             custom_css: ":root { --lekton-font-family: monospace; }".to_string(),
+            navbar_groups: vec![],
         };
         let json = serde_json::to_string(&settings).unwrap();
         let deserialized: AppSettings = serde_json::from_str(&json).unwrap();

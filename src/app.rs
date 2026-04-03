@@ -4,6 +4,8 @@ use leptos_router::components::*;
 use leptos_router::path;
 use serde::{Deserialize, Serialize};
 
+use crate::db::settings_repository::NavGroup;
+
 use crate::components::Layout;
 use crate::editor::component::EditorPage;
 use crate::pages::{AdminSettingsPage, DocPage, HomePage, LoginPage, NotFound};
@@ -158,28 +160,73 @@ pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    let all_items: Vec<NavItem> = docs.into_iter().map(|doc| NavItem {
-        slug: doc.slug,
-        title: doc.title,
-        parent_slug: doc.parent_slug,
-        order: doc.order,
-        children: vec![],
+    let mut all_items: Vec<NavItem> = docs.into_iter().map(|doc| {
+        let parent_slug = doc.parent_slug.or_else(|| {
+            if let Some((parent, _)) = doc.slug.rsplit_once('/') {
+                Some(parent.to_string())
+            } else {
+                None
+            }
+        });
+        NavItem {
+            slug: doc.slug,
+            title: doc.title,
+            parent_slug,
+            order: doc.order,
+            children: vec![],
+        }
     }).collect();
 
-    let items_by_slug: HashMap<String, NavItem> = all_items.into_iter()
+    let mut items_by_slug: HashMap<String, NavItem> = all_items.iter().cloned()
         .map(|item| (item.slug.clone(), item))
         .collect();
+
+    for item in &all_items {
+        let mut current_parent = item.parent_slug.clone();
+        while let Some(parent_slug) = current_parent {
+            if !items_by_slug.contains_key(&parent_slug) {
+                let title_part = parent_slug.split('/').last().unwrap_or(&parent_slug);
+                let title = title_part.split('-')
+                    .map(|w| {
+                        let mut c = w.chars();
+                        match c.next() {
+                            None => String::new(),
+                            Some(f) => f.to_uppercase().collect::<String>() + c.as_str()
+                        }
+                    }).collect::<Vec<_>>().join(" ");
+                
+                let next_parent = if let Some((p, _)) = parent_slug.rsplit_once('/') {
+                    Some(p.to_string())
+                } else {
+                    None
+                };
+
+                let missing_node = NavItem {
+                    slug: parent_slug.clone(),
+                    title,
+                    parent_slug: next_parent.clone(),
+                    order: 0,
+                    children: vec![],
+                };
+                
+                items_by_slug.insert(parent_slug.clone(), missing_node);
+                current_parent = next_parent;
+            } else {
+                break;
+            }
+        }
+    }
 
     let mut roots = Vec::new();
     let mut children_by_parent: HashMap<String, Vec<NavItem>> = HashMap::new();
 
-    for (_slug, item) in items_by_slug.iter() {
+    for (_slug, item) in items_by_slug.into_iter() {
         if let Some(parent) = &item.parent_slug {
             children_by_parent.entry(parent.clone())
                 .or_insert_with(Vec::new)
-                .push(item.clone());
+                .push(item);
         } else {
-            roots.push(item.clone());
+            roots.push(item);
         }
     }
 
@@ -286,6 +333,15 @@ pub async fn save_custom_css(css: String) -> Result<String, ServerFnError> {
     Ok("Custom CSS saved successfully".to_string())
 }
 
+/// Server function to get navbar grouping configurations.
+#[server(GetNavbarGroups, "/api")]
+pub async fn get_navbar_groups() -> Result<Vec<NavGroup>, ServerFnError> {
+    let state = expect_context::<AppState>();
+    let settings = state.settings_repo.get_settings().await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(settings.navbar_groups)
+}
+
 /// Returns `true` if a document with the given `access_level` / `is_draft` state
 /// is readable by a caller whose visibility is described by `allowed_levels` and
 /// `include_draft`.
@@ -319,7 +375,50 @@ pub async fn get_doc_html(
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let Some(doc) = doc else {
-        return Ok(None);
+        let (allowed_levels, include_draft) = request_document_visibility(&state).await?;
+        let all_docs = state.document_repo
+            .list_by_access_levels(allowed_levels.as_deref(), include_draft)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        
+        let mut children: Vec<_> = all_docs.into_iter()
+            .filter(|d| d.parent_slug.as_deref() == Some(slug.as_str()))
+            .collect();
+            
+        if children.is_empty() {
+            return Ok(None);
+        }
+        
+        children.sort_by_key(|d| d.order);
+
+        let title_part = slug.split('/').last().unwrap_or("Section");
+        let title = title_part.split('-')
+            .map(|word| {
+                let mut c = word.chars();
+                match c.next() {
+                    None => String::new(),
+                    Some(first) => first.to_uppercase().collect::<String>() + c.as_str(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let mut html = String::from("<p class=\"text-base-content/70 pb-4 border-b border-base-200\">Select a document from this section to read.</p><div class=\"grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-6\">");
+        for child in children {
+            html.push_str(&format!(
+                "<a href=\"/docs/{}\" class=\"card bg-base-100 shadow-sm border border-base-200 hover:shadow-md transition-shadow hover:border-primary/30\"><div class=\"card-body p-5\"><h2 class=\"card-title text-lg flex items-center gap-2\"><svg class=\"w-5 h-5 text-primary opacity-80\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\"></path></svg>{}</h2></div></a>",
+                child.slug, child.title
+            ));
+        }
+        html.push_str("</div>");
+
+        return Ok(Some(crate::pages::DocPageData {
+            title,
+            html,
+            headings: vec![],
+            last_updated: chrono::Utc::now().format("%B %d, %Y").to_string(),
+            tags: vec![],
+        }));
     };
 
     // Enforce access control: return None (→ 404) when the caller does not have

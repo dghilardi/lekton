@@ -178,6 +178,54 @@ pub async fn process_delete_asset(
     Ok(())
 }
 
+/// Request for checking which assets need uploading based on content hash.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckHashesRequest {
+    pub service_token: String,
+    pub entries: Vec<CheckHashEntry>,
+}
+
+/// A single entry in a check-hashes request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckHashEntry {
+    pub key: String,
+    pub content_hash: String,
+}
+
+/// Response indicating which asset keys need uploading.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckHashesResponse {
+    pub to_upload: Vec<String>,
+}
+
+/// Core check-hashes logic: returns which keys are missing or have a different hash.
+pub async fn process_check_hashes(
+    asset_repo: &dyn AssetRepository,
+    entries: &[CheckHashEntry],
+    expected_token: &str,
+    service_token: &str,
+) -> Result<CheckHashesResponse, AppError> {
+    if service_token != expected_token {
+        return Err(AppError::Auth("Invalid service token".into()));
+    }
+
+    let mut to_upload = Vec::new();
+    for entry in entries {
+        match asset_repo.find_by_key(&entry.key).await? {
+            Some(asset) => {
+                if asset.content_hash.as_deref() != Some(&entry.content_hash) {
+                    to_upload.push(entry.key.clone());
+                }
+            }
+            None => {
+                to_upload.push(entry.key.clone());
+            }
+        }
+    }
+
+    Ok(CheckHashesResponse { to_upload })
+}
+
 /// Core editor upload logic — no token validation, generates key from filename.
 pub async fn process_editor_upload(
     asset_repo: &dyn AssetRepository,
@@ -227,6 +275,26 @@ pub async fn process_editor_upload(
 }
 
 // --- HTTP Handlers ---
+
+/// Axum handler for `POST /api/v1/assets/check-hashes`.
+///
+/// Accepts a JSON body with service_token and a list of (key, content_hash) entries.
+/// Returns which keys need uploading (missing or hash mismatch).
+#[cfg(feature = "ssr")]
+pub async fn check_hashes_handler(
+    axum::extract::State(state): axum::extract::State<crate::app::AppState>,
+    axum::Json(request): axum::Json<CheckHashesRequest>,
+) -> Result<axum::Json<CheckHashesResponse>, AppError> {
+    let response = process_check_hashes(
+        state.asset_repo.as_ref(),
+        &request.entries,
+        &state.service_token,
+        &request.service_token,
+    )
+    .await?;
+
+    Ok(axum::Json(response))
+}
 
 /// Axum handler for `PUT /api/v1/assets/{*key}`.
 ///
@@ -807,5 +875,80 @@ mod tests {
 
         // Spaces and parens should be sanitized to underscores
         assert!(result.key.contains("my_file__1_.png"));
+    }
+
+    #[tokio::test]
+    async fn test_check_hashes_identifies_missing_and_changed() {
+        let repo = MockAssetRepo::new();
+        let storage = MockStorage::new();
+
+        // Upload an asset so it exists with a known hash
+        process_upload_asset(
+            &repo, &storage, "existing.txt", "text/plain", b"hello".to_vec(),
+            "ci-bot", "valid-token", "valid-token",
+        )
+        .await
+        .unwrap();
+
+        let existing_hash = compute_content_hash(b"hello");
+
+        let entries = vec![
+            // Same hash — should NOT be in to_upload
+            CheckHashEntry { key: "existing.txt".to_string(), content_hash: existing_hash.clone() },
+            // Different hash — should be in to_upload
+            CheckHashEntry { key: "existing.txt".to_string(), content_hash: "sha256:different".to_string() },
+            // Missing key — should be in to_upload
+            CheckHashEntry { key: "missing.txt".to_string(), content_hash: "sha256:whatever".to_string() },
+        ];
+
+        // Use a unique key for the "different hash" case
+        let entries = vec![
+            CheckHashEntry { key: "existing.txt".to_string(), content_hash: existing_hash },
+            CheckHashEntry { key: "missing.txt".to_string(), content_hash: "sha256:whatever".to_string() },
+        ];
+
+        let result = process_check_hashes(&repo, &entries, "valid-token", "valid-token")
+            .await
+            .unwrap();
+
+        assert_eq!(result.to_upload, vec!["missing.txt".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_check_hashes_invalid_token() {
+        let repo = MockAssetRepo::new();
+
+        let result = process_check_hashes(&repo, &[], "valid-token", "wrong-token").await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::Auth(msg) => assert!(msg.contains("Invalid service token")),
+            other => panic!("Expected Auth error, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_check_hashes_changed_content() {
+        let repo = MockAssetRepo::new();
+        let storage = MockStorage::new();
+
+        process_upload_asset(
+            &repo, &storage, "file.txt", "text/plain", b"version1".to_vec(),
+            "ci-bot", "valid-token", "valid-token",
+        )
+        .await
+        .unwrap();
+
+        let new_hash = compute_content_hash(b"version2");
+
+        let entries = vec![
+            CheckHashEntry { key: "file.txt".to_string(), content_hash: new_hash },
+        ];
+
+        let result = process_check_hashes(&repo, &entries, "valid-token", "valid-token")
+            .await
+            .unwrap();
+
+        assert_eq!(result.to_upload, vec!["file.txt".to_string()]);
     }
 }

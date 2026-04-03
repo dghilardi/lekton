@@ -6,6 +6,14 @@ use crate::db::models::Asset;
 use crate::error::AppError;
 use crate::storage::client::StorageClient;
 
+/// Compute the SHA-256 content hash for an asset in `sha256:<base64url>` format.
+pub fn compute_content_hash(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    use base64::engine::{general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    let hash = Sha256::digest(data);
+    format!("sha256:{}", URL_SAFE_NO_PAD.encode(hash))
+}
+
 /// Response from a successful asset upload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetUploadResponse {
@@ -73,6 +81,7 @@ pub async fn process_upload_asset(
 
     let size_bytes = data.len() as u64;
     let s3_key = format!("assets/{}", key);
+    let content_hash = Some(compute_content_hash(&data));
 
     // Upload to S3
     storage.put_object(&s3_key, data).await?;
@@ -92,6 +101,7 @@ pub async fn process_upload_asset(
         uploaded_at: Utc::now(),
         uploaded_by: uploaded_by.to_string(),
         referenced_by,
+        content_hash,
     };
 
     asset_repo.create_or_update(asset).await?;
@@ -191,6 +201,7 @@ pub async fn process_editor_upload(
     let key = format!("editor/{}_{}", timestamp, sanitized_name);
     let s3_key = format!("assets/{}", key);
     let size_bytes = data.len() as u64;
+    let content_hash = Some(compute_content_hash(&data));
 
     storage.put_object(&s3_key, data).await?;
 
@@ -202,6 +213,7 @@ pub async fn process_editor_upload(
         uploaded_at: Utc::now(),
         uploaded_by: "web-editor".to_string(),
         referenced_by: vec![],
+        content_hash,
     };
 
     asset_repo.create_or_update(asset).await?;

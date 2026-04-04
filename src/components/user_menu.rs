@@ -8,6 +8,8 @@ use crate::app::logout_user;
 pub fn UserMenu() -> impl IntoView {
     let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>()
         .expect("UserMenu must be inside App");
+    let is_demo_mode = use_context::<Signal<bool>>()
+        .expect("UserMenu must be inside App");
 
     let logout_action = Action::new(|_: &()| async move {
         let _ = logout_user().await;
@@ -54,9 +56,14 @@ pub fn UserMenu() -> impl IntoView {
                         </div>
                     }.into_any()
                 }
-                None => view! {
-                    <a href="/login" class="btn btn-ghost btn-sm font-medium whitespace-nowrap">"Log In"</a>
-                }.into_any(),
+                None => {
+                    // In demo mode, link to the in-app login form.
+                    // In OAuth mode, link directly to the auth redirect endpoint.
+                    let href = if is_demo_mode.get() { "/login" } else { "/auth/login" };
+                    view! {
+                        <a href=href class="btn btn-ghost btn-sm font-medium whitespace-nowrap">"Log In"</a>
+                    }.into_any()
+                }
             }
         }}
     }

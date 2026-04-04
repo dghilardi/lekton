@@ -30,6 +30,19 @@ pub struct AuthProviderConfig {
     pub userinfo_endpoint: Option<String>,
     /// OAuth2 scopes to request, space-separated (default: `"openid profile email"`).
     pub scopes: String,
+    /// Dot-notation path to the subject/ID field in the userinfo JSON response.
+    /// Falls back to standard `sub` then `id` fields when unset.
+    /// Example: `"data.userShortId"`
+    pub userinfo_sub_field: Option<String>,
+    /// Dot-notation path to the email field in the userinfo JSON response.
+    /// Falls back to standard `email` field when unset.
+    /// Example: `"data.loginEmail"`
+    pub userinfo_email_field: Option<String>,
+    /// Dot-notation path to the name field in the userinfo JSON response.
+    /// Falls back to standard `name` then `display_name` fields when unset.
+    /// Multiple paths can be joined with `,` to concatenate values (e.g.
+    /// `"data.firstName,data.lastName"`).
+    pub userinfo_name_field: Option<String>,
 }
 
 impl AuthProviderConfig {
@@ -46,6 +59,9 @@ impl AuthProviderConfig {
     /// - `AUTH_TOKEN_ENDPOINT`       (required for oauth2)
     /// - `AUTH_USERINFO_ENDPOINT`    (required for oauth2)
     /// - `AUTH_SCOPES`               (default: `"openid profile email"`)
+    /// - `AUTH_USERINFO_SUB_FIELD`    (dot-notation path, e.g. `"data.userShortId"`)
+    /// - `AUTH_USERINFO_EMAIL_FIELD`  (dot-notation path, e.g. `"data.loginEmail"`)
+    /// - `AUTH_USERINFO_NAME_FIELD`   (dot-notation path, e.g. `"data.firstName,data.lastName"`)
     pub fn from_env() -> Result<Self, AppError> {
         let provider_type = std::env::var("AUTH_PROVIDER_TYPE")
             .unwrap_or_else(|_| "oidc".to_string());
@@ -70,6 +86,9 @@ impl AuthProviderConfig {
             userinfo_endpoint: std::env::var("AUTH_USERINFO_ENDPOINT").ok(),
             scopes: std::env::var("AUTH_SCOPES")
                 .unwrap_or_else(|_| "openid profile email".to_string()),
+            userinfo_sub_field: std::env::var("AUTH_USERINFO_SUB_FIELD").ok(),
+            userinfo_email_field: std::env::var("AUTH_USERINFO_EMAIL_FIELD").ok(),
+            userinfo_name_field: std::env::var("AUTH_USERINFO_NAME_FIELD").ok(),
         })
     }
 }

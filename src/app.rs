@@ -323,6 +323,16 @@ pub async fn get_current_user() -> Result<Option<crate::auth::models::Authentica
     Ok(None)
 }
 
+/// Server function to check whether the app is running in demo mode.
+///
+/// Returns `true` for demo mode (username/password form), `false` for
+/// production OAuth2/OIDC (redirect to external provider).
+#[server(GetIsDemoMode, "/api")]
+pub async fn get_is_demo_mode() -> Result<bool, ServerFnError> {
+    let state = expect_context::<AppState>();
+    Ok(state.demo_mode)
+}
+
 /// Server function to log out the current user.
 ///
 /// Clears the JWT and refresh token cookies (or the demo session cookie in
@@ -685,13 +695,21 @@ pub fn App() -> impl IntoView {
     provide_meta_context();
 
     let user_resource = LocalResource::new(get_current_user);
+    let demo_mode_resource = LocalResource::new(get_is_demo_mode);
 
     let current_user: Signal<Option<crate::auth::models::AuthenticatedUser>> =
         Signal::derive(move || {
             user_resource.get().and_then(|res| res.ok()).flatten()
         });
 
+    // Whether the app is in demo mode (defaults to true until loaded to avoid
+    // flashing the wrong UI — the demo login page is a safe fallback).
+    let is_demo_mode: Signal<bool> = Signal::derive(move || {
+        demo_mode_resource.get().and_then(|res| res.ok()).unwrap_or(true)
+    });
+
     provide_context(current_user);
+    provide_context(is_demo_mode);
 
     view! {
         <Title text="Lekton — Internal Developer Portal" />

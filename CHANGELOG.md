@@ -6,6 +6,18 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Configurable OAuth2 userinfo field mapping**: New environment variables (`AUTH_USERINFO_SUB_FIELD`, `AUTH_USERINFO_EMAIL_FIELD`, `AUTH_USERINFO_NAME_FIELD`) allow dot-notation paths to extract user identity from non-standard OAuth2 provider responses. Supports nested fields (e.g. `data.loginEmail`) and comma-separated paths for name concatenation (e.g. `data.firstName,data.lastName`). Falls back to standard OIDC fields (`sub`, `email`, `name`) when unset.
+
+### Fixed
+
+- **OAuth2/OIDC login not shown in frontend**: Login page and user menu now detect whether the app is in demo mode or OAuth mode. In OAuth mode, clicking "Log In" redirects directly to the external identity provider instead of showing the demo username/password form.
+
+### Changed
+
+- **Updated `.env.example`**: Auth configuration section now reflects the actual environment variables (`AUTH_PROVIDER_TYPE`, `AUTH_CLIENT_ID`, etc.) instead of the stale `OIDC_*` placeholders.
+
+### Added
+
 - **Navigation ordering**: Sections and categories in the sidebar and navbar are now sorted deterministically — alphabetically by title by default, with support for custom ordering via a dedicated `navigation_order` MongoDB collection. Documents (leaves) continue to sort by their `order` field, then alphabetically.
 - **Navigation ordering admin UI**: New "Navigation Ordering" section in Admin Settings with drag-and-drop reordering of sections and categories. Includes up/down arrow buttons as an alternative, per-level indentation, and save/discard controls.
 - **`navigation_order` collection**: New MongoDB collection storing per-slug weights for custom section/category ordering. Managed via `get_navigation_order` / `save_navigation_order` admin-only server functions.

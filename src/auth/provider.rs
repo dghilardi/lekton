@@ -85,6 +85,70 @@ pub trait AuthProvider: Send + Sync {
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
+/// Resolve a dot-notation path (e.g. `"data.loginEmail"`) against a JSON value.
+///
+/// Returns `None` if any segment along the path is missing or not an object.
+fn resolve_json_path<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    let mut current = value;
+    for segment in path.split('.') {
+        current = current.get(segment)?;
+    }
+    Some(current)
+}
+
+/// Extract a string from a JSON value using an optional dot-notation path,
+/// falling back to a list of standard top-level field names.
+fn extract_field(
+    json: &serde_json::Value,
+    custom_path: Option<&str>,
+    fallback_keys: &[&str],
+) -> Option<String> {
+    if let Some(path) = custom_path {
+        if let Some(v) = resolve_json_path(json, path) {
+            return match v {
+                serde_json::Value::String(s) => Some(s.clone()),
+                serde_json::Value::Number(n) => Some(n.to_string()),
+                _ => None,
+            };
+        }
+        return None;
+    }
+    for key in fallback_keys {
+        if let Some(s) = json.get(*key).and_then(|v| v.as_str()) {
+            return Some(s.to_string());
+        }
+    }
+    None
+}
+
+/// Extract a name by resolving one or more comma-separated dot-notation paths
+/// and joining the results with a space.  Falls back to standard field names.
+fn extract_name_field(
+    json: &serde_json::Value,
+    custom_paths: Option<&str>,
+    fallback_keys: &[&str],
+) -> Option<String> {
+    if let Some(paths) = custom_paths {
+        let parts: Vec<String> = paths
+            .split(',')
+            .filter_map(|p| {
+                resolve_json_path(json, p.trim()).and_then(|v| v.as_str()).map(str::to_string)
+            })
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !parts.is_empty() {
+            return Some(parts.join(" "));
+        }
+        return None;
+    }
+    for key in fallback_keys {
+        if let Some(s) = json.get(*key).and_then(|v| v.as_str()) {
+            return Some(s.to_string());
+        }
+    }
+    None
+}
+
 /// Decode a JWT payload (base64url) into a JSON value without verifying the
 /// signature.  Used to extract claims from an OIDC `id_token`.
 ///
@@ -120,6 +184,12 @@ pub struct OAuth2AuthProvider {
     redirect_uri: String,
     scopes: String,
     http: reqwest::Client,
+    /// Optional dot-notation path to the subject/ID field.
+    sub_field: Option<String>,
+    /// Optional dot-notation path to the email field.
+    email_field: Option<String>,
+    /// Optional comma-separated dot-notation paths to name field(s).
+    name_field: Option<String>,
 }
 
 impl OAuth2AuthProvider {
@@ -142,6 +212,9 @@ impl OAuth2AuthProvider {
             redirect_uri: config.redirect_uri.clone(),
             scopes: config.scopes.clone(),
             http: reqwest::Client::new(),
+            sub_field: config.userinfo_sub_field.clone(),
+            email_field: config.userinfo_email_field.clone(),
+            name_field: config.userinfo_name_field.clone(),
         })
     }
 }
@@ -227,21 +300,13 @@ impl AuthProvider for OAuth2AuthProvider {
             .await
             .map_err(|e| AppError::Auth(format!("Userinfo parse failed: {e}")))?;
 
-        let sub = profile["sub"]
-            .as_str()
-            .or_else(|| profile["id"].as_str())
-            .ok_or_else(|| AppError::Auth("No 'sub' or 'id' in userinfo response".into()))?
-            .to_string();
+        let sub = extract_field(&profile, self.sub_field.as_deref(), &["sub", "id"])
+            .ok_or_else(|| AppError::Auth("No subject/ID in userinfo response".into()))?;
 
-        let email = profile["email"]
-            .as_str()
-            .ok_or_else(|| AppError::Auth("No 'email' in userinfo response".into()))?
-            .to_string();
+        let email = extract_field(&profile, self.email_field.as_deref(), &["email"])
+            .ok_or_else(|| AppError::Auth("No email in userinfo response".into()))?;
 
-        let name = profile["name"]
-            .as_str()
-            .or_else(|| profile["display_name"].as_str())
-            .map(str::to_string);
+        let name = extract_name_field(&profile, self.name_field.as_deref(), &["name", "display_name"]);
 
         Ok(UserInfo { sub, email, name })
     }
@@ -474,6 +539,9 @@ mod tests {
             token_endpoint: Some("https://provider.example.com/oauth/token".to_string()),
             userinfo_endpoint: Some("https://provider.example.com/userinfo".to_string()),
             scopes: "read:user user:email".to_string(),
+            userinfo_sub_field: None,
+            userinfo_email_field: None,
+            userinfo_name_field: None,
         }
     }
 
@@ -539,6 +607,9 @@ mod tests {
             token_endpoint: Some("https://provider/token".to_string()),
             userinfo_endpoint: None,
             scopes: "openid".to_string(),
+            userinfo_sub_field: None,
+            userinfo_email_field: None,
+            userinfo_name_field: None,
         };
         // Build without discovery (token_endpoint is already provided)
         let provider = OidcAuthProvider {
@@ -584,5 +655,91 @@ mod tests {
     fn test_decode_jwt_payload_invalid() {
         let result = decode_jwt_payload("not-a-jwt");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_resolve_json_path_nested() {
+        let json: serde_json::Value = serde_json::json!({
+            "data": {
+                "userShortId": 42,
+                "loginEmail": "user@example.com",
+                "firstName": "John",
+                "lastName": "Doe"
+            }
+        });
+        assert_eq!(
+            resolve_json_path(&json, "data.loginEmail").and_then(|v| v.as_str()),
+            Some("user@example.com")
+        );
+        assert_eq!(
+            resolve_json_path(&json, "data.userShortId").and_then(|v| v.as_i64()),
+            Some(42)
+        );
+        assert!(resolve_json_path(&json, "data.missing").is_none());
+        assert!(resolve_json_path(&json, "nonexistent.path").is_none());
+    }
+
+    #[test]
+    fn test_extract_field_with_custom_path() {
+        let json: serde_json::Value = serde_json::json!({
+            "data": { "loginEmail": "custom@example.com" },
+            "email": "standard@example.com"
+        });
+        // Custom path takes priority
+        assert_eq!(
+            extract_field(&json, Some("data.loginEmail"), &["email"]),
+            Some("custom@example.com".to_string())
+        );
+        // Falls back to standard fields when no custom path
+        assert_eq!(
+            extract_field(&json, None, &["email"]),
+            Some("standard@example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_field_numeric_id() {
+        let json: serde_json::Value = serde_json::json!({
+            "data": { "userShortId": 12345 }
+        });
+        assert_eq!(
+            extract_field(&json, Some("data.userShortId"), &["sub"]),
+            Some("12345".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_name_field_concatenated() {
+        let json: serde_json::Value = serde_json::json!({
+            "data": { "firstName": "John", "lastName": "Doe" },
+            "name": "Standard Name"
+        });
+        // Multiple paths joined with comma
+        assert_eq!(
+            extract_name_field(&json, Some("data.firstName,data.lastName"), &["name"]),
+            Some("John Doe".to_string())
+        );
+        // Single path
+        assert_eq!(
+            extract_name_field(&json, Some("data.firstName"), &["name"]),
+            Some("John".to_string())
+        );
+        // Fallback
+        assert_eq!(
+            extract_name_field(&json, None, &["name"]),
+            Some("Standard Name".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_name_field_partial_missing() {
+        let json: serde_json::Value = serde_json::json!({
+            "data": { "firstName": "John" }
+        });
+        // Only one of the paths resolves — should still return the resolved part
+        assert_eq!(
+            extract_name_field(&json, Some("data.firstName,data.lastName"), &["name"]),
+            Some("John".to_string())
+        );
     }
 }

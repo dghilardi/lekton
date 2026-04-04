@@ -3,6 +3,7 @@ pub mod asset_repository;
 pub mod auth_models;
 pub mod document_version_repository;
 pub mod models;
+pub mod navigation_order_repository;
 pub mod repository;
 pub mod schema_repository;
 pub mod service_token_models;

@@ -33,6 +33,7 @@ pub struct AppState {
     // ── Auth (phase 5) ────────────────────────────────────────────────────────
     pub user_repo: Arc<dyn crate::db::user_repository::UserRepository>,
     pub access_level_repo: Arc<dyn crate::db::access_level_repository::AccessLevelRepository>,
+    pub navigation_order_repo: Arc<dyn crate::db::navigation_order_repository::NavigationOrderRepository>,
     pub token_service: Arc<crate::auth::token_service::TokenService>,
     pub auth_provider: Option<Arc<dyn crate::auth::provider::AuthProvider>>,
 }
@@ -150,15 +151,24 @@ pub async fn search_docs(
 #[server(GetNavigation, "/api")]
 pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
     use crate::db::repository::DocumentRepository;
+    use crate::db::navigation_order_repository::NavigationOrderRepository;
     use std::collections::HashMap;
 
     let state = expect_context::<AppState>();
 
     let (allowed_levels, include_draft) = request_document_visibility(&state).await?;
-    let docs = state.document_repo
-        .list_by_access_levels(allowed_levels.as_deref(), include_draft)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let (docs, nav_order_entries) = tokio::join!(
+        state.document_repo.list_by_access_levels(allowed_levels.as_deref(), include_draft),
+        state.navigation_order_repo.list_all(),
+    );
+    let docs = docs.map_err(|e| ServerFnError::new(e.to_string()))?;
+    let nav_order_entries = nav_order_entries.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    // Build a weight lookup: slug -> weight
+    let nav_weights: HashMap<String, i32> = nav_order_entries
+        .into_iter()
+        .map(|e| (e.slug, e.weight))
+        .collect();
 
     let mut all_items: Vec<NavItem> = docs.into_iter().map(|doc| {
         let parent_slug = doc.parent_slug.or_else(|| {
@@ -242,6 +252,37 @@ pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
     for root in &mut roots {
         attach_children(root, &children_by_parent);
     }
+
+    // Sort the tree: sections/categories use custom weight (fallback alphabetical),
+    // documents use their order field (fallback alphabetical). Both types are mixed
+    // together — sections are NOT prioritized over documents.
+    fn sort_nav_items(items: &mut [NavItem], weights: &HashMap<String, i32>) {
+        items.sort_by(|a, b| {
+            let a_is_section = !a.children.is_empty();
+            let b_is_section = !b.children.is_empty();
+
+            let a_sort_key = if a_is_section {
+                weights.get(&a.slug).copied().unwrap_or(i32::MAX)
+            } else {
+                a.order as i32
+            };
+            let b_sort_key = if b_is_section {
+                weights.get(&b.slug).copied().unwrap_or(i32::MAX)
+            } else {
+                b.order as i32
+            };
+
+            a_sort_key.cmp(&b_sort_key)
+                .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
+        });
+        for item in items.iter_mut() {
+            if !item.children.is_empty() {
+                sort_nav_items(&mut item.children, weights);
+            }
+        }
+    }
+
+    sort_nav_items(&mut roots, &nav_weights);
 
     Ok(roots)
 }
@@ -340,6 +381,41 @@ pub async fn get_navbar_groups() -> Result<Vec<NavGroup>, ServerFnError> {
     let settings = state.settings_repo.get_settings().await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(settings.navbar_groups)
+}
+
+/// Re-export for use in frontend components.
+pub use crate::db::navigation_order_repository::NavigationOrderEntry;
+
+/// Server function to get all navigation order entries (admin only).
+#[server(GetNavigationOrder, "/api")]
+pub async fn get_navigation_order() -> Result<Vec<NavigationOrderEntry>, ServerFnError> {
+    use crate::db::navigation_order_repository::NavigationOrderRepository;
+
+    let state = expect_context::<AppState>();
+    require_admin_user(&state).await?;
+
+    state.navigation_order_repo
+        .list_all()
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+/// Server function to save navigation order (admin only).
+///
+/// Accepts the full ordered list of entries and replaces everything atomically.
+#[server(SaveNavigationOrder, "/api")]
+pub async fn save_navigation_order(entries: Vec<NavigationOrderEntry>) -> Result<String, ServerFnError> {
+    use crate::db::navigation_order_repository::NavigationOrderRepository;
+
+    let state = expect_context::<AppState>();
+    require_admin_user(&state).await?;
+
+    state.navigation_order_repo
+        .replace_all(entries)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok("Navigation order saved successfully".to_string())
 }
 
 /// Returns `true` if a document with the given `access_level` / `is_draft` state

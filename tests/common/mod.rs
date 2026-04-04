@@ -18,6 +18,7 @@ use lekton::db::document_version_repository::{DocumentVersionRepository, MongoDo
 use lekton::db::repository::{DocumentRepository, MongoDocumentRepository};
 use lekton::db::schema_repository::{MongoSchemaRepository, SchemaRepository};
 use lekton::db::service_token_repository::{MongoServiceTokenRepository, ServiceTokenRepository};
+use lekton::db::navigation_order_repository::{MongoNavigationOrderRepository, NavigationOrderRepository};
 use lekton::db::settings_repository::{MongoSettingsRepository, SettingsRepository};
 use lekton::db::user_repository::{MongoUserRepository, UserRepository};
 use lekton::search::client::{MeilisearchService, SearchService};
@@ -40,6 +41,7 @@ pub struct TestEnv {
     pub access_level_repo: Arc<dyn AccessLevelRepository>,
     pub service_token_repo: Arc<dyn ServiceTokenRepository>,
     pub document_version_repo: Arc<dyn DocumentVersionRepository>,
+    pub navigation_order_repo: Arc<dyn NavigationOrderRepository>,
     pub storage: Arc<dyn StorageClient>,
     pub search: Arc<dyn SearchService>,
     pub token_service: Arc<TokenService>,
@@ -84,6 +86,8 @@ impl TestEnv {
             Arc::new(MongoServiceTokenRepository::new(&mongo_db));
         let document_version_repo: Arc<dyn DocumentVersionRepository> =
             Arc::new(MongoDocumentVersionRepository::new(&mongo_db));
+        let navigation_order_repo: Arc<dyn NavigationOrderRepository> =
+            Arc::new(MongoNavigationOrderRepository::new(&mongo_db));
         access_level_repo
             .seed_defaults()
             .await
@@ -166,6 +170,7 @@ impl TestEnv {
             leptos_options,
             user_repo: user_repo.clone(),
             access_level_repo: access_level_repo.clone(),
+            navigation_order_repo: navigation_order_repo.clone(),
             token_service: token_service.clone(),
             auth_provider: None,
         };
@@ -293,6 +298,7 @@ impl TestEnv {
             access_level_repo,
             service_token_repo,
             document_version_repo,
+            navigation_order_repo,
             storage,
             search,
             token_service,
@@ -450,6 +456,7 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
         leptos_options,
         user_repo: env.user_repo.clone(),
         access_level_repo: env.access_level_repo.clone(),
+        navigation_order_repo: env.navigation_order_repo.clone(),
         token_service,
         auth_provider: None,
     };

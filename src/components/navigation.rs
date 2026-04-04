@@ -76,8 +76,11 @@ pub fn NavigationTree() -> impl IntoView {
                 nav_resource.get().map(|result| match result {
                     Ok(items) => {
                         let current_root = active_root.get();
+                        // Root-level sections (docs, hackday, …) live in the
+                        // navbar only.  The sidebar shows the *children* of
+                        // whichever section is currently selected.
                         let display_items = if current_root.is_empty() {
-                            items
+                            vec![]
                         } else {
                             if let Some(root_item) = items.into_iter().find(|i| i.slug == current_root) {
                                 root_item.children

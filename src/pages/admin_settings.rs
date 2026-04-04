@@ -489,20 +489,51 @@ fn NavigationOrderEditor() -> impl IntoView {
         }
     });
 
+    // Find the subtree range for an item: [idx .. end) where end is the first
+    // item at the same or higher level, i.e. the item plus all its descendants.
+    fn subtree_range(items: &[OrderableItem], idx: usize) -> std::ops::Range<usize> {
+        let level = items[idx].level;
+        let mut end = idx + 1;
+        while end < items.len() && items[end].level > level {
+            end += 1;
+        }
+        idx..end
+    }
+
     let move_item = move |idx: usize, direction: i32| {
         set_items.update(|items| {
-            let target = (idx as i32 + direction) as usize;
-            if target >= items.len() {
-                return;
-            }
+            let level = items[idx].level;
+            let src_range = subtree_range(items, idx);
 
-            // Only allow swapping within the same level
-            if items[idx].level != items[target].level {
-                return;
+            if direction < 0 {
+                // Move up: find previous sibling at the same level
+                if src_range.start == 0 {
+                    return;
+                }
+                // Walk backwards from src_range.start to find the previous sibling
+                let mut prev_idx = src_range.start - 1;
+                while prev_idx > 0 && items[prev_idx].level > level {
+                    prev_idx -= 1;
+                }
+                if items[prev_idx].level != level {
+                    return;
+                }
+                // Extract subtree and reinsert before previous sibling
+                let subtree: Vec<_> = items.drain(src_range.clone()).collect();
+                items.splice(prev_idx..prev_idx, subtree);
+            } else {
+                // Move down: find next sibling at the same level
+                if src_range.end >= items.len() {
+                    return;
+                }
+                let next_range = subtree_range(items, src_range.end);
+                if items[next_range.start].level != level {
+                    return;
+                }
+                // Extract the next sibling's subtree and insert before current
+                let next_subtree: Vec<_> = items.drain(next_range.clone()).collect();
+                items.splice(src_range.start..src_range.start, next_subtree);
             }
-
-            // Only swap if the items share the same parent (same level and adjacent in hierarchy)
-            items.swap(idx, target);
         });
     };
 
@@ -514,11 +545,25 @@ fn NavigationOrderEditor() -> impl IntoView {
         if let Some(from) = dragging_idx.get_untracked() {
             if from != idx {
                 set_items.update(|items| {
-                    if from < items.len() && idx < items.len() && items[from].level == items[idx].level {
-                        let item = items.remove(from);
-                        items.insert(idx, item);
-                        set_dragging_idx.set(Some(idx));
+                    if from >= items.len() || idx >= items.len() {
+                        return;
                     }
+                    if items[from].level != items[idx].level {
+                        return;
+                    }
+                    let src = subtree_range(items, from);
+                    let subtree: Vec<_> = items.drain(src.clone()).collect();
+                    let subtree_len = subtree.len();
+                    // Recalculate target after drain
+                    let target = if idx > from { idx - subtree_len + 1 } else { idx };
+                    // Find the insert position: before the target's subtree start
+                    let insert_at = if target < items.len() {
+                        target
+                    } else {
+                        items.len()
+                    };
+                    items.splice(insert_at..insert_at, subtree);
+                    set_dragging_idx.set(Some(insert_at));
                 });
             }
         }

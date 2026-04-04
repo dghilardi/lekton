@@ -97,6 +97,7 @@ struct SyncRequest {
 struct SyncDocEntry {
     slug: String,
     content_hash: String,
+    metadata_hash: String,
 }
 
 #[derive(Deserialize)]
@@ -181,6 +182,8 @@ struct DocumentInfo {
     /// Populated after attachment processing; initially same as `content`.
     rewritten_content: String,
     content_hash: String,
+    /// Hash of front-matter metadata fields, mirroring `ingest::compute_metadata_hash`.
+    metadata_hash: String,
     access_level: String,
     service_owner: String,
     tags: Vec<String>,
@@ -195,6 +198,31 @@ struct DocumentInfo {
 fn compute_hash(content: &str) -> String {
     let hash = Sha256::digest(content.as_bytes());
     format!("sha256:{}", URL_SAFE_NO_PAD.encode(hash))
+}
+
+/// Compute a metadata hash that matches `ingest::compute_metadata_hash` on the server.
+///
+/// Including front-matter fields in the hash lets the sync protocol detect
+/// metadata-only changes (e.g. `access_level`, `title`) without relying on
+/// content byte differences.
+fn compute_metadata_hash(
+    title: &str,
+    access_level: &str,
+    service_owner: &str,
+    tags: &[String],
+    parent_slug: Option<&str>,
+    order: i32,
+    is_hidden: bool,
+) -> String {
+    let mut sorted_tags: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
+    sorted_tags.sort_unstable();
+    let canonical = format!(
+        "title={title}\naccess_level={}\nservice_owner={service_owner}\ntags={}\nparent_slug={}\norder={order}\nis_hidden={is_hidden}",
+        access_level.to_lowercase(),
+        sorted_tags.join(","),
+        parent_slug.unwrap_or(""),
+    );
+    compute_hash(&canonical)
 }
 
 /// Compute SHA-256 content hash for a file's bytes.
@@ -467,6 +495,16 @@ fn scan_documents(root: &Path, config: &LektonConfig) -> Result<HashMap<String, 
         let rewritten_content = rewrite_content(&body, &attachments);
         // Hash the rewritten content for consistent sync comparison
         let content_hash = compute_hash(&rewritten_content);
+        // Hash front-matter metadata so metadata-only changes trigger a re-upload
+        let metadata_hash = compute_metadata_hash(
+            &title,
+            &access_level,
+            &service_owner,
+            &tags,
+            parent_slug.as_deref(),
+            order,
+            is_hidden,
+        );
 
         docs.insert(
             slug.clone(),
@@ -476,6 +514,7 @@ fn scan_documents(root: &Path, config: &LektonConfig) -> Result<HashMap<String, 
                 content: body,
                 rewritten_content,
                 content_hash,
+                metadata_hash,
                 access_level,
                 service_owner,
                 tags,
@@ -579,6 +618,7 @@ async fn main() -> Result<()> {
         .map(|d| SyncDocEntry {
             slug: d.slug.clone(),
             content_hash: d.content_hash.clone(),
+            metadata_hash: d.metadata_hash.clone(),
         })
         .collect();
 
@@ -611,21 +651,22 @@ async fn main() -> Result<()> {
         sync_result.to_archive.len(),
     );
 
-    // ── Collect attachments for documents that need uploading ────────────────
+    // ── Collect attachments for ALL documents ────────────────────────────────
+    // We check hashes for every attachment regardless of whether the document
+    // body changed, so that replacing a PDF/image with new content is detected
+    // even when the markdown (which only references the file by URL) is unchanged.
     let mut all_attachments: HashMap<String, &AttachmentInfo> = HashMap::new();
     let total_attachment_count: usize = docs.values().map(|d| d.attachments.len()).sum();
 
-    for slug in &sync_result.to_upload {
-        if let Some(doc) = docs.get(slug) {
-            for att in &doc.attachments {
-                all_attachments.entry(att.asset_key.clone()).or_insert(att);
-            }
+    for doc in docs.values() {
+        for att in &doc.attachments {
+            all_attachments.entry(att.asset_key.clone()).or_insert(att);
         }
     }
 
     if total_attachment_count > 0 {
         println!(
-            "Found {} attachment(s) across all documents ({} unique for upload candidates)",
+            "Found {} attachment(s) across all documents ({} unique to check)",
             total_attachment_count,
             all_attachments.len(),
         );

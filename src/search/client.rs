@@ -292,6 +292,7 @@ mod tests {
             order: 0,
             is_hidden: false,
             content_hash: None,
+            metadata_hash: None,
             is_archived: false,
         };
 
@@ -322,6 +323,7 @@ mod tests {
             order: 0,
             is_hidden: false,
             content_hash: None,
+            metadata_hash: None,
             is_archived: false,
         };
 

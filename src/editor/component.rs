@@ -117,7 +117,8 @@ pub async fn save_doc_content(
         parent_slug,
         order,
         is_hidden,
-        content_hash: None, // Editor saves don't compute content hash (use ingest API for CI flows)
+        content_hash: None,   // Editor saves don't compute content hash
+        metadata_hash: None,  // Populated on next lekton-sync run
         is_archived: false,
     };
 

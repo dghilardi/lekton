@@ -6,7 +6,9 @@ import { test, expect, type Page } from '@playwright/test';
  */
 async function openSearchModal(page: Page): Promise<void> {
   const searchInput = page.locator('input[placeholder*="Search"]');
-  for (let attempt = 0; attempt < 30; attempt++) {
+  // Retry Ctrl+K until WASM has hydrated and registered the keydown listener.
+  // In CI release builds, WASM hydration can take 15–30s.
+  for (let attempt = 0; attempt < 60; attempt++) {
     await page.keyboard.press('Control+k');
     if (await searchInput.isVisible({ timeout: 500 }).catch(() => false)) return;
     await page.waitForTimeout(500);

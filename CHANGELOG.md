@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **E2E tests aligned with navigation redesign**: Updated all Playwright specs to match the new navbar/sidebar architecture introduced in navigation-ordering. Tests no longer rely on `<details>` elements on the home page or click-navigation through WASM-rendered links. Replaced with direct URL navigation and increased timeouts for WASM hydration in CI release builds.
+- **CI wasm-bindgen version mismatch**: Pinned `wasm-bindgen-cli` installation in CI workflow to match the project's dependency version (0.2.117), preventing build failures from version drift.
+
 ## [0.7.0] 2026-04-04
 
 ### Added

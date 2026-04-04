@@ -33,10 +33,12 @@ export default defineConfig({
   globalSetup: './e2e/global-setup.ts',
 
   webServer: {
-    command: 'cargo leptos serve',
+    command: process.env.CI
+      ? 'cargo leptos serve --release'
+      : 'cargo leptos serve',
     url: 'http://localhost:3000',
-    reuseExistingServer: true,
-    timeout: 120_000,
+    reuseExistingServer: !process.env.CI,
+    timeout: 180_000,
     env: {
       DEMO_MODE: 'true',
       SERVICE_TOKEN: 'test-token',

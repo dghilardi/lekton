@@ -4,8 +4,8 @@ test.describe('Home page', () => {
   test('loads and shows document list in navigation', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
-    // Navigation sidebar should contain seeded documents
-    await expect(page.locator('text=Getting Started')).toBeVisible();
+    // Top-level documents should be visible in the navbar (SSR-streamed)
+    await expect(page.locator('text=Getting Started')).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('text=Architecture Overview')).toBeVisible();
   });
 

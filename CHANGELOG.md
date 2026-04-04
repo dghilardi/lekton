@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.0] 2026-04-04
+
 ### Added
 
 - **Configurable OAuth2 userinfo field mapping**: New environment variables (`AUTH_USERINFO_SUB_FIELD`, `AUTH_USERINFO_EMAIL_FIELD`, `AUTH_USERINFO_NAME_FIELD`) allow dot-notation paths to extract user identity from non-standard OAuth2 provider responses. Supports nested fields (e.g. `data.loginEmail`) and comma-separated paths for name concatenation (e.g. `data.firstName,data.lastName`). Falls back to standard OIDC fields (`sub`, `email`, `name`) when unset.

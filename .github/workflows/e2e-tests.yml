@@ -57,8 +57,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install cargo-leptos
-        run: cargo install cargo-leptos --locked
+      - name: Install cargo-leptos and wasm-bindgen-cli
+        run: |
+          cargo install cargo-leptos --locked
+          cargo install wasm-bindgen-cli --version 0.2.117
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

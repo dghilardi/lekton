@@ -1,29 +1,20 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('Navigation', () => {
-  test('nav tree shows hierarchy with collapsible items', async ({ page }) => {
+  test('navbar shows top-level document links', async ({ page }) => {
     await page.goto('/');
-    // Parent item "API Documentation" should be visible
-    await expect(page.locator('text=API Documentation')).toBeVisible();
-    // It should use details/summary for collapsible hierarchy
-    const details = page.locator('details');
-    const count = await details.count();
-    expect(count).toBeGreaterThan(0);
+    await page.waitForLoadState('networkidle');
+    // Top-level documents appear in the navbar (SSR-streamed via TopNavbarLinks)
+    await expect(page.locator('text=Getting Started')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('text=Architecture Overview')).toBeVisible();
   });
 
-  test('expand and collapse works', async ({ page }) => {
-    await page.goto('/');
-    // Find a collapsible parent (details element containing "API Documentation")
-    const apiDetails = page.locator('details', { hasText: 'API Documentation' }).first();
-    if (await apiDetails.isVisible()) {
-      const summary = apiDetails.locator('summary');
-      // Click to toggle (may already be open)
-      await summary.click();
-      await page.waitForTimeout(300);
-      // Click again to toggle back
-      await summary.click();
-      await page.waitForTimeout(300);
-    }
+  test('sidebar shows section children when browsing docs', async ({ page }) => {
+    // Navigate to a section that has children (api-docs → authentication)
+    await page.goto('/docs/api-docs');
+    await page.waitForLoadState('networkidle');
+    // The sidebar should show children of the api-docs section
+    await expect(page.locator('text=Authentication API')).toBeVisible({ timeout: 15_000 });
   });
 
   test('active link is highlighted', async ({ page }) => {

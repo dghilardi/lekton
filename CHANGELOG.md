@@ -6,6 +6,16 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Navigation ordering**: Sections and categories in the sidebar and navbar are now sorted deterministically — alphabetically by title by default, with support for custom ordering via a dedicated `navigation_order` MongoDB collection. Documents (leaves) continue to sort by their `order` field, then alphabetically.
+- **Navigation ordering admin UI**: New "Navigation Ordering" section in Admin Settings with drag-and-drop reordering of sections and categories. Includes up/down arrow buttons as an alternative, per-level indentation, and save/discard controls.
+- **`navigation_order` collection**: New MongoDB collection storing per-slug weights for custom section/category ordering. Managed via `get_navigation_order` / `save_navigation_order` admin-only server functions.
+
+### Fixed
+
+- **Non-deterministic navigation order**: Sections and categories no longer shuffle on page refresh. The root cause was `HashMap::into_iter()` returning items in arbitrary order during navigation tree construction.
+
+### Added
+
 - **Local attachment sync**: `lekton-sync` now detects local file references in markdown (`![](path)`, `[](path)`, `<img src="path">`) and automatically uploads them as assets before ingesting the document. Paths are rewritten in the uploaded content to server URLs (`/api/v1/assets/attachments/{slug}/{filename}`), while local files remain untouched. Supports all relative paths including `../`. Configurable via `max_attachment_size_mb` in `.lekton.yml` (default: 10 MB). Dry-run mode shows attachment upload plan.
 - **Asset content hash deduplication**: `POST /api/v1/assets/check-hashes` endpoint accepts a list of asset keys with their SHA-256 hashes and returns which ones need uploading. Used by `lekton-sync` to skip unchanged attachments.
 - **Server-side attachment size limit**: `MAX_ATTACHMENT_SIZE_MB` environment variable (default: 25 MB) rejects oversized asset uploads with a clear error message.

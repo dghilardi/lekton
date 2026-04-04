@@ -253,28 +253,27 @@ pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
         attach_children(root, &children_by_parent);
     }
 
-    // Sort the tree:
-    // - Sections/categories: by custom weight if set, otherwise alphabetically by title
-    // - Documents (leaves): by (order, title) from the document model
+    // Sort the tree: sections/categories use custom weight (fallback alphabetical),
+    // documents use their order field (fallback alphabetical). Both types are mixed
+    // together — sections are NOT prioritized over documents.
     fn sort_nav_items(items: &mut [NavItem], weights: &HashMap<String, i32>) {
         items.sort_by(|a, b| {
             let a_is_section = !a.children.is_empty();
             let b_is_section = !b.children.is_empty();
-            // Sections come first, then documents
-            match (a_is_section, b_is_section) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                (true, true) => {
-                    let a_weight = weights.get(&a.slug).copied().unwrap_or(i32::MAX);
-                    let b_weight = weights.get(&b.slug).copied().unwrap_or(i32::MAX);
-                    a_weight.cmp(&b_weight)
-                        .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
-                }
-                (false, false) => {
-                    a.order.cmp(&b.order)
-                        .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
-                }
-            }
+
+            let a_sort_key = if a_is_section {
+                weights.get(&a.slug).copied().unwrap_or(i32::MAX)
+            } else {
+                a.order as i32
+            };
+            let b_sort_key = if b_is_section {
+                weights.get(&b.slug).copied().unwrap_or(i32::MAX)
+            } else {
+                b.order as i32
+            };
+
+            a_sort_key.cmp(&b_sort_key)
+                .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
         });
         for item in items.iter_mut() {
             if !item.children.is_empty() {

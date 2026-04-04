@@ -212,6 +212,11 @@ async fn main() {
         navigation_order_repo,
         token_service,
         auth_provider,
+        reindex_state: if rag_service.is_some() {
+            Some(Arc::new(lekton::rag::reindex::ReindexState::default()))
+        } else {
+            None
+        },
         rag_service,
         insecure_cookies: config.server.insecure_cookies,
         max_attachment_size_bytes: config.server.max_attachment_size_mb * 1024 * 1024,
@@ -313,6 +318,14 @@ async fn main() {
         .route(
             "/api/v1/admin/service-tokens/{id}",
             axum::routing::delete(api::admin::deactivate_service_token_handler),
+        )
+        .route(
+            "/api/v1/admin/rag/reindex",
+            axum::routing::post(api::rag::trigger_reindex_handler),
+        )
+        .route(
+            "/api/v1/admin/rag/reindex/status",
+            axum::routing::get(api::rag::reindex_status_handler),
         );
 
     // Mount demo auth routes when demo mode is enabled, OAuth2/OIDC routes otherwise

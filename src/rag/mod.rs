@@ -1,6 +1,8 @@
 #[cfg(feature = "ssr")]
 pub mod embedding;
 #[cfg(feature = "ssr")]
+pub mod reindex;
+#[cfg(feature = "ssr")]
 pub mod service;
 #[cfg(feature = "ssr")]
 pub mod splitter;

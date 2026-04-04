@@ -6,9 +6,9 @@
  */
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
-const SERVICE_TOKEN = process.env.SERVICE_TOKEN || 'test-token';
-const MEILISEARCH_URL = process.env.MEILISEARCH_URL || 'http://localhost:7700';
-const MEILISEARCH_API_KEY = process.env.MEILISEARCH_API_KEY || '';
+const SERVICE_TOKEN = process.env.LKN_AUTH__SERVICE_TOKEN || 'test-token';
+const MEILISEARCH_URL = process.env.LKN_SEARCH__URL || 'http://localhost:7700';
+const MEILISEARCH_API_KEY = process.env.LKN_SEARCH__API_KEY || '';
 
 /**
  * Poll Meilisearch until all pending/processing tasks are done (or timeout).

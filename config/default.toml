@@ -32,3 +32,22 @@ jwt_access_ttl_secs = 900
 jwt_refresh_ttl_days = 30
 provider_type = "oidc"
 scopes = "openid profile email"
+
+[rag]
+# Leave empty to disable RAG entirely.
+qdrant_url = ""
+qdrant_collection = "docs_collection"
+embedding_url = ""
+embedding_model = "nomic-embed-text"
+embedding_dimensions = 768
+embedding_api_key = ""
+chat_url = ""
+chat_model = ""
+chat_api_key = ""
+system_prompt_template = """You are a helpful assistant for an internal developer portal. \
+Answer the user's question based on the following context extracted from the documentation.
+
+Context:
+{{ context }}
+
+If the context does not contain enough information to answer, say so honestly."""

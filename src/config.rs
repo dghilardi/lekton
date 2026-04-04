@@ -24,6 +24,7 @@ pub struct AppConfig {
     pub storage: StorageConfig,
     pub search: SearchConfig,
     pub auth: AuthConfig,
+    pub rag: RagConfig,
 }
 
 // ── Server ────────────────────────────────────────────────────────────────────
@@ -114,6 +115,39 @@ pub struct AuthConfig {
     pub userinfo_email_field: Option<String>,
     /// Comma-separated dot-notation paths to name field(s) in the userinfo response.
     pub userinfo_name_field: Option<String>,
+}
+
+// ── RAG ──────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct RagConfig {
+    /// Qdrant gRPC endpoint (e.g. `http://localhost:6334`). Empty disables RAG.
+    pub qdrant_url: String,
+    /// Qdrant collection name. Switchable for model fine-tuning.
+    pub qdrant_collection: String,
+    /// OpenAI-compatible embedding endpoint (e.g. Ollama at `http://localhost:11434/v1`).
+    pub embedding_url: String,
+    /// Embedding model name (e.g. `nomic-embed-text`).
+    pub embedding_model: String,
+    /// Vector dimensions produced by the embedding model.
+    pub embedding_dimensions: u32,
+    /// API key for the embedding endpoint. Optional.
+    pub embedding_api_key: String,
+    /// OpenAI-compatible chat/completion endpoint (e.g. OpenRouter, Ollama).
+    pub chat_url: String,
+    /// Chat model name (e.g. `meta-llama/llama-3-70b`).
+    pub chat_model: String,
+    /// API key for the chat endpoint. Optional.
+    pub chat_api_key: String,
+    /// Tera template for the system prompt. Available variables: `{{context}}`, `{{question}}`.
+    pub system_prompt_template: String,
+}
+
+impl RagConfig {
+    /// Returns `true` when RAG is fully configured (both Qdrant and embedding URLs set).
+    pub fn is_enabled(&self) -> bool {
+        !self.qdrant_url.is_empty() && !self.embedding_url.is_empty()
+    }
 }
 
 // ── Loader ────────────────────────────────────────────────────────────────────

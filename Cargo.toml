@@ -93,6 +93,9 @@ time = { version = "0.3", optional = true }
 # Rate limiting
 tower_governor = { version = "0.8", optional = true }
 
+# Configuration management
+config = { version = "0.14", optional = true }
+
 [build-dependencies]
 leptos-tiptap-build = "0.2"
 
@@ -130,6 +133,7 @@ ssr = [
     "dep:urlencoding",
     "dep:time",
     "dep:tower_governor",
+    "dep:config",
     "leptos/ssr",
     "leptos_meta/ssr",
     "leptos_router/ssr",

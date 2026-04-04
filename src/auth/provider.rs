@@ -465,12 +465,12 @@ impl AuthProvider for OidcAuthProvider {
 
 // ── Factory ───────────────────────────────────────────────────────────────────
 
-/// Build the configured [`AuthProvider`] from environment variables.
+/// Build the configured [`AuthProvider`] from the application config.
 ///
-/// Returns `None` when the required environment variables are not set
+/// Returns `None` when required auth fields are not set
 /// (auth is then unavailable but the server starts in degraded mode).
-pub async fn build_provider_from_env() -> Option<std::sync::Arc<dyn AuthProvider>> {
-    let config = match AuthProviderConfig::from_env() {
+pub async fn build_provider(auth: &crate::config::AuthConfig) -> Option<std::sync::Arc<dyn AuthProvider>> {
+    let config = match AuthProviderConfig::from_app_config(auth) {
         Ok(c) => c,
         Err(e) => {
             tracing::warn!("Auth provider not configured: {e}");

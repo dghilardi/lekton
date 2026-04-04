@@ -78,6 +78,7 @@ pub fn authenticate_demo_user(username: &str, password: &str) -> Result<Authenti
 /// On success, sets a `lekton_demo_user` cookie and returns the user info.
 #[cfg(feature = "ssr")]
 pub async fn login_handler(
+    axum::extract::State(state): axum::extract::State<crate::app::AppState>,
     jar: axum_extra::extract::CookieJar,
     axum::Json(req): axum::Json<LoginRequest>,
 ) -> Result<(axum_extra::extract::CookieJar, axum::Json<LoginResponse>), AppError> {
@@ -86,14 +87,10 @@ pub async fn login_handler(
     let user_json = serde_json::to_string(&user)
         .map_err(|e| AppError::Internal(format!("Failed to serialize user: {}", e)))?;
 
-    let secure = !std::env::var("INSECURE_COOKIES")
-        .map(|v| v == "true" || v == "1" || v == "yes")
-        .unwrap_or(false);
-
     let cookie = axum_extra::extract::cookie::Cookie::build(("lekton_demo_user", user_json))
         .path("/")
         .http_only(true)
-        .secure(secure)
+        .secure(!state.insecure_cookies)
         .same_site(axum_extra::extract::cookie::SameSite::Strict)
         .build();
 

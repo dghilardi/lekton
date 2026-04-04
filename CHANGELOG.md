@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Centralised configuration via `config` crate**: All runtime settings are now loaded in priority order — embedded `config/default.toml` defaults, optional `config/lekton.toml` local override (git-ignored), and `LKN_*` environment variables (e.g. `LKN_DATABASE__URI`, `LKN_AUTH__JWT_SECRET`). Replaces the previous ad-hoc `std::env::var` calls scattered across modules.
+- **`AppConfig` struct** (`src/config.rs`): Typed configuration with sections `server`, `database`, `storage`, `search`, and `auth`.
+- **`insecure_cookies` and `max_attachment_size_bytes` fields on `AppState`**: cookie security and upload limits are now driven by config rather than per-request env reads.
+
+### Changed
+- `auth::config::AuthProviderConfig::from_env()` replaced by `from_app_config(&AuthConfig)`.
+- `auth::token_service::TokenService::from_env()` replaced by `from_app_config(&AuthConfig)`.
+- `auth::provider::build_provider_from_env()` renamed to `build_provider(&AuthConfig)`.
+- `storage::client::S3StorageClient::from_env()` replaced by `from_app_config(&StorageConfig)`.
+- `search::client::MeilisearchService::from_env()` replaced by `from_app_config(&SearchConfig)`.
+- `api::assets::process_upload_asset` now accepts an explicit `max_size: u64` parameter instead of reading `MAX_ATTACHMENT_SIZE_MB` from the environment at call time.
+- Cookie builder functions (`access_token_cookie`, `refresh_token_cookie`, `auth_state_cookie`) now accept an explicit `secure: bool` parameter instead of reading `INSECURE_COOKIES` from the environment internally.
+- `.env.example` updated to use `LKN_*` prefix for all application settings.
+
 ### Fixed
 - **lekton-sync: attachment changes always detected**: Attachment hashes are now checked for every document on each sync run, not only those already flagged for upload. Replacing a PDF or image with new content while leaving the markdown body unchanged is now correctly detected and re-uploaded.
 - **lekton-sync: metadata-only changes trigger re-upload**: Changing front-matter fields (`access_level`, `title`, `service_owner`, `tags`, `parent_slug`, `order`, `is_hidden`) previously left the content hash identical, causing the document to be silently skipped. A separate `metadata_hash` is now computed from the canonical metadata and compared during sync. Documents stored before this version are treated as having no metadata hash and are re-uploaded once so their metadata hash gets populated.

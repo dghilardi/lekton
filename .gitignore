@@ -7,6 +7,9 @@ node_modules/
 # Environment variables
 .env
 
+# Local config overrides (contain sensitive values)
+config/lekton.toml
+
 # cargo-leptos generated site
 pkg/
 

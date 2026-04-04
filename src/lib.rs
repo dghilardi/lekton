@@ -3,6 +3,8 @@
 pub mod api;
 pub mod app;
 pub mod auth;
+#[cfg(feature = "ssr")]
+pub mod config;
 pub mod components;
 pub mod db;
 pub mod editor;

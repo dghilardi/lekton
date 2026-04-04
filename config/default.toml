@@ -1,0 +1,34 @@
+# Lekton default configuration.
+#
+# These values are embedded in the binary and serve as fallbacks.
+# Override via:
+#   1. config/lekton.toml  (optional local file, git-ignored)
+#   2. Environment variables with the LKN_ prefix and __ as separator
+#      e.g. LKN_DATABASE__URI, LKN_AUTH__JWT_SECRET
+
+[server]
+rate_limit_burst = 50
+insecure_cookies = false
+log_filter = "lekton=info,tower_http=info"
+max_attachment_size_mb = 25
+
+[database]
+uri = "mongodb://localhost:27017"
+name = "lekton"
+
+[storage]
+# Required. Set via LKN_STORAGE__BUCKET or config/lekton.toml.
+bucket = ""
+
+[search]
+# Leave empty to disable full-text search.
+url = ""
+api_key = ""
+
+[auth]
+demo_mode = false
+allow_demo_in_production = false
+jwt_access_ttl_secs = 900
+jwt_refresh_ttl_days = 30
+provider_type = "oidc"
+scopes = "openid profile email"

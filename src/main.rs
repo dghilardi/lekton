@@ -6,7 +6,7 @@ async fn main() {
     use leptos_axum::{generate_route_list, LeptosRoutes};
     use lekton::api;
     use lekton::app::App;
-    use lekton::auth::provider::build_provider_from_env;
+    use lekton::auth::provider::build_provider;
     use lekton::auth::token_service::TokenService;
     use std::net::SocketAddr;
     use lekton::db::access_level_repository::MongoAccessLevelRepository;
@@ -18,35 +18,34 @@ async fn main() {
     use lekton::db::document_version_repository::MongoDocumentVersionRepository;
     use lekton::db::service_token_repository::MongoServiceTokenRepository;
     use lekton::db::user_repository::MongoUserRepository;
-    use lekton::search::client::SearchService;
+    use lekton::search::client::{MeilisearchService, SearchService as _};
     use lekton::storage::client::S3StorageClient;
     use std::sync::Arc;
     use tower_http::services::ServeDir;
+
+    // Load configuration first — fast-fail on bad config before anything else starts.
+    let config = lekton::config::AppConfig::load()
+        .expect("Failed to load application configuration");
 
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "lekton=info,tower_http=info".into()),
+                .unwrap_or_else(|_| config.server.log_filter.as_str().into()),
         )
         .init();
 
     tracing::info!("Starting Lekton server...");
 
     // Check demo mode
-    let demo_mode = std::env::var("DEMO_MODE")
-        .map(|v| v == "true" || v == "1" || v == "yes")
-        .unwrap_or(false);
+    let demo_mode = config.auth.demo_mode;
 
     if demo_mode {
-        let allow_demo_prod = std::env::var("ALLOW_DEMO_IN_PRODUCTION")
-            .map(|v| v == "true" || v == "1" || v == "yes")
-            .unwrap_or(false);
-
-        if std::env::var("JWT_SECRET").is_ok() && !allow_demo_prod {
+        if config.auth.jwt_secret.is_some() && !config.auth.allow_demo_in_production {
             panic!(
-                "DEMO_MODE is enabled but JWT_SECRET is set, which suggests a production \
-                 environment. Set ALLOW_DEMO_IN_PRODUCTION=true to override this safety check."
+                "auth.demo_mode is enabled but auth.jwt_secret is set, which suggests a \
+                 production environment. Set auth.allow_demo_in_production = true (or \
+                 LKN_AUTH__ALLOW_DEMO_IN_PRODUCTION=true) to override this safety check."
             );
         }
 
@@ -60,19 +59,13 @@ async fn main() {
     let site_root = leptos_options.site_root.to_string();
 
     // Connect to MongoDB
-    let mongo_uri =
-        std::env::var("MONGODB_URI").unwrap_or_else(|_| "mongodb://localhost:27017".to_string());
-    let mongo_db_name =
-        std::env::var("MONGODB_DATABASE").unwrap_or_else(|_| "lekton".to_string());
+    let mongo_uri = config.database.uri.clone();
 
     // Inject credentials into the URI if provided separately
-    let mongo_uri = match (
-        std::env::var("MONGODB_USERNAME"),
-        std::env::var("MONGODB_PASSWORD"),
-    ) {
-        (Ok(user), Ok(pass)) => {
-            let encoded_user = urlencoding::encode(&user);
-            let encoded_pass = urlencoding::encode(&pass);
+    let mongo_uri = match (&config.database.username, &config.database.password) {
+        (Some(user), Some(pass)) if !user.is_empty() => {
+            let encoded_user = urlencoding::encode(user);
+            let encoded_pass = urlencoding::encode(pass);
             // Insert credentials after the scheme (mongodb:// or mongodb+srv://)
             if let Some(rest) = mongo_uri
                 .strip_prefix("mongodb+srv://")
@@ -92,7 +85,7 @@ async fn main() {
     let mongo_client = mongodb::Client::with_uri_str(&mongo_uri)
         .await
         .expect("Failed to connect to MongoDB");
-    let mongo_db = mongo_client.database(&mongo_db_name);
+    let mongo_db = mongo_client.database(&config.database.name);
     let document_repo: Arc<dyn lekton::db::repository::DocumentRepository> =
         Arc::new(MongoDocumentRepository::new(&mongo_db));
     let schema_repo: Arc<dyn lekton::db::schema_repository::SchemaRepository> =
@@ -121,7 +114,7 @@ async fn main() {
 
     // Connect to S3
     let storage_client: Arc<dyn lekton::storage::client::StorageClient> = Arc::new(
-        S3StorageClient::from_env()
+        S3StorageClient::from_app_config(&config.storage)
             .await
             .expect("Failed to initialize S3 client"),
     );
@@ -130,7 +123,7 @@ async fn main() {
 
     // Initialize Meilisearch (optional — app works without it)
     let search_service: Option<Arc<dyn lekton::search::client::SearchService>> =
-        match lekton::search::client::MeilisearchService::from_env() {
+        match MeilisearchService::from_app_config(&config.search) {
             Ok(service) => {
                 if let Err(e) = service.configure_index().await {
                     tracing::warn!("Failed to configure Meilisearch index: {e}");
@@ -145,31 +138,31 @@ async fn main() {
         };
 
     // Service token for API authentication
-    let service_token = match std::env::var("SERVICE_TOKEN") {
-        Ok(token) => token,
-        Err(_) if demo_mode => {
-            tracing::warn!("SERVICE_TOKEN not set — using insecure default (demo mode only)");
+    let service_token = match config.auth.service_token.as_deref() {
+        Some(token) if !token.is_empty() => token.to_string(),
+        _ if demo_mode => {
+            tracing::warn!("auth.service_token not set — using insecure default (demo mode only)");
             "dev-token".to_string()
         }
-        Err(_) => {
-            panic!("SERVICE_TOKEN environment variable is required in production");
+        _ => {
+            panic!("auth.service_token is required in production (set LKN_AUTH__SERVICE_TOKEN)");
         }
     };
 
     // JWT token service
-    let token_service = Arc::new(match TokenService::from_env() {
+    let token_service = Arc::new(match TokenService::from_app_config(&config.auth) {
         Ok(ts) => ts,
         Err(_) if demo_mode => {
-            tracing::warn!("JWT_SECRET not set — using insecure dev key (demo mode only)");
+            tracing::warn!("auth.jwt_secret not set — using insecure dev key (demo mode only)");
             TokenService::new("dev-insecure-secret-change-in-production!!", 900, 30)
         }
         Err(e) => {
-            panic!("JWT_SECRET environment variable is required in production: {e}");
+            panic!("auth.jwt_secret is required in production: {e}");
         }
     });
 
     // OAuth2 / OIDC auth provider (optional — server starts without auth if not configured)
-    let auth_provider = build_provider_from_env().await;
+    let auth_provider = build_provider(&config.auth).await;
 
     // Build application state
     let app_state = lekton::app::AppState {
@@ -189,6 +182,8 @@ async fn main() {
         navigation_order_repo,
         token_service,
         auth_provider,
+        insecure_cookies: config.server.insecure_cookies,
+        max_attachment_size_bytes: config.server.max_attachment_size_mb * 1024 * 1024,
     };
 
     // Generate the Leptos route list for SSR
@@ -312,11 +307,8 @@ async fn main() {
         tracing::info!("OAuth2/OIDC auth routes mounted: /auth/login, /auth/callback, /auth/refresh, /auth/logout, /auth/me");
     }
 
-    // Rate limiting: configurable via RATE_LIMIT_BURST (default 50), replenished at 1 per second
-    let burst_size: u32 = std::env::var("RATE_LIMIT_BURST")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(50);
+    // Rate limiting: replenished at 1 per second, burst from config
+    let burst_size = config.server.rate_limit_burst;
     let governor_conf = Arc::new(
         tower_governor::governor::GovernorConfigBuilder::default()
             .per_second(1)
@@ -335,9 +327,9 @@ async fn main() {
         }
     });
 
-    // CORS: same-origin by default; set CORS_ALLOWED_ORIGINS for cross-origin access.
-    let cors = match std::env::var("CORS_ALLOWED_ORIGINS") {
-        Ok(origins) => {
+    // CORS: same-origin by default; set cors_allowed_origins for cross-origin access.
+    let cors = match config.server.cors_allowed_origins.as_deref().filter(|s| !s.is_empty()) {
+        Some(origins) => {
             let allowed: Vec<_> = origins
                 .split(',')
                 .filter_map(|s| s.trim().parse().ok())
@@ -353,7 +345,7 @@ async fn main() {
                 .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::AUTHORIZATION])
                 .allow_credentials(true)
         }
-        Err(_) => {
+        None => {
             // Default: no CORS headers (same-origin only)
             tower_http::cors::CorsLayer::new()
         }

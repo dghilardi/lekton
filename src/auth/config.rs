@@ -46,49 +46,40 @@ pub struct AuthProviderConfig {
 }
 
 impl AuthProviderConfig {
-    /// Load provider config from environment variables.
-    ///
-    /// Required:
-    /// - `AUTH_PROVIDER_TYPE` — `"oidc"` or `"oauth2"`
-    /// - `AUTH_CLIENT_ID`
-    /// - `AUTH_CLIENT_SECRET`
-    /// - `AUTH_REDIRECT_URI`
-    /// - `AUTH_AUTHORIZATION_ENDPOINT`
-    ///
-    /// Optional:
-    /// - `AUTH_TOKEN_ENDPOINT`       (required for oauth2)
-    /// - `AUTH_USERINFO_ENDPOINT`    (required for oauth2)
-    /// - `AUTH_SCOPES`               (default: `"openid profile email"`)
-    /// - `AUTH_USERINFO_SUB_FIELD`    (dot-notation path, e.g. `"data.userShortId"`)
-    /// - `AUTH_USERINFO_EMAIL_FIELD`  (dot-notation path, e.g. `"data.loginEmail"`)
-    /// - `AUTH_USERINFO_NAME_FIELD`   (dot-notation path, e.g. `"data.firstName,data.lastName"`)
-    pub fn from_env() -> Result<Self, AppError> {
-        let provider_type = std::env::var("AUTH_PROVIDER_TYPE")
-            .unwrap_or_else(|_| "oidc".to_string());
-
+    /// Build from the application's centralised [`crate::config::AuthConfig`].
+    #[cfg(feature = "ssr")]
+    pub fn from_app_config(auth: &crate::config::AuthConfig) -> Result<Self, AppError> {
+        let provider_type = auth.provider_type.clone();
         if provider_type != "oidc" && provider_type != "oauth2" {
             return Err(AppError::Auth(format!(
-                "AUTH_PROVIDER_TYPE must be 'oidc' or 'oauth2', got '{provider_type}'"
+                "auth.provider_type must be 'oidc' or 'oauth2', got '{provider_type}'"
             )));
         }
 
         Ok(Self {
             provider_type,
-            client_id: std::env::var("AUTH_CLIENT_ID")
-                .map_err(|_| AppError::Auth("AUTH_CLIENT_ID not set".into()))?,
-            client_secret: std::env::var("AUTH_CLIENT_SECRET")
-                .map_err(|_| AppError::Auth("AUTH_CLIENT_SECRET not set".into()))?,
-            redirect_uri: std::env::var("AUTH_REDIRECT_URI")
-                .map_err(|_| AppError::Auth("AUTH_REDIRECT_URI not set".into()))?,
-            authorization_endpoint: std::env::var("AUTH_AUTHORIZATION_ENDPOINT")
-                .map_err(|_| AppError::Auth("AUTH_AUTHORIZATION_ENDPOINT not set".into()))?,
-            token_endpoint: std::env::var("AUTH_TOKEN_ENDPOINT").ok(),
-            userinfo_endpoint: std::env::var("AUTH_USERINFO_ENDPOINT").ok(),
-            scopes: std::env::var("AUTH_SCOPES")
-                .unwrap_or_else(|_| "openid profile email".to_string()),
-            userinfo_sub_field: std::env::var("AUTH_USERINFO_SUB_FIELD").ok(),
-            userinfo_email_field: std::env::var("AUTH_USERINFO_EMAIL_FIELD").ok(),
-            userinfo_name_field: std::env::var("AUTH_USERINFO_NAME_FIELD").ok(),
+            client_id: auth
+                .client_id
+                .clone()
+                .ok_or_else(|| AppError::Auth("auth.client_id not set".into()))?,
+            client_secret: auth
+                .client_secret
+                .clone()
+                .ok_or_else(|| AppError::Auth("auth.client_secret not set".into()))?,
+            redirect_uri: auth
+                .redirect_uri
+                .clone()
+                .ok_or_else(|| AppError::Auth("auth.redirect_uri not set".into()))?,
+            authorization_endpoint: auth
+                .authorization_endpoint
+                .clone()
+                .ok_or_else(|| AppError::Auth("auth.authorization_endpoint not set".into()))?,
+            token_endpoint: auth.token_endpoint.clone(),
+            userinfo_endpoint: auth.userinfo_endpoint.clone(),
+            scopes: auth.scopes.clone(),
+            userinfo_sub_field: auth.userinfo_sub_field.clone(),
+            userinfo_email_field: auth.userinfo_email_field.clone(),
+            userinfo_name_field: auth.userinfo_name_field.clone(),
         })
     }
 }
@@ -97,30 +88,42 @@ impl AuthProviderConfig {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_from_env_missing_required_vars() {
-        // Without any env vars set, from_env should fail.
-        // (AUTH_CLIENT_ID is the first required var after provider type.)
-        unsafe {
-            std::env::remove_var("AUTH_CLIENT_ID");
-            std::env::remove_var("AUTH_CLIENT_SECRET");
-            std::env::remove_var("AUTH_REDIRECT_URI");
-            std::env::remove_var("AUTH_AUTHORIZATION_ENDPOINT");
+    fn make_auth_config_missing_client() -> crate::config::AuthConfig {
+        crate::config::AuthConfig {
+            demo_mode: false,
+            allow_demo_in_production: false,
+            service_token: None,
+            jwt_secret: None,
+            jwt_access_ttl_secs: 900,
+            jwt_refresh_ttl_days: 30,
+            provider_type: "oidc".to_string(),
+            client_id: None, // missing
+            client_secret: None,
+            redirect_uri: None,
+            authorization_endpoint: None,
+            token_endpoint: None,
+            userinfo_endpoint: None,
+            scopes: "openid profile email".to_string(),
+            userinfo_sub_field: None,
+            userinfo_email_field: None,
+            userinfo_name_field: None,
         }
-        let result = AuthProviderConfig::from_env();
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn test_from_app_config_missing_required_fields() {
+        let auth = make_auth_config_missing_client();
+        let result = AuthProviderConfig::from_app_config(&auth);
         assert!(result.is_err());
     }
 
+    #[cfg(feature = "ssr")]
     #[test]
     fn test_invalid_provider_type() {
-        unsafe {
-            std::env::set_var("AUTH_PROVIDER_TYPE", "saml");
-        }
-        let result = AuthProviderConfig::from_env();
-        // Clean up before asserting to avoid polluting other tests.
-        unsafe {
-            std::env::remove_var("AUTH_PROVIDER_TYPE");
-        }
+        let mut auth = make_auth_config_missing_client();
+        auth.provider_type = "saml".to_string();
+        let result = AuthProviderConfig::from_app_config(&auth);
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::Auth(msg) => assert!(msg.contains("saml")),

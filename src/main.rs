@@ -10,6 +10,7 @@ async fn main() {
     use lekton::auth::token_service::TokenService;
     use std::net::SocketAddr;
     use lekton::db::access_level_repository::MongoAccessLevelRepository;
+    use lekton::db::navigation_order_repository::MongoNavigationOrderRepository;
     use lekton::db::asset_repository::MongoAssetRepository;
     use lekton::db::repository::MongoDocumentRepository;
     use lekton::db::schema_repository::MongoSchemaRepository;
@@ -108,6 +109,8 @@ async fn main() {
         Arc::new(MongoServiceTokenRepository::new(&mongo_db));
     let document_version_repo: Arc<dyn lekton::db::document_version_repository::DocumentVersionRepository> =
         Arc::new(MongoDocumentVersionRepository::new(&mongo_db));
+    let navigation_order_repo: Arc<dyn lekton::db::navigation_order_repository::NavigationOrderRepository> =
+        Arc::new(MongoNavigationOrderRepository::new(&mongo_db));
 
     // Seed default access levels (no-op if already present).
     if let Err(e) = access_level_repo.seed_defaults().await {
@@ -183,6 +186,7 @@ async fn main() {
         demo_mode,
         user_repo,
         access_level_repo,
+        navigation_order_repo,
         token_service,
         auth_provider,
     };

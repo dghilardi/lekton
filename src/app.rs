@@ -33,6 +33,7 @@ pub struct AppState {
     // ── Auth (phase 5) ────────────────────────────────────────────────────────
     pub user_repo: Arc<dyn crate::db::user_repository::UserRepository>,
     pub access_level_repo: Arc<dyn crate::db::access_level_repository::AccessLevelRepository>,
+    pub navigation_order_repo: Arc<dyn crate::db::navigation_order_repository::NavigationOrderRepository>,
     pub token_service: Arc<crate::auth::token_service::TokenService>,
     pub auth_provider: Option<Arc<dyn crate::auth::provider::AuthProvider>>,
 }

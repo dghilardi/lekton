@@ -104,6 +104,14 @@ async fn main() {
         Arc::new(MongoDocumentVersionRepository::new(&mongo_db));
     let navigation_order_repo: Arc<dyn lekton::db::navigation_order_repository::NavigationOrderRepository> =
         Arc::new(MongoNavigationOrderRepository::new(&mongo_db));
+    let chat_repo: Option<Arc<dyn lekton::db::chat_repository::ChatRepository>> =
+        if config.rag.is_enabled() {
+            Some(Arc::new(
+                lekton::db::chat_repository::MongoChatRepository::new(&mongo_db),
+            ))
+        } else {
+            None
+        };
 
     // Seed default access levels (no-op if already present).
     if let Err(e) = access_level_repo.seed_defaults().await {
@@ -218,6 +226,7 @@ async fn main() {
             None
         },
         rag_service,
+        chat_repo,
         insecure_cookies: config.server.insecure_cookies,
         max_attachment_size_bytes: config.server.max_attachment_size_mb * 1024 * 1024,
     };

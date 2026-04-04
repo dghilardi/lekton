@@ -38,6 +38,7 @@ pub struct AppState {
     pub auth_provider: Option<Arc<dyn crate::auth::provider::AuthProvider>>,
     pub rag_service: Option<Arc<dyn crate::rag::service::RagService>>,
     pub reindex_state: Option<Arc<crate::rag::reindex::ReindexState>>,
+    pub chat_repo: Option<Arc<dyn crate::db::chat_repository::ChatRepository>>,
     /// Whether cookies should be set without the `Secure` flag (HTTP local dev).
     #[from_ref(skip)]
     pub insecure_cookies: bool,

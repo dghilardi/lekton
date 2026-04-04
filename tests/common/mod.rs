@@ -177,6 +177,7 @@ impl TestEnv {
             max_attachment_size_bytes: 5242880,
             rag_service: None,
             reindex_state: None,
+            chat_repo: None,
         };
 
         // --- Build Router (API routes only, no Leptos SSR) ---

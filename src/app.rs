@@ -384,6 +384,41 @@ pub async fn get_navbar_groups() -> Result<Vec<NavGroup>, ServerFnError> {
     Ok(settings.navbar_groups)
 }
 
+/// Re-export for use in frontend components.
+pub use crate::db::navigation_order_repository::NavigationOrderEntry;
+
+/// Server function to get all navigation order entries (admin only).
+#[server(GetNavigationOrder, "/api")]
+pub async fn get_navigation_order() -> Result<Vec<NavigationOrderEntry>, ServerFnError> {
+    use crate::db::navigation_order_repository::NavigationOrderRepository;
+
+    let state = expect_context::<AppState>();
+    require_admin_user(&state).await?;
+
+    state.navigation_order_repo
+        .list_all()
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+/// Server function to save navigation order (admin only).
+///
+/// Accepts the full ordered list of entries and replaces everything atomically.
+#[server(SaveNavigationOrder, "/api")]
+pub async fn save_navigation_order(entries: Vec<NavigationOrderEntry>) -> Result<String, ServerFnError> {
+    use crate::db::navigation_order_repository::NavigationOrderRepository;
+
+    let state = expect_context::<AppState>();
+    require_admin_user(&state).await?;
+
+    state.navigation_order_repo
+        .replace_all(entries)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok("Navigation order saved successfully".to_string())
+}
+
 /// Returns `true` if a document with the given `access_level` / `is_draft` state
 /// is readable by a caller whose visibility is described by `allowed_levels` and
 /// `include_draft`.

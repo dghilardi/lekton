@@ -100,27 +100,7 @@ jobs:
         run: cargo leptos build --release
 
       - name: Run E2E tests
-        run: |
-          # Start the server in the background.
-          # RATE_LIMIT_BURST=1000 prevents 429s from parallel page loads during tests.
-          RATE_LIMIT_BURST=1000 cargo leptos serve --release &
-          SERVER_PID=$!
-
-          # Wait for the server to be ready
-          for i in $(seq 1 60); do
-            if curl -s http://localhost:3000 > /dev/null 2>&1; then
-              echo "Server is ready"
-              break
-            fi
-            echo "Waiting for server... ($i/60)"
-            sleep 2
-          done
-
-          # Run E2E tests
-          npx playwright test
-
-          # Cleanup
-          kill $SERVER_PID || true
+        run: npx playwright test
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@v4

@@ -41,10 +41,16 @@ pub struct Document {
     #[serde(default)]
     pub is_hidden: bool,
     /// SHA-256 hash of the markdown content (format: `"sha256:<base64url>"`).
-    /// Used for diffing during sync. `None` for documents ingested before
-    /// content hashing was introduced.
+    /// Used to decide whether to re-upload content to S3. `None` for documents
+    /// ingested before content hashing was introduced.
     #[serde(default)]
     pub content_hash: Option<String>,
+    /// SHA-256 hash of the document's front-matter metadata (same format as
+    /// `content_hash`).  Used by the sync protocol to detect metadata-only
+    /// changes (e.g. `access_level`, `title`) that don't alter the body text.
+    /// `None` for documents ingested before metadata hashing was introduced.
+    #[serde(default)]
+    pub metadata_hash: Option<String>,
     /// Whether this document has been archived (removed from source but kept
     /// for historical reference). Archived documents are excluded from
     /// navigation and search.
@@ -176,6 +182,7 @@ mod tests {
             order: 10,
             is_hidden: false,
             content_hash: Some("sha256:abc123".to_string()),
+            metadata_hash: None,
             is_archived: false,
         };
 
@@ -234,6 +241,7 @@ mod tests {
             order: 0,
             is_hidden: false,
             content_hash: None,
+            metadata_hash: None,
             is_archived: false,
         };
 

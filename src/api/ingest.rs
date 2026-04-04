@@ -74,10 +74,23 @@ pub async fn process_ingest(
         )));
     }
 
-    // 4. Compute content hash
+    // 4. Compute content hash (used for S3 upload decision)
     let new_hash = format!(
         "sha256:{}",
         crate::auth::token_service::TokenService::hash_token(&request.content)
+    );
+
+    // Compute metadata hash (sent by CLI alongside content_hash; stored separately
+    // so that metadata-only changes can be detected during sync without requiring
+    // a full content re-upload).
+    let new_metadata_hash = compute_metadata_hash(
+        &request.title,
+        &access_level,
+        &request.service_owner,
+        &request.tags,
+        request.parent_slug.as_deref(),
+        request.order,
+        request.is_hidden,
     );
 
     // 5. Extract internal links from content
@@ -208,6 +221,7 @@ pub async fn process_ingest(
         order: effective_order,
         is_hidden: effective_is_hidden,
         content_hash: Some(new_hash),
+        metadata_hash: Some(new_metadata_hash),
         is_archived: false,
     };
 
@@ -238,6 +252,37 @@ pub async fn process_ingest(
         s3_key,
         changed: true,
     })
+}
+
+/// Build a canonical string from document metadata and hash it.
+///
+/// The canonical format is identical to what `lekton-sync` (the CLI) computes,
+/// so the server and client always agree on what "metadata unchanged" means.
+///
+/// Fields included: title, access_level (already lowercase), service_owner,
+/// tags (sorted), parent_slug, order, is_hidden.
+/// `is_draft` is intentionally excluded because the CLI does not expose it yet.
+#[cfg(feature = "ssr")]
+pub(crate) fn compute_metadata_hash(
+    title: &str,
+    access_level: &str,
+    service_owner: &str,
+    tags: &[String],
+    parent_slug: Option<&str>,
+    order: u32,
+    is_hidden: bool,
+) -> String {
+    let mut sorted_tags: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
+    sorted_tags.sort_unstable();
+    let canonical = format!(
+        "title={title}\naccess_level={access_level}\nservice_owner={service_owner}\ntags={}\nparent_slug={}\norder={order}\nis_hidden={is_hidden}",
+        sorted_tags.join(","),
+        parent_slug.unwrap_or(""),
+    );
+    format!(
+        "sha256:{}",
+        crate::auth::token_service::TokenService::hash_token(&canonical)
+    )
 }
 
 /// Validate the service token — either legacy global token or scoped token.
@@ -899,5 +944,61 @@ mod tests {
         let doc = repo.find_by_slug("docs/hello").await.unwrap().unwrap();
         assert!(doc.content_hash.is_some());
         assert!(doc.content_hash.unwrap().starts_with("sha256:"));
+    }
+
+    #[tokio::test]
+    async fn test_ingest_stores_metadata_hash() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+
+        let request = make_request("valid-token", "docs/hello");
+        process_ingest(&ctx, request).await.unwrap();
+
+        let doc = repo.find_by_slug("docs/hello").await.unwrap().unwrap();
+        assert!(doc.metadata_hash.is_some());
+        assert!(doc.metadata_hash.as_ref().unwrap().starts_with("sha256:"));
+
+        // metadata_hash must differ from content_hash (they cover different input)
+        assert_ne!(doc.metadata_hash, doc.content_hash);
+    }
+
+    #[tokio::test]
+    async fn test_ingest_metadata_hash_changes_when_access_level_changes() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+
+        let request1 = make_request("valid-token", "docs/hello");
+        process_ingest(&ctx, request1).await.unwrap();
+        let hash1 = repo.find_by_slug("docs/hello").await.unwrap().unwrap().metadata_hash.unwrap();
+
+        let mut request2 = make_request("valid-token", "docs/hello");
+        request2.access_level = "public".to_string();
+        process_ingest(&ctx, request2).await.unwrap();
+        let hash2 = repo.find_by_slug("docs/hello").await.unwrap().unwrap().metadata_hash.unwrap();
+
+        assert_ne!(hash1, hash2, "metadata_hash must change when access_level changes");
+    }
+
+    #[tokio::test]
+    async fn test_ingest_metadata_hash_stable_when_nothing_changes() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+
+        let request1 = make_request("valid-token", "docs/hello");
+        process_ingest(&ctx, request1).await.unwrap();
+        let hash1 = repo.find_by_slug("docs/hello").await.unwrap().unwrap().metadata_hash.unwrap();
+
+        // Second ingest with identical data — unchanged, no DB write
+        let request2 = make_request("valid-token", "docs/hello");
+        process_ingest(&ctx, request2).await.unwrap();
+        let hash2 = repo.find_by_slug("docs/hello").await.unwrap().unwrap().metadata_hash.unwrap();
+
+        assert_eq!(hash1, hash2, "metadata_hash must be stable when nothing changes");
     }
 }

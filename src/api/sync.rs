@@ -9,6 +9,12 @@ use crate::search::client::SearchService;
 pub struct SyncDocumentEntry {
     pub slug: String,
     pub content_hash: String,
+    /// Hash of front-matter metadata (title, access_level, …).
+    /// When present, the sync endpoint uses it alongside `content_hash` to
+    /// detect metadata-only changes.  Absent in requests from older CLI
+    /// versions — treated as "metadata unchanged" for backwards compatibility.
+    #[serde(default)]
+    pub metadata_hash: Option<String>,
 }
 
 /// Request payload for `POST /api/v1/sync`.
@@ -65,25 +71,26 @@ pub async fn process_sync(
     }
 
     // 3. Fetch all server documents within the token's scopes
-    let mut server_docs: HashMap<String, Option<String>> = HashMap::new();
+    // Value: (content_hash, metadata_hash)
+    let mut server_docs: HashMap<String, (Option<String>, Option<String>)> = HashMap::new();
     for scope in &scopes {
         if scope == "*" {
             // Wildcard (legacy token): fetch all non-archived documents
             let docs = repo.find_by_slug_prefix("").await?;
             for doc in docs {
-                server_docs.insert(doc.slug, doc.content_hash);
+                server_docs.insert(doc.slug, (doc.content_hash, doc.metadata_hash));
             }
         } else if let Some(prefix) = scope.strip_suffix("/*") {
             // Prefix scope
             let docs = repo.find_by_slug_prefix(prefix).await?;
             for doc in docs {
-                server_docs.insert(doc.slug, doc.content_hash);
+                server_docs.insert(doc.slug, (doc.content_hash, doc.metadata_hash));
             }
         } else {
             // Exact scope — fetch by slug directly
             if let Some(doc) = repo.find_by_slug(scope).await? {
                 if !doc.is_archived {
-                    server_docs.insert(doc.slug, doc.content_hash);
+                    server_docs.insert(doc.slug, (doc.content_hash, doc.metadata_hash));
                 }
             }
         }
@@ -104,11 +111,24 @@ pub async fn process_sync(
     // Check client docs against server
     for entry in &request.documents {
         match server_docs.get(&entry.slug) {
-            Some(Some(server_hash)) if server_hash == &entry.content_hash => {
-                unchanged.push(entry.slug.clone());
+            Some((server_content_hash, server_metadata_hash)) => {
+                let content_ok = server_content_hash.as_deref() == Some(entry.content_hash.as_str());
+                // Metadata comparison: only enforced when both sides provide a hash.
+                // If the client sends a metadata_hash but the server has None (old
+                // document), we treat it as changed so the metadata_hash gets stored.
+                let metadata_ok = match (entry.metadata_hash.as_deref(), server_metadata_hash.as_deref()) {
+                    (Some(c), Some(s)) => c == s,
+                    (Some(_), None) => false, // server has no metadata hash yet → upload to populate it
+                    (None, _) => true,         // old CLI without metadata_hash → assume unchanged
+                };
+                if content_ok && metadata_ok {
+                    unchanged.push(entry.slug.clone());
+                } else {
+                    to_upload.push(entry.slug.clone());
+                }
             }
             _ => {
-                // Missing from server, or hash mismatch, or server has no hash
+                // Missing from server, or server has no content hash
                 to_upload.push(entry.slug.clone());
             }
         }
@@ -340,6 +360,7 @@ mod tests {
             order: 0,
             is_hidden: false,
             content_hash: Some(hash.to_string()),
+            metadata_hash: None,
             is_archived: false,
         }
     }
@@ -355,6 +376,7 @@ mod tests {
             documents: vec![SyncDocumentEntry {
                 slug: "docs/new".to_string(),
                 content_hash: "sha256:abc".to_string(),
+                metadata_hash: None,
             }],
             archive_missing: false,
         };
@@ -376,6 +398,7 @@ mod tests {
             documents: vec![SyncDocumentEntry {
                 slug: "docs/a".to_string(),
                 content_hash: "sha256:abc".to_string(),
+                metadata_hash: None,
             }],
             archive_missing: false,
         };
@@ -397,6 +420,7 @@ mod tests {
             documents: vec![SyncDocumentEntry {
                 slug: "docs/a".to_string(),
                 content_hash: "sha256:new".to_string(),
+                metadata_hash: None,
             }],
             archive_missing: false,
         };
@@ -420,6 +444,7 @@ mod tests {
             documents: vec![SyncDocumentEntry {
                 slug: "docs/a".to_string(),
                 content_hash: "sha256:abc".to_string(),
+                metadata_hash: None,
             }],
             archive_missing: false,
         };
@@ -443,6 +468,7 @@ mod tests {
             documents: vec![SyncDocumentEntry {
                 slug: "docs/a".to_string(),
                 content_hash: "sha256:abc".to_string(),
+                metadata_hash: None,
             }],
             archive_missing: true,
         };
@@ -498,6 +524,7 @@ mod tests {
             documents: vec![SyncDocumentEntry {
                 slug: "docs/outside".to_string(),
                 content_hash: "sha256:abc".to_string(),
+                metadata_hash: None,
             }],
             archive_missing: false,
         };
@@ -523,6 +550,7 @@ mod tests {
             documents: vec![SyncDocumentEntry {
                 slug: "docs/a".to_string(),
                 content_hash: "sha256:abc".to_string(),
+                metadata_hash: None,
             }],
             archive_missing: true,
         };
@@ -547,6 +575,7 @@ mod tests {
             documents: vec![SyncDocumentEntry {
                 slug: "docs/a".to_string(),
                 content_hash: "sha256:abc".to_string(),
+                metadata_hash: None,
             }],
             archive_missing: false,
         };
@@ -556,5 +585,99 @@ mod tests {
             .unwrap();
 
         assert!(search.deleted_slugs().is_empty());
+    }
+
+    // ── Metadata hash tests ──────────────────────────────────────────────
+
+    fn make_doc_with_meta(slug: &str, content_hash: &str, metadata_hash: &str) -> Document {
+        let mut doc = make_doc(slug, content_hash);
+        doc.metadata_hash = Some(metadata_hash.to_string());
+        doc
+    }
+
+    #[tokio::test]
+    async fn test_sync_metadata_hash_match_is_unchanged() {
+        let repo = MockRepo::with_docs(vec![make_doc_with_meta("docs/a", "sha256:content", "sha256:meta")]);
+        let token_repo = MockServiceTokenRepo;
+        let request = SyncRequest {
+            service_token: "legacy".to_string(),
+            documents: vec![SyncDocumentEntry {
+                slug: "docs/a".to_string(),
+                content_hash: "sha256:content".to_string(),
+                metadata_hash: Some("sha256:meta".to_string()),
+            }],
+            archive_missing: false,
+        };
+
+        let result = process_sync(&repo, &token_repo, None, Some("legacy"), request)
+            .await
+            .unwrap();
+        assert!(result.to_upload.is_empty(), "should be unchanged when both hashes match");
+        assert_eq!(result.unchanged, vec!["docs/a"]);
+    }
+
+    #[tokio::test]
+    async fn test_sync_metadata_hash_mismatch_triggers_upload() {
+        // content hash matches, but metadata (e.g. access_level) changed
+        let repo = MockRepo::with_docs(vec![make_doc_with_meta("docs/a", "sha256:content", "sha256:old-meta")]);
+        let token_repo = MockServiceTokenRepo;
+        let request = SyncRequest {
+            service_token: "legacy".to_string(),
+            documents: vec![SyncDocumentEntry {
+                slug: "docs/a".to_string(),
+                content_hash: "sha256:content".to_string(),
+                metadata_hash: Some("sha256:new-meta".to_string()),
+            }],
+            archive_missing: false,
+        };
+
+        let result = process_sync(&repo, &token_repo, None, Some("legacy"), request)
+            .await
+            .unwrap();
+        assert_eq!(result.to_upload, vec!["docs/a"], "should upload when metadata hash differs");
+        assert!(result.unchanged.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_sync_metadata_hash_absent_on_server_triggers_upload() {
+        // Server has no metadata_hash (old document) → force upload to populate it
+        let repo = MockRepo::with_docs(vec![make_doc("docs/a", "sha256:content")]);
+        let token_repo = MockServiceTokenRepo;
+        let request = SyncRequest {
+            service_token: "legacy".to_string(),
+            documents: vec![SyncDocumentEntry {
+                slug: "docs/a".to_string(),
+                content_hash: "sha256:content".to_string(),
+                metadata_hash: Some("sha256:meta".to_string()),
+            }],
+            archive_missing: false,
+        };
+
+        let result = process_sync(&repo, &token_repo, None, Some("legacy"), request)
+            .await
+            .unwrap();
+        assert_eq!(result.to_upload, vec!["docs/a"], "should upload when server has no metadata_hash");
+    }
+
+    #[tokio::test]
+    async fn test_sync_no_metadata_hash_from_client_is_backwards_compat() {
+        // Old CLI without metadata_hash → treat as unchanged if content matches
+        let repo = MockRepo::with_docs(vec![make_doc_with_meta("docs/a", "sha256:content", "sha256:meta")]);
+        let token_repo = MockServiceTokenRepo;
+        let request = SyncRequest {
+            service_token: "legacy".to_string(),
+            documents: vec![SyncDocumentEntry {
+                slug: "docs/a".to_string(),
+                content_hash: "sha256:content".to_string(),
+                metadata_hash: None,
+            }],
+            archive_missing: false,
+        };
+
+        let result = process_sync(&repo, &token_repo, None, Some("legacy"), request)
+            .await
+            .unwrap();
+        assert!(result.to_upload.is_empty(), "old CLI without metadata_hash should be treated as unchanged");
+        assert_eq!(result.unchanged, vec!["docs/a"]);
     }
 }

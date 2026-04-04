@@ -243,6 +243,29 @@ pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
         attach_children(root, &children_by_parent);
     }
 
+    // Sort the tree: sections/categories alphabetically by title,
+    // documents (leaves) by (order, title).
+    fn sort_nav_items(items: &mut [NavItem]) {
+        items.sort_by(|a, b| {
+            let a_is_section = !a.children.is_empty();
+            let b_is_section = !b.children.is_empty();
+            // Sections come first, then documents
+            match (a_is_section, b_is_section) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                (true, true) => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
+                (false, false) => a.order.cmp(&b.order).then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase())),
+            }
+        });
+        for item in items.iter_mut() {
+            if !item.children.is_empty() {
+                sort_nav_items(&mut item.children);
+            }
+        }
+    }
+
+    sort_nav_items(&mut roots);
+
     Ok(roots)
 }
 

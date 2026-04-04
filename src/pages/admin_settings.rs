@@ -543,29 +543,61 @@ fn NavigationOrderEditor() -> impl IntoView {
 
     let on_drag_over = move |idx: usize| {
         if let Some(from) = dragging_idx.get_untracked() {
-            if from != idx {
-                set_items.update(|items| {
-                    if from >= items.len() || idx >= items.len() {
-                        return;
-                    }
-                    if items[from].level != items[idx].level {
-                        return;
-                    }
-                    let src = subtree_range(items, from);
-                    let subtree: Vec<_> = items.drain(src.clone()).collect();
-                    let subtree_len = subtree.len();
-                    // Recalculate target after drain
-                    let target = if idx > from { idx - subtree_len + 1 } else { idx };
-                    // Find the insert position: before the target's subtree start
-                    let insert_at = if target < items.len() {
-                        target
-                    } else {
-                        items.len()
-                    };
-                    items.splice(insert_at..insert_at, subtree);
-                    set_dragging_idx.set(Some(insert_at));
-                });
+            if from == idx {
+                return;
             }
+            set_items.update(|items| {
+                if from >= items.len() || idx >= items.len() {
+                    return;
+                }
+                let from_level = items[from].level;
+                let idx_level = items[idx].level;
+                if from_level != idx_level {
+                    return;
+                }
+
+                // Find the root of the sibling subtree that idx belongs to.
+                // Walk backwards from idx to find the first item at the same level.
+                let mut target_root = idx;
+                while target_root > 0 && items[target_root].level > from_level {
+                    target_root -= 1;
+                }
+                if items[target_root].level != from_level {
+                    return;
+                }
+
+                // Don't move onto ourselves
+                let src = subtree_range(items, from);
+                if src.contains(&target_root) {
+                    return;
+                }
+
+                let dst = subtree_range(items, target_root);
+
+                // Swap the two subtrees by extracting both and reinserting
+                if from < target_root {
+                    // Moving down: extract dst first (higher indices), then src
+                    let dst_subtree: Vec<_> = items.drain(dst.clone()).collect();
+                    let src_subtree: Vec<_> = items.drain(src.clone()).collect();
+                    let src_len = src_subtree.len();
+                    // Reinsert: src was at src.start, dst was at dst.start
+                    // After removing both, insert at src.start: dst then src
+                    items.splice(src.start..src.start, dst_subtree);
+                    let new_src_start = src.start + (dst.len());
+                    items.splice(new_src_start..new_src_start, src_subtree);
+                    set_dragging_idx.set(Some(new_src_start));
+                } else {
+                    // Moving up: extract src first (higher indices), then dst
+                    let src_subtree: Vec<_> = items.drain(src.clone()).collect();
+                    let dst_subtree: Vec<_> = items.drain(dst.clone()).collect();
+                    let dst_len = dst_subtree.len();
+                    // Reinsert at dst.start: src then dst
+                    items.splice(dst.start..dst.start, src_subtree.clone());
+                    let new_dst_start = dst.start + src_subtree.len();
+                    items.splice(new_dst_start..new_dst_start, dst_subtree);
+                    set_dragging_idx.set(Some(dst.start));
+                }
+            });
         }
     };
 

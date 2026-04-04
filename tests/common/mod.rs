@@ -178,6 +178,7 @@ impl TestEnv {
             rag_service: None,
             reindex_state: None,
             chat_repo: None,
+            chat_service: None,
         };
 
         // --- Build Router (API routes only, no Leptos SSR) ---

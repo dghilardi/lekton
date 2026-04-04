@@ -172,35 +172,75 @@ async fn main() {
     // OAuth2 / OIDC auth provider (optional — server starts without auth if not configured)
     let auth_provider = build_provider(&config.auth).await;
 
-    // Initialize RAG service (optional — app works without it)
-    let rag_service: Option<Arc<dyn lekton::rag::service::RagService>> =
-        if config.rag.is_enabled() {
-            match lekton::rag::service::DefaultRagService::from_rag_config(&config.rag) {
-                Ok(service) => {
-                    if let Err(e) = service
-                        .vectorstore()
-                        .ensure_collection(config.rag.embedding_dimensions)
-                        .await
-                    {
-                        tracing::warn!("Failed to ensure Qdrant collection: {e} — RAG disabled");
-                        None
+    // Initialize RAG services (optional — app works without them)
+    let (rag_service, chat_service): (
+        Option<Arc<dyn lekton::rag::service::RagService>>,
+        Option<Arc<lekton::rag::chat::ChatService>>,
+    ) = if config.rag.is_enabled() {
+        use lekton::rag::embedding::OpenAICompatibleEmbedding;
+        use lekton::rag::vectorstore::QdrantVectorStore;
+
+        match (
+            OpenAICompatibleEmbedding::from_rag_config(&config.rag),
+            QdrantVectorStore::from_rag_config(&config.rag),
+        ) {
+            (Ok(embedding), Ok(vectorstore)) => {
+                let embedding: Arc<dyn lekton::rag::embedding::EmbeddingService> =
+                    Arc::new(embedding);
+                let vectorstore: Arc<dyn lekton::rag::vectorstore::VectorStore> =
+                    Arc::new(vectorstore);
+
+                // Ensure collection exists
+                if let Err(e) = vectorstore
+                    .ensure_collection(config.rag.embedding_dimensions)
+                    .await
+                {
+                    tracing::warn!("Failed to ensure Qdrant collection: {e} — RAG disabled");
+                    (None, None)
+                } else {
+                    let rag_svc = Arc::new(
+                        lekton::rag::service::DefaultRagService::new(
+                            embedding.clone(),
+                            vectorstore.clone(),
+                        ),
+                    );
+
+                    let chat_svc = if let Some(ref chat_repo) = chat_repo {
+                        match lekton::rag::chat::ChatService::from_rag_config(
+                            &config.rag,
+                            chat_repo.clone(),
+                            embedding,
+                            vectorstore,
+                        ) {
+                            Ok(svc) => {
+                                tracing::info!("RAG chat service initialized");
+                                Some(Arc::new(svc))
+                            }
+                            Err(e) => {
+                                tracing::warn!("RAG chat not available: {e}");
+                                None
+                            }
+                        }
                     } else {
-                        tracing::info!(
-                            collection = %config.rag.qdrant_collection,
-                            "RAG service initialized"
-                        );
-                        Some(Arc::new(service))
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("RAG not available: {e} — RAG will be disabled");
-                    None
+                        None
+                    };
+
+                    tracing::info!(
+                        collection = %config.rag.qdrant_collection,
+                        "RAG service initialized"
+                    );
+                    (Some(rag_svc as Arc<dyn lekton::rag::service::RagService>), chat_svc)
                 }
             }
-        } else {
-            tracing::info!("RAG not configured — feature disabled");
-            None
-        };
+            (Err(e), _) | (_, Err(e)) => {
+                tracing::warn!("RAG not available: {e} — RAG will be disabled");
+                (None, None)
+            }
+        }
+    } else {
+        tracing::info!("RAG not configured — feature disabled");
+        (None, None)
+    };
 
     // Build application state
     let app_state = lekton::app::AppState {
@@ -227,6 +267,7 @@ async fn main() {
         },
         rag_service,
         chat_repo,
+        chat_service,
         insecure_cookies: config.server.insecure_cookies,
         max_attachment_size_bytes: config.server.max_attachment_size_mb * 1024 * 1024,
     };
@@ -335,6 +376,18 @@ async fn main() {
         .route(
             "/api/v1/admin/rag/reindex/status",
             axum::routing::get(api::rag::reindex_status_handler),
+        )
+        .route(
+            "/api/v1/rag/chat",
+            axum::routing::post(api::rag::chat_handler),
+        )
+        .route(
+            "/api/v1/rag/sessions",
+            axum::routing::get(api::rag::list_sessions_handler),
+        )
+        .route(
+            "/api/v1/rag/sessions/{id}",
+            axum::routing::delete(api::rag::delete_session_handler),
         );
 
     // Mount demo auth routes when demo mode is enabled, OAuth2/OIDC routes otherwise

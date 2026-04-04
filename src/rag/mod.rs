@@ -1,4 +1,6 @@
 #[cfg(feature = "ssr")]
+pub mod chat;
+#[cfg(feature = "ssr")]
 pub mod embedding;
 #[cfg(feature = "ssr")]
 pub mod reindex;

@@ -37,6 +37,17 @@ pub struct DefaultRagService {
 }
 
 impl DefaultRagService {
+    /// Create from pre-built service components.
+    pub fn new(
+        embedding: Arc<dyn EmbeddingService>,
+        vectorstore: Arc<dyn VectorStore>,
+    ) -> Self {
+        Self {
+            embedding,
+            vectorstore,
+        }
+    }
+
     /// Build from application config.  Returns `Err` when required URLs are missing.
     pub fn from_rag_config(config: &RagConfig) -> Result<Self, AppError> {
         let embedding = OpenAICompatibleEmbedding::from_rag_config(config)?;
@@ -45,11 +56,6 @@ impl DefaultRagService {
             embedding: Arc::new(embedding),
             vectorstore: Arc::new(vectorstore),
         })
-    }
-
-    /// Expose the underlying vector store for collection bootstrapping.
-    pub fn vectorstore(&self) -> &dyn VectorStore {
-        self.vectorstore.as_ref()
     }
 }
 

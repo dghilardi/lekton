@@ -68,6 +68,7 @@ async-trait = "0.1"
 
 # Async utilities
 futures = "0.3"
+async-stream = { version = "0.3", optional = true }
 
 # Encoding
 base64 = "0.22"
@@ -140,6 +141,7 @@ ssr = [
     "dep:time",
     "dep:tower_governor",
     "dep:config",
+    "dep:async-stream",
     "dep:qdrant-client",
     "dep:async-openai",
     "dep:text-splitter",

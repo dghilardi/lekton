@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **lekton-sync: attachment changes always detected**: Attachment hashes are now checked for every document on each sync run, not only those already flagged for upload. Replacing a PDF or image with new content while leaving the markdown body unchanged is now correctly detected and re-uploaded.
+- **lekton-sync: metadata-only changes trigger re-upload**: Changing front-matter fields (`access_level`, `title`, `service_owner`, `tags`, `parent_slug`, `order`, `is_hidden`) previously left the content hash identical, causing the document to be silently skipped. A separate `metadata_hash` is now computed from the canonical metadata and compared during sync. Documents stored before this version are treated as having no metadata hash and are re-uploaded once so their metadata hash gets populated.
+
 ## [0.7.2] 2026-04-04
 
 ## [0.7.1] 2026-04-04

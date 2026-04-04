@@ -9,17 +9,17 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  DEMO_MODE: "true"
-  SERVICE_TOKEN: "test-token"
-  MONGODB_URI: "mongodb://localhost:27017"
-  MONGODB_DATABASE: "lekton_e2e"
+  LKN_AUTH__DEMO_MODE: "true"
+  LKN_AUTH__SERVICE_TOKEN: "test-token"
+  LKN_DATABASE__URI: "mongodb://localhost:27017"
+  LKN_DATABASE__NAME: "lekton_e2e"
   AWS_ACCESS_KEY_ID: "minioadmin"
   AWS_SECRET_ACCESS_KEY: "minioadmin"
   AWS_REGION: "us-east-1"
-  S3_BUCKET: "lekton-e2e"
-  S3_ENDPOINT: "http://localhost:9000"
-  MEILISEARCH_URL: "http://localhost:7700"
-  MEILISEARCH_API_KEY: ""
+  LKN_STORAGE__BUCKET: "lekton-e2e"
+  LKN_STORAGE__ENDPOINT: "http://localhost:9000"
+  LKN_SEARCH__URL: "http://localhost:7700"
+  LKN_SEARCH__API_KEY: ""
 
 jobs:
   e2e:
@@ -93,7 +93,6 @@ jobs:
 
       - name: Create S3 bucket
         run: |
-          pip install awscli
           aws --endpoint-url http://localhost:9000 s3 mb s3://lekton-e2e
 
       - name: Build application

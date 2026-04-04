@@ -611,21 +611,22 @@ async fn main() -> Result<()> {
         sync_result.to_archive.len(),
     );
 
-    // ── Collect attachments for documents that need uploading ────────────────
+    // ── Collect attachments for ALL documents ────────────────────────────────
+    // We check hashes for every attachment regardless of whether the document
+    // body changed, so that replacing a PDF/image with new content is detected
+    // even when the markdown (which only references the file by URL) is unchanged.
     let mut all_attachments: HashMap<String, &AttachmentInfo> = HashMap::new();
     let total_attachment_count: usize = docs.values().map(|d| d.attachments.len()).sum();
 
-    for slug in &sync_result.to_upload {
-        if let Some(doc) = docs.get(slug) {
-            for att in &doc.attachments {
-                all_attachments.entry(att.asset_key.clone()).or_insert(att);
-            }
+    for doc in docs.values() {
+        for att in &doc.attachments {
+            all_attachments.entry(att.asset_key.clone()).or_insert(att);
         }
     }
 
     if total_attachment_count > 0 {
         println!(
-            "Found {} attachment(s) across all documents ({} unique for upload candidates)",
+            "Found {} attachment(s) across all documents ({} unique to check)",
             total_attachment_count,
             all_attachments.len(),
         );

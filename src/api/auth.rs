@@ -153,7 +153,7 @@ pub async fn login_handler(
     let state_json = serde_json::to_string(&flow_state)
         .map_err(|e| AppError::Internal(format!("Failed to serialize auth state: {e}")))?;
 
-    let jar = jar.add(auth_state_cookie(state_json));
+    let jar = jar.add(auth_state_cookie(state_json, !state.insecure_cookies));
 
     Ok((jar, axum::response::Redirect::temporary(&url)))
 }
@@ -205,9 +205,10 @@ pub async fn callback_handler(
     let ttl_secs = app_state.token_service.access_token_ttl_secs();
     let ttl_days = app_state.token_service.refresh_token_ttl_days();
 
+    let secure = !app_state.insecure_cookies;
     let jar = jar
-        .add(access_token_cookie(access_token, ttl_secs))
-        .add(refresh_token_cookie(refresh_token, ttl_days));
+        .add(access_token_cookie(access_token, ttl_secs, secure))
+        .add(refresh_token_cookie(refresh_token, ttl_days, secure));
 
     Ok((jar, axum::response::Redirect::temporary("/")))
 }
@@ -259,9 +260,10 @@ pub async fn refresh_handler(
     let ttl_secs = app_state.token_service.access_token_ttl_secs();
     let ttl_days = app_state.token_service.refresh_token_ttl_days();
 
+    let secure = !app_state.insecure_cookies;
     let jar = jar
-        .add(access_token_cookie(access_token, ttl_secs))
-        .add(refresh_token_cookie(new_refresh, ttl_days));
+        .add(access_token_cookie(access_token, ttl_secs, secure))
+        .add(refresh_token_cookie(new_refresh, ttl_days, secure));
 
     Ok((jar, axum::Json(RefreshResponse { user: auth_user })))
 }

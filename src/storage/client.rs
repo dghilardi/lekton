@@ -28,34 +28,37 @@ pub struct S3StorageClient {
 
 #[cfg(feature = "ssr")]
 impl S3StorageClient {
-    /// Create a new S3 storage client.
+    /// Create a new S3 storage client from the application's centralised config.
     ///
-    /// Configuration is read from environment variables:
-    /// - `S3_BUCKET` — the bucket name
-    /// - `S3_ENDPOINT` (optional) — custom endpoint for MinIO / LocalStack
-    /// - `AWS_REGION` or `S3_REGION` — the AWS region
-    pub async fn from_env() -> Result<Self, AppError> {
-        let bucket = std::env::var("S3_BUCKET")
-            .map_err(|_| AppError::Storage("S3_BUCKET not set".into()))?;
+    /// AWS credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`)
+    /// are still read by the `aws-config` crate from the environment / credential chain.
+    pub async fn from_app_config(storage: &crate::config::StorageConfig) -> Result<Self, AppError> {
+        let bucket = storage.bucket.clone();
+        if bucket.is_empty() {
+            return Err(AppError::Storage("storage.bucket is not configured".into()));
+        }
 
-        let mut config_loader =
-            aws_config::defaults(aws_config::BehaviorVersion::latest());
+        let has_custom_endpoint = storage.endpoint.as_ref().map_or(false, |e| !e.is_empty());
 
-        // Support custom S3 endpoint (for MinIO, LocalStack, etc.)
-        if let Ok(endpoint) = std::env::var("S3_ENDPOINT") {
-            config_loader = config_loader.endpoint_url(&endpoint);
+        let mut config_loader = aws_config::defaults(aws_config::BehaviorVersion::latest());
+
+        // Support custom S3 endpoint (for MinIO, Garage, LocalStack, etc.)
+        if let Some(endpoint) = &storage.endpoint {
+            if !endpoint.is_empty() {
+                config_loader = config_loader.endpoint_url(endpoint.as_str());
+            }
         }
 
         let sdk_config = config_loader.load().await;
-        
+
         // Build S3 client with path-style addressing for Garage/MinIO compatibility
         let mut s3_config_builder = aws_sdk_s3::config::Builder::from(&sdk_config);
-        
+
         // Force path-style requests when using a custom endpoint (required for Garage)
-        if std::env::var("S3_ENDPOINT").is_ok() {
+        if has_custom_endpoint {
             s3_config_builder = s3_config_builder.force_path_style(true);
         }
-        
+
         let client = aws_sdk_s3::Client::from_conf(s3_config_builder.build());
 
         Ok(Self { client, bucket })

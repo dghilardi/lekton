@@ -43,21 +43,13 @@ pub struct TokenService {
 
 #[cfg(feature = "ssr")]
 impl TokenService {
-    /// Create a `TokenService` from the `JWT_SECRET` environment variable.
-    ///
-    /// Optionally reads `JWT_ACCESS_TTL_SECS` and `JWT_REFRESH_TTL_DAYS`.
-    pub fn from_env() -> Result<Self, AppError> {
-        let secret = std::env::var("JWT_SECRET")
-            .map_err(|_| AppError::Auth("JWT_SECRET not set".into()))?;
-        let access_ttl = std::env::var("JWT_ACCESS_TTL_SECS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(DEFAULT_ACCESS_TTL_SECS);
-        let refresh_ttl = std::env::var("JWT_REFRESH_TTL_DAYS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(DEFAULT_REFRESH_TTL_DAYS);
-        Ok(Self::new(&secret, access_ttl, refresh_ttl))
+    /// Create a `TokenService` from the application's centralised config.
+    pub fn from_app_config(auth: &crate::config::AuthConfig) -> Result<Self, AppError> {
+        let secret = auth
+            .jwt_secret
+            .clone()
+            .ok_or_else(|| AppError::Auth("auth.jwt_secret not set".into()))?;
+        Ok(Self::new(&secret, auth.jwt_access_ttl_secs, auth.jwt_refresh_ttl_days))
     }
 
     /// Create a `TokenService` with explicit parameters (useful for testing).

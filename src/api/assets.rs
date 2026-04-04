@@ -49,17 +49,7 @@ pub struct ListAssetsQuery {
 }
 
 /// Default maximum attachment size in bytes (25 MB).
-const DEFAULT_MAX_ATTACHMENT_SIZE: u64 = 25 * 1024 * 1024;
-
-/// Read the maximum attachment size from the `MAX_ATTACHMENT_SIZE_MB` env var.
-/// Returns the limit in bytes, defaulting to 25 MB.
-pub fn max_attachment_size_bytes() -> u64 {
-    std::env::var("MAX_ATTACHMENT_SIZE_MB")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .map(|mb| mb * 1024 * 1024)
-        .unwrap_or(DEFAULT_MAX_ATTACHMENT_SIZE)
-}
+pub const DEFAULT_MAX_ATTACHMENT_SIZE: u64 = 25 * 1024 * 1024;
 
 /// Core upload logic — separated from HTTP layer for testability.
 pub async fn process_upload_asset(
@@ -71,6 +61,7 @@ pub async fn process_upload_asset(
     uploaded_by: &str,
     expected_token: &str,
     service_token: &str,
+    max_size: u64,
 ) -> Result<AssetUploadResponse, AppError> {
     // Validate token
     if service_token != expected_token {
@@ -93,7 +84,6 @@ pub async fn process_upload_asset(
     }
 
     let size_bytes = data.len() as u64;
-    let max_size = max_attachment_size_bytes();
     if size_bytes > max_size {
         return Err(AppError::BadRequest(format!(
             "File size ({:.1} MB) exceeds maximum allowed size ({:.1} MB)",
@@ -379,6 +369,7 @@ pub async fn upload_asset_handler(
         &service_token, // use token as uploader identity for now
         &state.service_token,
         &service_token,
+        state.max_attachment_size_bytes,
     )
     .await?;
 
@@ -583,6 +574,7 @@ mod tests {
         let result = process_upload_asset(
             &repo, &storage, "project/file.txt", "text/plain", data,
             "ci-bot", "valid-token", "valid-token",
+            DEFAULT_MAX_ATTACHMENT_SIZE,
         )
         .await;
 
@@ -611,6 +603,7 @@ mod tests {
         let result = process_upload_asset(
             &repo, &storage, "file.txt", "text/plain", vec![1, 2, 3],
             "ci-bot", "valid-token", "wrong-token",
+            DEFAULT_MAX_ATTACHMENT_SIZE,
         )
         .await;
 
@@ -629,6 +622,7 @@ mod tests {
         let result = process_upload_asset(
             &repo, &storage, "", "text/plain", vec![1],
             "ci-bot", "valid-token", "valid-token",
+            DEFAULT_MAX_ATTACHMENT_SIZE,
         )
         .await;
 
@@ -647,6 +641,7 @@ mod tests {
         let result = process_upload_asset(
             &repo, &storage, "project/../secret/file.txt", "text/plain", vec![1],
             "ci-bot", "valid-token", "valid-token",
+            DEFAULT_MAX_ATTACHMENT_SIZE,
         )
         .await;
 
@@ -665,6 +660,7 @@ mod tests {
         let result = process_upload_asset(
             &repo, &storage, "/absolute/path.txt", "text/plain", vec![1],
             "ci-bot", "valid-token", "valid-token",
+            DEFAULT_MAX_ATTACHMENT_SIZE,
         )
         .await;
 
@@ -684,6 +680,7 @@ mod tests {
         process_upload_asset(
             &repo, &storage, "logo.png", "image/png", vec![1, 2, 3],
             "ci-bot", "valid-token", "valid-token",
+            DEFAULT_MAX_ATTACHMENT_SIZE,
         )
         .await
         .unwrap();
@@ -698,6 +695,7 @@ mod tests {
         process_upload_asset(
             &repo, &storage, "logo.png", "image/png", vec![4, 5, 6, 7],
             "ci-bot", "valid-token", "valid-token",
+            DEFAULT_MAX_ATTACHMENT_SIZE,
         )
         .await
         .unwrap();
@@ -717,6 +715,7 @@ mod tests {
         process_upload_asset(
             &repo, &storage, "docs/manual.pdf", "application/pdf", content.clone(),
             "ci-bot", "valid-token", "valid-token",
+            DEFAULT_MAX_ATTACHMENT_SIZE,
         )
         .await
         .unwrap();
@@ -753,6 +752,7 @@ mod tests {
             process_upload_asset(
                 &repo, &storage, name, "text/plain", vec![1],
                 "ci-bot", "valid-token", "valid-token",
+                DEFAULT_MAX_ATTACHMENT_SIZE,
             )
             .await
             .unwrap();
@@ -771,6 +771,7 @@ mod tests {
             process_upload_asset(
                 &repo, &storage, name, "text/plain", vec![1],
                 "ci-bot", "valid-token", "valid-token",
+                DEFAULT_MAX_ATTACHMENT_SIZE,
             )
             .await
             .unwrap();
@@ -788,6 +789,7 @@ mod tests {
         process_upload_asset(
             &repo, &storage, "temp/file.txt", "text/plain", vec![1, 2, 3],
             "ci-bot", "valid-token", "valid-token",
+            DEFAULT_MAX_ATTACHMENT_SIZE,
         )
         .await
         .unwrap();
@@ -831,6 +833,7 @@ mod tests {
         process_upload_asset(
             &repo, &storage, "file.txt", "text/plain", vec![1],
             "ci-bot", "valid-token", "valid-token",
+            DEFAULT_MAX_ATTACHMENT_SIZE,
         )
         .await
         .unwrap();
@@ -907,6 +910,7 @@ mod tests {
         process_upload_asset(
             &repo, &storage, "existing.txt", "text/plain", b"hello".to_vec(),
             "ci-bot", "valid-token", "valid-token",
+            DEFAULT_MAX_ATTACHMENT_SIZE,
         )
         .await
         .unwrap();
@@ -956,6 +960,7 @@ mod tests {
         process_upload_asset(
             &repo, &storage, "file.txt", "text/plain", b"version1".to_vec(),
             "ci-bot", "valid-token", "valid-token",
+            DEFAULT_MAX_ATTACHMENT_SIZE,
         )
         .await
         .unwrap();

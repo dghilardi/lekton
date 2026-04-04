@@ -68,17 +68,15 @@ pub struct MeilisearchService {
 
 #[cfg(feature = "ssr")]
 impl MeilisearchService {
-    /// Create a new MeilisearchService from environment variables.
+    /// Create a new MeilisearchService from the application's centralised config.
     ///
-    /// Reads `MEILISEARCH_URL` and `MEILISEARCH_API_KEY`.
-    pub fn from_env() -> Result<Self, AppError> {
-        let url = std::env::var("MEILISEARCH_URL")
-            .map_err(|_| AppError::Internal("MEILISEARCH_URL not set".into()))?;
-        let api_key = std::env::var("MEILISEARCH_API_KEY")
-            .ok()
-            .filter(|k| !k.is_empty());
-
-        Self::new(url, api_key)
+    /// Returns `Err` when `search.url` is empty or unset (search is then disabled).
+    pub fn from_app_config(search: &crate::config::SearchConfig) -> Result<Self, AppError> {
+        if search.url.is_empty() {
+            return Err(AppError::Internal("search.url is not configured".into()));
+        }
+        let api_key = if search.api_key.is_empty() { None } else { Some(search.api_key.as_str()) };
+        Self::new(&search.url, api_key)
     }
 
     /// Create a new MeilisearchService with explicit URL and optional API key.

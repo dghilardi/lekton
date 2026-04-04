@@ -94,22 +94,17 @@ where
 
 // ── Cookie builders ───────────────────────────────────────────────────────────
 
-/// Returns `true` unless `INSECURE_COOKIES=true` is set (for local dev over HTTP).
-fn cookies_secure() -> bool {
-    !std::env::var("INSECURE_COOKIES")
-        .map(|v| v == "true" || v == "1" || v == "yes")
-        .unwrap_or(false)
-}
-
 /// Build the access-token httpOnly cookie.
 ///
 /// Uses `SameSite::Strict` for stronger CSRF protection — this cookie is only
 /// sent on same-site requests, which is fine for API calls from our own frontend.
-pub fn access_token_cookie(value: String, ttl_secs: u64) -> axum_extra::extract::cookie::Cookie<'static> {
+///
+/// `secure` should be `!app_state.insecure_cookies`.
+pub fn access_token_cookie(value: String, ttl_secs: u64, secure: bool) -> axum_extra::extract::cookie::Cookie<'static> {
     axum_extra::extract::cookie::Cookie::build((ACCESS_TOKEN_COOKIE, value))
         .path("/")
         .http_only(true)
-        .secure(cookies_secure())
+        .secure(secure)
         .same_site(axum_extra::extract::cookie::SameSite::Strict)
         .max_age(time::Duration::seconds(ttl_secs as i64))
         .build()
@@ -120,11 +115,13 @@ pub fn access_token_cookie(value: String, ttl_secs: u64) -> axum_extra::extract:
 ///
 /// Uses `SameSite::Strict` — the refresh endpoint is only called from our own
 /// frontend, never from a cross-site redirect.
-pub fn refresh_token_cookie(value: String, ttl_days: i64) -> axum_extra::extract::cookie::Cookie<'static> {
+///
+/// `secure` should be `!app_state.insecure_cookies`.
+pub fn refresh_token_cookie(value: String, ttl_days: i64, secure: bool) -> axum_extra::extract::cookie::Cookie<'static> {
     axum_extra::extract::cookie::Cookie::build((REFRESH_TOKEN_COOKIE, value))
         .path("/auth/refresh")
         .http_only(true)
-        .secure(cookies_secure())
+        .secure(secure)
         .same_site(axum_extra::extract::cookie::SameSite::Strict)
         .max_age(time::Duration::days(ttl_days))
         .build()
@@ -135,11 +132,13 @@ pub fn refresh_token_cookie(value: String, ttl_days: i64) -> axum_extra::extract
 /// Must remain `SameSite::Lax` — after the OAuth provider redirects back to
 /// `/auth/callback`, the browser needs to send this cookie on the cross-site
 /// navigation.
-pub fn auth_state_cookie(value: String) -> axum_extra::extract::cookie::Cookie<'static> {
+///
+/// `secure` should be `!app_state.insecure_cookies`.
+pub fn auth_state_cookie(value: String, secure: bool) -> axum_extra::extract::cookie::Cookie<'static> {
     axum_extra::extract::cookie::Cookie::build((AUTH_STATE_COOKIE, value))
         .path("/auth/callback")
         .http_only(true)
-        .secure(cookies_secure())
+        .secure(secure)
         .same_site(axum_extra::extract::cookie::SameSite::Lax)
         .max_age(time::Duration::minutes(10))
         .build()
@@ -188,14 +187,14 @@ mod tests {
             is_admin: false,
         };
         let token = svc.generate_access_token(&user).unwrap();
-        let cookie = access_token_cookie(token, 900);
+        let cookie = access_token_cookie(token, 900, true);
         assert_eq!(cookie.name(), ACCESS_TOKEN_COOKIE);
         assert!(cookie.http_only().unwrap_or(false));
     }
 
     #[test]
     fn test_refresh_token_cookie_path() {
-        let cookie = refresh_token_cookie("raw".to_string(), 30);
+        let cookie = refresh_token_cookie("raw".to_string(), 30, true);
         assert_eq!(cookie.path(), Some("/auth/refresh"));
     }
 

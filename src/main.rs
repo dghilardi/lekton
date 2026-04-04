@@ -204,6 +204,10 @@ async fn main() {
             axum::routing::post(api::assets::editor_upload_asset_handler),
         )
         .route(
+            "/api/v1/assets/check-hashes",
+            axum::routing::post(api::assets::check_hashes_handler),
+        )
+        .route(
             "/api/v1/assets/{*key}",
             axum::routing::put(api::assets::upload_asset_handler)
                 .get(api::assets::serve_asset_handler)

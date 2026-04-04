@@ -1,6 +1,7 @@
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use clap::Parser;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -61,6 +62,9 @@ struct LektonConfig {
     /// Archive documents not found locally (can be overridden by --archive-missing flag)
     #[serde(default)]
     archive_missing: Option<bool>,
+    /// Maximum attachment file size in MB (default: 10)
+    #[serde(default)]
+    max_attachment_size_mb: Option<u32>,
 }
 
 /// YAML front matter parsed from the top of each `.md` file.
@@ -121,12 +125,61 @@ struct IngestResponse {
     changed: bool,
 }
 
+#[derive(Serialize)]
+struct CheckHashesRequest {
+    service_token: String,
+    entries: Vec<CheckHashEntry>,
+}
+
+#[derive(Serialize)]
+struct CheckHashEntry {
+    key: String,
+    content_hash: String,
+}
+
+#[derive(Deserialize)]
+struct CheckHashesResponse {
+    to_upload: Vec<String>,
+}
+
+// ── Attachment types ──────────────────────────────────────────────────────────
+
+/// A local file reference found in a markdown document.
+#[derive(Debug, Clone)]
+struct LocalFileRef {
+    /// The raw path as it appears in the markdown (e.g., "./images/arch.png")
+    raw_path: String,
+    /// The resolved absolute path on disk
+    disk_path: PathBuf,
+}
+
+/// A resolved attachment ready for upload.
+#[derive(Debug, Clone)]
+struct AttachmentInfo {
+    /// The raw relative path as it appears in markdown
+    raw_path: String,
+    /// Resolved absolute path on disk
+    disk_path: PathBuf,
+    /// SHA-256 content hash of the file bytes
+    content_hash: String,
+    /// The asset key on the server: "attachments/{doc-slug}/{filename}"
+    asset_key: String,
+    /// File size in bytes
+    size_bytes: u64,
+    /// MIME content type
+    content_type: String,
+}
+
 // ── Document scanning ─────────────────────────────────────────────────────────
 
 struct DocumentInfo {
     slug: String,
     title: String,
+    /// Original markdown body (local file refs intact)
     content: String,
+    /// Rewritten markdown body (local file refs replaced with server URLs).
+    /// Populated after attachment processing; initially same as `content`.
+    rewritten_content: String,
     content_hash: String,
     access_level: String,
     service_owner: String,
@@ -134,12 +187,163 @@ struct DocumentInfo {
     parent_slug: Option<String>,
     order: i32,
     is_hidden: bool,
+    /// Attachments found in this document
+    attachments: Vec<AttachmentInfo>,
 }
 
 /// Compute the same `sha256:<base64url>` hash format the server uses.
 fn compute_hash(content: &str) -> String {
     let hash = Sha256::digest(content.as_bytes());
     format!("sha256:{}", URL_SAFE_NO_PAD.encode(hash))
+}
+
+/// Compute SHA-256 content hash for a file's bytes.
+fn compute_file_hash(data: &[u8]) -> String {
+    let hash = Sha256::digest(data);
+    format!("sha256:{}", URL_SAFE_NO_PAD.encode(hash))
+}
+
+/// Extract local file references from markdown content.
+///
+/// Detects `![alt](path)`, `[text](path)`, and `<img src="path">` patterns.
+/// Filters out external URLs, anchors, absolute paths, and already-rewritten
+/// Lekton asset URLs.
+fn extract_local_file_refs(markdown: &str, md_file_dir: &Path) -> Vec<LocalFileRef> {
+    // Markdown images/links: ![alt](path) or [text](path)
+    // We use a single pattern that optionally matches the leading !
+    let md_link_re = Regex::new(r#"!?\[[^\]]*\]\(([^)\s]+)"#).unwrap();
+    // HTML img tags: <img src="path"> or <img src='path'>
+    let html_img_re = Regex::new(r#"<img[^>]+src=["']([^"']+)["']"#).unwrap();
+
+    let mut seen = HashMap::new();
+    let mut refs = Vec::new();
+
+    let all_captures = md_link_re
+        .captures_iter(markdown)
+        .chain(html_img_re.captures_iter(markdown));
+
+    for cap in all_captures {
+        let raw_path = cap[1].to_string();
+
+        // Skip external URLs, anchors, absolute paths, and already-rewritten paths
+        if raw_path.starts_with("http://")
+            || raw_path.starts_with("https://")
+            || raw_path.starts_with("mailto:")
+            || raw_path.starts_with('#')
+            || raw_path.starts_with('/')
+            || raw_path.starts_with("/api/v1/")
+        {
+            continue;
+        }
+
+        // Deduplicate by raw path
+        if seen.contains_key(&raw_path) {
+            continue;
+        }
+        seen.insert(raw_path.clone(), true);
+
+        let disk_path = md_file_dir.join(&raw_path);
+        refs.push(LocalFileRef {
+            raw_path,
+            disk_path,
+        });
+    }
+
+    refs
+}
+
+/// Build attachment info for a document's local file references.
+/// Skips files that don't exist or exceed the size limit (with warnings).
+fn resolve_attachments(
+    refs: &[LocalFileRef],
+    doc_slug: &str,
+    max_size_bytes: u64,
+) -> Vec<AttachmentInfo> {
+    let mut attachments = Vec::new();
+
+    for file_ref in refs {
+        // Canonicalize to resolve ../
+        let disk_path = match file_ref.disk_path.canonicalize() {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!(
+                    "  Warning: referenced file not found: {} (skipping)",
+                    file_ref.raw_path
+                );
+                continue;
+            }
+        };
+
+        let metadata = match std::fs::metadata(&disk_path) {
+            Ok(m) => m,
+            Err(_) => {
+                eprintln!(
+                    "  Warning: cannot read file: {} (skipping)",
+                    file_ref.raw_path
+                );
+                continue;
+            }
+        };
+
+        let size_bytes = metadata.len();
+        if size_bytes > max_size_bytes {
+            eprintln!(
+                "  Warning: file too large ({:.1} MB > {:.1} MB limit): {} (skipping)",
+                size_bytes as f64 / (1024.0 * 1024.0),
+                max_size_bytes as f64 / (1024.0 * 1024.0),
+                file_ref.raw_path,
+            );
+            continue;
+        }
+
+        let data = match std::fs::read(&disk_path) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!(
+                    "  Warning: failed to read {}: {} (skipping)",
+                    file_ref.raw_path, e
+                );
+                continue;
+            }
+        };
+
+        let content_hash = compute_file_hash(&data);
+        let filename = disk_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let asset_key = format!("attachments/{}/{}", doc_slug, filename);
+
+        let content_type = mime_guess::from_path(&disk_path)
+            .first_or_octet_stream()
+            .to_string();
+
+        attachments.push(AttachmentInfo {
+            raw_path: file_ref.raw_path.clone(),
+            disk_path,
+            content_hash,
+            asset_key,
+            size_bytes,
+            content_type,
+        });
+    }
+
+    attachments
+}
+
+/// Rewrite markdown content, replacing local file paths with server asset URLs.
+/// Only rewrites paths that have a corresponding attachment (i.e., file exists and
+/// is within size limits).
+fn rewrite_content(content: &str, attachments: &[AttachmentInfo]) -> String {
+    let mut result = content.to_string();
+    for att in attachments {
+        // Simple string replacement: replace the raw_path with the server URL.
+        // This works because we're replacing exact path strings.
+        let server_url = format!("/api/v1/assets/{}", att.asset_key);
+        result = result.replace(&att.raw_path, &server_url);
+    }
+    result
 }
 
 /// Strip YAML front matter from a markdown file and return (front_matter, body).
@@ -183,8 +387,11 @@ fn slug_from_path(file: &Path, root: &Path) -> String {
 }
 
 /// Scan all `.md` files under `root` and build a map of slug → DocumentInfo.
-/// Files without a `title` or `slug` in their front matter are skipped.
+/// Files without `lekton-import: true` in their front matter are skipped.
+/// Also extracts local file references and builds attachment info.
 fn scan_documents(root: &Path, config: &LektonConfig) -> Result<HashMap<String, DocumentInfo>> {
+    let max_attachment_size_bytes =
+        (config.max_attachment_size_mb.unwrap_or(10) as u64) * 1024 * 1024;
     let mut docs = HashMap::new();
 
     for entry in WalkDir::new(root)
@@ -250,7 +457,16 @@ fn scan_documents(root: &Path, config: &LektonConfig) -> Result<HashMap<String, 
         let tags = fm.tags.unwrap_or_default();
         let order = fm.order.unwrap_or(0);
         let is_hidden = fm.is_hidden.unwrap_or(false);
-        let content_hash = compute_hash(&body);
+
+        // Extract local file references and build attachments
+        let md_file_dir = path.parent().unwrap_or(root);
+        let local_refs = extract_local_file_refs(&body, md_file_dir);
+        let attachments = resolve_attachments(&local_refs, &slug, max_attachment_size_bytes);
+
+        // Rewrite content: replace local paths with server asset URLs
+        let rewritten_content = rewrite_content(&body, &attachments);
+        // Hash the rewritten content for consistent sync comparison
+        let content_hash = compute_hash(&rewritten_content);
 
         docs.insert(
             slug.clone(),
@@ -258,6 +474,7 @@ fn scan_documents(root: &Path, config: &LektonConfig) -> Result<HashMap<String, 
                 slug,
                 title,
                 content: body,
+                rewritten_content,
                 content_hash,
                 access_level,
                 service_owner,
@@ -265,11 +482,35 @@ fn scan_documents(root: &Path, config: &LektonConfig) -> Result<HashMap<String, 
                 parent_slug,
                 order,
                 is_hidden,
+                attachments,
             },
         );
     }
 
     Ok(docs)
+}
+
+// ── HTTP helpers ──────────────────────────────────────────────────────────
+
+const MAX_RETRIES: u32 = 5;
+const INITIAL_BACKOFF_MS: u64 = 500;
+
+/// Sleep with exponential backoff if the response is 429 (Too Many Requests).
+/// Returns `true` if the caller should retry, `false` if retries are exhausted
+/// or the response was not 429.
+async fn backoff_on_429(response: &reqwest::Response, attempt: &mut u32, backoff_ms: &mut u64) -> bool {
+    if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && *attempt < MAX_RETRIES {
+        *attempt += 1;
+        eprintln!(
+            "  rate limited, retrying in {}ms (attempt {}/{})",
+            backoff_ms, *attempt, MAX_RETRIES,
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(*backoff_ms)).await;
+        *backoff_ms *= 2;
+        true
+    } else {
+        false
+    }
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -370,10 +611,40 @@ async fn main() -> Result<()> {
         sync_result.to_archive.len(),
     );
 
+    // ── Collect attachments for documents that need uploading ────────────────
+    let mut all_attachments: HashMap<String, &AttachmentInfo> = HashMap::new();
+    let total_attachment_count: usize = docs.values().map(|d| d.attachments.len()).sum();
+
+    for slug in &sync_result.to_upload {
+        if let Some(doc) = docs.get(slug) {
+            for att in &doc.attachments {
+                all_attachments.entry(att.asset_key.clone()).or_insert(att);
+            }
+        }
+    }
+
+    if total_attachment_count > 0 {
+        println!(
+            "Found {} attachment(s) across all documents ({} unique for upload candidates)",
+            total_attachment_count,
+            all_attachments.len(),
+        );
+    }
+
     // ── Dry run: show plan and exit ───────────────────────────────────────────
     if args.dry_run {
+        if !all_attachments.is_empty() {
+            println!("\nWould upload attachments:");
+            for (key, att) in &all_attachments {
+                println!(
+                    "  + {} ({:.1} KB)",
+                    key,
+                    att.size_bytes as f64 / 1024.0,
+                );
+            }
+        }
         if !sync_result.to_upload.is_empty() {
-            println!("\nWould upload:");
+            println!("\nWould upload documents:");
             for slug in &sync_result.to_upload {
                 println!("  + {slug}");
             }
@@ -394,6 +665,120 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // ── Upload attachments ────────────────────────────────────────────────────
+    let mut attachments_uploaded = 0usize;
+    let mut attachment_errors = 0usize;
+
+    if !all_attachments.is_empty() {
+        // Check which attachments need uploading (hash-based dedup)
+        let check_url = format!("{base_url}/api/v1/assets/check-hashes");
+        let entries: Vec<CheckHashEntry> = all_attachments
+            .values()
+            .map(|att| CheckHashEntry {
+                key: att.asset_key.clone(),
+                content_hash: att.content_hash.clone(),
+            })
+            .collect();
+
+        if args.verbose {
+            eprintln!("POST {check_url} ({} entries)", entries.len());
+        }
+
+        let check_resp = client
+            .post(&check_url)
+            .json(&CheckHashesRequest {
+                service_token: token.clone(),
+                entries,
+            })
+            .send()
+            .await
+            .context("Failed to call check-hashes API")?;
+
+        if !check_resp.status().is_success() {
+            let status = check_resp.status();
+            let body = check_resp.text().await.unwrap_or_default();
+            bail!("Check-hashes API returned {status}: {body}");
+        }
+
+        let check_result: CheckHashesResponse = check_resp
+            .json()
+            .await
+            .context("Failed to parse check-hashes response")?;
+
+        let to_upload_set: std::collections::HashSet<&str> =
+            check_result.to_upload.iter().map(|s| s.as_str()).collect();
+
+        let unchanged_count = all_attachments.len() - to_upload_set.len();
+        if unchanged_count > 0 {
+            println!("{unchanged_count} attachment(s) unchanged, {} to upload", to_upload_set.len());
+        }
+
+        // Upload each attachment that needs it
+        for key in &check_result.to_upload {
+            let Some(att) = all_attachments.get(key.as_str()) else {
+                continue;
+            };
+
+            let data = match std::fs::read(&att.disk_path) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("  error: failed to read {}: {e}", att.raw_path);
+                    attachment_errors += 1;
+                    continue;
+                }
+            };
+
+            if args.verbose {
+                eprintln!(
+                    "  uploading: {} ({:.1} KB)",
+                    key,
+                    data.len() as f64 / 1024.0,
+                );
+            }
+
+            let upload_url = format!("{base_url}/api/v1/assets/{key}");
+            let file_name = att.disk_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "file".to_string());
+            let content_type_str = att.content_type.clone();
+
+            let mut attempt = 0u32;
+            let mut backoff_ms = INITIAL_BACKOFF_MS;
+            let upload_result = loop {
+                let file_part = reqwest::multipart::Part::bytes(data.clone())
+                    .file_name(file_name.clone())
+                    .mime_str(&content_type_str)
+                    .unwrap_or_else(|_| reqwest::multipart::Part::bytes(vec![]));
+                let form = reqwest::multipart::Form::new()
+                    .text("service_token", token.clone())
+                    .part("file", file_part);
+
+                match client.put(&upload_url).multipart(form).send().await {
+                    Ok(r) if backoff_on_429(&r, &mut attempt, &mut backoff_ms).await => continue,
+                    other => break other,
+                }
+            };
+
+            match upload_result {
+                Ok(r) if r.status().is_success() => {
+                    attachments_uploaded += 1;
+                    println!("  attachment: {key}");
+                }
+                Ok(r) => {
+                    let status = r.status();
+                    let body = r.text().await.unwrap_or_default();
+                    eprintln!("  error: attachment {key}: HTTP {status} — {body}");
+                    attachment_errors += 1;
+                }
+                Err(e) => {
+                    eprintln!("  error: attachment {key}: {e}");
+                    attachment_errors += 1;
+                }
+            }
+        }
+    }
+
     // ── Upload changed documents ──────────────────────────────────────────────
     let ingest_url = format!("{base_url}/api/v1/ingest");
     let mut uploaded = 0usize;
@@ -409,22 +794,27 @@ async fn main() -> Result<()> {
             eprintln!("Uploading: {slug}");
         }
 
-        let result = client
-            .post(&ingest_url)
-            .json(&IngestRequest {
-                service_token: token.clone(),
-                slug: doc.slug.clone(),
-                title: doc.title.clone(),
-                content: doc.content.clone(),
-                access_level: doc.access_level.clone(),
-                service_owner: doc.service_owner.clone(),
-                tags: doc.tags.clone(),
-                parent_slug: doc.parent_slug.clone(),
-                order: doc.order,
-                is_hidden: doc.is_hidden,
-            })
-            .send()
-            .await;
+        let ingest_body = IngestRequest {
+            service_token: token.clone(),
+            slug: doc.slug.clone(),
+            title: doc.title.clone(),
+            content: doc.rewritten_content.clone(),
+            access_level: doc.access_level.clone(),
+            service_owner: doc.service_owner.clone(),
+            tags: doc.tags.clone(),
+            parent_slug: doc.parent_slug.clone(),
+            order: doc.order,
+            is_hidden: doc.is_hidden,
+        };
+
+        let mut attempt = 0u32;
+        let mut backoff_ms = INITIAL_BACKOFF_MS;
+        let result = loop {
+            match client.post(&ingest_url).json(&ingest_body).send().await {
+                Ok(r) if backoff_on_429(&r, &mut attempt, &mut backoff_ms).await => continue,
+                other => break other,
+            }
+        };
 
         match result {
             Ok(r) if r.status().is_success() => {
@@ -451,14 +841,21 @@ async fn main() -> Result<()> {
     }
 
     // ── Summary ───────────────────────────────────────────────────────────────
+    if attachments_uploaded > 0 || attachment_errors > 0 {
+        println!(
+            "\nAttachments: {attachments_uploaded} uploaded, {} errors",
+            attachment_errors,
+        );
+    }
     println!(
-        "\nDone: {uploaded} uploaded, {} unchanged, {} archived",
+        "Documents: {uploaded} uploaded, {} unchanged, {} archived",
         sync_result.unchanged.len(),
         sync_result.to_archive.len(),
     );
 
-    if errors > 0 {
-        bail!("{errors} upload(s) failed");
+    let total_errors = errors + attachment_errors;
+    if total_errors > 0 {
+        bail!("{total_errors} upload(s) failed");
     }
 
     Ok(())
@@ -566,5 +963,140 @@ mod tests {
             .unwrap();
         let docs = scan_documents(dir.path(), &LektonConfig::default()).unwrap();
         assert!(docs.is_empty());
+    }
+
+    // ── Attachment extraction tests ───────────────────────────────────────────
+
+    #[test]
+    fn extract_refs_markdown_image() {
+        let md = "# Doc\n\n![diagram](./images/arch.png)\n\nSome text.";
+        let refs = extract_local_file_refs(md, Path::new("/docs"));
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].raw_path, "./images/arch.png");
+    }
+
+    #[test]
+    fn extract_refs_markdown_link() {
+        let md = "See [the spec](attachments/spec.pdf) for details.";
+        let refs = extract_local_file_refs(md, Path::new("/docs"));
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].raw_path, "attachments/spec.pdf");
+    }
+
+    #[test]
+    fn extract_refs_parent_relative() {
+        let md = "![shared](../shared/logo.svg)";
+        let refs = extract_local_file_refs(md, Path::new("/docs/guides"));
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].raw_path, "../shared/logo.svg");
+        assert_eq!(refs[0].disk_path, PathBuf::from("/docs/guides/../shared/logo.svg"));
+    }
+
+    #[test]
+    fn extract_refs_html_img() {
+        let md = r#"Some text <img src="images/photo.jpg" alt="photo"> more text"#;
+        let refs = extract_local_file_refs(md, Path::new("/docs"));
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].raw_path, "images/photo.jpg");
+    }
+
+    #[test]
+    fn extract_refs_skips_external_urls() {
+        let md = r#"
+![ext](https://example.com/img.png)
+[link](http://example.com/doc.pdf)
+[mail](mailto:test@example.com)
+[anchor](#section)
+[abs](/absolute/path.md)
+![already](/api/v1/assets/something.png)
+"#;
+        let refs = extract_local_file_refs(md, Path::new("/docs"));
+        assert!(refs.is_empty(), "Should skip all external/absolute/anchor refs, got: {:?}", refs);
+    }
+
+    #[test]
+    fn extract_refs_deduplicates() {
+        let md = "![a](img.png) and ![b](img.png) and [c](img.png)";
+        let refs = extract_local_file_refs(md, Path::new("/docs"));
+        assert_eq!(refs.len(), 1, "Should deduplicate same path");
+    }
+
+    #[test]
+    fn extract_refs_multiple_different() {
+        let md = "![a](one.png)\n![b](two.pdf)\n[c](three.zip)";
+        let refs = extract_local_file_refs(md, Path::new("/docs"));
+        assert_eq!(refs.len(), 3);
+    }
+
+    // ── Content rewriting tests ───────────────────────────────────────────────
+
+    #[test]
+    fn rewrite_content_replaces_paths() {
+        let content = "![diagram](./images/arch.png)\n\nSee [spec](docs/spec.pdf).";
+        let attachments = vec![
+            AttachmentInfo {
+                raw_path: "./images/arch.png".to_string(),
+                disk_path: PathBuf::from("/tmp/images/arch.png"),
+                content_hash: "sha256:abc".to_string(),
+                asset_key: "attachments/my-doc/arch.png".to_string(),
+                size_bytes: 1000,
+                content_type: "image/png".to_string(),
+            },
+            AttachmentInfo {
+                raw_path: "docs/spec.pdf".to_string(),
+                disk_path: PathBuf::from("/tmp/docs/spec.pdf"),
+                content_hash: "sha256:def".to_string(),
+                asset_key: "attachments/my-doc/spec.pdf".to_string(),
+                size_bytes: 2000,
+                content_type: "application/pdf".to_string(),
+            },
+        ];
+
+        let result = rewrite_content(content, &attachments);
+        assert_eq!(
+            result,
+            "![diagram](/api/v1/assets/attachments/my-doc/arch.png)\n\nSee [spec](/api/v1/assets/attachments/my-doc/spec.pdf)."
+        );
+    }
+
+    #[test]
+    fn rewrite_content_no_attachments_unchanged() {
+        let content = "# Hello\n\nNo attachments here.";
+        let result = rewrite_content(content, &[]);
+        assert_eq!(result, content);
+    }
+
+    // ── Scan with attachments test ────────────────────────────────────────────
+
+    #[test]
+    fn scan_detects_attachments() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+
+        // Create an image file
+        let img_dir = dir.path().join("images");
+        std::fs::create_dir(&img_dir).unwrap();
+        std::fs::File::create(img_dir.join("logo.png"))
+            .unwrap()
+            .write_all(b"fake png data")
+            .unwrap();
+
+        // Create a markdown file referencing the image
+        let md_path = dir.path().join("guide.md");
+        std::fs::File::create(&md_path)
+            .unwrap()
+            .write_all(
+                b"---\ntitle: Guide\nlekton-import: true\n---\n# Guide\n\n![logo](images/logo.png)\n",
+            )
+            .unwrap();
+
+        let docs = scan_documents(dir.path(), &LektonConfig::default()).unwrap();
+        assert_eq!(docs.len(), 1);
+        let doc = docs.values().next().unwrap();
+        assert_eq!(doc.attachments.len(), 1);
+        assert_eq!(doc.attachments[0].asset_key, "attachments/guide/logo.png");
+        assert!(doc.rewritten_content.contains("/api/v1/assets/attachments/guide/logo.png"));
+        // Original content should still have the local path
+        assert!(doc.content.contains("images/logo.png"));
     }
 }

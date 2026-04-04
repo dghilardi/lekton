@@ -97,6 +97,11 @@ pub struct Asset {
     /// Document slugs that reference this asset (managed during document save).
     #[serde(default)]
     pub referenced_by: Vec<String>,
+    /// SHA-256 hash of the asset content (format: `"sha256:<base64url>"`).
+    /// Used for deduplication during sync. `None` for assets uploaded before
+    /// content hashing was introduced.
+    #[serde(default)]
+    pub content_hash: Option<String>,
 }
 
 /// The request payload for the ingest API.
@@ -310,6 +315,7 @@ mod tests {
             uploaded_at: Utc::now(),
             uploaded_by: "ci-pipeline".to_string(),
             referenced_by: vec!["deployment-guide".to_string()],
+            content_hash: Some("sha256:abc123".to_string()),
         };
 
         let json = serde_json::to_string(&asset).unwrap();

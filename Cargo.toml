@@ -69,8 +69,8 @@ base64 = "0.22"
 # Unique ID generation
 uuid = { version = "1", features = ["v4"] }
 
-# Hashing (for refresh token storage)
-sha2 = { version = "0.10", optional = true }
+# Hashing (for content hash computation and refresh token storage)
+sha2 = "0.10"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
@@ -127,7 +127,6 @@ ssr = [
     "dep:reqwest",
     "dep:meilisearch-sdk",
     "dep:jsonwebtoken",
-    "dep:sha2",
     "dep:urlencoding",
     "dep:time",
     "dep:tower_governor",

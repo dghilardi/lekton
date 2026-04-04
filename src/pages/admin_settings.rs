@@ -371,7 +371,7 @@ fn CreateTokenForm(
 
             <div class="flex justify-end pt-2">
                 <button
-                    class="btn btn-primary btn-wide shadow-lg shadow-primary/20"
+                    class="btn btn-primary w-full sm:w-64 shadow-lg shadow-primary/20"
                     disabled=move || submitting.get() || name.get().trim().is_empty() || scopes.get().trim().is_empty()
                     on:click=move |_| { submit_action.dispatch(()); }
                 >
@@ -728,9 +728,9 @@ fn NavigationOrderEditor() -> impl IntoView {
                             </Show>
                         </div>
 
-                        <div class="flex gap-3">
+                        <div class="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
                             <button
-                                class="btn btn-ghost"
+                                class="btn btn-ghost w-full sm:w-auto"
                                 disabled=move || !has_changes() || saving.get()
                                 on:click=move |_| {
                                     // Reset to original order
@@ -741,7 +741,7 @@ fn NavigationOrderEditor() -> impl IntoView {
                                 "Discard"
                             </button>
                             <button
-                                class="btn btn-primary btn-wide shadow-lg shadow-primary/20"
+                                class="btn btn-primary w-full sm:w-64 shadow-lg shadow-primary/20"
                                 disabled=move || !has_changes() || saving.get()
                                 on:click=move |_| { save_action.dispatch(()); }
                             >
@@ -910,16 +910,16 @@ fn CustomCssEditor() -> impl IntoView {
                             </Show>
                         </div>
 
-                        <div class="flex gap-3">
+                        <div class="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
                             <button
-                                class="btn btn-ghost"
+                                class="btn btn-ghost w-full sm:w-auto"
                                 disabled=move || !has_changes() || saving.get()
                                 on:click=move |_| set_css.set(original_css.get())
                             >
                                 "Discard"
                             </button>
                             <button
-                                class="btn btn-primary btn-wide shadow-lg shadow-primary/20"
+                                class="btn btn-primary w-full sm:w-64 shadow-lg shadow-primary/20"
                                 disabled=move || !has_changes() || saving.get()
                                 on:click=move |_| { save_action.dispatch(css.get()); }
                             >
@@ -1028,7 +1028,7 @@ fn CreatedTokenModal(
 
                     <div class="flex justify-end pt-8">
                         <button
-                            class="btn btn-ghost hover:bg-base-200 btn-wide font-bold"
+                            class="btn btn-ghost hover:bg-base-200 w-full sm:w-64 font-bold"
                             on:click=move |_| {
                                 set_token.set(None);
                                 set_copied.set(false);

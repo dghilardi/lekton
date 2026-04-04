@@ -36,6 +36,7 @@ pub struct AppState {
     pub navigation_order_repo: Arc<dyn crate::db::navigation_order_repository::NavigationOrderRepository>,
     pub token_service: Arc<crate::auth::token_service::TokenService>,
     pub auth_provider: Option<Arc<dyn crate::auth::provider::AuthProvider>>,
+    pub rag_service: Option<Arc<dyn crate::rag::service::RagService>>,
     /// Whether cookies should be set without the `Secure` flag (HTTP local dev).
     #[from_ref(skip)]
     pub insecure_cookies: bool,

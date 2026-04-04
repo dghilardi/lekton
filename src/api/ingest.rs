@@ -16,6 +16,8 @@ use crate::db::service_token_repository::ServiceTokenRepository;
 #[cfg(feature = "ssr")]
 use crate::rendering::links::extract_internal_links;
 #[cfg(feature = "ssr")]
+use crate::rag::service::RagService;
+#[cfg(feature = "ssr")]
 use crate::search::client::SearchService;
 #[cfg(feature = "ssr")]
 use crate::storage::client::StorageClient;
@@ -29,6 +31,7 @@ pub struct IngestContext<'a> {
     pub access_level_repo: &'a dyn AccessLevelRepository,
     pub service_token_repo: &'a dyn ServiceTokenRepository,
     pub version_repo: &'a dyn DocumentVersionRepository,
+    pub rag: Option<&'a dyn RagService>,
     /// The legacy global token from the `SERVICE_TOKEN` env var (if set).
     pub legacy_token: Option<&'a str>,
 }
@@ -230,6 +233,14 @@ pub async fn process_ingest(
         .as_ref()
         .map(|_| crate::search::client::build_search_document(&doc, &raw_content));
 
+    // Capture fields for RAG indexing before doc is consumed
+    let rag_slug = doc.slug.clone();
+    let rag_title = doc.title.clone();
+    let rag_access_level = doc.access_level.clone();
+    let rag_is_draft = doc.is_draft;
+    let rag_tags = doc.tags.clone();
+    let rag_is_archived = doc.is_archived;
+
     ctx.repo.create_or_update(doc).await?;
 
     // 11. Update backlinks on referenced documents.
@@ -243,6 +254,29 @@ pub async fn process_ingest(
     if let (Some(search_svc), Some(search_doc)) = (ctx.search, search_doc) {
         if let Err(e) = search_svc.index_document(&search_doc).await {
             tracing::warn!("Failed to index document in search: {e}");
+        }
+    }
+
+    // 13. Index in RAG vector store (if available)
+    if let Some(rag) = ctx.rag {
+        if rag_is_archived {
+            if let Err(e) = rag.delete_document(&rag_slug).await {
+                tracing::warn!("Failed to remove archived document from RAG: {e}");
+            }
+        } else {
+            if let Err(e) = rag
+                .index_document(
+                    &rag_slug,
+                    &rag_title,
+                    &raw_content,
+                    &rag_access_level,
+                    rag_is_draft,
+                    &rag_tags,
+                )
+                .await
+            {
+                tracing::warn!("Failed to index document in RAG: {e}");
+            }
         }
     }
 
@@ -363,6 +397,7 @@ pub async fn ingest_handler(
         access_level_repo: state.access_level_repo.as_ref(),
         service_token_repo: state.service_token_repo.as_ref(),
         version_repo: state.document_version_repo.as_ref(),
+        rag: state.rag_service.as_deref(),
         legacy_token: Some(&state.service_token),
     };
 
@@ -599,6 +634,7 @@ mod tests {
             access_level_repo: &MockAccessLevelRepo,
             service_token_repo: token_repo,
             version_repo: &MockVersionRepo,
+            rag: None,
             legacy_token,
         }
     }

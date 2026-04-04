@@ -175,6 +175,7 @@ impl TestEnv {
             auth_provider: None,
             insecure_cookies: true,
             max_attachment_size_bytes: 5242880,
+            rag_service: None,
         };
 
         // --- Build Router (API routes only, no Leptos SSR) ---

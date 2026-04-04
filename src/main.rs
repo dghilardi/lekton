@@ -164,6 +164,36 @@ async fn main() {
     // OAuth2 / OIDC auth provider (optional — server starts without auth if not configured)
     let auth_provider = build_provider(&config.auth).await;
 
+    // Initialize RAG service (optional — app works without it)
+    let rag_service: Option<Arc<dyn lekton::rag::service::RagService>> =
+        if config.rag.is_enabled() {
+            match lekton::rag::service::DefaultRagService::from_rag_config(&config.rag) {
+                Ok(service) => {
+                    if let Err(e) = service
+                        .vectorstore()
+                        .ensure_collection(config.rag.embedding_dimensions)
+                        .await
+                    {
+                        tracing::warn!("Failed to ensure Qdrant collection: {e} — RAG disabled");
+                        None
+                    } else {
+                        tracing::info!(
+                            collection = %config.rag.qdrant_collection,
+                            "RAG service initialized"
+                        );
+                        Some(Arc::new(service))
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("RAG not available: {e} — RAG will be disabled");
+                    None
+                }
+            }
+        } else {
+            tracing::info!("RAG not configured — feature disabled");
+            None
+        };
+
     // Build application state
     let app_state = lekton::app::AppState {
         document_repo,
@@ -182,6 +212,7 @@ async fn main() {
         navigation_order_repo,
         token_service,
         auth_provider,
+        rag_service,
         insecure_cookies: config.server.insecure_cookies,
         max_attachment_size_bytes: config.server.max_attachment_size_mb * 1024 * 1024,
     };

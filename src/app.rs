@@ -151,15 +151,24 @@ pub async fn search_docs(
 #[server(GetNavigation, "/api")]
 pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
     use crate::db::repository::DocumentRepository;
+    use crate::db::navigation_order_repository::NavigationOrderRepository;
     use std::collections::HashMap;
 
     let state = expect_context::<AppState>();
 
     let (allowed_levels, include_draft) = request_document_visibility(&state).await?;
-    let docs = state.document_repo
-        .list_by_access_levels(allowed_levels.as_deref(), include_draft)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let (docs, nav_order_entries) = tokio::join!(
+        state.document_repo.list_by_access_levels(allowed_levels.as_deref(), include_draft),
+        state.navigation_order_repo.list_all(),
+    );
+    let docs = docs.map_err(|e| ServerFnError::new(e.to_string()))?;
+    let nav_order_entries = nav_order_entries.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    // Build a weight lookup: slug -> weight
+    let nav_weights: HashMap<String, i32> = nav_order_entries
+        .into_iter()
+        .map(|e| (e.slug, e.weight))
+        .collect();
 
     let mut all_items: Vec<NavItem> = docs.into_iter().map(|doc| {
         let parent_slug = doc.parent_slug.or_else(|| {
@@ -244,9 +253,10 @@ pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
         attach_children(root, &children_by_parent);
     }
 
-    // Sort the tree: sections/categories alphabetically by title,
-    // documents (leaves) by (order, title).
-    fn sort_nav_items(items: &mut [NavItem]) {
+    // Sort the tree:
+    // - Sections/categories: by custom weight if set, otherwise alphabetically by title
+    // - Documents (leaves): by (order, title) from the document model
+    fn sort_nav_items(items: &mut [NavItem], weights: &HashMap<String, i32>) {
         items.sort_by(|a, b| {
             let a_is_section = !a.children.is_empty();
             let b_is_section = !b.children.is_empty();
@@ -254,18 +264,26 @@ pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
             match (a_is_section, b_is_section) {
                 (true, false) => std::cmp::Ordering::Less,
                 (false, true) => std::cmp::Ordering::Greater,
-                (true, true) => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
-                (false, false) => a.order.cmp(&b.order).then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase())),
+                (true, true) => {
+                    let a_weight = weights.get(&a.slug).copied().unwrap_or(i32::MAX);
+                    let b_weight = weights.get(&b.slug).copied().unwrap_or(i32::MAX);
+                    a_weight.cmp(&b_weight)
+                        .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
+                }
+                (false, false) => {
+                    a.order.cmp(&b.order)
+                        .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
+                }
             }
         });
         for item in items.iter_mut() {
             if !item.children.is_empty() {
-                sort_nav_items(&mut item.children);
+                sort_nav_items(&mut item.children, weights);
             }
         }
     }
 
-    sort_nav_items(&mut roots);
+    sort_nav_items(&mut roots, &nav_weights);
 
     Ok(roots)
 }

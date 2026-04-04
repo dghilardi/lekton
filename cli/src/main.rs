@@ -490,6 +490,29 @@ fn scan_documents(root: &Path, config: &LektonConfig) -> Result<HashMap<String, 
     Ok(docs)
 }
 
+// ── HTTP helpers ──────────────────────────────────────────────────────────
+
+const MAX_RETRIES: u32 = 5;
+const INITIAL_BACKOFF_MS: u64 = 500;
+
+/// Sleep with exponential backoff if the response is 429 (Too Many Requests).
+/// Returns `true` if the caller should retry, `false` if retries are exhausted
+/// or the response was not 429.
+async fn backoff_on_429(response: &reqwest::Response, attempt: &mut u32, backoff_ms: &mut u64) -> bool {
+    if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && *attempt < MAX_RETRIES {
+        *attempt += 1;
+        eprintln!(
+            "  rate limited, retrying in {}ms (attempt {}/{})",
+            backoff_ms, *attempt, MAX_RETRIES,
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(*backoff_ms)).await;
+        *backoff_ms *= 2;
+        true
+    } else {
+        false
+    }
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 #[tokio::main]
@@ -714,21 +737,30 @@ async fn main() -> Result<()> {
             }
 
             let upload_url = format!("{base_url}/api/v1/assets/{key}");
-            let file_part = reqwest::multipart::Part::bytes(data)
-                .file_name(
-                    att.disk_path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "file".to_string()),
-                )
-                .mime_str(&att.content_type)
-                .unwrap_or_else(|_| reqwest::multipart::Part::bytes(vec![]));
+            let file_name = att.disk_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "file".to_string());
+            let content_type_str = att.content_type.clone();
 
-            let form = reqwest::multipart::Form::new()
-                .text("service_token", token.clone())
-                .part("file", file_part);
+            let mut attempt = 0u32;
+            let mut backoff_ms = INITIAL_BACKOFF_MS;
+            let upload_result = loop {
+                let file_part = reqwest::multipart::Part::bytes(data.clone())
+                    .file_name(file_name.clone())
+                    .mime_str(&content_type_str)
+                    .unwrap_or_else(|_| reqwest::multipart::Part::bytes(vec![]));
+                let form = reqwest::multipart::Form::new()
+                    .text("service_token", token.clone())
+                    .part("file", file_part);
 
-            match client.put(&upload_url).multipart(form).send().await {
+                match client.put(&upload_url).multipart(form).send().await {
+                    Ok(r) if backoff_on_429(&r, &mut attempt, &mut backoff_ms).await => continue,
+                    other => break other,
+                }
+            };
+
+            match upload_result {
                 Ok(r) if r.status().is_success() => {
                     attachments_uploaded += 1;
                     println!("  attachment: {key}");
@@ -762,22 +794,27 @@ async fn main() -> Result<()> {
             eprintln!("Uploading: {slug}");
         }
 
-        let result = client
-            .post(&ingest_url)
-            .json(&IngestRequest {
-                service_token: token.clone(),
-                slug: doc.slug.clone(),
-                title: doc.title.clone(),
-                content: doc.rewritten_content.clone(),
-                access_level: doc.access_level.clone(),
-                service_owner: doc.service_owner.clone(),
-                tags: doc.tags.clone(),
-                parent_slug: doc.parent_slug.clone(),
-                order: doc.order,
-                is_hidden: doc.is_hidden,
-            })
-            .send()
-            .await;
+        let ingest_body = IngestRequest {
+            service_token: token.clone(),
+            slug: doc.slug.clone(),
+            title: doc.title.clone(),
+            content: doc.rewritten_content.clone(),
+            access_level: doc.access_level.clone(),
+            service_owner: doc.service_owner.clone(),
+            tags: doc.tags.clone(),
+            parent_slug: doc.parent_slug.clone(),
+            order: doc.order,
+            is_hidden: doc.is_hidden,
+        };
+
+        let mut attempt = 0u32;
+        let mut backoff_ms = INITIAL_BACKOFF_MS;
+        let result = loop {
+            match client.post(&ingest_url).json(&ingest_body).send().await {
+                Ok(r) if backoff_on_429(&r, &mut attempt, &mut backoff_ms).await => continue,
+                other => break other,
+            }
+        };
 
         match result {
             Ok(r) if r.status().is_success() => {

@@ -59,9 +59,11 @@ pub fn UserMenu() -> impl IntoView {
                 None => {
                     // In demo mode, link to the in-app login form.
                     // In OAuth mode, link directly to the auth redirect endpoint.
-                    let href = if is_demo_mode.get() { "/login" } else { "/auth/login" };
+                    let is_demo = is_demo_mode.get();
+                    let href = if is_demo { "/login" } else { "/auth/login" };
+                    let rel = if is_demo { "" } else { "external" };
                     view! {
-                        <a href=href class="btn btn-ghost btn-sm font-medium whitespace-nowrap">"Log In"</a>
+                        <a href=href rel=rel class="btn btn-ghost btn-sm font-medium whitespace-nowrap">"Log In"</a>
                     }.into_any()
                 }
             }

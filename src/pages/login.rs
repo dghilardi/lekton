@@ -25,18 +25,29 @@ pub fn LoginPage() -> impl IntoView {
 /// Shows a brief loading state while the redirect is set up.
 #[component]
 fn OAuthRedirect() -> impl IntoView {
+    Effect::new(|_| {
+        #[cfg(feature = "hydrate")]
+        {
+            use leptos::web_sys::window;
+            if let Some(w) = window() {
+                let _ = w.location().replace("/auth/login");
+            }
+        }
+    });
+
     view! {
         <div class="hero min-h-[60vh]">
             <div class="hero-content text-center">
                 <div>
                     <span class="loading loading-spinner loading-lg"></span>
                     <p class="mt-4 text-base-content/70">"Redirecting to sign in..."</p>
+                    <p class="text-sm mt-4">
+                        "If you are not redirected automatically, "
+                        <a href="/auth/login" rel="external" class="link link-primary">"click here"</a>.
+                    </p>
                 </div>
             </div>
         </div>
-
-        // Redirect via JS — works both on initial SSR and on client navigation.
-        <script>"window.location.replace('/auth/login');"</script>
     }
 }
 

@@ -169,8 +169,11 @@ impl AppConfig {
             .add_source(config::File::with_name("config/lekton").required(false))
             // First pass: raw strings. Ensures strings with hyphens or complex characters
             // aren't silently dropped or mutated by `try_parsing`.
+            // First pass: raw strings. Ensures strings with hyphens or complex characters
+            // aren't silently dropped or mutated by `try_parsing`.
             .add_source(
                 config::Environment::with_prefix("LKN")
+                    .prefix_separator("_")
                     .separator("__")
                     .try_parsing(false),
             )
@@ -178,6 +181,7 @@ impl AppConfig {
             // Overwrites the raw strings with typed values where applicable.
             .add_source(
                 config::Environment::with_prefix("LKN")
+                    .prefix_separator("_")
                     .separator("__")
                     .try_parsing(true),
             )

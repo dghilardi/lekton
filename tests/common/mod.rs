@@ -173,6 +173,8 @@ impl TestEnv {
             navigation_order_repo: navigation_order_repo.clone(),
             token_service: token_service.clone(),
             auth_provider: None,
+            insecure_cookies: true,
+            max_attachment_size_bytes: 5242880,
         };
 
         // --- Build Router (API routes only, no Leptos SSR) ---
@@ -459,6 +461,8 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
         navigation_order_repo: env.navigation_order_repo.clone(),
         token_service,
         auth_provider: None,
+        insecure_cookies: true,
+        max_attachment_size_bytes: 5242880,
     };
 
     let router = Router::new()

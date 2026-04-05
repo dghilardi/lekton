@@ -173,7 +173,7 @@ impl AppConfig {
             // aren't silently dropped or mutated by `try_parsing`.
             .add_source(
                 config::Environment::with_prefix("LKN")
-                    .prefix_separator("_")
+                    .prefix_separator("__")
                     .separator("__")
                     .try_parsing(false),
             )
@@ -181,7 +181,7 @@ impl AppConfig {
             // Overwrites the raw strings with typed values where applicable.
             .add_source(
                 config::Environment::with_prefix("LKN")
-                    .prefix_separator("_")
+                    .prefix_separator("__")
                     .separator("__")
                     .try_parsing(true),
             )

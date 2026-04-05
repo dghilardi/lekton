@@ -170,7 +170,8 @@ impl AppConfig {
             // Environment variables with prefix LKN__ and __ as separator.
             // try_parsing(true) allows parsing "true", "false", and numbers from env vars.
             .add_source(
-                config::Environment::with_prefix("LKN__")
+                config::Environment::with_prefix("LKN")
+                    .prefix_separator("__")
                     .separator("__")
                     .try_parsing(true),
             )
@@ -187,9 +188,9 @@ mod tests {
         std::env::set_var("LKN__STORAGE__BUCKET", "testing-bucket");
         std::env::set_var("LKN__AUTH__DEMO_MODE", "true");
         std::env::set_var("LKN__SERVER__RATE_LIMIT_BURST", "123");
-        
+
         let config = super::AppConfig::load().expect("Failed to load config with env vars");
-        
+
         assert_eq!(config.storage.bucket, "testing-bucket");
         assert!(config.auth.demo_mode);
         assert_eq!(config.server.rate_limit_burst, 123);

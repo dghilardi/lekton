@@ -3,8 +3,8 @@
 # These values are embedded in the binary and serve as fallbacks.
 # Override via:
 #   1. config/lekton.toml  (optional local file, git-ignored)
-#   2. Environment variables with the LKN_ prefix and __ as separator
-#      e.g. LKN_DATABASE__URI, LKN_AUTH__JWT_SECRET
+#   2. Environment variables with the LKN__ prefix and __ as separator
+#      e.g. LKN__DATABASE__URI, LKN__AUTH__JWT_SECRET
 
 [server]
 rate_limit_burst = 50
@@ -17,7 +17,7 @@ uri = "mongodb://localhost:27017"
 name = "lekton"
 
 [storage]
-# Required. Set via LKN_STORAGE__BUCKET or config/lekton.toml.
+# Required. Set via LKN__STORAGE__BUCKET or config/lekton.toml.
 bucket = ""
 
 [search]

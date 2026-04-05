@@ -45,7 +45,7 @@ async fn main() {
             panic!(
                 "auth.demo_mode is enabled but auth.jwt_secret is set, which suggests a \
                  production environment. Set auth.allow_demo_in_production = true (or \
-                 LKN_AUTH__ALLOW_DEMO_IN_PRODUCTION=true) to override this safety check."
+                 LKN__AUTH__ALLOW_DEMO_IN_PRODUCTION=true) to override this safety check."
             );
         }
 
@@ -153,7 +153,7 @@ async fn main() {
             "dev-token".to_string()
         }
         _ => {
-            panic!("auth.service_token is required in production (set LKN_AUTH__SERVICE_TOKEN)");
+            panic!("auth.service_token is required in production (set LKN__AUTH__SERVICE_TOKEN)");
         }
     };
 

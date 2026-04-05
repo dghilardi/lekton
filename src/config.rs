@@ -175,7 +175,7 @@ impl AppConfig {
                 config::Environment::with_prefix("LKN")
                     .prefix_separator("__")
                     .separator("__")
-                    .try_parsing(false),
+                    .try_parsing(true),
             )
             // Second pass: parses booleans (e.g. demo_mode) and numbers (e.g. rate_limit).
             // Overwrites the raw strings with typed values where applicable.
@@ -196,7 +196,13 @@ mod tests {
     #[cfg(feature = "ssr")]
     fn test_config_env() {
         std::env::set_var("LKN__STORAGE__BUCKET", "testing-bucket");
-        let config = super::AppConfig::load().unwrap();
+        std::env::set_var("LKN__AUTH__DEMO_MODE", "true");
+        std::env::set_var("LKN__SERVER__RATE_LIMIT_BURST", "123");
+        
+        let config = super::AppConfig::load().expect("Failed to load config with env vars");
+        
         assert_eq!(config.storage.bucket, "testing-bucket");
+        assert!(config.auth.demo_mode);
+        assert_eq!(config.server.rate_limit_burst, 123);
     }
 }

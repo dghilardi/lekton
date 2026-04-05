@@ -167,18 +167,8 @@ impl AppConfig {
             ))
             // Optional local override (e.g. developer's config/lekton.toml)
             .add_source(config::File::with_name("config/lekton").required(false))
-            // First pass: raw strings. Ensures strings with hyphens or complex characters
-            // aren't silently dropped or mutated by `try_parsing`.
-            // First pass: raw strings. Ensures strings with hyphens or complex characters
-            // aren't silently dropped or mutated by `try_parsing`.
-            .add_source(
-                config::Environment::with_prefix("LKN")
-                    .prefix_separator("__")
-                    .separator("__")
-                    .try_parsing(true),
-            )
-            // Second pass: parses booleans (e.g. demo_mode) and numbers (e.g. rate_limit).
-            // Overwrites the raw strings with typed values where applicable.
+            // Environment variables with prefix LKN__ and __ as separator.
+            // try_parsing(true) allows parsing "true", "false", and numbers from env vars.
             .add_source(
                 config::Environment::with_prefix("LKN")
                     .prefix_separator("__")

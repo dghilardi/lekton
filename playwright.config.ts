@@ -38,6 +38,8 @@ export default defineConfig({
       : 'cargo leptos serve',
     url: 'http://localhost:3000',
     reuseExistingServer: !process.env.CI,
+    stdout: 'pipe',
+    stderr: 'pipe',
     timeout: 180_000,
     env: {
       LKN__AUTH__DEMO_MODE: 'true',

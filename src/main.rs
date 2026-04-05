@@ -27,6 +27,12 @@ async fn main() {
     let config = lekton::config::AppConfig::load()
         .expect("Failed to load application configuration");
 
+    // Debug config loading
+    println!("[DEBUG] LKN__AUTH__DEMO_MODE env: {:?}", std::env::var("LKN__AUTH__DEMO_MODE"));
+    println!("[DEBUG] Loaded config auth.demo_mode: {}", config.auth.demo_mode);
+    use std::io::Write;
+    std::io::stdout().flush().ok();
+
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(

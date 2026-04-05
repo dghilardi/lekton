@@ -133,7 +133,15 @@ impl AppConfig {
             ))
             // Optional local override (e.g. developer's config/lekton.toml)
             .add_source(config::File::with_name("config/lekton").required(false))
-            // Environment variables: LKN_DATABASE__URI → database.uri
+            // First pass: raw strings. Ensures strings with hyphens or complex characters
+            // aren't silently dropped or mutated by `try_parsing`.
+            .add_source(
+                config::Environment::with_prefix("LKN")
+                    .separator("__")
+                    .try_parsing(false),
+            )
+            // Second pass: parses booleans (e.g. demo_mode) and numbers (e.g. rate_limit).
+            // Overwrites the raw strings with typed values where applicable.
             .add_source(
                 config::Environment::with_prefix("LKN")
                     .separator("__")
@@ -141,5 +149,16 @@ impl AppConfig {
             )
             .build()?
             .try_deserialize()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[cfg(feature = "ssr")]
+    fn test_config_env() {
+        std::env::set_var("LKN_STORAGE__BUCKET", "testing-bucket");
+        let config = super::AppConfig::load().unwrap();
+        assert_eq!(config.storage.bucket, "testing-bucket");
     }
 }

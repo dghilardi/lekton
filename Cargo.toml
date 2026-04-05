@@ -88,6 +88,7 @@ wasm-bindgen-futures = { version = "0.4", optional = true }
 js-sys = { version = "0.3", optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
 serde-wasm-bindgen = { version = "0.6", optional = true }
+gloo-timers = { version = "0.3", features = ["futures"], optional = true }
 
 # HTTP client (for OIDC discovery)
 reqwest = { version = "0.12", features = ["json"], optional = true }
@@ -123,6 +124,7 @@ hydrate = [
     "dep:wasm-bindgen-futures",
     "dep:js-sys",
     "dep:serde-wasm-bindgen",
+    "dep:gloo-timers",
 ]
 ssr = [
     "dep:axum",

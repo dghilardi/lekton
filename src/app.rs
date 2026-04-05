@@ -350,6 +350,58 @@ pub async fn get_is_rag_enabled() -> Result<bool, ServerFnError> {
     Ok(state.rag_service.is_some() && state.chat_service.is_some())
 }
 
+/// Server function to get RAG re-index status.
+#[server(GetRagReindexStatus, "/api")]
+pub async fn get_rag_reindex_status() -> Result<(bool, u32, bool), ServerFnError> {
+    use std::sync::atomic::Ordering;
+    let state = expect_context::<AppState>();
+    let rag_enabled = state.rag_service.is_some();
+    match &state.reindex_state {
+        Some(reindex) => Ok((
+            reindex.is_running.load(Ordering::Acquire),
+            reindex.progress.load(Ordering::Relaxed),
+            rag_enabled,
+        )),
+        None => Ok((false, 0, rag_enabled)),
+    }
+}
+
+/// Server function to trigger RAG re-index (admin only).
+#[server(TriggerRagReindex, "/api")]
+pub async fn trigger_rag_reindex() -> Result<String, ServerFnError> {
+    use std::sync::atomic::Ordering;
+    let state = expect_context::<AppState>();
+
+    let rag = state
+        .rag_service
+        .as_ref()
+        .ok_or_else(|| ServerFnError::new("RAG is not enabled"))?;
+
+    let reindex = state
+        .reindex_state
+        .as_ref()
+        .ok_or_else(|| ServerFnError::new("Reindex state not available"))?;
+
+    if reindex
+        .is_running
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Err(ServerFnError::new("Re-index is already in progress"));
+    }
+
+    let reindex_clone = reindex.clone();
+    let document_repo = state.document_repo.clone();
+    let storage = state.storage_client.clone();
+    let rag_clone = rag.clone();
+
+    tokio::spawn(async move {
+        crate::rag::reindex::run_reindex(reindex_clone, document_repo, storage, rag_clone).await;
+    });
+
+    Ok("Re-index started".to_string())
+}
+
 /// Server function to log out the current user.
 ///
 /// Clears the JWT and refresh token cookies (or the demo session cookie in

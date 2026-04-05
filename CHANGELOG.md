@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **RAG (Retrieval-Augmented Generation) integration**: Optional feature that connects to external embedding and chat providers (Ollama, OpenRouter, etc.) and Qdrant vector database. When configured, documents are automatically chunked, embedded and indexed during ingestion. Disabled by default — enable via `[rag]` config section with `qdrant_url` and `embedding_url`.
+- **RAG Chat**: Streaming multi-turn chat API (`POST /api/v1/rag/chat`) with SSE, filtered by user's access levels. Conversations are persisted in MongoDB (`chat_sessions` / `chat_messages` collections) with session management endpoints (`GET /api/v1/rag/sessions`, `DELETE /api/v1/rag/sessions/{id}`).
+- **RAG Admin Re-index**: Background re-embedding of all documents via `POST /api/v1/admin/rag/reindex` with progress tracking (`GET /api/v1/admin/rag/reindex/status`). Prevents concurrent runs via CAS.
+- **Chat page** (`/chat`): Leptos chat UI with DaisyUI chat bubbles, streaming token display, session sidebar. Visible only when RAG is enabled and user is authenticated.
+- **Admin re-index panel**: Progress bar and trigger button in admin settings page, with auto-polling during re-index.
+- **Configurable system prompt**: Tera-templated system prompt for the RAG chat, with `{{context}}` and `{{question}}` variables.
+- **New dependencies**: `qdrant-client`, `async-openai` (embedding + chat-completion), `text-splitter` (markdown), `tera`, `async-stream`, `serde-wasm-bindgen`, `gloo-timers`.
 - **Centralised configuration via `config` crate**: All runtime settings are now loaded in priority order — embedded `config/default.toml` defaults, optional `config/lekton.toml` local override (git-ignored), and `LKN_*` environment variables (e.g. `LKN_DATABASE__URI`, `LKN_AUTH__JWT_SECRET`). Replaces the previous ad-hoc `std::env::var` calls scattered across modules.
 - **`AppConfig` struct** (`src/config.rs`): Typed configuration with sections `server`, `database`, `storage`, `search`, and `auth`.
 - **`insecure_cookies` and `max_attachment_size_bytes` fields on `AppState`**: cookie security and upload limits are now driven by config rather than per-request env reads.

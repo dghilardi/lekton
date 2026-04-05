@@ -32,8 +32,8 @@ echo "✅ Node.js dependencies installed"
 echo ""
 
 # Start dependencies
-echo "📦 Starting MongoDB, Garage S3, and Meilisearch..."
-docker-compose up -d mongodb garage meilisearch
+echo "📦 Starting MongoDB, Garage S3, Meilisearch, and Qdrant..."
+docker-compose up -d mongodb garage meilisearch qdrant
 
 echo "⏳ Waiting for services to be healthy..."
 sleep 5
@@ -73,6 +73,21 @@ while ! docker-compose ps meilisearch | grep -q "healthy"; do
 done
 
 echo "✅ Meilisearch is healthy"
+
+# Wait for Qdrant to be healthy
+attempt=0
+while ! docker-compose ps qdrant | grep -q "healthy"; do
+    attempt=$((attempt + 1))
+    if [ $attempt -ge $max_attempts ]; then
+        echo "❌ Timeout waiting for Qdrant to become healthy"
+        echo "   Check logs with: docker-compose logs qdrant"
+        exit 1
+    fi
+    echo "   Waiting for Qdrant... ($attempt/$max_attempts)"
+    sleep 2
+done
+
+echo "✅ Qdrant is healthy"
 
 # Run garage-init to create bucket and keys
 echo "🔧 Initializing Garage (creating bucket and API keys)..."
@@ -118,6 +133,10 @@ LKN__AUTH__SERVICE_TOKEN=demo-ingest-token
 # Meilisearch Configuration
 LKN__SEARCH__URL=http://localhost:7700
 LKN__SEARCH__API_KEY=dev-master-key-change-in-prod
+
+# RAG Configuration (Vector Database)
+LKN__RAG__QDRANT_URL=http://localhost:6334
+LKN__RAG__QDRANT_COLLECTION=lekton
 
 # Enable demo auth mode (bypasses OIDC)
 LKN__AUTH__DEMO_MODE=true

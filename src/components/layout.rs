@@ -175,6 +175,28 @@ pub fn Layout(children: Children) -> impl IntoView {
                                 </a>
                             </li>
                         </ul>
+                        // RAG Chat section (visible only when RAG is enabled and user is logged in)
+                        {move || {
+                            let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
+                            let is_rag = use_context::<Signal<bool>>();
+                            let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
+                            let rag_enabled = is_rag.map(|sig| sig.get()).unwrap_or(false);
+                            if logged_in && rag_enabled {
+                                view! {
+                                    <ul class="flex flex-col gap-1 mt-6">
+                                        <li class="menu-title text-xs font-semibold tracking-wider text-base-content/60 uppercase mb-1">"AI Assistant"</li>
+                                        <li>
+                                            <a href="/chat" class="gap-3 group data-[active]:bg-primary/10 data-[active]:text-primary data-[active]:font-medium transition-colors">
+                                                <svg class="w-4 h-4 opacity-70 group-hover:opacity-100 transition-opacity" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                                "Chat"
+                                            </a>
+                                        </li>
+                                    </ul>
+                                }.into_any()
+                            } else {
+                                view! { <span></span> }.into_any()
+                            }
+                        }}
                         // Admin section (visible only to admin users)
                         {move || {
                             let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();

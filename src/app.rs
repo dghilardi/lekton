@@ -8,7 +8,7 @@ use crate::db::settings_repository::NavGroup;
 
 use crate::components::Layout;
 use crate::editor::component::EditorPage;
-use crate::pages::{AdminSettingsPage, DocPage, HomePage, LoginPage, NotFound};
+use crate::pages::{AdminSettingsPage, ChatPage, DocPage, HomePage, LoginPage, NotFound};
 use crate::schema::component::{SchemaListPage, SchemaViewerPage};
 use crate::search::client::SearchHit;
 
@@ -341,6 +341,13 @@ pub async fn get_current_user() -> Result<Option<crate::auth::models::Authentica
 pub async fn get_is_demo_mode() -> Result<bool, ServerFnError> {
     let state = expect_context::<AppState>();
     Ok(state.demo_mode)
+}
+
+/// Server function to check whether RAG chat is available.
+#[server(GetIsRagEnabled, "/api")]
+pub async fn get_is_rag_enabled() -> Result<bool, ServerFnError> {
+    let state = expect_context::<AppState>();
+    Ok(state.rag_service.is_some() && state.chat_service.is_some())
 }
 
 /// Server function to log out the current user.
@@ -706,6 +713,7 @@ pub fn App() -> impl IntoView {
 
     let user_resource = LocalResource::new(get_current_user);
     let demo_mode_resource = LocalResource::new(get_is_demo_mode);
+    let rag_resource = LocalResource::new(get_is_rag_enabled);
 
     let current_user: Signal<Option<crate::auth::models::AuthenticatedUser>> =
         Signal::derive(move || {
@@ -718,8 +726,13 @@ pub fn App() -> impl IntoView {
         demo_mode_resource.get().and_then(|res| res.ok()).unwrap_or(true)
     });
 
+    let is_rag_enabled: Signal<bool> = Signal::derive(move || {
+        rag_resource.get().and_then(|res| res.ok()).unwrap_or(false)
+    });
+
     provide_context(current_user);
     provide_context(is_demo_mode);
+    provide_context(is_rag_enabled);
 
     view! {
         <Title text="Lekton — Internal Developer Portal" />
@@ -733,6 +746,7 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/edit/*slug") view=EditorPage />
                     <Route path=path!("/schemas") view=SchemaListPage />
                     <Route path=path!("/schemas/:name") view=SchemaViewerPage />
+                    <Route path=path!("/chat") view=ChatPage />
                     <Route path=path!("/admin/settings") view=AdminSettingsPage />
                 </Routes>
             </Layout>

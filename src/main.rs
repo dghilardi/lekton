@@ -26,8 +26,6 @@ async fn main() {
     // Load configuration first — fast-fail on bad config before anything else starts.
     let config = lekton::config::AppConfig::load()
         .expect("Failed to load application configuration");
-    eprintln!("[DEBUG] LKN__AUTH__DEMO_MODE env: {:?}", std::env::var("LKN__AUTH__DEMO_MODE"));
-    eprintln!("[DEBUG] Loaded config auth.demo_mode: {}", config.auth.demo_mode);
 
     // Initialize tracing
     tracing_subscriber::fmt()

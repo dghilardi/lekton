@@ -53,10 +53,10 @@ test-e2e *ARGS:
         echo "Starting server for e2e tests..."
         # Use a separate DB so e2e data doesn't pollute the dev database.
         # All other vars (S3, Meilisearch, etc.) come from .env via dotenv-load.
-        MONGODB_DATABASE=lekton_e2e \
-        SERVICE_TOKEN=test-token \
-        RATE_LIMIT_BURST=1000 \
-        DEMO_MODE=true \
+        LKN__DATABASE__NAME=lekton_e2e \
+        LKN__AUTH__SERVICE_TOKEN=test-token \
+        LKN__SERVER__RATE_LIMIT_BURST=1000 \
+        LKN__AUTH__DEMO_MODE=true \
             cargo leptos serve > /tmp/lekton-e2e-server.log 2>&1 &
         CARGO_LEPTOS_PID=$!
         E2E_SERVER_STARTED=true
@@ -86,7 +86,7 @@ test-e2e *ARGS:
     # Pass test-specific overrides to the playwright process too — global-setup.ts
     # reads SERVICE_TOKEN from the environment, and dotenv-load may have set it
     # to the dev value from .env.
-    SERVICE_TOKEN=test-token npx playwright test {{ ARGS }}
+    LKN__AUTH__SERVICE_TOKEN=test-token npx playwright test {{ ARGS }}
 
 # Open the Playwright UI for interactive test debugging
 test-e2e-ui:
@@ -107,10 +107,10 @@ test-e2e-ui:
         echo "Server already running on :3000, reusing."
     else
         echo "Starting server for e2e tests..."
-        MONGODB_DATABASE=lekton_e2e \
-        SERVICE_TOKEN=test-token \
-        RATE_LIMIT_BURST=1000 \
-        DEMO_MODE=true \
+        LKN__DATABASE__NAME=lekton_e2e \
+        LKN__AUTH__SERVICE_TOKEN=test-token \
+        LKN__SERVER__RATE_LIMIT_BURST=1000 \
+        LKN__AUTH__DEMO_MODE=true \
             cargo leptos serve > /tmp/lekton-e2e-server.log 2>&1 &
         CARGO_LEPTOS_PID=$!
         E2E_SERVER_STARTED=true
@@ -130,7 +130,7 @@ test-e2e-ui:
         done
     fi
 
-    SERVICE_TOKEN=test-token npx playwright test --ui
+    LKN__AUTH__SERVICE_TOKEN=test-token npx playwright test --ui
 
 # Run all test suites in sequence: unit → integration → e2e
 test-all: test test-integration test-e2e

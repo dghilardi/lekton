@@ -170,7 +170,7 @@ impl AppConfig {
             // Environment variables with prefix LKN__ and __ as separator.
             // try_parsing(true) allows parsing "true", "false", and numbers from env vars.
             .add_source(
-                config::Environment::with_prefix("LKN")
+                config::Environment::with_prefix("lkn")
                     .prefix_separator("__")
                     .separator("__")
                     .try_parsing(true),

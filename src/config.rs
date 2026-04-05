@@ -2,8 +2,8 @@
 //!
 //! Configuration is loaded in priority order (highest wins):
 //!
-//! 1. Environment variables with prefix `LKN_` and `__` as the nesting separator.
-//!    Examples: `LKN_DATABASE__URI`, `LKN_AUTH__JWT_SECRET`.
+//! 1. Environment variables with prefix `LKN__` and `__` as the nesting separator.
+//!    Examples: `LKN__DATABASE__URI`, `LKN__AUTH__JWT_SECRET`.
 //! 2. `config/lekton.toml` — optional local override file (git-ignored).
 //! 3. `config/default.toml` — embedded defaults shipped with the binary.
 //!
@@ -195,7 +195,7 @@ mod tests {
     #[test]
     #[cfg(feature = "ssr")]
     fn test_config_env() {
-        std::env::set_var("LKN_STORAGE__BUCKET", "testing-bucket");
+        std::env::set_var("LKN__STORAGE__BUCKET", "testing-bucket");
         let config = super::AppConfig::load().unwrap();
         assert_eq!(config.storage.bucket, "testing-bucket");
     }

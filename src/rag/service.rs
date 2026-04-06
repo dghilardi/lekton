@@ -82,24 +82,33 @@ impl RagService for DefaultRagService {
         // 3. Embed all chunks
         let vectors = self.embedding.embed(&chunks).await?;
 
-        // 4. Build Qdrant points
+        // 4. Build Qdrant points, skipping any chunk whose embedding is empty.
+        // Some embedding backends (e.g. Ollama) return [] for whitespace-only
+        // or otherwise problematic inputs; sending a zero-dim vector to Qdrant
+        // causes a hard error ("expected dim: 768, got 0").
         let num_chunks = chunks.len();
         let points: Vec<VectorPoint> = chunks
             .into_iter()
             .zip(vectors)
             .enumerate()
-            .map(|(idx, (text, vector))| VectorPoint {
-                id: Uuid::new_v4().to_string(),
-                vector,
-                payload: ChunkPayload {
-                    chunk_text: text,
-                    document_slug: slug.to_string(),
-                    document_title: title.to_string(),
-                    access_level: access_level.to_string(),
-                    is_draft,
-                    tags: tags.to_vec(),
-                    chunk_index: idx as u32,
-                },
+            .filter_map(|(idx, (text, vector))| {
+                if vector.is_empty() {
+                    tracing::warn!(slug, idx, "RAG: embedding returned empty vector for chunk, skipping");
+                    return None;
+                }
+                Some(VectorPoint {
+                    id: Uuid::new_v4().to_string(),
+                    vector,
+                    payload: ChunkPayload {
+                        chunk_text: text,
+                        document_slug: slug.to_string(),
+                        document_title: title.to_string(),
+                        access_level: access_level.to_string(),
+                        is_draft,
+                        tags: tags.to_vec(),
+                        chunk_index: idx as u32,
+                    },
+                })
             })
             .collect();
 

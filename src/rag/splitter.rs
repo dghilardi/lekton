@@ -13,7 +13,11 @@ pub fn split_document(content: &str) -> Vec<String> {
         return Vec::new();
     }
     let splitter = MarkdownSplitter::new(CHUNK_SIZE);
-    splitter.chunks(content).map(String::from).collect()
+    splitter
+        .chunks(content)
+        .map(String::from)
+        .filter(|c| !c.trim().is_empty())
+        .collect()
 }
 
 #[cfg(test)]

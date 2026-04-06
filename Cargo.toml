@@ -117,6 +117,7 @@ tower_governor = { version = "0.8", optional = true }
 
 # Configuration management
 config = { version = "0.14", optional = true }
+tokio-stream = "0.1.18"
 
 [build-dependencies]
 leptos-tiptap-build = "0.2"

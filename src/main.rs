@@ -398,6 +398,14 @@ async fn main() {
         .route(
             "/api/v1/rag/sessions/{id}/messages",
             axum::routing::get(api::rag::get_session_messages_handler),
+        )
+        .route(
+            "/api/v1/mcp/sse",
+            axum::routing::get(api::mcp::sse_handler),
+        )
+        .route(
+            "/api/v1/mcp/messages",
+            axum::routing::post(api::mcp::messages_handler),
         );
 
     // Mount demo auth routes when demo mode is enabled, OAuth2/OIDC routes otherwise

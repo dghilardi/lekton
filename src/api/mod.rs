@@ -14,3 +14,5 @@ pub mod search;
 pub mod sync;
 #[cfg(feature = "ssr")]
 pub mod upload;
+#[cfg(feature = "ssr")]
+pub mod mcp;

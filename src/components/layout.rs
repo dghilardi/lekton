@@ -178,9 +178,9 @@ pub fn Layout(children: Children) -> impl IntoView {
                         // RAG Chat section (visible only when RAG is enabled and user is logged in)
                         {move || {
                             let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
-                            let is_rag = use_context::<Signal<bool>>();
+                            let is_rag = use_context::<crate::app::IsRagEnabled>();
                             let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
-                            let rag_enabled = is_rag.map(|sig| sig.get()).unwrap_or(false);
+                            let rag_enabled = is_rag.map(|sig| sig.0.get()).unwrap_or(false);
                             if logged_in && rag_enabled {
                                 view! {
                                     <ul class="flex flex-col gap-1 mt-6">

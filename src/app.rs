@@ -12,6 +12,15 @@ use crate::pages::{AdminSettingsPage, ChatPage, DocPage, HomePage, LoginPage, No
 use crate::schema::component::{SchemaListPage, SchemaViewerPage};
 use crate::search::client::SearchHit;
 
+/// Newtype wrapper for the demo-mode signal, used as Leptos context.
+/// Prevents collision with other `Signal<bool>` contexts (e.g. `IsRagEnabled`).
+#[derive(Clone, Copy)]
+pub struct IsDemoMode(pub Signal<bool>);
+
+/// Newtype wrapper for the RAG-enabled signal, used as Leptos context.
+#[derive(Clone, Copy)]
+pub struct IsRagEnabled(pub Signal<bool>);
+
 /// Shared application state (server-side only).
 #[cfg(feature = "ssr")]
 use std::sync::Arc;
@@ -783,8 +792,8 @@ pub fn App() -> impl IntoView {
     });
 
     provide_context(current_user);
-    provide_context(is_demo_mode);
-    provide_context(is_rag_enabled);
+    provide_context(IsDemoMode(is_demo_mode));
+    provide_context(IsRagEnabled(is_rag_enabled));
 
     view! {
         <Title text="Lekton — Internal Developer Portal" />

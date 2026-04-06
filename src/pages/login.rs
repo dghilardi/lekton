@@ -1,5 +1,7 @@
 use leptos::prelude::*;
 
+use crate::app::IsDemoMode;
+
 /// Login page.
 ///
 /// In demo mode, shows a username/password form with demo credentials.
@@ -8,7 +10,7 @@ use leptos::prelude::*;
 #[component]
 pub fn LoginPage() -> impl IntoView {
     let is_demo_mode =
-        use_context::<Signal<bool>>().expect("LoginPage must be inside App");
+        use_context::<IsDemoMode>().expect("LoginPage must be inside App").0;
 
     view! {
         {move || {

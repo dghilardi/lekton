@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 
-use crate::app::logout_user;
+use crate::app::{logout_user, IsDemoMode};
 
 /// User menu in the navbar: shows login link for anonymous users, or a
 /// dropdown with the user's email and a logout button when authenticated.
@@ -8,8 +8,8 @@ use crate::app::logout_user;
 pub fn UserMenu() -> impl IntoView {
     let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>()
         .expect("UserMenu must be inside App");
-    let is_demo_mode = use_context::<Signal<bool>>()
-        .expect("UserMenu must be inside App");
+    let is_demo_mode = use_context::<IsDemoMode>()
+        .expect("UserMenu must be inside App").0;
 
     let logout_action = Action::new(|_: &()| async move {
         let _ = logout_user().await;

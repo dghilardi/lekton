@@ -1,6 +1,8 @@
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::rendering::markdown::render_markdown;
+
 /// A single message in the chat UI.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct UiMessage {
@@ -48,6 +50,7 @@ fn ChatContent() -> impl IntoView {
     let (session_id, set_session_id) = signal(Option::<String>::None);
     let (sessions, set_sessions) = signal(Vec::<SessionSummary>::new());
     let (error_msg, set_error_msg) = signal(Option::<String>::None);
+    let (sidebar_open, set_sidebar_open) = signal(false);
 
     // Load sessions on mount
     #[cfg(feature = "hydrate")]
@@ -115,12 +118,14 @@ fn ChatContent() -> impl IntoView {
         set_session_id.set(None);
         set_messages.set(Vec::new());
         set_error_msg.set(None);
+        set_sidebar_open.set(false);
     };
 
     let load_session = move |sid: String| {
         set_session_id.set(Some(sid.clone()));
         set_messages.set(Vec::new());
         set_error_msg.set(None);
+        set_sidebar_open.set(false);
         // We don't load old messages from server yet — start fresh in the session
         // (history is maintained server-side for prompt context)
     };
@@ -146,16 +151,31 @@ fn ChatContent() -> impl IntoView {
     };
 
     view! {
-        <div class="flex h-[calc(100vh-8rem)] -mt-4 -mx-4 lg:-mx-8">
+        <div class="flex h-[calc(100vh-10rem)] lg:h-[calc(100vh-12rem)] -mt-6 -mx-6 lg:-mt-10 lg:-mx-10 bg-base-100/50 rounded-xl overflow-hidden border border-base-200 shadow-sm relative">
+            // Sidebar Overlay (Mobile)
+            <div
+                class=move || format!(
+                    "absolute inset-0 z-20 bg-base-900/40 backdrop-blur-sm transition-opacity md:hidden {}",
+                    if sidebar_open.get() { "opacity-100 pointer-events-auto" } else { "opacity-0 pointer-events-none" }
+                )
+                on:click=move |_| set_sidebar_open.set(false)
+            ></div>
+
             // Sidebar: session list
-            <div class="w-64 border-r border-base-200 bg-base-200/30 flex-shrink-0 flex flex-col hidden md:flex">
-                <div class="p-3 border-b border-base-200">
-                    <button class="btn btn-primary btn-sm w-full" on:click=start_new_session>
+            <div
+                class=move || format!(
+                    "absolute md:relative inset-y-0 left-0 z-30 w-72 bg-base-200/50 backdrop-blur-md border-r border-base-200 flex flex-col transition-transform duration-300 transform md:translate-x-0 {}",
+                    if sidebar_open.get() { "translate-x-0" } else { "-translate-x-full" }
+                )
+            >
+                <div class="p-4 border-b border-base-200">
+                    <button class="btn btn-primary btn-sm w-full gap-2 shadow-md" on:click=start_new_session>
                         <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
-                        "New chat"
+                        "New Chat"
                     </button>
                 </div>
-                <div class="flex-1 overflow-y-auto p-2 space-y-1">
+                <div class="flex-1 overflow-y-auto p-3 space-y-2">
+                    <div class="text-[10px] uppercase font-bold tracking-wider text-base-content/40 px-2 mb-1">"Recent Chats"</div>
                     <For
                         each=move || sessions.get()
                         key=|s| s.id.clone()
@@ -167,27 +187,28 @@ fn ChatContent() -> impl IntoView {
                                 move || session_id.get().as_deref() == Some(&sid)
                             };
                             view! {
-                                <div class="flex items-center group">
+                                <div class="flex items-center group gap-1">
                                     <button
                                         class=move || format!(
-                                            "btn btn-ghost btn-sm flex-1 justify-start text-left truncate font-normal {}",
-                                            if is_active() { "bg-primary/10 text-primary" } else { "" }
+                                            "btn btn-ghost btn-sm flex-1 justify-start text-left truncate font-normal px-2 hover:bg-base-300/50 {}",
+                                            if is_active() { "bg-primary/10 text-primary font-medium" } else { "text-base-content/70" }
                                         )
                                         on:click={
                                             let sid = sid_click.clone();
                                             move |_| load_session(sid.clone())
                                         }
                                     >
-                                        {session.title.clone()}
+                                        <svg class="w-4 h-4 opacity-50 mr-1 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                        <span class="truncate">{session.title.clone()}</span>
                                     </button>
                                     <button
-                                        class="btn btn-ghost btn-xs opacity-0 group-hover:opacity-100"
+                                        class="btn btn-ghost btn-sm btn-square opacity-0 group-hover:opacity-100 hover:text-error transition-opacity"
                                         on:click={
                                             let sid = sid_delete.clone();
                                             move |_| delete_session(sid.clone())
                                         }
                                     >
-                                        <svg class="w-3 h-3" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                                        <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                                     </button>
                                 </div>
                             }
@@ -197,14 +218,42 @@ fn ChatContent() -> impl IntoView {
             </div>
 
             // Main chat area
-            <div class="flex-1 flex flex-col min-w-0">
+            <div class="flex-1 flex flex-col min-w-0 bg-base-100 relative">
+                // Mobile Header
+                <div class="md:hidden flex items-center p-3 border-b border-base-200 gap-3">
+                    <button class="btn btn-ghost btn-sm btn-square" on:click=move |_| set_sidebar_open.set(true)>
+                        <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                    </button>
+                    <span class="font-bold truncate text-sm">
+                        {move || {
+                            let sid = session_id.get();
+                            sessions.get().iter().find(|s| Some(s.id.clone()) == sid).map(|s| s.title.clone()).unwrap_or_else(|| "AI Assistant".into())
+                        }}
+                    </span>
+                </div>
+
                 // Messages
-                <div class="flex-1 overflow-y-auto p-4 space-y-4">
+                <div class="flex-1 overflow-y-auto px-4 py-6 md:p-8 space-y-6">
                     <Show when=move || messages.get().is_empty() fallback=|| ()>
-                        <div class="flex items-center justify-center h-full text-base-content/40">
-                            <div class="text-center space-y-2">
-                                <svg class="w-12 h-12 mx-auto opacity-30" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                                <p>"Ask a question about the documentation"</p>
+                        <div class="flex items-center justify-center h-full">
+                            <div class="text-center max-w-md space-y-6">
+                                <div class="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mx-auto text-primary shadow-inner">
+                                    <svg class="w-8 h-8" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                </div>
+                                <div class="space-y-2">
+                                    <h2 class="text-2xl font-bold tracking-tight">"AI Assistant"</h2>
+                                    <p class="text-base-content/50">"Ask me anything about the documentation and codebase."</p>
+                                </div>
+                                <div class="grid grid-cols-1 gap-2">
+                                    <button class="btn btn-outline btn-sm font-normal normal-case border-base-300 hover:bg-base-200 hover:border-base-300 text-base-content/70"
+                                        on:click={let set_input = set_input.clone(); move |_| { set_input.set("What is Lekton?".to_string()); send_message(); }}>
+                                        "What is Lekton?"
+                                    </button>
+                                    <button class="btn btn-outline btn-sm font-normal normal-case border-base-300 hover:bg-base-200 hover:border-base-300 text-base-content/70"
+                                        on:click={let set_input = set_input.clone(); move |_| { set_input.set("How do I configure OIDC?".to_string()); send_message(); }}>
+                                        "How do I configure OIDC?"
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </Show>
@@ -219,18 +268,44 @@ fn ChatContent() -> impl IntoView {
                             let is_user = msg.role == "user";
                             view! {
                                 <div class=format!(
-                                    "chat {}",
-                                    if is_user { "chat-end" } else { "chat-start" }
+                                    "flex w-full group {}",
+                                    if is_user { "justify-end" } else { "justify-start" }
                                 )>
                                     <div class=format!(
-                                        "chat-bubble {} whitespace-pre-wrap",
-                                        if is_user { "chat-bubble-primary" } else { "" }
+                                        "flex max-w-[85%] md:max-w-[75%] gap-3 {}",
+                                        if is_user { "flex-row-reverse" } else { "flex-row" }
                                     )>
-                                        {if msg.content.is_empty() && !is_user {
-                                            view! { <span class="loading loading-dots loading-sm"></span> }.into_any()
-                                        } else {
-                                            view! { <span>{msg.content.clone()}</span> }.into_any()
-                                        }}
+                                        // Avatar
+                                        <div class=format!(
+                                            "w-8 h-8 rounded-lg flex-shrink-0 flex items-center justify-center shadow-sm {}",
+                                            if is_user { "bg-primary text-primary-content" } else { "bg-base-300 text-base-content" }
+                                        )>
+                                            {if is_user {
+                                                view! { <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> }.into_any()
+                                            } else {
+                                                view! { <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5Z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg> }.into_any()
+                                            }}
+                                        </div>
+
+                                        // Bubble
+                                        <div class="flex flex-col gap-1">
+                                            <div class=format!(
+                                                "px-4 py-2.5 rounded-2xl shadow-sm text-[15px] leading-relaxed relative {}",
+                                                if is_user {
+                                                    "bg-primary text-primary-content rounded-tr-none"
+                                                } else {
+                                                    "bg-base-200/80 text-base-content border border-base-200 rounded-tl-none prose prose-sm max-w-none prose-headings:text-base-content prose-p:text-base-content/90"
+                                                }
+                                            )>
+                                                {if msg.content.is_empty() && !is_user {
+                                                    view! { <span class="loading loading-dots loading-sm opacity-50 py-1"></span> }.into_any()
+                                                } else if is_user {
+                                                    view! { <div class="whitespace-pre-wrap">{msg.content.clone()}</div> }.into_any()
+                                                } else {
+                                                    view! { <div inner_html=render_markdown(&msg.content)></div> }.into_any()
+                                                }}
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             }
@@ -239,40 +314,51 @@ fn ChatContent() -> impl IntoView {
 
                     // Error message
                     <Show when=move || error_msg.get().is_some() fallback=|| ()>
-                        <div class="alert alert-error">
+                        <div class="alert alert-error font-medium shadow-lg max-w-2xl mx-auto rounded-xl">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                             <span>{move || error_msg.get().unwrap_or_default()}</span>
                         </div>
                     </Show>
                 </div>
 
                 // Input area
-                <div class="border-t border-base-200 p-4">
-                    <div class="flex gap-2 max-w-4xl mx-auto">
-                        <input
-                            type="text"
-                            class="input input-bordered flex-1"
-                            placeholder="Type your message..."
-                            prop:value=move || input.get()
-                            on:input=move |ev| set_input.set(event_target_value(&ev))
-                            on:keydown=move |ev: leptos::web_sys::KeyboardEvent| {
-                                if ev.key() == "Enter" && !ev.shift_key() {
-                                    ev.prevent_default();
-                                    send_message();
+                <div class="p-4 md:p-6 bg-gradient-to-t from-base-100 via-base-100 to-transparent">
+                    <div class="max-w-4xl mx-auto relative group">
+                        <div class="absolute -inset-0.5 bg-gradient-to-r from-primary/20 to-secondary/20 rounded-2xl blur opacity-0 group-focus-within:opacity-100 transition duration-300"></div>
+                        <div class="relative flex items-end gap-2 bg-base-100 border border-base-200 shadow-xl rounded-2xl p-2 transition-all group-focus-within:border-primary/50 group-focus-within:ring-2 group-focus-within:ring-primary/10">
+                            <textarea
+                                class="textarea bg-transparent border-none focus:outline-none flex-1 resize-none py-3 px-4 min-h-[52px] max-h-48"
+                                placeholder="Type your message..."
+                                prop:value=move || input.get()
+                                on:input=move |ev| set_input.set(event_target_value(&ev))
+                                on:keydown=move |ev: leptos::web_sys::KeyboardEvent| {
+                                    if ev.key() == "Enter" && !ev.shift_key() {
+                                        ev.prevent_default();
+                                        send_message();
+                                    }
                                 }
-                            }
-                            prop:disabled=move || is_loading.get()
-                        />
-                        <button
-                            class="btn btn-primary"
-                            on:click=move |_| send_message()
-                            prop:disabled=move || is_loading.get() || input.get().trim().is_empty()
-                        >
-                            <Show when=move || is_loading.get() fallback=|| view! {
-                                <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
-                            }>
-                                <span class="loading loading-spinner loading-sm"></span>
-                            </Show>
-                        </button>
+                                prop:disabled=move || is_loading.get()
+                                rows=1
+                            />
+                            <button
+                                class=move || format!(
+                                    "btn btn-primary btn-square h-12 w-12 rounded-xl transition-all {}",
+                                    if is_loading.get() || input.get().trim().is_empty() { "opacity-40 grayscale" } else { "shadow-lg shadow-primary/20" }
+                                )
+                                on:click=move |_| send_message()
+                                prop:disabled=move || is_loading.get() || input.get().trim().is_empty()
+                            >
+                                <Show when=move || is_loading.get() fallback=|| view! {
+                                    <svg class="w-5 h-5 translate-x-0.5 -translate-y-0.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+                                }>
+                                    <span class="loading loading-spinner loading-sm"></span>
+                                </Show>
+                            </button>
+                        </div>
+                        <div class="mt-2 flex justify-between px-2">
+                            <span class="text-[10px] text-base-content/30 italic">"Shift + Enter for new line"</span>
+                            <span class="text-[10px] text-base-content/30">"AI responses may be inaccurate"</span>
+                        </div>
                     </div>
                 </div>
             </div>

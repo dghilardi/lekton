@@ -8,6 +8,8 @@ use super::user_menu::UserMenu;
 use super::custom_css::RuntimeCustomCss;
 use crate::app::{get_navigation, get_navbar_groups};
 
+const MAX_DOCS_ITEMS: usize = 5;
+
 #[component]
 pub fn TopNavbarLinks() -> impl IntoView {
     let nav_resource = Resource::new(|| (), |_| get_navigation());
@@ -18,91 +20,264 @@ pub fn TopNavbarLinks() -> impl IntoView {
             {move || {
                 let nav_res = nav_resource.get();
                 let groups_res = groups_resource.get();
-                
+
                 if let (Some(Ok(items)), Some(Ok(groups))) = (nav_res, groups_res) {
-                    let mut standalone = vec![];
-                    
-                    for item in &items {
-                        let mut in_group = false;
-                        for group in &groups {
-                            if group.items.contains(&item.slug) {
-                                in_group = true;
-                                break;
-                            }
-                        }
-                        if !in_group {
-                            standalone.push(item.clone());
-                        }
-                    }
+                    let standalone: Vec<_> = items.iter()
+                        .filter(|item| !groups.iter().any(|g| g.items.contains(&item.slug)))
+                        .cloned()
+                        .collect();
+
+                    // Tier 1 max-items logic
+                    let n_s = standalone.len();
+                    let vis_s = n_s.min(MAX_DOCS_ITEMS);
+                    let vis_g = groups.len().min(MAX_DOCS_ITEMS.saturating_sub(n_s));
+
+                    let t1_standalone = standalone[..vis_s].to_vec();
+                    let t1_groups = groups[..vis_g].to_vec();
+                    let altro_standalone = standalone[vis_s..].to_vec();
+                    let altro_groups = groups[vis_g..].to_vec();
+                    let has_overflow = !altro_standalone.is_empty() || !altro_groups.is_empty();
+
+                    // Clones for each tier
+                    let t2_standalone = standalone.clone();
+                    let t2_groups = groups.clone();
+                    let t3_standalone = standalone;
+                    let t3_groups = groups;
+
+                    // Items for group filtering per tier
+                    let items_t1g = items.clone();
+                    let items_altro = items.clone();
+                    let items_t2 = items.clone();
+                    let items_t3 = items;
 
                     view! {
-                        {standalone.into_iter().map(|item| {
-                            view! {
-                                <a href=format!("/docs/{}", item.slug) class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">
-                                    {item.title}
-                                </a>
-                            }
-                        }).collect::<Vec<_>>()}
+                        // ── TIER 1: xl+ — full text, max items, "Altro" overflow ──────────────
+                        <div class="hidden xl:flex items-center gap-1">
+                            {t1_standalone.into_iter().map(|item| {
+                                view! {
+                                    <a href=format!("/docs/{}", item.slug)
+                                       class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">
+                                        {item.title}
+                                    </a>
+                                }
+                            }).collect::<Vec<_>>()}
 
-                        {groups.into_iter().map(|group| {
-                            let group_items: Vec<_> = items.iter().filter(|i| group.items.contains(&i.slug)).collect();
-                            if group_items.is_empty() {
-                                return view! { <span></span> }.into_any();
-                            }
-                            view! {
-                                <div class="dropdown dropdown-hover dropdown-bottom">
-                                    <div tabindex="0" role="button" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50 m-1">
-                                        {group.title.clone()}
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="ml-1 opacity-60"><path d="m6 9 6 6 6-6"/></svg>
-                                    </div>
-                                    <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52 border border-base-200">
-                                        {group_items.into_iter().map(|i| {
-                                            view! {
+                            {t1_groups.into_iter().map(|group| {
+                                let group_items: Vec<_> = items_t1g.iter()
+                                    .filter(|i| group.items.contains(&i.slug))
+                                    .cloned()
+                                    .collect();
+                                if group_items.is_empty() {
+                                    return view! { <span></span> }.into_any();
+                                }
+                                view! {
+                                    <div class="dropdown dropdown-hover dropdown-bottom">
+                                        <div tabindex="0" role="button"
+                                             class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50 m-1">
+                                            {group.title.clone()}
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="ml-1 opacity-60"><path d="m6 9 6 6 6-6"/></svg>
+                                        </div>
+                                        <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52 border border-base-200">
+                                            {group_items.into_iter().map(|i| view! {
                                                 <li><a href=format!("/docs/{}", i.slug) class="active:!bg-primary active:!text-primary-content">{i.title.clone()}</a></li>
-                                            }
-                                        }).collect::<Vec<_>>()}
-                                    </ul>
+                                            }).collect::<Vec<_>>()}
+                                        </ul>
+                                    </div>
+                                }.into_any()
+                            }).collect::<Vec<_>>()}
+
+                            // "Altro" overflow dropdown
+                            {if has_overflow {
+                                view! {
+                                    <div class="dropdown dropdown-hover dropdown-bottom">
+                                        <div tabindex="0" role="button"
+                                             class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50 m-1">
+                                            "Altro"
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="ml-1 opacity-60"><path d="m6 9 6 6 6-6"/></svg>
+                                        </div>
+                                        <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52 border border-base-200">
+                                            {altro_standalone.into_iter().map(|item| view! {
+                                                <li><a href=format!("/docs/{}", item.slug) class="active:!bg-primary active:!text-primary-content">{item.title}</a></li>
+                                            }).collect::<Vec<_>>()}
+                                            {altro_groups.into_iter().flat_map(|group| {
+                                                let gis: Vec<_> = items_altro.iter()
+                                                    .filter(|i| group.items.contains(&i.slug))
+                                                    .cloned()
+                                                    .collect();
+                                                let mut all = vec![
+                                                    view! { <li class="menu-title">{group.title}</li> }.into_any()
+                                                ];
+                                                all.extend(gis.into_iter().map(|i| view! {
+                                                    <li><a href=format!("/docs/{}", i.slug) class="active:!bg-primary active:!text-primary-content">{i.title}</a></li>
+                                                }.into_any()));
+                                                all
+                                            }).collect::<Vec<_>>()}
+                                        </ul>
+                                    </div>
+                                }.into_any()
+                            } else {
+                                view! { <span></span> }.into_any()
+                            }}
+
+                            // Separator
+                            <div class="w-px h-5 bg-base-300 mx-1 self-center"></div>
+
+                            <a href="/schemas" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">
+                                "Registry"
+                            </a>
+                            {move || {
+                                let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
+                                let is_rag = use_context::<crate::app::IsRagEnabled>();
+                                let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
+                                let rag_enabled = is_rag.map(|sig| sig.0.get()).unwrap_or(false);
+                                if logged_in && rag_enabled {
+                                    view! { <a href="/chat" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">"Chat"</a> }.into_any()
+                                } else {
+                                    view! { <span></span> }.into_any()
+                                }
+                            }}
+                            {move || {
+                                let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
+                                let is_admin = current_user.and_then(|sig| sig.get()).map(|u| u.is_admin).unwrap_or(false);
+                                if is_admin {
+                                    view! { <a href="/admin/tokens" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">"Admin"</a> }.into_any()
+                                } else {
+                                    view! { <span></span> }.into_any()
+                                }
+                            }}
+                        </div>
+
+                        // ── TIER 2: lg–xl — "Docs ▾" dropdown + text system links ─────────────
+                        <div class="hidden lg:flex xl:hidden items-center gap-1">
+                            <div class="dropdown dropdown-hover dropdown-bottom">
+                                <div tabindex="0" role="button"
+                                     class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50 m-1">
+                                    "Docs"
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="ml-1 opacity-60"><path d="m6 9 6 6 6-6"/></svg>
                                 </div>
-                            }.into_any()
-                        }).collect::<Vec<_>>()}
+                                <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52 border border-base-200">
+                                    {t2_standalone.into_iter().map(|item| view! {
+                                        <li><a href=format!("/docs/{}", item.slug) class="active:!bg-primary active:!text-primary-content">{item.title}</a></li>
+                                    }).collect::<Vec<_>>()}
+                                    {t2_groups.into_iter().flat_map(|group| {
+                                        let gis: Vec<_> = items_t2.iter()
+                                            .filter(|i| group.items.contains(&i.slug))
+                                            .cloned()
+                                            .collect();
+                                        let mut all = vec![
+                                            view! { <li class="menu-title">{group.title}</li> }.into_any()
+                                        ];
+                                        all.extend(gis.into_iter().map(|i| view! {
+                                            <li><a href=format!("/docs/{}", i.slug) class="active:!bg-primary active:!text-primary-content">{i.title}</a></li>
+                                        }.into_any()));
+                                        all
+                                    }).collect::<Vec<_>>()}
+                                </ul>
+                            </div>
 
-                        // Macro-areas links
-                        <a href="/schemas" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">
-                            "Registry"
-                        </a>
-                        
-                        {move || {
-                            let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
-                            let is_rag = use_context::<crate::app::IsRagEnabled>();
-                            let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
-                            let rag_enabled = is_rag.map(|sig| sig.0.get()).unwrap_or(false);
-                            if logged_in && rag_enabled {
-                                view! {
-                                    <a href="/chat" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">
-                                        "Chat"
-                                    </a>
-                                }.into_any()
-                            } else {
-                                view! { <span></span> }.into_any()
-                            }
-                        }}
+                            // Separator
+                            <div class="w-px h-5 bg-base-300 mx-1 self-center"></div>
 
-                        {move || {
-                            let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
-                            let is_admin = current_user
-                                .and_then(|sig| sig.get())
-                                .map(|u| u.is_admin)
-                                .unwrap_or(false);
-                            if is_admin {
-                                view! {
-                                    <a href="/admin/tokens" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">
-                                        "Admin"
-                                    </a>
-                                }.into_any()
-                            } else {
-                                view! { <span></span> }.into_any()
-                            }
-                        }}
+                            <a href="/schemas" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">
+                                "Registry"
+                            </a>
+                            {move || {
+                                let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
+                                let is_rag = use_context::<crate::app::IsRagEnabled>();
+                                let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
+                                let rag_enabled = is_rag.map(|sig| sig.0.get()).unwrap_or(false);
+                                if logged_in && rag_enabled {
+                                    view! { <a href="/chat" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">"Chat"</a> }.into_any()
+                                } else {
+                                    view! { <span></span> }.into_any()
+                                }
+                            }}
+                            {move || {
+                                let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
+                                let is_admin = current_user.and_then(|sig| sig.get()).map(|u| u.is_admin).unwrap_or(false);
+                                if is_admin {
+                                    view! { <a href="/admin/tokens" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">"Admin"</a> }.into_any()
+                                } else {
+                                    view! { <span></span> }.into_any()
+                                }
+                            }}
+                        </div>
+
+                        // ── TIER 3: md–lg — icons only ────────────────────────────────────────
+                        <div class="hidden md:flex lg:hidden items-center gap-1">
+                            // Book icon + docs dropdown
+                            <div class="dropdown dropdown-hover dropdown-bottom">
+                                <div tabindex="0" role="button"
+                                     class="btn btn-ghost btn-sm px-2 text-base-content/80 hover:text-base-content hover:bg-base-200/50 m-1"
+                                     title="Documentazione">
+                                    // Book icon
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="opacity-60"><path d="m6 9 6 6 6-6"/></svg>
+                                </div>
+                                <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52 border border-base-200">
+                                    {t3_standalone.into_iter().map(|item| view! {
+                                        <li><a href=format!("/docs/{}", item.slug) class="active:!bg-primary active:!text-primary-content">{item.title}</a></li>
+                                    }).collect::<Vec<_>>()}
+                                    {t3_groups.into_iter().flat_map(|group| {
+                                        let gis: Vec<_> = items_t3.iter()
+                                            .filter(|i| group.items.contains(&i.slug))
+                                            .cloned()
+                                            .collect();
+                                        let mut all = vec![
+                                            view! { <li class="menu-title">{group.title}</li> }.into_any()
+                                        ];
+                                        all.extend(gis.into_iter().map(|i| view! {
+                                            <li><a href=format!("/docs/{}", i.slug) class="active:!bg-primary active:!text-primary-content">{i.title}</a></li>
+                                        }.into_any()));
+                                        all
+                                    }).collect::<Vec<_>>()}
+                                </ul>
+                            </div>
+
+                            // Registry icon
+                            <a href="/schemas"
+                               class="btn btn-ghost btn-sm px-2 text-base-content/80 hover:text-base-content hover:bg-base-200/50"
+                               title="Registry">
+                                // File-list icon
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
+                            </a>
+
+                            // Chat icon (conditional)
+                            {move || {
+                                let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
+                                let is_rag = use_context::<crate::app::IsRagEnabled>();
+                                let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
+                                let rag_enabled = is_rag.map(|sig| sig.0.get()).unwrap_or(false);
+                                if logged_in && rag_enabled {
+                                    view! {
+                                        <a href="/chat"
+                                           class="btn btn-ghost btn-sm px-2 text-base-content/80 hover:text-base-content hover:bg-base-200/50"
+                                           title="Chat">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                        </a>
+                                    }.into_any()
+                                } else {
+                                    view! { <span></span> }.into_any()
+                                }
+                            }}
+
+                            // Admin icon (conditional)
+                            {move || {
+                                let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
+                                let is_admin = current_user.and_then(|sig| sig.get()).map(|u| u.is_admin).unwrap_or(false);
+                                if is_admin {
+                                    view! {
+                                        <a href="/admin/tokens"
+                                           class="btn btn-ghost btn-sm px-2 text-base-content/80 hover:text-base-content hover:bg-base-200/50"
+                                           title="Admin">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                                        </a>
+                                    }.into_any()
+                                } else {
+                                    view! { <span></span> }.into_any()
+                                }
+                            }}
+                        </div>
                     }.into_any()
                 } else {
                     view! { <span></span> }.into_any()
@@ -142,7 +317,7 @@ pub fn Layout(children: Children) -> impl IntoView {
                         <svg class="w-6 h-6 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5Z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
                         <span class="truncate">"Lekton"</span>
                     </a>
-                    <div class="hidden lg:flex items-center gap-1 ml-4 pl-4 border-l border-base-300">
+                    <div class="hidden md:flex items-center gap-1 ml-4 pl-4 border-l border-base-300">
                         <TopNavbarLinks />
                     </div>
                 </div>
@@ -195,7 +370,7 @@ pub fn Layout(children: Children) -> impl IntoView {
                         {move || {
                             let location = leptos_router::hooks::use_location();
                             let path = location.pathname.get();
-                            
+
                             if path.starts_with("/docs") || path == "/" {
                                 view! { <DocsSidebar /> }.into_any()
                             } else if path.starts_with("/schemas") {

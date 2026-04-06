@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::rendering::markdown::render_markdown;
 
-/// A single message in the chat UI.
+/// A single message in the chat UI (completed messages only).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct UiMessage {
     role: String,
@@ -51,6 +51,9 @@ fn ChatContent() -> impl IntoView {
     let (sessions, set_sessions) = signal(Vec::<SessionSummary>::new());
     let (error_msg, set_error_msg) = signal(Option::<String>::None);
     let (sidebar_open, set_sidebar_open) = signal(false);
+    // Holds the in-progress assistant response while streaming.
+    // Committed to `messages` when streaming completes.
+    let (streaming_content, set_streaming_content) = signal(String::new());
 
     // Load sessions on mount
     #[cfg(feature = "hydrate")]
@@ -71,20 +74,13 @@ fn ChatContent() -> impl IntoView {
 
         set_input.set(String::new());
         set_error_msg.set(None);
+        set_streaming_content.set(String::new());
 
-        // Add user message to UI
+        // Add user message to completed messages list
         set_messages.update(|msgs| {
             msgs.push(UiMessage {
                 role: "user".into(),
                 content: msg.clone(),
-            });
-        });
-
-        // Add empty assistant message (will be filled by streaming)
-        set_messages.update(|msgs| {
-            msgs.push(UiMessage {
-                role: "assistant".into(),
-                content: String::new(),
             });
         });
 
@@ -95,18 +91,23 @@ fn ChatContent() -> impl IntoView {
             let sid = session_id.get_untracked();
             use leptos::task::spawn_local;
             spawn_local(async move {
-                match stream_chat(msg, sid, set_messages, set_session_id, set_sessions).await {
-                    Ok(()) => {}
+                match stream_chat(msg, sid, set_streaming_content, set_session_id, set_sessions)
+                    .await
+                {
+                    Ok(()) => {
+                        // Commit the streamed content as a completed assistant message
+                        let content = streaming_content.get_untracked();
+                        set_messages.update(|msgs| {
+                            msgs.push(UiMessage {
+                                role: "assistant".into(),
+                                content,
+                            });
+                        });
+                        set_streaming_content.set(String::new());
+                    }
                     Err(e) => {
                         set_error_msg.set(Some(e));
-                        // Remove the empty assistant message on error
-                        set_messages.update(|msgs| {
-                            if let Some(last) = msgs.last() {
-                                if last.role == "assistant" && last.content.is_empty() {
-                                    msgs.pop();
-                                }
-                            }
-                        });
+                        set_streaming_content.set(String::new());
                     }
                 }
                 set_is_loading.set(false);
@@ -297,9 +298,7 @@ fn ChatContent() -> impl IntoView {
                                                     "bg-base-200/80 text-base-content border border-base-200 rounded-tl-none prose prose-sm max-w-none prose-headings:text-base-content prose-p:text-base-content/90"
                                                 }
                                             )>
-                                                {if msg.content.is_empty() && !is_user {
-                                                    view! { <span class="loading loading-dots loading-sm opacity-50 py-1"></span> }.into_any()
-                                                } else if is_user {
+                                                {if is_user {
                                                     view! { <div class="whitespace-pre-wrap">{msg.content.clone()}</div> }.into_any()
                                                 } else {
                                                     view! { <div inner_html=render_markdown(&msg.content)></div> }.into_any()
@@ -311,6 +310,29 @@ fn ChatContent() -> impl IntoView {
                             }
                         }
                     />
+
+                    // In-progress assistant message (shown while streaming)
+                    <Show when=move || is_loading.get() fallback=|| ()>
+                        <div class="flex w-full group justify-start">
+                            <div class="flex max-w-[85%] md:max-w-[75%] gap-3 flex-row">
+                                <div class="w-8 h-8 rounded-lg flex-shrink-0 flex items-center justify-center shadow-sm bg-base-300 text-base-content">
+                                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5Z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                                </div>
+                                <div class="flex flex-col gap-1">
+                                    <div class="px-4 py-2.5 rounded-2xl shadow-sm text-[15px] leading-relaxed relative bg-base-200/80 text-base-content border border-base-200 rounded-tl-none prose prose-sm max-w-none prose-headings:text-base-content prose-p:text-base-content/90">
+                                        {move || {
+                                            let content = streaming_content.get();
+                                            if content.is_empty() {
+                                                view! { <span class="loading loading-dots loading-sm opacity-50 py-1"></span> }.into_any()
+                                            } else {
+                                                view! { <div inner_html=render_markdown(&content)></div> }.into_any()
+                                            }
+                                        }}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </Show>
 
                     // Error message
                     <Show when=move || error_msg.get().is_some() fallback=|| ()>
@@ -419,7 +441,7 @@ async fn fetch_delete_session(session_id: &str) -> Result<(), String> {
 async fn stream_chat(
     message: String,
     session_id: Option<String>,
-    set_messages: WriteSignal<Vec<UiMessage>>,
+    set_streaming: WriteSignal<String>,
     set_session_id: WriteSignal<Option<String>>,
     set_sessions: WriteSignal<Vec<SessionSummary>>,
 ) -> Result<(), String> {
@@ -519,13 +541,7 @@ async fn stream_chat(
                                 if let Some(content) =
                                     event.get("content").and_then(|c| c.as_str())
                                 {
-                                    set_messages.update(|msgs| {
-                                        if let Some(last) = msgs.last_mut() {
-                                            if last.role == "assistant" {
-                                                last.content.push_str(content);
-                                            }
-                                        }
-                                    });
+                                    set_streaming.update(|s| s.push_str(content));
                                 }
                             }
                             Some("error") => {

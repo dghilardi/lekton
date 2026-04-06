@@ -315,7 +315,7 @@ pub fn Layout(children: Children) -> impl IntoView {
                     </label>
                     <a class="flex items-center gap-2 text-xl font-bold tracking-tight hover:opacity-80 transition-opacity" href="/">
                         <svg class="w-6 h-6 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5Z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-                        <span class="truncate">"Lekton"</span>
+                        <span class="hidden sm:inline truncate">"Lekton"</span>
                     </a>
                     <div class="flex items-center gap-1 ml-2 pl-2 sm:ml-4 sm:pl-4 border-l border-base-300">
                         <TopNavbarLinks />

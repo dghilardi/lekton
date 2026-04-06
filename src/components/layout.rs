@@ -307,9 +307,9 @@ pub fn Layout(children: Children) -> impl IntoView {
 
         <div class="min-h-screen bg-base-100/50">
             // Navbar
-            <header class="bg-base-100/80 backdrop-blur-md fixed top-0 inset-x-0 z-50 border-b border-base-200 px-4 h-16 flex items-center justify-between shadow-sm">
-                // Left
-                <div class="flex items-center gap-2 z-10">
+            <header class="bg-base-100/80 backdrop-blur-md fixed top-0 inset-x-0 z-50 border-b border-base-200 px-4 h-16 flex items-center gap-2 shadow-sm">
+                // Left — shrinks only when space is truly exhausted
+                <div class="flex items-center gap-2 shrink-0">
                     <label for="sidebar-drawer" class="btn btn-square btn-ghost drawer-button lg:hidden">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="inline-block w-5 h-5 stroke-current"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
                     </label>
@@ -321,9 +321,9 @@ pub fn Layout(children: Children) -> impl IntoView {
                         <TopNavbarLinks />
                     </div>
                 </div>
-                // Center (Absolutey Centered)
-                <div class="hidden sm:flex absolute inset-0 pointer-events-none items-center justify-center">
-                    <div class="w-full max-w-md px-4 pointer-events-auto">
+                // Center — takes all remaining space, search bar fills it up to max-w
+                <div class="hidden sm:flex flex-1 min-w-0 items-center justify-center">
+                    <div class="w-full max-w-md">
                         <button
                             class="btn btn-ghost bg-base-200/50 hover:bg-base-200 border border-base-300 hover:border-base-content/20 w-full justify-between shadow-sm flex-nowrap h-10 min-h-10 px-3 transition-colors font-normal text-base-content/70"
                             on:click=move |_| set_search_modal_open.set(true)
@@ -338,8 +338,8 @@ pub fn Layout(children: Children) -> impl IntoView {
                         </button>
                     </div>
                 </div>
-                // Right
-                <div class="flex items-center gap-2 z-10 flex-nowrap shrink-0">
+                // Right — never shrinks
+                <div class="flex items-center gap-2 flex-nowrap shrink-0">
                     // Mobile search icon
                     <button class="btn btn-circle btn-ghost sm:hidden" on:click=move |_| set_search_modal_open.set(true)>
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>

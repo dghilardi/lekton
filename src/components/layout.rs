@@ -203,8 +203,8 @@ pub fn TopNavbarLinks() -> impl IntoView {
                             }}
                         </div>
 
-                        // ── TIER 3: md–lg — icons only ────────────────────────────────────────
-                        <div class="hidden md:flex lg:hidden items-center gap-1">
+                        // ── TIER 3: <lg — icons only (always visible below lg) ───────────────
+                        <div class="flex lg:hidden items-center gap-1">
                             // Book icon + docs dropdown
                             <div class="dropdown dropdown-hover dropdown-bottom">
                                 <div tabindex="0" role="button"
@@ -317,12 +317,12 @@ pub fn Layout(children: Children) -> impl IntoView {
                         <svg class="w-6 h-6 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5Z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
                         <span class="truncate">"Lekton"</span>
                     </a>
-                    <div class="hidden md:flex items-center gap-1 ml-4 pl-4 border-l border-base-300">
+                    <div class="flex items-center gap-1 ml-2 pl-2 sm:ml-4 sm:pl-4 border-l border-base-300">
                         <TopNavbarLinks />
                     </div>
                 </div>
-                // Center — takes all remaining space, search bar fills it up to max-w
-                <div class="hidden sm:flex flex-1 min-w-0 items-center justify-center">
+                // Center — visible at md+, replaced by icon on smaller screens
+                <div class="hidden md:flex flex-1 min-w-0 items-center justify-center">
                     <div class="w-full max-w-md">
                         <button
                             class="btn btn-ghost bg-base-200/50 hover:bg-base-200 border border-base-300 hover:border-base-content/20 w-full justify-between shadow-sm flex-nowrap h-10 min-h-10 px-3 transition-colors font-normal text-base-content/70"
@@ -340,8 +340,8 @@ pub fn Layout(children: Children) -> impl IntoView {
                 </div>
                 // Right — never shrinks
                 <div class="flex items-center gap-2 flex-nowrap shrink-0">
-                    // Mobile search icon
-                    <button class="btn btn-circle btn-ghost sm:hidden" on:click=move |_| set_search_modal_open.set(true)>
+                    // Search icon — shown when full search bar is hidden
+                    <button class="btn btn-circle btn-ghost md:hidden" on:click=move |_| set_search_modal_open.set(true)>
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                     </button>
                     // Theme toggle

@@ -137,6 +137,14 @@ LKN__SEARCH__API_KEY=dev-master-key-change-in-prod
 # RAG Configuration (Vector Database)
 LKN__RAG__QDRANT_URL=http://localhost:6334
 LKN__RAG__QDRANT_COLLECTION=lekton
+LKN__RAG__EMBEDDING_URL=http://localhost:11434/v1
+LKN__RAG__EMBEDDING_MODEL=nomic-embed-text
+LKN__RAG__EMBEDDING_DIMENSIONS=768
+LKN__RAG__EMBEDDING_API_KEY=ollama
+LKN__RAG__CHAT_URL=http://localhost:11434/v1
+LKN__RAG__CHAT_MODEL=meta-llama/llama-3-70b
+LKN__RAG__SYSTEM_PROMPT_TEMPLATE={{context}}{{question}}
+LKN__RAG__CHAT_API_KEY=ollama
 
 # Enable demo auth mode (bypasses OIDC)
 LKN__AUTH__DEMO_MODE=true

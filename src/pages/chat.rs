@@ -5,20 +5,58 @@ use crate::rendering::markdown::render_markdown;
 
 /// A single message in the chat UI (completed messages only).
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct UiMessage {
+pub struct UiMessage {
     role: String,
     content: String,
 }
 
+
 /// Session summary for the sidebar.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct SessionSummary {
-    id: String,
-    title: String,
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SessionSummary {
+    pub id: String,
+    pub title: String,
+}
+
+#[derive(Clone, Copy)]
+pub struct ChatContext {
+    pub messages: RwSignal<Vec<UiMessage>>,
+    pub session_id: RwSignal<Option<String>>,
+    pub sessions: RwSignal<Vec<SessionSummary>>,
+    pub is_loading: RwSignal<bool>,
+    pub streaming_content: RwSignal<String>,
+    pub error_msg: RwSignal<Option<String>>,
+}
+
+impl ChatContext {
+    pub fn new() -> Self {
+        Self {
+            messages: RwSignal::new(Vec::new()),
+            session_id: RwSignal::new(None),
+            sessions: RwSignal::new(Vec::new()),
+            is_loading: RwSignal::new(false),
+            streaming_content: RwSignal::new(String::new()),
+            error_msg: RwSignal::new(None),
+        }
+    }
 }
 
 #[component]
 pub fn ChatPage() -> impl IntoView {
+    let context = use_context::<ChatContext>().expect("ChatContext not found");
+
+    // Load sessions on mount
+    #[cfg(feature = "hydrate")]
+    {
+        use leptos::task::spawn_local;
+        let sessions = context.sessions;
+        spawn_local(async move {
+            if let Ok(list) = fetch_sessions().await {
+                sessions.set(list);
+            }
+        });
+    }
+
     let current_user =
         use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
     let is_logged_in = move || {
@@ -37,34 +75,24 @@ pub fn ChatPage() -> impl IntoView {
                 </div>
             </div>
         }>
-            <ChatContent />
+            <div class="h-full flex flex-col">
+                <ChatContent />
+            </div>
         </Show>
     }
 }
 
 #[component]
 fn ChatContent() -> impl IntoView {
-    let (messages, set_messages) = signal(Vec::<UiMessage>::new());
-    let (input, set_input) = signal(String::new());
-    let (is_loading, set_is_loading) = signal(false);
-    let (session_id, set_session_id) = signal(Option::<String>::None);
-    let (sessions, set_sessions) = signal(Vec::<SessionSummary>::new());
-    let (error_msg, set_error_msg) = signal(Option::<String>::None);
-    let (sidebar_open, set_sidebar_open) = signal(false);
-    // Holds the in-progress assistant response while streaming.
-    // Committed to `messages` when streaming completes.
-    let (streaming_content, set_streaming_content) = signal(String::new());
+    let context = use_context::<ChatContext>().expect("ChatContext not found");
+    let messages = context.messages;
+    let session_id = context.session_id;
+    let sessions = context.sessions;
+    let is_loading = context.is_loading;
+    let streaming_content = context.streaming_content;
+    let error_msg = context.error_msg;
 
-    // Load sessions on mount
-    #[cfg(feature = "hydrate")]
-    {
-        use leptos::task::spawn_local;
-        spawn_local(async move {
-            if let Ok(list) = fetch_sessions().await {
-                set_sessions.set(list);
-            }
-        });
-    }
+    let (input, set_input) = signal(String::new());
 
     let send_message = move || {
         let msg = input.get_untracked().trim().to_string();
@@ -73,78 +101,42 @@ fn ChatContent() -> impl IntoView {
         }
 
         set_input.set(String::new());
-        set_error_msg.set(None);
-        set_streaming_content.set(String::new());
+        error_msg.set(None);
+        streaming_content.set(String::new());
 
         // Add user message to completed messages list
-        set_messages.update(|msgs| {
+        messages.update(|msgs| {
             msgs.push(UiMessage {
                 role: "user".into(),
                 content: msg.clone(),
             });
         });
 
-        set_is_loading.set(true);
+        is_loading.set(true);
 
         #[cfg(feature = "hydrate")]
         {
             let sid = session_id.get_untracked();
             use leptos::task::spawn_local;
             spawn_local(async move {
-                match stream_chat(msg, sid, set_streaming_content, set_session_id, set_sessions)
+                match fetch_chat_stream(sid, msg, session_id, sessions, streaming_content)
                     .await
                 {
                     Ok(()) => {
                         // Commit the streamed content as a completed assistant message
                         let content = streaming_content.get_untracked();
-                        set_messages.update(|msgs| {
+                        messages.update(|msgs| {
                             msgs.push(UiMessage {
                                 role: "assistant".into(),
-                                content,
+                                content: content.clone(),
                             });
                         });
-                        set_streaming_content.set(String::new());
+                        streaming_content.set(String::new());
+                        is_loading.set(false);
                     }
                     Err(e) => {
-                        set_error_msg.set(Some(e));
-                        set_streaming_content.set(String::new());
-                    }
-                }
-                set_is_loading.set(false);
-            });
-        }
-    };
-
-    let start_new_session = move |_| {
-        set_session_id.set(None);
-        set_messages.set(Vec::new());
-        set_error_msg.set(None);
-        set_sidebar_open.set(false);
-    };
-
-    let load_session = move |sid: String| {
-        set_session_id.set(Some(sid.clone()));
-        set_messages.set(Vec::new());
-        set_error_msg.set(None);
-        set_sidebar_open.set(false);
-        // We don't load old messages from server yet — start fresh in the session
-        // (history is maintained server-side for prompt context)
-    };
-
-    let delete_session = move |sid: String| {
-        #[cfg(feature = "hydrate")]
-        {
-            use leptos::task::spawn_local;
-            let current_sid = session_id.get_untracked();
-            spawn_local(async move {
-                if fetch_delete_session(&sid).await.is_ok() {
-                    set_sessions.update(|sessions| {
-                        sessions.retain(|s| s.id != sid);
-                    });
-                    // If we deleted the active session, clear it
-                    if current_sid.as_deref() == Some(&sid) {
-                        set_session_id.set(None);
-                        set_messages.set(Vec::new());
+                        error_msg.set(Some(e));
+                        is_loading.set(false);
                     }
                 }
             });
@@ -152,86 +144,9 @@ fn ChatContent() -> impl IntoView {
     };
 
     view! {
-        <div class="flex h-[calc(100vh-10rem)] lg:h-[calc(100vh-12rem)] -mt-6 -mx-6 lg:-mt-10 lg:-mx-10 bg-base-100/50 rounded-xl overflow-hidden border border-base-200 shadow-sm relative">
-            // Sidebar Overlay (Mobile)
-            <div
-                class=move || format!(
-                    "absolute inset-0 z-20 bg-base-900/40 backdrop-blur-sm transition-opacity md:hidden {}",
-                    if sidebar_open.get() { "opacity-100 pointer-events-auto" } else { "opacity-0 pointer-events-none" }
-                )
-                on:click=move |_| set_sidebar_open.set(false)
-            ></div>
-
-            // Sidebar: session list
-            <div
-                class=move || format!(
-                    "absolute md:relative inset-y-0 left-0 z-30 w-72 bg-base-200/50 backdrop-blur-md border-r border-base-200 flex flex-col transition-transform duration-300 transform md:translate-x-0 {}",
-                    if sidebar_open.get() { "translate-x-0" } else { "-translate-x-full" }
-                )
-            >
-                <div class="p-4 border-b border-base-200">
-                    <button class="btn btn-primary btn-sm w-full gap-2 shadow-md" on:click=start_new_session>
-                        <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
-                        "New Chat"
-                    </button>
-                </div>
-                <div class="flex-1 overflow-y-auto p-3 space-y-2">
-                    <div class="text-[10px] uppercase font-bold tracking-wider text-base-content/40 px-2 mb-1">"Recent Chats"</div>
-                    <For
-                        each=move || sessions.get()
-                        key=|s| s.id.clone()
-                        children=move |session| {
-                            let sid_click = session.id.clone();
-                            let sid_delete = session.id.clone();
-                            let is_active = {
-                                let sid = session.id.clone();
-                                move || session_id.get().as_deref() == Some(&sid)
-                            };
-                            view! {
-                                <div class="flex items-center group gap-1">
-                                    <button
-                                        class=move || format!(
-                                            "btn btn-ghost btn-sm flex-1 justify-start text-left truncate font-normal px-2 hover:bg-base-300/50 {}",
-                                            if is_active() { "bg-primary/10 text-primary font-medium" } else { "text-base-content/70" }
-                                        )
-                                        on:click={
-                                            let sid = sid_click.clone();
-                                            move |_| load_session(sid.clone())
-                                        }
-                                    >
-                                        <svg class="w-4 h-4 opacity-50 mr-1 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                                        <span class="truncate">{session.title.clone()}</span>
-                                    </button>
-                                    <button
-                                        class="btn btn-ghost btn-sm btn-square opacity-0 group-hover:opacity-100 hover:text-error transition-opacity"
-                                        on:click={
-                                            let sid = sid_delete.clone();
-                                            move |_| delete_session(sid.clone())
-                                        }
-                                    >
-                                        <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-                                    </button>
-                                </div>
-                            }
-                        }
-                    />
-                </div>
-            </div>
-
+        <div class="flex h-[calc(100vh-8rem)] bg-base-100 rounded-xl overflow-hidden border border-base-200 shadow-sm relative">
             // Main chat area
             <div class="flex-1 flex flex-col min-w-0 bg-base-100 relative">
-                // Mobile Header
-                <div class="md:hidden flex items-center p-3 border-b border-base-200 gap-3">
-                    <button class="btn btn-ghost btn-sm btn-square" on:click=move |_| set_sidebar_open.set(true)>
-                        <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-                    </button>
-                    <span class="font-bold truncate text-sm">
-                        {move || {
-                            let sid = session_id.get();
-                            sessions.get().iter().find(|s| Some(s.id.clone()) == sid).map(|s| s.title.clone()).unwrap_or_else(|| "AI Assistant".into())
-                        }}
-                    </span>
-                </div>
 
                 // Messages
                 <div class="flex-1 overflow-y-auto px-4 py-6 md:p-8 space-y-6">
@@ -391,7 +306,7 @@ fn ChatContent() -> impl IntoView {
 // ── Client-side fetch helpers (hydrate only) ─────────────────────────────────
 
 #[cfg(feature = "hydrate")]
-async fn fetch_sessions() -> Result<Vec<SessionSummary>, String> {
+pub async fn fetch_sessions() -> Result<Vec<SessionSummary>, String> {
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;
 
@@ -417,7 +332,7 @@ async fn fetch_sessions() -> Result<Vec<SessionSummary>, String> {
 }
 
 #[cfg(feature = "hydrate")]
-async fn fetch_delete_session(session_id: &str) -> Result<(), String> {
+pub async fn fetch_delete_session(session_id: &str) -> Result<(), String> {
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;
 
@@ -438,40 +353,41 @@ async fn fetch_delete_session(session_id: &str) -> Result<(), String> {
 
 /// Stream chat response via fetch + ReadableStream.
 #[cfg(feature = "hydrate")]
-async fn stream_chat(
-    message: String,
+pub async fn fetch_chat_stream(
     session_id: Option<String>,
-    set_streaming: WriteSignal<String>,
-    set_session_id: WriteSignal<Option<String>>,
-    set_sessions: WriteSignal<Vec<SessionSummary>>,
+    message: String,
+    set_session_id: RwSignal<Option<String>>,
+    set_sessions: RwSignal<Vec<SessionSummary>>,
+    set_streaming: RwSignal<String>,
 ) -> Result<(), String> {
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;
     use js_sys::Reflect;
+    use web_sys::{RequestInit, Headers, Request, Response, ReadableStreamDefaultReader, TextDecoder};
 
-    let window = leptos::web_sys::window().ok_or("no window")?;
+    let window = web_sys::window().ok_or("No window")?;
 
     // Build request
     let body = serde_json::json!({
         "session_id": session_id,
         "message": message,
     });
-    let opts = leptos::web_sys::RequestInit::new();
+    let opts = RequestInit::new();
     opts.set_method("POST");
-    let headers = leptos::web_sys::Headers::new().map_err(|e| format!("{e:?}"))?;
+    let headers = Headers::new().map_err(|e| format!("{e:?}"))?;
     headers
         .set("Content-Type", "application/json")
         .map_err(|e| format!("{e:?}"))?;
     opts.set_headers(&headers);
     opts.set_body(&JsValue::from_str(&body.to_string()));
 
-    let request = leptos::web_sys::Request::new_with_str_and_init("/api/v1/rag/chat", &opts)
+    let request = Request::new_with_str_and_init("/api/v1/rag/chat", &opts)
         .map_err(|e| format!("{e:?}"))?;
 
     let resp_value = JsFuture::from(window.fetch_with_request(&request))
         .await
         .map_err(|e| format!("{e:?}"))?;
-    let resp: leptos::web_sys::Response = resp_value.dyn_into().map_err(|_| "not a Response")?;
+    let resp: Response = resp_value.dyn_into().map_err(|_| "not a Response")?;
 
     if !resp.ok() {
         return Err(format!("Chat request failed: {}", resp.status()));
@@ -481,10 +397,10 @@ async fn stream_chat(
     let body = resp.body().ok_or("no body")?;
     let reader = body
         .get_reader()
-        .dyn_into::<leptos::web_sys::ReadableStreamDefaultReader>()
+        .dyn_into::<ReadableStreamDefaultReader>()
         .map_err(|_| "not a reader")?;
 
-    let decoder = js_sys::eval("new TextDecoder()").map_err(|e| format!("{e:?}"))?;
+    let decoder = TextDecoder::new().map_err(|e| format!("{e:?}"))?;
     let mut buffer = String::new();
 
     loop {
@@ -505,15 +421,10 @@ async fn stream_chat(
             .map_err(|e| format!("{e:?}"))?;
 
         // Decode bytes to string
-        let decode_fn: js_sys::Function = Reflect::get(&decoder, &JsValue::from_str("decode"))
-            .map_err(|e| format!("{e:?}"))?
-            .dyn_into()
-            .map_err(|_| "decode is not a function")?;
-        let text = decode_fn
-            .call1(&decoder, &value)
-            .map_err(|e| format!("{e:?}"))?
-            .as_string()
-            .unwrap_or_default();
+        let value_obj: js_sys::Object = value.into();
+        let text = decoder
+            .decode_with_buffer_source(&value_obj)
+            .map_err(|e| format!("{e:?}"))?;
 
         buffer.push_str(&text);
 

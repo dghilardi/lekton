@@ -1,5 +1,5 @@
 mod admin_settings;
-mod chat;
+pub mod chat;
 mod doc;
 mod home;
 mod login;

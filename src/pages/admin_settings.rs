@@ -1,4 +1,6 @@
 use leptos::prelude::*;
+use leptos_router::hooks::use_params;
+use leptos_router::params::Params;
 
 use crate::app::{
     create_service_token, deactivate_service_token, get_custom_css, get_navigation,
@@ -6,6 +8,12 @@ use crate::app::{
     save_navigation_order, trigger_rag_reindex, CreateTokenResult, NavItem,
     NavigationOrderEntry, ServiceTokenInfo,
 };
+
+
+#[derive(Params, PartialEq, Clone, Debug)]
+pub struct AdminParams {
+    pub section: String,
+}
 
 /// Admin settings page with service token management and theming.
 #[component]
@@ -18,6 +26,9 @@ pub fn AdminSettingsPage() -> impl IntoView {
             .map(|u| u.is_admin)
             .unwrap_or(false)
     };
+
+    let params = use_params::<AdminParams>();
+    let section = move || params.with(|p| p.as_ref().map(|p| p.section.clone()).unwrap_or_else(|_| "tokens".to_string()));
 
     view! {
         <Show
@@ -34,7 +45,7 @@ pub fn AdminSettingsPage() -> impl IntoView {
             }
         >
             <div class="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                <AdminSettingsContent />
+                <AdminSettingsContent section=section />
             </div>
         </Show>
     }
@@ -42,12 +53,15 @@ pub fn AdminSettingsPage() -> impl IntoView {
 
 /// Inner content, rendered only for admins.
 #[component]
-fn AdminSettingsContent() -> impl IntoView {
+fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) -> impl IntoView {
     // Created token (shown once in modal)
     let (created_token, set_created_token) = signal(Option::<CreateTokenResult>::None);
 
+    let section = std::sync::Arc::new(section);
+    let section2 = section.clone();
+
     view! {
-        <div class="max-w-5xl mx-auto space-y-12 pb-20">
+        <div class="max-w-5xl mx-auto space-y-8 pb-20">
             <header class="flex items-center gap-4 border-b border-base-200 pb-8">
                 <div class="p-3 bg-primary/10 rounded-2xl text-primary">
                     <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -56,17 +70,28 @@ fn AdminSettingsContent() -> impl IntoView {
                     </svg>
                 </div>
                 <div>
-                  <h1 class="text-4xl font-extrabold tracking-tight">"Admin Settings"</h1>
+                   {move || {
+                       let title = match section().as_str() {
+                           "tokens" => "Service Tokens",
+                           "navigation" => "Navigation Setup",
+                           "css" => "Visual Customization",
+                           "rag" => "RAG Index Management",
+                           _ => "Administration",
+                       };
+                       view! { <h1 class="text-4xl font-extrabold tracking-tight">{title}</h1> }
+                   }}
                   <p class="text-base-content/60 mt-1">"Manage your instance configuration, service tokens, and theming."</p>
                 </div>
             </header>
 
-            // Service Tokens section
             <div class="grid grid-cols-1 gap-8">
-                <ServiceTokenManager set_created_token=set_created_token />
-                <NavigationOrderEditor />
-                <CustomCssEditor />
-                <RagReindexSection />
+                {move || match section2().as_str() {
+                    "tokens" => view! { <ServiceTokenManager set_created_token=set_created_token /> }.into_any(),
+                    "navigation" => view! { <NavigationOrderEditor /> }.into_any(),
+                    "css" => view! { <CustomCssEditor /> }.into_any(),
+                    "rag" => view! { <RagReindexSection /> }.into_any(),
+                    _ => view! { <div class="alert alert-warning">"Page not found"</div> }.into_any(),
+                }}
             </div>
         </div>
 

@@ -86,6 +86,19 @@ chrono = { version = "0.4", features = ["serde"] }
 wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3", features = [
+    "Window",
+    "Document",
+    "Element",
+    "HtmlElement",
+    "ReadableStream",
+    "ReadableStreamDefaultReader",
+    "Response",
+    "RequestInit",
+    "RequestMode",
+    "Headers",
+    "TextDecoder",
+], optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
 serde-wasm-bindgen = { version = "0.6", optional = true }
 gloo-timers = { version = "0.3", features = ["futures"], optional = true }
@@ -123,6 +136,7 @@ hydrate = [
     "dep:wasm-bindgen",
     "dep:wasm-bindgen-futures",
     "dep:js-sys",
+    "dep:web-sys",
     "dep:serde-wasm-bindgen",
     "dep:gloo-timers",
 ]

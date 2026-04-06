@@ -804,6 +804,7 @@ pub fn App() -> impl IntoView {
     provide_context(current_user);
     provide_context(IsDemoMode(is_demo_mode));
     provide_context(IsRagEnabled(is_rag_enabled));
+    provide_context(crate::pages::chat::ChatContext::new());
 
     view! {
         <Title text="Lekton — Internal Developer Portal" />
@@ -818,7 +819,7 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/schemas") view=SchemaListPage />
                     <Route path=path!("/schemas/:name") view=SchemaViewerPage />
                     <Route path=path!("/chat") view=ChatPage />
-                    <Route path=path!("/admin/settings") view=AdminSettingsPage />
+                    <Route path=path!("/admin/:section") view=AdminSettingsPage />
                 </Routes>
             </Layout>
         </Router>

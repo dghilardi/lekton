@@ -52,30 +52,24 @@ pub fn NavigationItem(item: NavItem, #[prop(optional)] level: u32) -> impl IntoV
 /// Navigation tree component that fetches and renders the sidebar navigation.
 #[component]
 pub fn NavigationTree() -> impl IntoView {
-    let nav_resource = Resource::new(
-        || (),
-        |_| get_navigation(),
-    );
+    let nav_resource = LocalResource::new(|| get_navigation());
 
     let location = leptos_router::hooks::use_location();
-    let active_root = Signal::derive(move || {
-        let path = location.pathname.get();
-        let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-        if parts.len() >= 2 && parts[0] == "docs" {
-            parts[1].to_string()
-        } else {
-            String::new()
-        }
-    });
 
     view! {
         <Suspense fallback=move || view! {
             <li><span class="loading loading-spinner loading-sm"></span></li>
         }>
             {move || {
-                nav_resource.get().map(|result| match result {
+                nav_resource.try_get().flatten().map(|result| match result {
                     Ok(items) => {
-                        let current_root = active_root.get();
+                        let path = location.pathname.get();
+                        let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+                        let current_root = if parts.len() >= 2 && parts[0] == "docs" {
+                            parts[1].to_string()
+                        } else {
+                            String::new()
+                        };
                         // Root-level sections (docs, hackday, …) live in the
                         // navbar only.  The sidebar shows the *children* of
                         // whichever section is currently selected.

@@ -21,6 +21,16 @@ pub struct IsDemoMode(pub Signal<bool>);
 #[derive(Clone, Copy)]
 pub struct IsRagEnabled(pub Signal<bool>);
 
+/// Implement `FromRef<AppState>` for `DemoMode` so that Axum extractors
+/// (`RequiredAuthUser`, `OptionalAuthUser`) can fall back to the demo session
+/// cookie when demo mode is active.
+#[cfg(feature = "ssr")]
+impl axum::extract::FromRef<AppState> for crate::auth::extractor::DemoMode {
+    fn from_ref(state: &AppState) -> Self {
+        crate::auth::extractor::DemoMode(state.demo_mode)
+    }
+}
+
 /// Shared application state (server-side only).
 #[cfg(feature = "ssr")]
 use std::sync::Arc;

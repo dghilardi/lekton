@@ -6,6 +6,9 @@
 //!   cookie; resolves to `None` when the token is absent or invalid.
 //! - [`RequiredAuthUser`]: like `OptionalAuthUser` but returns `401 Unauthorized`
 //!   when the user is not authenticated.
+//!
+//! Both extractors support demo mode: when [`DemoMode`] is `true`, they also
+//! accept the `lekton_demo_user` session cookie as a valid authentication source.
 
 use axum::extract::{FromRef, FromRequestParts};
 use axum::http::request::Parts;
@@ -23,11 +26,20 @@ pub const ACCESS_TOKEN_COOKIE: &str = "lekton_access_token";
 pub const REFRESH_TOKEN_COOKIE: &str = "lekton_refresh_token";
 /// Name of the httpOnly cookie carrying the serialised OAuth2/OIDC flow state.
 pub const AUTH_STATE_COOKIE: &str = "lekton_auth_state";
+/// Name of the httpOnly cookie carrying the demo session (demo mode only).
+pub const DEMO_USER_COOKIE: &str = "lekton_demo_user";
+
+/// Newtype wrapper for the demo-mode flag, used as Axum state.
+///
+/// Implement `axum::extract::FromRef<YourState>` to enable demo-mode fallback
+/// in [`OptionalAuthUser`] and [`RequiredAuthUser`].
+#[derive(Clone, Debug, Default)]
+pub struct DemoMode(pub bool);
 
 // ── OptionalAuthUser ──────────────────────────────────────────────────────────
 
 /// An Axum extractor that resolves to the authenticated user when a valid JWT
-/// cookie is present, or `None` otherwise.
+/// cookie (or demo session cookie in demo mode) is present, or `None` otherwise.
 ///
 /// This extractor never fails — unauthenticated requests simply receive `None`.
 /// Use [`RequiredAuthUser`] when the endpoint must reject unauthenticated callers.
@@ -37,20 +49,35 @@ pub struct OptionalAuthUser(pub Option<AuthenticatedUser>);
 impl<S> FromRequestParts<S> for OptionalAuthUser
 where
     Arc<TokenService>: axum::extract::FromRef<S>,
+    DemoMode: axum::extract::FromRef<S>,
     S: Send + Sync,
 {
     type Rejection = Infallible;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let token_service = Arc::<TokenService>::from_ref(state);
+        let demo_mode = DemoMode::from_ref(state).0;
         let jar = CookieJar::from_headers(&parts.headers);
 
-        let user = jar
+        // Try JWT first
+        if let Some(user) = jar
             .get(ACCESS_TOKEN_COOKIE)
             .and_then(|c| token_service.validate_access_token(c.value()).ok())
-            .map(|claims| TokenService::claims_to_user(&claims));
+            .map(|claims| TokenService::claims_to_user(&claims))
+        {
+            return Ok(OptionalAuthUser(Some(user)));
+        }
 
-        Ok(OptionalAuthUser(user))
+        // Fall back to demo session cookie when demo mode is active
+        if demo_mode {
+            if let Some(cookie) = jar.get(DEMO_USER_COOKIE) {
+                if let Ok(user) = serde_json::from_str::<AuthenticatedUser>(cookie.value()) {
+                    return Ok(OptionalAuthUser(Some(user)));
+                }
+            }
+        }
+
+        Ok(OptionalAuthUser(None))
     }
 }
 
@@ -77,18 +104,35 @@ impl IntoResponse for Unauthenticated {
 impl<S> FromRequestParts<S> for RequiredAuthUser
 where
     Arc<TokenService>: axum::extract::FromRef<S>,
+    DemoMode: axum::extract::FromRef<S>,
     S: Send + Sync,
 {
     type Rejection = Unauthenticated;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let token_service = Arc::<TokenService>::from_ref(state);
+        let demo_mode = DemoMode::from_ref(state).0;
         let jar = CookieJar::from_headers(&parts.headers);
 
-        jar.get(ACCESS_TOKEN_COOKIE)
+        // Try JWT first
+        if let Some(user) = jar
+            .get(ACCESS_TOKEN_COOKIE)
             .and_then(|c| token_service.validate_access_token(c.value()).ok())
-            .map(|claims| RequiredAuthUser(TokenService::claims_to_user(&claims)))
-            .ok_or(Unauthenticated)
+            .map(|claims| TokenService::claims_to_user(&claims))
+        {
+            return Ok(RequiredAuthUser(user));
+        }
+
+        // Fall back to demo session cookie when demo mode is active
+        if demo_mode {
+            if let Some(cookie) = jar.get(DEMO_USER_COOKIE) {
+                if let Ok(user) = serde_json::from_str::<AuthenticatedUser>(cookie.value()) {
+                    return Ok(RequiredAuthUser(user));
+                }
+            }
+        }
+
+        Err(Unauthenticated)
     }
 }
 

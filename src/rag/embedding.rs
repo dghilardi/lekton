@@ -69,7 +69,14 @@ impl EmbeddingService for OpenAICompatibleEmbedding {
         let mut embeddings = response.data;
         embeddings.sort_by_key(|e| e.index);
 
-        Ok(embeddings.into_iter().map(|e| e.embedding).collect())
+        let result: Vec<Vec<f32>> = embeddings.into_iter().map(|e| e.embedding).collect();
+        tracing::info!(
+            sent = texts.len(),
+            received = result.len(),
+            dims = result.first().map(|v| v.len()).unwrap_or(0),
+            "embed: Ollama response"
+        );
+        Ok(result)
     }
 }
 

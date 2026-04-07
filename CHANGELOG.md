@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.0] 2026-04-07
+
 ### Added
 - **RAG (Retrieval-Augmented Generation) integration**: Optional feature that connects to external embedding and chat providers (Ollama, OpenRouter, etc.) and Qdrant vector database. When configured, documents are automatically chunked, embedded and indexed during ingestion. Disabled by default — enable via `[rag]` config section with `qdrant_url` and `embedding_url`.
 - **RAG Chat**: Streaming multi-turn chat API (`POST /api/v1/rag/chat`) with SSE, filtered by user's access levels. Conversations are persisted in MongoDB (`chat_sessions` / `chat_messages` collections) with session management endpoints (`GET /api/v1/rag/sessions`, `DELETE /api/v1/rag/sessions/{id}`).

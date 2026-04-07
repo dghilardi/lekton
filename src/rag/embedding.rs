@@ -97,6 +97,8 @@ mod tests {
             chat_model: String::new(),
             chat_api_key: String::new(),
             system_prompt_template: String::new(),
+            rewrite_model: String::new(),
+            rewrite_max_tokens: 80,
         };
         assert!(OpenAICompatibleEmbedding::from_rag_config(&config).is_err());
     }
@@ -114,6 +116,8 @@ mod tests {
             chat_model: String::new(),
             chat_api_key: String::new(),
             system_prompt_template: String::new(),
+            rewrite_model: String::new(),
+            rewrite_max_tokens: 80,
         };
         assert!(OpenAICompatibleEmbedding::from_rag_config(&config).is_ok());
     }

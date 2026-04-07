@@ -3,8 +3,8 @@
 # These values are embedded in the binary and serve as fallbacks.
 # Override via:
 #   1. config/lekton.toml  (optional local file, git-ignored)
-#   2. Environment variables with the LKN_ prefix and __ as separator
-#      e.g. LKN_DATABASE__URI, LKN_AUTH__JWT_SECRET
+#   2. Environment variables with the LKN__ prefix and __ as separator
+#      e.g. LKN__DATABASE__URI, LKN__AUTH__JWT_SECRET
 
 [server]
 rate_limit_burst = 50
@@ -17,7 +17,7 @@ uri = "mongodb://localhost:27017"
 name = "lekton"
 
 [storage]
-# Required. Set via LKN_STORAGE__BUCKET or config/lekton.toml.
+# Required. Set via LKN__STORAGE__BUCKET or config/lekton.toml.
 bucket = ""
 
 [search]
@@ -32,3 +32,22 @@ jwt_access_ttl_secs = 900
 jwt_refresh_ttl_days = 30
 provider_type = "oidc"
 scopes = "openid profile email"
+
+[rag]
+# Leave empty to disable RAG entirely.
+qdrant_url = ""
+qdrant_collection = "docs_collection"
+embedding_url = ""
+embedding_model = "nomic-embed-text"
+embedding_dimensions = 768
+embedding_api_key = ""
+chat_url = ""
+chat_model = ""
+chat_api_key = ""
+system_prompt_template = """You are a helpful assistant for an internal developer portal. \
+Answer the user's question based on the following context extracted from the documentation.
+
+Context:
+{{ context }}
+
+If the context does not contain enough information to answer, say so honestly."""

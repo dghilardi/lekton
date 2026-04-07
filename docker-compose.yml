@@ -80,6 +80,8 @@ services:
         condition: service_completed_successfully
       meilisearch:
         condition: service_healthy
+      qdrant:
+        condition: service_healthy
     environment:
       - MONGODB_URI=mongodb://mongodb:27017
       - MONGODB_DATABASE=lekton
@@ -91,6 +93,8 @@ services:
       - SERVICE_TOKEN=demo-ingest-token
       - MEILISEARCH_URL=http://meilisearch:7700
       - MEILISEARCH_API_KEY=dev-master-key-change-in-prod
+      - LKN__RAG__QDRANT_URL=http://qdrant:6334
+      - LKN__RAG__QDRANT_COLLECTION=lekton
       - DEMO_MODE=true
       - RUST_LOG=lekton=info,tower_http=info
       - LEPTOS_SITE_ADDR=0.0.0.0:3000
@@ -100,6 +104,22 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+
+  # ===========================================================================
+  # Qdrant — Vector database for RAG
+  # ===========================================================================
+  qdrant:
+    image: qdrant/qdrant:v1.17
+    ports:
+      - "6333:6333" # HTTP API
+      - "6334:6334" # gRPC API
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   # ===========================================================================
   # Demo Loader — one-shot: ingest demo documents into Lekton
@@ -119,3 +139,4 @@ volumes:
   garage_data:
   garage_meta:
   meilisearch_data:
+  qdrant_data:

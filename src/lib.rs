@@ -12,6 +12,7 @@ pub mod error;
 pub mod pages;
 pub mod rendering;
 pub mod schema;
+pub mod rag;
 pub mod search;
 pub mod storage;
 #[cfg(test)]

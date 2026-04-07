@@ -9,17 +9,17 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  LKN_AUTH__DEMO_MODE: "true"
-  LKN_AUTH__SERVICE_TOKEN: "test-token"
-  LKN_DATABASE__URI: "mongodb://localhost:27017"
-  LKN_DATABASE__NAME: "lekton_e2e"
+  LKN__AUTH__DEMO_MODE: "true"
+  LKN__AUTH__SERVICE_TOKEN: "test-token"
+  LKN__DATABASE__URI: "mongodb://localhost:27017"
+  LKN__DATABASE__NAME: "lekton_e2e"
   AWS_ACCESS_KEY_ID: "minioadmin"
   AWS_SECRET_ACCESS_KEY: "minioadmin"
   AWS_REGION: "us-east-1"
-  LKN_STORAGE__BUCKET: "lekton-e2e"
-  LKN_STORAGE__ENDPOINT: "http://localhost:9000"
-  LKN_SEARCH__URL: "http://localhost:7700"
-  LKN_SEARCH__API_KEY: ""
+  LKN__STORAGE__BUCKET: "lekton-e2e"
+  LKN__STORAGE__ENDPOINT: "http://localhost:9000"
+  LKN__SEARCH__URL: "http://localhost:7700"
+  LKN__SEARCH__API_KEY: ""
 
 jobs:
   e2e:

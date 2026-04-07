@@ -27,6 +27,12 @@ async fn main() {
     let config = lekton::config::AppConfig::load()
         .expect("Failed to load application configuration");
 
+    // Debug config loading
+    println!("[DEBUG] LKN__AUTH__DEMO_MODE env: {:?}", std::env::var("LKN__AUTH__DEMO_MODE"));
+    println!("[DEBUG] Loaded config auth.demo_mode: {}", config.auth.demo_mode);
+    use std::io::Write;
+    std::io::stdout().flush().ok();
+
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -45,7 +51,7 @@ async fn main() {
             panic!(
                 "auth.demo_mode is enabled but auth.jwt_secret is set, which suggests a \
                  production environment. Set auth.allow_demo_in_production = true (or \
-                 LKN_AUTH__ALLOW_DEMO_IN_PRODUCTION=true) to override this safety check."
+                 LKN__AUTH__ALLOW_DEMO_IN_PRODUCTION=true) to override this safety check."
             );
         }
 
@@ -104,6 +110,14 @@ async fn main() {
         Arc::new(MongoDocumentVersionRepository::new(&mongo_db));
     let navigation_order_repo: Arc<dyn lekton::db::navigation_order_repository::NavigationOrderRepository> =
         Arc::new(MongoNavigationOrderRepository::new(&mongo_db));
+    let chat_repo: Option<Arc<dyn lekton::db::chat_repository::ChatRepository>> =
+        if config.rag.is_enabled() {
+            Some(Arc::new(
+                lekton::db::chat_repository::MongoChatRepository::new(&mongo_db),
+            ))
+        } else {
+            None
+        };
 
     // Seed default access levels (no-op if already present).
     if let Err(e) = access_level_repo.seed_defaults().await {
@@ -145,7 +159,7 @@ async fn main() {
             "dev-token".to_string()
         }
         _ => {
-            panic!("auth.service_token is required in production (set LKN_AUTH__SERVICE_TOKEN)");
+            panic!("auth.service_token is required in production (set LKN__AUTH__SERVICE_TOKEN)");
         }
     };
 
@@ -163,6 +177,76 @@ async fn main() {
 
     // OAuth2 / OIDC auth provider (optional — server starts without auth if not configured)
     let auth_provider = build_provider(&config.auth).await;
+
+    // Initialize RAG services (optional — app works without them)
+    let (rag_service, chat_service): (
+        Option<Arc<dyn lekton::rag::service::RagService>>,
+        Option<Arc<lekton::rag::chat::ChatService>>,
+    ) = if config.rag.is_enabled() {
+        use lekton::rag::embedding::OpenAICompatibleEmbedding;
+        use lekton::rag::vectorstore::QdrantVectorStore;
+
+        match (
+            OpenAICompatibleEmbedding::from_rag_config(&config.rag),
+            QdrantVectorStore::from_rag_config(&config.rag),
+        ) {
+            (Ok(embedding), Ok(vectorstore)) => {
+                let embedding: Arc<dyn lekton::rag::embedding::EmbeddingService> =
+                    Arc::new(embedding);
+                let vectorstore: Arc<dyn lekton::rag::vectorstore::VectorStore> =
+                    Arc::new(vectorstore);
+
+                // Ensure collection exists
+                if let Err(e) = vectorstore
+                    .ensure_collection(config.rag.embedding_dimensions)
+                    .await
+                {
+                    tracing::warn!("Failed to ensure Qdrant collection: {e} — RAG disabled");
+                    (None, None)
+                } else {
+                    let rag_svc = Arc::new(
+                        lekton::rag::service::DefaultRagService::new(
+                            embedding.clone(),
+                            vectorstore.clone(),
+                        ),
+                    );
+
+                    let chat_svc = if let Some(ref chat_repo) = chat_repo {
+                        match lekton::rag::chat::ChatService::from_rag_config(
+                            &config.rag,
+                            chat_repo.clone(),
+                            embedding,
+                            vectorstore,
+                        ) {
+                            Ok(svc) => {
+                                tracing::info!("RAG chat service initialized");
+                                Some(Arc::new(svc))
+                            }
+                            Err(e) => {
+                                tracing::warn!("RAG chat not available: {e}");
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    };
+
+                    tracing::info!(
+                        collection = %config.rag.qdrant_collection,
+                        "RAG service initialized"
+                    );
+                    (Some(rag_svc as Arc<dyn lekton::rag::service::RagService>), chat_svc)
+                }
+            }
+            (Err(e), _) | (_, Err(e)) => {
+                tracing::warn!("RAG not available: {e} — RAG will be disabled");
+                (None, None)
+            }
+        }
+    } else {
+        tracing::info!("RAG not configured — feature disabled");
+        (None, None)
+    };
 
     // Build application state
     let app_state = lekton::app::AppState {
@@ -182,6 +266,14 @@ async fn main() {
         navigation_order_repo,
         token_service,
         auth_provider,
+        reindex_state: if rag_service.is_some() {
+            Some(Arc::new(lekton::rag::reindex::ReindexState::default()))
+        } else {
+            None
+        },
+        rag_service,
+        chat_repo,
+        chat_service,
         insecure_cookies: config.server.insecure_cookies,
         max_attachment_size_bytes: config.server.max_attachment_size_mb * 1024 * 1024,
     };
@@ -282,6 +374,30 @@ async fn main() {
         .route(
             "/api/v1/admin/service-tokens/{id}",
             axum::routing::delete(api::admin::deactivate_service_token_handler),
+        )
+        .route(
+            "/api/v1/admin/rag/reindex",
+            axum::routing::post(api::rag::trigger_reindex_handler),
+        )
+        .route(
+            "/api/v1/admin/rag/reindex/status",
+            axum::routing::get(api::rag::reindex_status_handler),
+        )
+        .route(
+            "/api/v1/rag/chat",
+            axum::routing::post(api::rag::chat_handler),
+        )
+        .route(
+            "/api/v1/rag/sessions",
+            axum::routing::get(api::rag::list_sessions_handler),
+        )
+        .route(
+            "/api/v1/rag/sessions/{id}",
+            axum::routing::delete(api::rag::delete_session_handler),
+        )
+        .route(
+            "/api/v1/rag/sessions/{id}/messages",
+            axum::routing::get(api::rag::get_session_messages_handler),
         );
 
     // Mount demo auth routes when demo mode is enabled, OAuth2/OIDC routes otherwise

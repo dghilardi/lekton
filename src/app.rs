@@ -8,9 +8,28 @@ use crate::db::settings_repository::NavGroup;
 
 use crate::components::Layout;
 use crate::editor::component::EditorPage;
-use crate::pages::{AdminSettingsPage, DocPage, HomePage, LoginPage, NotFound};
+use crate::pages::{AdminSettingsPage, ChatPage, DocPage, HomePage, LoginPage, NotFound};
 use crate::schema::component::{SchemaListPage, SchemaViewerPage};
 use crate::search::client::SearchHit;
+
+/// Newtype wrapper for the demo-mode signal, used as Leptos context.
+/// Prevents collision with other `Signal<bool>` contexts (e.g. `IsRagEnabled`).
+#[derive(Clone, Copy)]
+pub struct IsDemoMode(pub Signal<bool>);
+
+/// Newtype wrapper for the RAG-enabled signal, used as Leptos context.
+#[derive(Clone, Copy)]
+pub struct IsRagEnabled(pub Signal<bool>);
+
+/// Implement `FromRef<AppState>` for `DemoMode` so that Axum extractors
+/// (`RequiredAuthUser`, `OptionalAuthUser`) can fall back to the demo session
+/// cookie when demo mode is active.
+#[cfg(feature = "ssr")]
+impl axum::extract::FromRef<AppState> for crate::auth::extractor::DemoMode {
+    fn from_ref(state: &AppState) -> Self {
+        crate::auth::extractor::DemoMode(state.demo_mode)
+    }
+}
 
 /// Shared application state (server-side only).
 #[cfg(feature = "ssr")]
@@ -36,6 +55,10 @@ pub struct AppState {
     pub navigation_order_repo: Arc<dyn crate::db::navigation_order_repository::NavigationOrderRepository>,
     pub token_service: Arc<crate::auth::token_service::TokenService>,
     pub auth_provider: Option<Arc<dyn crate::auth::provider::AuthProvider>>,
+    pub rag_service: Option<Arc<dyn crate::rag::service::RagService>>,
+    pub reindex_state: Option<Arc<crate::rag::reindex::ReindexState>>,
+    pub chat_repo: Option<Arc<dyn crate::db::chat_repository::ChatRepository>>,
+    pub chat_service: Option<Arc<crate::rag::chat::ChatService>>,
     /// Whether cookies should be set without the `Secure` flag (HTTP local dev).
     #[from_ref(skip)]
     pub insecure_cookies: bool,
@@ -337,6 +360,65 @@ pub async fn get_current_user() -> Result<Option<crate::auth::models::Authentica
 pub async fn get_is_demo_mode() -> Result<bool, ServerFnError> {
     let state = expect_context::<AppState>();
     Ok(state.demo_mode)
+}
+
+/// Server function to check whether RAG chat is available.
+#[server(GetIsRagEnabled, "/api")]
+pub async fn get_is_rag_enabled() -> Result<bool, ServerFnError> {
+    let state = expect_context::<AppState>();
+    Ok(state.rag_service.is_some() && state.chat_service.is_some())
+}
+
+/// Server function to get RAG re-index status.
+#[server(GetRagReindexStatus, "/api")]
+pub async fn get_rag_reindex_status() -> Result<(bool, u32, bool), ServerFnError> {
+    use std::sync::atomic::Ordering;
+    let state = expect_context::<AppState>();
+    let rag_enabled = state.rag_service.is_some();
+    match &state.reindex_state {
+        Some(reindex) => Ok((
+            reindex.is_running.load(Ordering::Acquire),
+            reindex.progress.load(Ordering::Relaxed),
+            rag_enabled,
+        )),
+        None => Ok((false, 0, rag_enabled)),
+    }
+}
+
+/// Server function to trigger RAG re-index (admin only).
+#[server(TriggerRagReindex, "/api")]
+pub async fn trigger_rag_reindex() -> Result<String, ServerFnError> {
+    use std::sync::atomic::Ordering;
+    let state = expect_context::<AppState>();
+
+    let rag = state
+        .rag_service
+        .as_ref()
+        .ok_or_else(|| ServerFnError::new("RAG is not enabled"))?;
+
+    let reindex = state
+        .reindex_state
+        .as_ref()
+        .ok_or_else(|| ServerFnError::new("Reindex state not available"))?;
+
+    if reindex
+        .is_running
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Err(ServerFnError::new("Re-index is already in progress"));
+    }
+
+    let reindex_clone = reindex.clone();
+    let document_repo = state.document_repo.clone();
+    let storage = state.storage_client.clone();
+    let rag_clone = rag.clone();
+
+    tokio::spawn(async move {
+        crate::rag::reindex::run_reindex(reindex_clone, document_repo, storage, rag_clone).await;
+    });
+
+    Ok("Re-index started".to_string())
 }
 
 /// Server function to log out the current user.
@@ -702,6 +784,7 @@ pub fn App() -> impl IntoView {
 
     let user_resource = LocalResource::new(get_current_user);
     let demo_mode_resource = LocalResource::new(get_is_demo_mode);
+    let rag_resource = LocalResource::new(get_is_rag_enabled);
 
     let current_user: Signal<Option<crate::auth::models::AuthenticatedUser>> =
         Signal::derive(move || {
@@ -714,8 +797,14 @@ pub fn App() -> impl IntoView {
         demo_mode_resource.get().and_then(|res| res.ok()).unwrap_or(true)
     });
 
+    let is_rag_enabled: Signal<bool> = Signal::derive(move || {
+        rag_resource.get().and_then(|res| res.ok()).unwrap_or(false)
+    });
+
     provide_context(current_user);
-    provide_context(is_demo_mode);
+    provide_context(IsDemoMode(is_demo_mode));
+    provide_context(IsRagEnabled(is_rag_enabled));
+    provide_context(crate::pages::chat::ChatContext::new());
 
     view! {
         <Title text="Lekton — Internal Developer Portal" />
@@ -729,7 +818,8 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/edit/*slug") view=EditorPage />
                     <Route path=path!("/schemas") view=SchemaListPage />
                     <Route path=path!("/schemas/:name") view=SchemaViewerPage />
-                    <Route path=path!("/admin/settings") view=AdminSettingsPage />
+                    <Route path=path!("/chat") view=ChatPage />
+                    <Route path=path!("/admin/:section") view=AdminSettingsPage />
                 </Routes>
             </Layout>
         </Router>

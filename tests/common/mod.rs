@@ -175,6 +175,10 @@ impl TestEnv {
             auth_provider: None,
             insecure_cookies: true,
             max_attachment_size_bytes: 5242880,
+            rag_service: None,
+            reindex_state: None,
+            chat_repo: None,
+            chat_service: None,
         };
 
         // --- Build Router (API routes only, no Leptos SSR) ---
@@ -463,6 +467,10 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
         auth_provider: None,
         insecure_cookies: true,
         max_attachment_size_bytes: 5242880,
+        rag_service: None,
+        reindex_state: None,
+        chat_repo: None,
+        chat_service: None,
     };
 
     let router = Router::new()

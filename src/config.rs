@@ -2,8 +2,8 @@
 //!
 //! Configuration is loaded in priority order (highest wins):
 //!
-//! 1. Environment variables with prefix `LKN_` and `__` as the nesting separator.
-//!    Examples: `LKN_DATABASE__URI`, `LKN_AUTH__JWT_SECRET`.
+//! 1. Environment variables with prefix `LKN__` and `__` as the nesting separator.
+//!    Examples: `LKN__DATABASE__URI`, `LKN__AUTH__JWT_SECRET`.
 //! 2. `config/lekton.toml` — optional local override file (git-ignored).
 //! 3. `config/default.toml` — embedded defaults shipped with the binary.
 //!
@@ -24,6 +24,7 @@ pub struct AppConfig {
     pub storage: StorageConfig,
     pub search: SearchConfig,
     pub auth: AuthConfig,
+    pub rag: RagConfig,
 }
 
 // ── Server ────────────────────────────────────────────────────────────────────
@@ -116,6 +117,39 @@ pub struct AuthConfig {
     pub userinfo_name_field: Option<String>,
 }
 
+// ── RAG ──────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct RagConfig {
+    /// Qdrant gRPC endpoint (e.g. `http://localhost:6334`). Empty disables RAG.
+    pub qdrant_url: String,
+    /// Qdrant collection name. Switchable for model fine-tuning.
+    pub qdrant_collection: String,
+    /// OpenAI-compatible embedding endpoint (e.g. Ollama at `http://localhost:11434/v1`).
+    pub embedding_url: String,
+    /// Embedding model name (e.g. `nomic-embed-text`).
+    pub embedding_model: String,
+    /// Vector dimensions produced by the embedding model.
+    pub embedding_dimensions: u32,
+    /// API key for the embedding endpoint. Optional.
+    pub embedding_api_key: String,
+    /// OpenAI-compatible chat/completion endpoint (e.g. OpenRouter, Ollama).
+    pub chat_url: String,
+    /// Chat model name (e.g. `meta-llama/llama-3-70b`).
+    pub chat_model: String,
+    /// API key for the chat endpoint. Optional.
+    pub chat_api_key: String,
+    /// Tera template for the system prompt. Available variables: `{{context}}`, `{{question}}`.
+    pub system_prompt_template: String,
+}
+
+impl RagConfig {
+    /// Returns `true` when RAG is fully configured (both Qdrant and embedding URLs set).
+    pub fn is_enabled(&self) -> bool {
+        !self.qdrant_url.is_empty() && !self.embedding_url.is_empty()
+    }
+}
+
 // ── Loader ────────────────────────────────────────────────────────────────────
 
 #[cfg(feature = "ssr")]
@@ -133,17 +167,11 @@ impl AppConfig {
             ))
             // Optional local override (e.g. developer's config/lekton.toml)
             .add_source(config::File::with_name("config/lekton").required(false))
-            // First pass: raw strings. Ensures strings with hyphens or complex characters
-            // aren't silently dropped or mutated by `try_parsing`.
+            // Environment variables with prefix LKN__ and __ as separator.
+            // try_parsing(true) allows parsing "true", "false", and numbers from env vars.
             .add_source(
                 config::Environment::with_prefix("LKN")
-                    .separator("__")
-                    .try_parsing(false),
-            )
-            // Second pass: parses booleans (e.g. demo_mode) and numbers (e.g. rate_limit).
-            // Overwrites the raw strings with typed values where applicable.
-            .add_source(
-                config::Environment::with_prefix("LKN")
+                    .prefix_separator("__")
                     .separator("__")
                     .try_parsing(true),
             )
@@ -157,8 +185,14 @@ mod tests {
     #[test]
     #[cfg(feature = "ssr")]
     fn test_config_env() {
-        std::env::set_var("LKN_STORAGE__BUCKET", "testing-bucket");
-        let config = super::AppConfig::load().unwrap();
+        std::env::set_var("LKN__STORAGE__BUCKET", "testing-bucket");
+        std::env::set_var("LKN__AUTH__DEMO_MODE", "true");
+        std::env::set_var("LKN__SERVER__RATE_LIMIT_BURST", "123");
+
+        let config = super::AppConfig::load().expect("Failed to load config with env vars");
+
         assert_eq!(config.storage.bucket, "testing-bucket");
+        assert!(config.auth.demo_mode);
+        assert_eq!(config.server.rate_limit_burst, 123);
     }
 }

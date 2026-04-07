@@ -1,10 +1,12 @@
 mod admin_settings;
+pub mod chat;
 mod doc;
 mod home;
 mod login;
 mod not_found;
 
 pub use admin_settings::*;
+pub use chat::*;
 pub use doc::*;
 pub use home::*;
 pub use login::*;

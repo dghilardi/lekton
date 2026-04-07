@@ -1,0 +1,12 @@
+#[cfg(feature = "ssr")]
+pub mod chat;
+#[cfg(feature = "ssr")]
+pub mod embedding;
+#[cfg(feature = "ssr")]
+pub mod reindex;
+#[cfg(feature = "ssr")]
+pub mod service;
+#[cfg(feature = "ssr")]
+pub mod splitter;
+#[cfg(feature = "ssr")]
+pub mod vectorstore;

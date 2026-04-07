@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 
-use crate::app::logout_user;
+use crate::app::{logout_user, IsDemoMode};
 
 /// User menu in the navbar: shows login link for anonymous users, or a
 /// dropdown with the user's email and a logout button when authenticated.
@@ -8,8 +8,8 @@ use crate::app::logout_user;
 pub fn UserMenu() -> impl IntoView {
     let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>()
         .expect("UserMenu must be inside App");
-    let is_demo_mode = use_context::<Signal<bool>>()
-        .expect("UserMenu must be inside App");
+    let is_demo_mode = use_context::<IsDemoMode>()
+        .expect("UserMenu must be inside App").0;
 
     let logout_action = Action::new(|_: &()| async move {
         let _ = logout_user().await;
@@ -31,9 +31,11 @@ pub fn UserMenu() -> impl IntoView {
                     view! {
                         <div class="dropdown dropdown-end">
                             <div tabindex="0" role="button" class="btn btn-ghost btn-sm gap-2 font-medium">
-                                <span class="truncate max-w-[120px]">{display}</span>
+                                // Icon on small screens, name on sm+
+                                <svg class="sm:hidden w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>
+                                <span class="hidden sm:inline truncate max-w-[120px]">{display}</span>
                                 {if is_admin {
-                                    view! { <span class="badge badge-error badge-xs">"Admin"</span> }.into_any()
+                                    view! { <span class="hidden sm:inline badge badge-error badge-xs">"Admin"</span> }.into_any()
                                 } else {
                                     view! { <span /> }.into_any()
                                 }}
@@ -63,7 +65,10 @@ pub fn UserMenu() -> impl IntoView {
                     let href = if is_demo { "/login" } else { "/auth/login" };
                     let rel = if is_demo { "" } else { "external" };
                     view! {
-                        <a href=href rel=rel class="btn btn-ghost btn-sm font-medium whitespace-nowrap">"Log In"</a>
+                        <a href=href rel=rel class="btn btn-ghost btn-sm font-medium whitespace-nowrap">
+                            <svg class="sm:hidden w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>
+                            <span class="hidden sm:inline">"Log In"</span>
+                        </a>
                     }.into_any()
                 }
             }

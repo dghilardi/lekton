@@ -1,6 +1,6 @@
 [package]
 name = "lekton-sync"
-version = "0.8.0"
+version = "0.8.1"
 edition = "2021"
 description = "CLI tool to sync markdown documents to a Lekton instance"
 license = "MIT"

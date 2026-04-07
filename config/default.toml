@@ -51,3 +51,6 @@ Context:
 {{ context }}
 
 If the context does not contain enough information to answer, say so honestly."""
+# Leave empty to disable query rewriting (first-turn pass-through only).
+rewrite_model = ""
+rewrite_max_tokens = 80

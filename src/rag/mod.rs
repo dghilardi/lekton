@@ -1,6 +1,8 @@
 #[cfg(feature = "ssr")]
 pub mod chat;
 #[cfg(feature = "ssr")]
+pub mod query_rewriter;
+#[cfg(feature = "ssr")]
 pub mod embedding;
 #[cfg(feature = "ssr")]
 pub mod reindex;

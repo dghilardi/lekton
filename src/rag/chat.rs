@@ -18,6 +18,7 @@ use crate::db::chat_models::{ChatMessage, ChatSession};
 use crate::db::chat_repository::ChatRepository;
 use crate::error::AppError;
 use crate::rag::embedding::EmbeddingService;
+use crate::rag::query_rewriter::QueryRewriter;
 use crate::rag::vectorstore::VectorStore;
 
 /// Maximum number of conversation history messages to include in the prompt.
@@ -34,6 +35,7 @@ pub struct ChatService {
     chat_model: String,
     tera: tera::Tera,
     system_template_name: String,
+    query_rewriter: Option<QueryRewriter>,
 }
 
 /// A token event yielded by the streaming chat response.
@@ -83,6 +85,7 @@ impl ChatService {
             chat_model: config.chat_model.clone(),
             tera,
             system_template_name: template_name.to_string(),
+            query_rewriter: QueryRewriter::from_rag_config(config),
         })
     }
 
@@ -129,7 +132,13 @@ impl ChatService {
             }
         };
 
-        // 2. Save user message
+        // 2. Fetch conversation history (needed both for query rewriting and prompt building)
+        let history = self
+            .chat_repo
+            .get_messages(&session_id, MAX_HISTORY_MESSAGES)
+            .await?;
+
+        // 3. Save user message
         self.chat_repo
             .add_message(ChatMessage {
                 id: Uuid::new_v4().to_string(),
@@ -140,14 +149,22 @@ impl ChatService {
             })
             .await?;
 
-        // 3. Embed user query
-        let query_vectors = self.embedding.embed(&[user_message.clone()]).await?;
+        // 4. Rewrite the query into a standalone question when history is non-empty.
+        //    This improves vector-search relevance for follow-up / elliptic questions.
+        //    Falls back to the original message when rewriting is disabled or history is empty.
+        let retrieval_query = match &self.query_rewriter {
+            Some(rewriter) => rewriter.rewrite(&user_message, &history).await?,
+            None => user_message.clone(),
+        };
+
+        // 5. Embed the (possibly rewritten) retrieval query
+        let query_vectors = self.embedding.embed(&[retrieval_query]).await?;
         let query_vector = query_vectors
             .into_iter()
             .next()
             .ok_or_else(|| AppError::Internal("embedding returned no vectors".into()))?;
 
-        // 4. Search vector store with user's access filters
+        // 6. Search vector store with user's access filters
         let (allowed_levels, include_draft) = user_ctx.document_visibility();
         let search_results = self
             .vectorstore
@@ -159,14 +176,14 @@ impl ChatService {
             )
             .await?;
 
-        // 5. Build context string from search results
+        // 7. Build context string from search results
         let context = search_results
             .iter()
             .map(|r| format!("[{}] ({})\n{}", r.document_title, r.document_slug, r.chunk_text))
             .collect::<Vec<_>>()
             .join("\n\n---\n\n");
 
-        // 6. Render system prompt via Tera
+        // 8. Render system prompt via Tera
         let mut tera_ctx = tera::Context::new();
         tera_ctx.insert("context", &context);
         tera_ctx.insert("question", &user_message);
@@ -175,12 +192,7 @@ impl ChatService {
             .render(&self.system_template_name, &tera_ctx)
             .map_err(|e| AppError::Internal(format!("tera render failed: {e}")))?;
 
-        // 7. Build message history
-        let history = self
-            .chat_repo
-            .get_messages(&session_id, MAX_HISTORY_MESSAGES)
-            .await?;
-
+        // 9. Build message array: system prompt + history + current user message
         let mut messages: Vec<ChatCompletionRequestMessage> = Vec::new();
         messages.push(ChatCompletionRequestMessage::System(
             ChatCompletionRequestSystemMessage {
@@ -228,7 +240,7 @@ impl ChatService {
             },
         ));
 
-        // 8. Create streaming LLM request
+        // 10. Create streaming LLM request
         let request = CreateChatCompletionRequest {
             messages,
             model: self.chat_model.clone(),
@@ -243,7 +255,7 @@ impl ChatService {
             .await
             .map_err(|e| AppError::Internal(format!("LLM stream creation failed: {e}")))?;
 
-        // 9. Build SSE event stream
+        // 11. Build SSE event stream
         let chat_repo = self.chat_repo.clone();
         let sid = session_id.clone();
 

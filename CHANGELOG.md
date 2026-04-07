@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **RAG query rewriting**: Conditional standalone-question generation for multi-turn conversations. When `rewrite_model` is configured, follow-up questions are rewritten by an LLM into self-contained queries before computing embeddings, improving vector-search relevance for elliptic or anaphoric inputs. Falls back transparently to the original message on the first turn or when the feature is disabled (`rewrite_model = ""`).
+- New `RagConfig` fields: `rewrite_model` (empty = disabled) and `rewrite_max_tokens` (default 80). Both configurable via `LKN__RAG__REWRITE_MODEL` / `LKN__RAG__REWRITE_MAX_TOKENS` environment variables.
+- `src/rag/query_rewriter.rs`: `QueryRewriter` struct with unit-tested `format_history` windowing (last 6 messages) and graceful degradation on empty LLM response.
+
 ## [0.8.1] 2026-04-07
 
 ## [0.8.0] 2026-04-07

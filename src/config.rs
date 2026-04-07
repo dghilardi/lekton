@@ -141,6 +141,12 @@ pub struct RagConfig {
     pub chat_api_key: String,
     /// Tera template for the system prompt. Available variables: `{{context}}`, `{{question}}`.
     pub system_prompt_template: String,
+    /// Model used to rewrite follow-up questions into standalone queries before embedding.
+    /// Uses the same `chat_url` / `chat_api_key` endpoint.
+    /// Empty string disables query rewriting (default).
+    pub rewrite_model: String,
+    /// Maximum tokens for the query-rewriting LLM call.
+    pub rewrite_max_tokens: u32,
 }
 
 impl RagConfig {

@@ -5,8 +5,9 @@ test.describe('Navigation', () => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
     // Top-level documents appear in the navbar (SSR-streamed via TopNavbarLinks)
-    await expect(page.locator('text=Getting Started')).toBeVisible({ timeout: 15_000 });
-    await expect(page.locator('text=Architecture Overview')).toBeVisible();
+    // .first() because the navbar renders 3 responsive tiers in the DOM simultaneously
+    await expect(page.locator('text=Getting Started').first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('text=Architecture Overview').first()).toBeVisible();
   });
 
   test('sidebar shows section children when browsing docs', async ({ page }) => {

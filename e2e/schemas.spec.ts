@@ -6,7 +6,8 @@ test.describe('Schema Registry', () => {
     await page.waitForLoadState('networkidle');
     await expect(page.locator('h1', { hasText: 'Schema Registry' })).toBeVisible();
     // Should show the seeded schema
-    await expect(page.locator('text=user-api')).toBeVisible({ timeout: 15_000 });
+    // .first() because schema name appears in both the main list and the sidebar
+    await expect(page.locator('text=user-api').first()).toBeVisible({ timeout: 15_000 });
   });
 
   test('schema detail page shows versions', async ({ page }) => {

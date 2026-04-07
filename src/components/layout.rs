@@ -357,8 +357,15 @@ pub fn Layout(children: Children) -> impl IntoView {
             // Main content area with sidebar
             <div class="drawer lg:drawer-open pt-16">
                 <input id="sidebar-drawer" type="checkbox" class="drawer-toggle" />
-                <div class="drawer-content lg:col-start-2 flex flex-col items-center bg-base-100 min-w-0">
-                    <div class="w-full max-w-6xl p-6 lg:p-10 min-h-[calc(100vh-4rem)]">
+                <div class="drawer-content lg:col-start-2 flex flex-col bg-base-100 min-w-0">
+                    <div class=move || {
+                        let path = leptos_router::hooks::use_location().pathname.get();
+                        if path.starts_with("/chat") {
+                            "w-full h-[calc(100vh-4rem)] flex flex-col overflow-hidden"
+                        } else {
+                            "w-full max-w-6xl mx-auto p-6 lg:p-10 min-h-[calc(100vh-4rem)]"
+                        }
+                    }>
                         {children()}
                     </div>
                 </div>

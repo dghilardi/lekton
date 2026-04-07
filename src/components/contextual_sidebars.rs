@@ -131,8 +131,8 @@ pub fn ChatSidebar() -> impl IntoView {
                     };
 
                     view! {
-                        <li>
-                            <button class="btn btn-primary btn-sm w-full gap-2 mb-4" on:click=start_new_session>
+                        <li class="mb-3">
+                            <button class="btn btn-primary btn-sm w-full gap-2" on:click=start_new_session>
                                 <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
                                 "New Chat"
                             </button>
@@ -148,11 +148,15 @@ pub fn ChatSidebar() -> impl IntoView {
                                     move || session_id.get().as_deref() == Some(&sid)
                                 };
                                 view! {
-                                    <li class="flex items-center group gap-1">
+                                    <li class="relative group/session list-none">
                                         <button
                                             class=move || format!(
-                                                "btn btn-ghost btn-sm flex-1 justify-start text-left truncate font-normal px-2 hover:bg-base-300/50 {}",
-                                                if is_active() { "bg-primary/10 text-primary font-medium" } else { "text-base-content/70" }
+                                                "w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs transition-colors text-left pr-7 {}",
+                                                if is_active() {
+                                                    "bg-primary/10 text-primary font-medium"
+                                                } else {
+                                                    "text-base-content/60 hover:bg-base-300/60 hover:text-base-content"
+                                                }
                                             )
                                             on:click={
                                                 let sid = sid_click.clone();
@@ -174,11 +178,11 @@ pub fn ChatSidebar() -> impl IntoView {
                                                 }
                                             }
                                         >
-                                            <svg class="w-4 h-4 opacity-50 mr-1 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                                            <span class="truncate text-xs">{session.title.clone()}</span>
+                                            <svg class="w-3.5 h-3.5 flex-shrink-0 opacity-50" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                            <span class="truncate min-w-0 flex-1">{session.title.clone()}</span>
                                         </button>
                                         <button
-                                            class="btn btn-ghost btn-xs btn-square opacity-0 group-hover:opacity-100 hover:text-error transition-opacity"
+                                            class="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover/session:opacity-100 hover:text-error hover:bg-error/10 transition-all"
                                             on:click={
                                                 let sid = sid_delete.clone();
                                                 move |_| delete_session(sid.clone())

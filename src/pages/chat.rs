@@ -93,6 +93,7 @@ fn ChatContent() -> impl IntoView {
     let error_msg = context.error_msg;
 
     let (input, set_input) = signal(String::new());
+    let textarea_ref = NodeRef::<leptos::html::Textarea>::new();
 
     let send_message = move || {
         let msg = input.get_untracked().trim().to_string();
@@ -101,6 +102,12 @@ fn ChatContent() -> impl IntoView {
         }
 
         set_input.set(String::new());
+        // Reset textarea height
+        #[cfg(feature = "hydrate")]
+        if let Some(el) = textarea_ref.get() {
+            let style = web_sys::HtmlElement::style(el.as_ref());
+            let _ = style.set_property("height", "auto");
+        }
         error_msg.set(None);
         streaming_content.set(String::new());
 
@@ -144,9 +151,9 @@ fn ChatContent() -> impl IntoView {
     };
 
     view! {
-        <div class="flex h-[calc(100vh-8rem)] bg-base-100 rounded-xl overflow-hidden border border-base-200 shadow-sm relative">
+        <div class="flex flex-col h-full bg-base-100">
             // Main chat area
-            <div class="flex-1 flex flex-col min-w-0 bg-base-100 relative">
+            <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
 
                 // Messages
                 <div class="flex-1 overflow-y-auto px-4 py-6 md:p-8 space-y-6">
@@ -262,12 +269,31 @@ fn ChatContent() -> impl IntoView {
                 <div class="p-4 md:p-6 bg-gradient-to-t from-base-100 via-base-100 to-transparent">
                     <div class="max-w-4xl mx-auto relative group">
                         <div class="absolute -inset-0.5 bg-gradient-to-r from-primary/20 to-secondary/20 rounded-2xl blur opacity-0 group-focus-within:opacity-100 transition duration-300"></div>
-                        <div class="relative flex items-end gap-2 bg-base-100 border border-base-200 shadow-xl rounded-2xl p-2 transition-all group-focus-within:border-primary/50 group-focus-within:ring-2 group-focus-within:ring-primary/10">
+                        <div class="relative flex items-end gap-3 bg-base-100 border border-base-200 shadow-xl rounded-2xl px-4 py-3 transition-all group-focus-within:border-primary/50 group-focus-within:ring-2 group-focus-within:ring-primary/10">
                             <textarea
-                                class="textarea bg-transparent border-none focus:outline-none flex-1 resize-none py-3 px-4 min-h-[52px] max-h-48"
+                                class="w-full bg-transparent outline-none border-0 resize-none text-sm text-base-content placeholder:text-base-content/40 leading-relaxed overflow-y-hidden"
+                                style="height: 24px; min-height: 24px;"
                                 placeholder="Type your message..."
+                                node_ref=textarea_ref
                                 prop:value=move || input.get()
-                                on:input=move |ev| set_input.set(event_target_value(&ev))
+                                on:input=move |ev| {
+                                    set_input.set(event_target_value(&ev));
+                                    #[cfg(feature = "hydrate")]
+                                    {
+                                        use wasm_bindgen::JsCast;
+                                        if let Some(target) = ev.target() {
+                                            if let Ok(el) = target.dyn_into::<web_sys::HtmlTextAreaElement>() {
+                                                let style = web_sys::HtmlElement::style(el.as_ref());
+                                                let _ = style.set_property("height", "auto");
+                                                let sh = el.scroll_height();
+                                                let capped = sh.min(192); // ~6 rows max
+                                                let _ = style.set_property("height", &format!("{capped}px"));
+                                                let overflow = if sh > 192 { "auto" } else { "hidden" };
+                                                let _ = style.set_property("overflow-y", overflow);
+                                            }
+                                        }
+                                    }
+                                }
                                 on:keydown=move |ev: leptos::web_sys::KeyboardEvent| {
                                     if ev.key() == "Enter" && !ev.shift_key() {
                                         ev.prevent_default();
@@ -279,8 +305,8 @@ fn ChatContent() -> impl IntoView {
                             />
                             <button
                                 class=move || format!(
-                                    "btn btn-primary btn-square h-12 w-12 rounded-xl transition-all {}",
-                                    if is_loading.get() || input.get().trim().is_empty() { "opacity-40 grayscale" } else { "shadow-lg shadow-primary/20" }
+                                    "btn btn-primary btn-square h-9 w-9 min-h-0 rounded-lg flex-shrink-0 transition-all {}",
+                                    if is_loading.get() || input.get().trim().is_empty() { "opacity-40 grayscale" } else { "shadow-md shadow-primary/20" }
                                 )
                                 on:click=move |_| send_message()
                                 prop:disabled=move || is_loading.get() || input.get().trim().is_empty()

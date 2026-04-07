@@ -157,9 +157,20 @@ pub fn ChatSidebar() -> impl IntoView {
                                             on:click={
                                                 let sid = sid_click.clone();
                                                 move |_| {
+                                                    let sid_clone = sid.clone();
                                                     session_id.set(Some(sid.clone()));
                                                     messages.set(Vec::new());
                                                     error_msg.set(None);
+                                                    #[cfg(feature = "hydrate")]
+                                                    {
+                                                        use crate::pages::chat::fetch_session_messages;
+                                                        use leptos::task::spawn_local;
+                                                        spawn_local(async move {
+                                                            if let Ok(msgs) = fetch_session_messages(&sid_clone).await {
+                                                                messages.set(msgs);
+                                                            }
+                                                        });
+                                                    }
                                                 }
                                             }
                                         >

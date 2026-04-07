@@ -332,6 +332,42 @@ pub async fn fetch_sessions() -> Result<Vec<SessionSummary>, String> {
 }
 
 #[cfg(feature = "hydrate")]
+pub async fn fetch_session_messages(session_id: &str) -> Result<Vec<UiMessage>, String> {
+    use wasm_bindgen::prelude::*;
+    use wasm_bindgen_futures::JsFuture;
+
+    let window = leptos::web_sys::window().ok_or("no window")?;
+    let resp_value = JsFuture::from(
+        window.fetch_with_str(&format!("/api/v1/rag/sessions/{session_id}/messages")),
+    )
+    .await
+    .map_err(|e| format!("{e:?}"))?;
+
+    let resp: leptos::web_sys::Response = resp_value.dyn_into().map_err(|_| "not a Response")?;
+    if !resp.ok() {
+        return Err(format!("Failed to load messages: {}", resp.status()));
+    }
+    let json = JsFuture::from(resp.json().map_err(|e| format!("{e:?}"))?)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+
+    #[derive(serde::Deserialize)]
+    struct MsgResp {
+        role: String,
+        content: String,
+    }
+    let msgs: Vec<MsgResp> =
+        serde_wasm_bindgen::from_value(json).map_err(|e| format!("{e}"))?;
+    Ok(msgs
+        .into_iter()
+        .map(|m| UiMessage {
+            role: m.role,
+            content: m.content,
+        })
+        .collect())
+}
+
+#[cfg(feature = "hydrate")]
 pub async fn fetch_delete_session(session_id: &str) -> Result<(), String> {
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;

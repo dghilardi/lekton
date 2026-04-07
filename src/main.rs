@@ -394,6 +394,10 @@ async fn main() {
         .route(
             "/api/v1/rag/sessions/{id}",
             axum::routing::delete(api::rag::delete_session_handler),
+        )
+        .route(
+            "/api/v1/rag/sessions/{id}/messages",
+            axum::routing::get(api::rag::get_session_messages_handler),
         );
 
     // Mount demo auth routes when demo mode is enabled, OAuth2/OIDC routes otherwise

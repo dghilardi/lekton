@@ -1,12 +1,13 @@
 //! RAG API endpoints.
 //!
-//! | Method | Path                               | Description                |
-//! |--------|------------------------------------|----------------------------|
-//! | POST   | `/api/v1/admin/rag/reindex`        | Trigger full re-embedding  |
-//! | GET    | `/api/v1/admin/rag/reindex/status` | Poll re-index progress     |
-//! | POST   | `/api/v1/rag/chat`                 | Chat with RAG (SSE stream) |
-//! | GET    | `/api/v1/rag/sessions`             | List user's chat sessions  |
-//! | DELETE | `/api/v1/rag/sessions/{id}`        | Delete a chat session      |
+//! | Method | Path                                    | Description                |
+//! |--------|-----------------------------------------|----------------------------|
+//! | POST   | `/api/v1/admin/rag/reindex`             | Trigger full re-embedding  |
+//! | GET    | `/api/v1/admin/rag/reindex/status`      | Poll re-index progress     |
+//! | POST   | `/api/v1/rag/chat`                      | Chat with RAG (SSE stream) |
+//! | GET    | `/api/v1/rag/sessions`                  | List user's chat sessions  |
+//! | DELETE | `/api/v1/rag/sessions/{id}`             | Delete a chat session      |
+//! | GET    | `/api/v1/rag/sessions/{id}/messages`    | Get messages for a session |
 
 use std::convert::Infallible;
 use std::sync::atomic::Ordering;
@@ -171,6 +172,36 @@ pub async fn list_sessions_handler(
             created_at: s.created_at.to_rfc3339(),
             updated_at: s.updated_at.to_rfc3339(),
         })
+        .collect();
+
+    Ok(Json(response))
+}
+
+/// `GET /api/v1/rag/sessions/{id}/messages` — get messages for a chat session (owner only).
+pub async fn get_session_messages_handler(
+    RequiredAuthUser(user): RequiredAuthUser,
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Result<Json<Vec<serde_json::Value>>, AppError> {
+    let chat_repo = state
+        .chat_repo
+        .as_ref()
+        .ok_or_else(|| AppError::BadRequest("RAG is not enabled".into()))?;
+
+    // Verify ownership
+    let session = chat_repo
+        .get_session(&session_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Chat session not found".into()))?;
+
+    if session.user_id != user.user_id {
+        return Err(AppError::NotFound("Chat session not found".into()));
+    }
+
+    let messages = chat_repo.get_messages(&session_id, 500).await?;
+    let response: Vec<serde_json::Value> = messages
+        .into_iter()
+        .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
         .collect();
 
     Ok(Json(response))

@@ -445,4 +445,4 @@ Lekton follows a Headless CMS architecture:
 
 ## License
 
-Distributed under the MIT License. See `LICENSE` for more information.
+Distributed under the GNU GPL v3 License. See [LICENSE](LICENSE) for more information.

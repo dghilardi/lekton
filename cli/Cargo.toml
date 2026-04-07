@@ -1,9 +1,10 @@
 [package]
 name = "lekton-sync"
 version = "0.8.1"
+authors = ["Davide Ghilardi"]
 edition = "2021"
 description = "CLI tool to sync markdown documents to a Lekton instance"
-license = "MIT"
+license = "GPL-3.0-or-later"
 repository = "https://github.com/dghilardi/lekton"
 readme = "README.md"
 keywords = ["lekton", "docs", "sync", "markdown", "cli"]

@@ -18,6 +18,12 @@ pub struct ServiceToken {
     /// - An exact slug (e.g. `"guidelines/protocols"`)
     /// - A prefix pattern ending with `/*` (e.g. `"protocols/*"`)
     pub allowed_scopes: Vec<String>,
+    /// Token type: `"service"` (scope-based CI/CD) or `"pat"` (inherits user permissions).
+    #[serde(default = "default_service")]
+    pub token_type: String,
+    /// For PATs: the user whose permissions this token inherits. Empty for service tokens.
+    #[serde(default)]
+    pub user_id: Option<String>,
     /// Whether this token can write (create/update) documents.
     /// Read access is implicit for all active tokens.
     #[serde(default)]
@@ -37,6 +43,17 @@ pub struct ServiceToken {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_service() -> String {
+    "service".to_string()
+}
+
+impl ServiceToken {
+    /// Returns `true` if this is a personal access token.
+    pub fn is_pat(&self) -> bool {
+        self.token_type == "pat"
+    }
 }
 
 impl ServiceToken {
@@ -99,6 +116,8 @@ mod tests {
             name: "test".to_string(),
             token_hash: "hash".to_string(),
             allowed_scopes: scopes.into_iter().map(String::from).collect(),
+            token_type: "service".to_string(),
+            user_id: None,
             can_write: true,
             created_by: "admin".to_string(),
             created_at: Utc::now(),

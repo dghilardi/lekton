@@ -390,6 +390,8 @@ impl TestEnv {
             name: name.to_string(),
             token_hash: TokenService::hash_token(&raw_token),
             allowed_scopes: scopes,
+            token_type: "service".to_string(),
+            user_id: None,
             can_write,
             created_by: "test-admin".to_string(),
             created_at: chrono::Utc::now(),

@@ -9,6 +9,8 @@ pub mod components;
 pub mod db;
 pub mod editor;
 pub mod error;
+#[cfg(feature = "ssr")]
+pub mod mcp;
 pub mod pages;
 pub mod rendering;
 pub mod schema;

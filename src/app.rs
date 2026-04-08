@@ -747,6 +747,8 @@ pub async fn create_service_token(
         name: name.clone(),
         token_hash,
         allowed_scopes: allowed_scopes.clone(),
+        token_type: "service".to_string(),
+        user_id: None,
         can_write,
         created_by: user.user_id,
         created_at: chrono::Utc::now(),

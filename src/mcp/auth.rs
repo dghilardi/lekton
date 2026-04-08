@@ -5,6 +5,13 @@
 //! accepted. On success, the middleware resolves the linked user's permissions
 //! and injects a [`UserContext`] into the request extensions so that downstream
 //! handlers can enforce access-level filtering.
+//!
+//! ## Admin PAT (no user_id)
+//!
+//! If the PAT has `user_id = None`, it is treated as an admin token with full
+//! access to all documents. This is useful for machine-to-machine integrations
+//! (e.g. demo mode, CI pipelines) where tying the token to a specific user
+//! account is not practical.
 
 use std::sync::Arc;
 
@@ -56,29 +63,42 @@ pub async fn pat_auth_middleware(
         let _ = repo.touch_last_used(&token_id).await;
     });
 
-    let user_id = token.user_id.as_deref().ok_or(StatusCode::UNAUTHORIZED)?;
+    let user_ctx = match token.user_id.as_deref() {
+        // PAT linked to a real user — resolve permissions from DB
+        Some(user_id) => {
+            let user = auth
+                .user_repo
+                .find_user_by_id(user_id)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    let user = auth
-        .user_repo
-        .find_user_by_id(user_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+            let permissions = auth
+                .user_repo
+                .get_permissions(user_id)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let permissions = auth
-        .user_repo
-        .get_permissions(user_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let user_ctx = UserContext {
-        user: AuthenticatedUser {
-            user_id: user.id,
-            email: user.email,
-            name: user.name,
-            is_admin: user.is_admin,
+            UserContext {
+                user: AuthenticatedUser {
+                    user_id: user.id,
+                    email: user.email,
+                    name: user.name,
+                    is_admin: user.is_admin,
+                },
+                permissions,
+            }
+        }
+        // Admin PAT — no user_id, full access to all documents
+        None => UserContext {
+            user: AuthenticatedUser {
+                user_id: token.id.clone(),
+                email: format!("pat:{}@lekton", token.name),
+                name: Some(token.name.clone()),
+                is_admin: true,
+            },
+            permissions: vec![],
         },
-        permissions,
     };
 
     request.extensions_mut().insert(user_ctx);

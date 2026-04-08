@@ -44,6 +44,14 @@ pub fn UserMenu() -> impl IntoView {
                                 <li class="menu-title text-xs opacity-60 px-2 pb-1 truncate">{user.email.clone()}</li>
                                 <div class="divider my-1"></div>
                                 <li>
+                                    <a href="/profile">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a4 4 0 11-8 0 4 4 0 018 0zM21 21a9 9 0 10-18 0" />
+                                        </svg>
+                                        "Profile & Tokens"
+                                    </a>
+                                </li>
+                                <li>
                                     <button
                                         class="text-error"
                                         on:click=move |_| { logout_action.dispatch(()); }

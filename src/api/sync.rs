@@ -342,6 +342,10 @@ mod tests {
         async fn deactivate(&self, _: &str) -> Result<(), AppError> { Ok(()) }
         async fn touch_last_used(&self, _: &str) -> Result<(), AppError> { Ok(()) }
         async fn check_scope_overlap(&self, _: &[String], _: Option<&str>) -> Result<bool, AppError> { Ok(false) }
+        async fn set_active(&self, _: &str, _: bool) -> Result<(), AppError> { Ok(()) }
+        async fn list_by_user_id(&self, _: &str) -> Result<Vec<ServiceToken>, AppError> { Ok(vec![]) }
+        async fn list_pats_paginated(&self, _: u64, _: u64) -> Result<(Vec<ServiceToken>, u64), AppError> { Ok((vec![], 0)) }
+        async fn delete_pat(&self, _: &str, _: &str) -> Result<(), AppError> { Ok(()) }
     }
 
     fn make_doc(slug: &str, hash: &str) -> Document {
@@ -515,6 +519,10 @@ mod tests {
             async fn deactivate(&self, _: &str) -> Result<(), AppError> { Ok(()) }
             async fn touch_last_used(&self, _: &str) -> Result<(), AppError> { Ok(()) }
             async fn check_scope_overlap(&self, _: &[String], _: Option<&str>) -> Result<bool, AppError> { Ok(false) }
+            async fn set_active(&self, _: &str, _: bool) -> Result<(), AppError> { Ok(()) }
+            async fn list_by_user_id(&self, _: &str) -> Result<Vec<ServiceToken>, AppError> { Ok(vec![]) }
+            async fn list_pats_paginated(&self, _: u64, _: u64) -> Result<(Vec<ServiceToken>, u64), AppError> { Ok((vec![], 0)) }
+            async fn delete_pat(&self, _: &str, _: &str) -> Result<(), AppError> { Ok(()) }
         }
 
         let repo = MockRepo::new();

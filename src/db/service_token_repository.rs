@@ -34,6 +34,24 @@ pub trait ServiceTokenRepository: Send + Sync {
         scopes: &[String],
         exclude_id: Option<&str>,
     ) -> Result<bool, AppError>;
+
+    /// Set the `is_active` flag on a token. Returns `NotFound` if the token doesn't exist.
+    async fn set_active(&self, id: &str, active: bool) -> Result<(), AppError>;
+
+    /// List all PATs (`token_type = "pat"`) belonging to a specific user, newest first.
+    async fn list_by_user_id(&self, user_id: &str) -> Result<Vec<ServiceToken>, AppError>;
+
+    /// List all PATs (`token_type = "pat"`) paginated, newest first.
+    /// Returns `(tokens, total_count)`.
+    async fn list_pats_paginated(
+        &self,
+        page: u64,
+        per_page: u64,
+    ) -> Result<(Vec<ServiceToken>, u64), AppError>;
+
+    /// Permanently delete a token owned by `user_id`. Returns `Forbidden` if the
+    /// token exists but belongs to a different user.
+    async fn delete_pat(&self, id: &str, user_id: &str) -> Result<(), AppError>;
 }
 
 /// MongoDB implementation of [`ServiceTokenRepository`].
@@ -175,5 +193,92 @@ impl ServiceTokenRepository for MongoServiceTokenRepository {
             }
         }
         Ok(false)
+    }
+
+    async fn set_active(&self, id: &str, active: bool) -> Result<(), AppError> {
+        use mongodb::bson::doc;
+
+        let result = self
+            .collection
+            .update_one(
+                doc! { "id": id },
+                doc! { "$set": { "is_active": active } },
+            )
+            .await?;
+
+        if result.matched_count == 0 {
+            return Err(AppError::NotFound(format!(
+                "Service token '{id}' not found"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn list_by_user_id(&self, user_id: &str) -> Result<Vec<ServiceToken>, AppError> {
+        use futures::TryStreamExt;
+        use mongodb::bson::doc;
+        use mongodb::options::FindOptions;
+
+        let options = FindOptions::builder()
+            .sort(doc! { "created_at": -1 })
+            .build();
+
+        let filter = doc! { "token_type": "pat", "user_id": user_id };
+        let mut cursor = self.collection.find(filter).with_options(options).await?;
+        let mut tokens = Vec::new();
+        while let Some(token) = cursor.try_next().await? {
+            tokens.push(token);
+        }
+        Ok(tokens)
+    }
+
+    async fn list_pats_paginated(
+        &self,
+        page: u64,
+        per_page: u64,
+    ) -> Result<(Vec<ServiceToken>, u64), AppError> {
+        use futures::TryStreamExt;
+        use mongodb::bson::doc;
+        use mongodb::options::{CountOptions, FindOptions};
+
+        let filter = doc! { "token_type": "pat" };
+
+        let total = self
+            .collection
+            .count_documents(filter.clone())
+            .with_options(CountOptions::builder().build())
+            .await? as u64;
+
+        let skip = page.saturating_sub(1) * per_page;
+        let options = FindOptions::builder()
+            .sort(doc! { "created_at": -1 })
+            .skip(skip)
+            .limit(per_page as i64)
+            .build();
+
+        let mut cursor = self.collection.find(filter).with_options(options).await?;
+        let mut tokens = Vec::new();
+        while let Some(token) = cursor.try_next().await? {
+            tokens.push(token);
+        }
+        Ok((tokens, total))
+    }
+
+    async fn delete_pat(&self, id: &str, user_id: &str) -> Result<(), AppError> {
+        use mongodb::bson::doc;
+
+        // First verify ownership
+        let token = self
+            .collection
+            .find_one(doc! { "id": id, "token_type": "pat" })
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("PAT '{id}' not found")))?;
+
+        if token.user_id.as_deref() != Some(user_id) {
+            return Err(AppError::Forbidden("You do not own this token".into()));
+        }
+
+        self.collection.delete_one(doc! { "id": id }).await?;
+        Ok(())
     }
 }

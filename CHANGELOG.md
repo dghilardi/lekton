@@ -3,6 +3,18 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+### Added
+- **AI response feedback**: Users can give a thumbs-up or thumbs-down on each assistant message in the chat. Negative feedback shows an optional free-text comment box. The selected rating is persisted immediately; clicking the active button removes the feedback. A small badge below each rated message shows the current rating with an × to remove it.
+- **Feedback history in `/profile`**: New section at the bottom of the profile page lists all feedback the user has submitted, newest first, with pagination (10 per page). Each item shows the rating badge, date, optional comment, a "View session" link, and a delete button.
+- **Admin feedback export API**: `GET /api/v1/admin/rag/feedback` — paginated, filterable list of all feedback across users. Supports query parameters: `rating` (`positive` | `negative`), `date_from` / `date_to` (RFC 3339), `user_id`, `page` (0-based), `per_page` (max 200, default 50). Callable via Bearer PAT with admin scope.
+- New REST endpoints: `POST /api/v1/rag/messages/{id}/feedback` (create/update), `DELETE /api/v1/rag/messages/{id}/feedback` (remove).
+- `GET /api/v1/rag/sessions/{id}/messages` now includes `id` and `feedback` fields per message so the chat UI can restore feedback state when loading a previous session.
+- `ChatEvent::Done` now carries an optional `message_id` so the client immediately knows the server-assigned ID of the saved assistant message and can attach feedback without reloading the session.
+- New `src/db/feedback_repository.rs`: `FeedbackRepository` trait and `MongoFeedbackRepository` implementation. Feedback is stored in the `message_feedback` collection with upsert semantics (one entry per user + message pair). Supports paginated queries with rating, date-range, and user filters.
+- `MessageFeedback` model and `FeedbackRating` enum added to `src/db/chat_models.rs`.
+- `feedback_repo: Option<Arc<dyn FeedbackRepository>>` added to `AppState`; initialised alongside `chat_repo` when RAG is enabled.
+- `ChatRepository::get_message_by_id` added for ownership validation in the feedback submit endpoint.
+- `list_user_feedback` and `delete_user_feedback` server functions (Leptos `#[server]`) for the profile history page.
 
 ## [0.9.1] 2026-04-09
 

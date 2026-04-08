@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **PAT self-service management**: Users can create, toggle, and delete their own Personal Access Tokens from the new `/profile` page. The raw token is shown once after creation, with a ready-to-use `claude mcp add-json` command snippet. "Profile & Tokens" link added to the user menu dropdown.
+- **Admin PAT overview**: New admin section at `/admin/pats` — paginated table of all PATs across users with user email resolution, last-used timestamp, and per-token activate/deactivate. Accessible from the admin sidebar.
+- New REST endpoints: `GET/POST /api/v1/user/pats`, `PATCH/DELETE /api/v1/user/pats/{id}`, `GET /api/v1/admin/pats`, `PATCH /api/v1/admin/pats/{id}`.
+- `ServiceTokenRepository` extended with `set_active`, `list_by_user_id`, `list_pats_paginated`, and `delete_pat` (ownership-checked hard delete).
+- Admin-PAT support: PATs with `user_id = null` are treated as admin tokens with full access, enabling machine-to-machine integrations without requiring a linked user account (useful in demo mode).
 - **MCP server (Model Context Protocol)**: Expose Lekton documentation to IDE agents (Claude Code, Cursor, RooCode) via the Streamable HTTP transport (`POST /mcp`). Authenticated with Personal Access Tokens (PAT) stored in the `service_tokens` collection. Three tools are available:
   - `get_index`: Returns the document tree with slugs, titles, hierarchy, and tags visible to the authenticated user.
   - `search_docs`: Semantic search via Qdrant vector store with access-level filtering, returns text fragments with source document slugs.

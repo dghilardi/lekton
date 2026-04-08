@@ -384,6 +384,25 @@ async fn main() {
             "/api/v1/admin/service-tokens/{id}",
             axum::routing::delete(api::admin::deactivate_service_token_handler),
         )
+        // PAT management (user self-service + admin)
+        .route(
+            "/api/v1/user/pats",
+            axum::routing::get(api::pat::list_user_pats_handler)
+                .post(api::pat::create_user_pat_handler),
+        )
+        .route(
+            "/api/v1/user/pats/{id}",
+            axum::routing::patch(api::pat::toggle_user_pat_handler)
+                .delete(api::pat::delete_user_pat_handler),
+        )
+        .route(
+            "/api/v1/admin/pats",
+            axum::routing::get(api::pat::admin_list_pats_handler),
+        )
+        .route(
+            "/api/v1/admin/pats/{id}",
+            axum::routing::patch(api::pat::admin_toggle_pat_handler),
+        )
         .route(
             "/api/v1/admin/rag/reindex",
             axum::routing::post(api::rag::trigger_reindex_handler),

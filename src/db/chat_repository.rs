@@ -35,6 +35,9 @@ pub trait ChatRepository: Send + Sync {
 
     /// Delete a session and all its messages.
     async fn delete_session(&self, id: &str) -> Result<(), AppError>;
+
+    /// Find a single message by its ID.
+    async fn get_message_by_id(&self, id: &str) -> Result<Option<ChatMessage>, AppError>;
 }
 
 // ── MongoDB implementation ───────────────────────────────────────────────────
@@ -158,5 +161,12 @@ impl ChatRepository for MongoChatRepository {
             .map_err(|e| AppError::Internal(format!("mongo delete chat_session: {e}")))?;
 
         Ok(())
+    }
+
+    async fn get_message_by_id(&self, id: &str) -> Result<Option<ChatMessage>, AppError> {
+        self.messages
+            .find_one(mongodb::bson::doc! { "id": id })
+            .await
+            .map_err(|e| AppError::Internal(format!("mongo find chat_message: {e}")))
     }
 }

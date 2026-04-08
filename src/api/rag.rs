@@ -1,18 +1,21 @@
 //! RAG API endpoints.
 //!
-//! | Method | Path                                    | Description                |
-//! |--------|-----------------------------------------|----------------------------|
-//! | POST   | `/api/v1/admin/rag/reindex`             | Trigger full re-embedding  |
-//! | GET    | `/api/v1/admin/rag/reindex/status`      | Poll re-index progress     |
-//! | POST   | `/api/v1/rag/chat`                      | Chat with RAG (SSE stream) |
-//! | GET    | `/api/v1/rag/sessions`                  | List user's chat sessions  |
-//! | DELETE | `/api/v1/rag/sessions/{id}`             | Delete a chat session      |
-//! | GET    | `/api/v1/rag/sessions/{id}/messages`    | Get messages for a session |
+//! | Method | Path                                      | Description                          |
+//! |--------|-------------------------------------------|--------------------------------------|
+//! | POST   | `/api/v1/admin/rag/reindex`               | Trigger full re-embedding            |
+//! | GET    | `/api/v1/admin/rag/reindex/status`        | Poll re-index progress               |
+//! | GET    | `/api/v1/admin/rag/feedback`              | Export feedback (paginated, filtered)|
+//! | POST   | `/api/v1/rag/chat`                        | Chat with RAG (SSE stream)           |
+//! | GET    | `/api/v1/rag/sessions`                    | List user's chat sessions            |
+//! | DELETE | `/api/v1/rag/sessions/{id}`               | Delete a chat session                |
+//! | GET    | `/api/v1/rag/sessions/{id}/messages`      | Get messages for a session           |
+//! | POST   | `/api/v1/rag/messages/{id}/feedback`      | Submit or update message feedback    |
+//! | DELETE | `/api/v1/rag/messages/{id}/feedback`      | Remove message feedback              |
 
 use std::convert::Infallible;
 use std::sync::atomic::Ordering;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event, Sse};
 use axum::Json;
@@ -22,6 +25,8 @@ use serde::{Deserialize, Serialize};
 use crate::app::AppState;
 use crate::auth::extractor::RequiredAuthUser;
 use crate::auth::models::UserContext;
+use crate::db::chat_models::FeedbackRating;
+use crate::db::feedback_repository::FeedbackListParams;
 use crate::error::AppError;
 
 // ── Response types ───────────────────────────────────────────────────────────
@@ -178,6 +183,9 @@ pub async fn list_sessions_handler(
 }
 
 /// `GET /api/v1/rag/sessions/{id}/messages` — get messages for a chat session (owner only).
+///
+/// Each assistant message includes an `id` field and an optional `feedback` object so
+/// the frontend can render the current thumbs-up/down state without a second request.
 pub async fn get_session_messages_handler(
     RequiredAuthUser(user): RequiredAuthUser,
     State(state): State<AppState>,
@@ -199,9 +207,41 @@ pub async fn get_session_messages_handler(
     }
 
     let messages = chat_repo.get_messages(&session_id, 500).await?;
+
+    // Load all feedback for this session in one query, then build a lookup map.
+    let feedback_map: std::collections::HashMap<String, serde_json::Value> =
+        if let Some(fb_repo) = state.feedback_repo.as_ref() {
+            fb_repo
+                .get_session_feedback(&session_id, &user.user_id)
+                .await?
+                .into_iter()
+                .map(|fb| {
+                    let rating_str = match fb.rating {
+                        FeedbackRating::Positive => "positive",
+                        FeedbackRating::Negative => "negative",
+                    };
+                    let val = serde_json::json!({
+                        "rating": rating_str,
+                        "comment": fb.comment,
+                    });
+                    (fb.message_id, val)
+                })
+                .collect()
+        } else {
+            std::collections::HashMap::new()
+        };
+
     let response: Vec<serde_json::Value> = messages
         .into_iter()
-        .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
+        .map(|m| {
+            let feedback = feedback_map.get(&m.id).cloned();
+            serde_json::json!({
+                "id":       m.id,
+                "role":     m.role,
+                "content":  m.content,
+                "feedback": feedback,
+            })
+        })
         .collect();
 
     Ok(Json(response))
@@ -230,6 +270,203 @@ pub async fn delete_session_handler(
 
     chat_repo.delete_session(&session_id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ── Feedback endpoints ───────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct SubmitFeedbackRequest {
+    pub rating: String,
+    pub comment: Option<String>,
+}
+
+/// `POST /api/v1/rag/messages/{id}/feedback` — submit or update feedback on an assistant message.
+pub async fn submit_feedback_handler(
+    RequiredAuthUser(user): RequiredAuthUser,
+    State(state): State<AppState>,
+    Path(message_id): Path<String>,
+    Json(body): Json<SubmitFeedbackRequest>,
+) -> Result<StatusCode, AppError> {
+    let chat_repo = state
+        .chat_repo
+        .as_ref()
+        .ok_or_else(|| AppError::BadRequest("RAG is not enabled".into()))?;
+
+    let fb_repo = state
+        .feedback_repo
+        .as_ref()
+        .ok_or_else(|| AppError::BadRequest("RAG is not enabled".into()))?;
+
+    // Resolve message → verify it exists and belongs to this user's session.
+    let message = chat_repo
+        .get_message_by_id(&message_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Message not found".into()))?;
+
+    if message.role != "assistant" {
+        return Err(AppError::BadRequest("Feedback can only be given on assistant messages".into()));
+    }
+
+    let session = chat_repo
+        .get_session(&message.session_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Chat session not found".into()))?;
+
+    if session.user_id != user.user_id {
+        return Err(AppError::NotFound("Message not found".into()));
+    }
+
+    let rating = match body.rating.as_str() {
+        "positive" => FeedbackRating::Positive,
+        "negative" => FeedbackRating::Negative,
+        _ => return Err(AppError::BadRequest("rating must be 'positive' or 'negative'".into())),
+    };
+
+    let now = chrono::Utc::now();
+    let feedback = crate::db::chat_models::MessageFeedback {
+        id: uuid::Uuid::new_v4().to_string(),
+        message_id: message_id.clone(),
+        session_id: message.session_id,
+        user_id: user.user_id.clone(),
+        rating,
+        comment: body.comment,
+        created_at: now,
+        updated_at: now,
+    };
+
+    fb_repo.upsert_feedback(feedback).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `DELETE /api/v1/rag/messages/{id}/feedback` — remove the user's feedback on a message.
+pub async fn delete_feedback_handler(
+    RequiredAuthUser(user): RequiredAuthUser,
+    State(state): State<AppState>,
+    Path(message_id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    let fb_repo = state
+        .feedback_repo
+        .as_ref()
+        .ok_or_else(|| AppError::BadRequest("RAG is not enabled".into()))?;
+
+    fb_repo.delete_feedback(&message_id, &user.user_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ── Admin feedback export ────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct AdminFeedbackQuery {
+    pub rating: Option<String>,
+    pub date_from: Option<String>,
+    pub date_to: Option<String>,
+    pub user_id: Option<String>,
+    #[serde(default)]
+    pub page: u64,
+    #[serde(default = "default_per_page")]
+    pub per_page: u64,
+}
+
+fn default_per_page() -> u64 {
+    50
+}
+
+#[derive(Serialize)]
+pub struct FeedbackItemResponse {
+    pub id: String,
+    pub message_id: String,
+    pub session_id: String,
+    pub user_id: String,
+    pub rating: String,
+    pub comment: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Serialize)]
+pub struct FeedbackPageResponse {
+    pub items: Vec<FeedbackItemResponse>,
+    pub total: u64,
+    pub page: u64,
+    pub per_page: u64,
+}
+
+/// `GET /api/v1/admin/rag/feedback` — paginated feedback export (admin only).
+///
+/// Query params: `rating`, `date_from` (RFC 3339), `date_to` (RFC 3339),
+/// `user_id`, `page` (0-based), `per_page` (max 200, default 50).
+pub async fn admin_list_feedback_handler(
+    RequiredAuthUser(user): RequiredAuthUser,
+    State(state): State<AppState>,
+    Query(q): Query<AdminFeedbackQuery>,
+) -> Result<Json<FeedbackPageResponse>, AppError> {
+    if !user.is_admin {
+        return Err(AppError::Forbidden("Admin privileges required".into()));
+    }
+
+    let fb_repo = state
+        .feedback_repo
+        .as_ref()
+        .ok_or_else(|| AppError::BadRequest("RAG is not enabled".into()))?;
+
+    let date_from = q
+        .date_from
+        .as_deref()
+        .map(|s| {
+            chrono::DateTime::parse_from_rfc3339(s)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .map_err(|_| AppError::BadRequest(format!("invalid date_from: {s}")))
+        })
+        .transpose()?;
+
+    let date_to = q
+        .date_to
+        .as_deref()
+        .map(|s| {
+            chrono::DateTime::parse_from_rfc3339(s)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .map_err(|_| AppError::BadRequest(format!("invalid date_to: {s}")))
+        })
+        .transpose()?;
+
+    let params = FeedbackListParams {
+        rating: q.rating,
+        date_from,
+        date_to,
+        user_id: q.user_id,
+        page: q.page,
+        per_page: q.per_page,
+    };
+
+    let page = fb_repo.list_all_feedback(params).await?;
+
+    let items = page
+        .items
+        .into_iter()
+        .map(|fb| {
+            let rating_str = match fb.rating {
+                FeedbackRating::Positive => "positive".to_string(),
+                FeedbackRating::Negative => "negative".to_string(),
+            };
+            FeedbackItemResponse {
+                id: fb.id,
+                message_id: fb.message_id,
+                session_id: fb.session_id,
+                user_id: fb.user_id,
+                rating: rating_str,
+                comment: fb.comment,
+                created_at: fb.created_at.to_rfc3339(),
+                updated_at: fb.updated_at.to_rfc3339(),
+            }
+        })
+        .collect();
+
+    Ok(Json(FeedbackPageResponse {
+        items,
+        total: page.total,
+        page: page.page,
+        per_page: page.per_page,
+    }))
 }
 
 /// Build a [`UserContext`] from the authenticated user for access-level filtering.

@@ -291,6 +291,8 @@ pub async fn create_service_token_handler(
         name: name.clone(),
         token_hash,
         allowed_scopes: req.allowed_scopes.clone(),
+        token_type: "service".to_string(),
+        user_id: None,
         can_write: req.can_write,
         created_by: user.user_id,
         created_at: Utc::now(),

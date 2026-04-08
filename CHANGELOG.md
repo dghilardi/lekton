@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **MCP server (Model Context Protocol)**: Expose Lekton documentation to IDE agents (Claude Code, Cursor, RooCode) via the Streamable HTTP transport (`POST /mcp`). Authenticated with Personal Access Tokens (PAT) stored in the `service_tokens` collection. Three tools are available:
+  - `get_index`: Returns the document tree with slugs, titles, hierarchy, and tags visible to the authenticated user.
+  - `search_docs`: Semantic search via Qdrant vector store with access-level filtering, returns text fragments with source document slugs.
+  - `read_document`: Retrieves the full Markdown content of a document by slug, with access control enforcement.
+- New `src/mcp/` module: `auth.rs` (PAT middleware), `server.rs` (MCP tool definitions using `rmcp`).
+- `ServiceToken` model extended with `token_type` (`"service"` | `"pat"`) and `user_id` fields. PAT tokens inherit the linked user's RBAC permissions. Backwards-compatible with existing service tokens via `serde(default)`.
+- New dependencies: `rmcp` (MCP Rust SDK with streamable HTTP transport), `schemars` (JSON Schema generation for tool parameters).
 - **RAG query rewriting**: Conditional standalone-question generation for multi-turn conversations. When `rewrite_model` is configured, follow-up questions are rewritten by an LLM into self-contained queries before computing embeddings, improving vector-search relevance for elliptic or anaphoric inputs. Falls back transparently to the original message on the first turn or when the feature is disabled (`rewrite_model = ""`).
 - New `RagConfig` fields: `rewrite_model` (empty = disabled) and `rewrite_max_tokens` (default 80). Both configurable via `LKN__RAG__REWRITE_MODEL` / `LKN__RAG__REWRITE_MAX_TOKENS` environment variables.
 - `src/rag/query_rewriter.rs`: `QueryRewriter` struct with unit-tested `format_history` windowing (last 6 messages) and graceful degradation on empty LLM response.

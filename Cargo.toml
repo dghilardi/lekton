@@ -54,6 +54,10 @@ async-openai = { version = "0.34", features = ["embedding", "chat-completion"], 
 text-splitter = { version = "0.29", features = ["markdown"], optional = true }
 tera = { version = "1", optional = true }
 
+# MCP (Model Context Protocol)
+rmcp = { version = "1.3", features = ["server", "transport-streamable-http-server"], optional = true }
+schemars = { version = "0.8", optional = true }
+
 # Rich text editor
 leptos-tiptap = "0.9"
 
@@ -166,6 +170,8 @@ ssr = [
     "dep:async-openai",
     "dep:text-splitter",
     "dep:tera",
+    "dep:rmcp",
+    "dep:schemars",
     "leptos/ssr",
     "leptos_meta/ssr",
     "leptos_router/ssr",

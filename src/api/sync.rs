@@ -493,6 +493,8 @@ mod tests {
             name: "test".to_string(),
             token_hash: crate::auth::token_service::TokenService::hash_token("scoped-tok"),
             allowed_scopes: vec!["protocols/*".to_string()],
+            token_type: "service".to_string(),
+            user_id: None,
             can_write: true,
             created_by: "admin".to_string(),
             created_at: Utc::now(),

@@ -179,9 +179,13 @@ async fn main() {
     let auth_provider = build_provider(&config.auth).await;
 
     // Initialize RAG services (optional — app works without them)
-    let (rag_service, chat_service): (
+    //
+    // The embedding + vectorstore arcs are also kept for the MCP server.
+    let (rag_service, chat_service, embedding_service, vector_store): (
         Option<Arc<dyn lekton::rag::service::RagService>>,
         Option<Arc<lekton::rag::chat::ChatService>>,
+        Option<Arc<dyn lekton::rag::embedding::EmbeddingService>>,
+        Option<Arc<dyn lekton::rag::vectorstore::VectorStore>>,
     ) = if config.rag.is_enabled() {
         use lekton::rag::embedding::OpenAICompatibleEmbedding;
         use lekton::rag::vectorstore::QdrantVectorStore;
@@ -202,7 +206,7 @@ async fn main() {
                     .await
                 {
                     tracing::warn!("Failed to ensure Qdrant collection: {e} — RAG disabled");
-                    (None, None)
+                    (None, None, None, None)
                 } else {
                     let rag_svc = Arc::new(
                         lekton::rag::service::DefaultRagService::new(
@@ -215,8 +219,8 @@ async fn main() {
                         match lekton::rag::chat::ChatService::from_rag_config(
                             &config.rag,
                             chat_repo.clone(),
-                            embedding,
-                            vectorstore,
+                            embedding.clone(),
+                            vectorstore.clone(),
                         ) {
                             Ok(svc) => {
                                 tracing::info!("RAG chat service initialized");
@@ -235,17 +239,22 @@ async fn main() {
                         collection = %config.rag.qdrant_collection,
                         "RAG service initialized"
                     );
-                    (Some(rag_svc as Arc<dyn lekton::rag::service::RagService>), chat_svc)
+                    (
+                        Some(rag_svc as Arc<dyn lekton::rag::service::RagService>),
+                        chat_svc,
+                        Some(embedding),
+                        Some(vectorstore),
+                    )
                 }
             }
             (Err(e), _) | (_, Err(e)) => {
                 tracing::warn!("RAG not available: {e} — RAG will be disabled");
-                (None, None)
+                (None, None, None, None)
             }
         }
     } else {
         tracing::info!("RAG not configured — feature disabled");
-        (None, None)
+        (None, None, None, None)
     };
 
     // Build application state
@@ -421,6 +430,50 @@ async fn main() {
             .route("/auth/me", axum::routing::get(auth_api::me_handler));
 
         tracing::info!("OAuth2/OIDC auth routes mounted: /auth/login, /auth/callback, /auth/refresh, /auth/logout, /auth/me");
+    }
+
+    // MCP server (requires RAG — needs embedding + vectorstore)
+    if let (Some(ref emb), Some(ref vs)) = (&embedding_service, &vector_store) {
+        use lekton::mcp::auth::{McpAuthState, pat_auth_middleware};
+        use lekton::mcp::server::LektonMcpServer;
+        use rmcp::transport::streamable_http_server::{
+            StreamableHttpServerConfig,
+            session::local::LocalSessionManager,
+            tower::StreamableHttpService,
+        };
+
+        let doc_repo = app_state.document_repo.clone();
+        let storage = app_state.storage_client.clone();
+        let emb = emb.clone();
+        let vs = vs.clone();
+
+        let mcp_service = StreamableHttpService::new(
+            move || {
+                Ok(LektonMcpServer::new(
+                    doc_repo.clone(),
+                    storage.clone(),
+                    emb.clone(),
+                    vs.clone(),
+                ))
+            },
+            LocalSessionManager::default().into(),
+            StreamableHttpServerConfig::default(),
+        );
+
+        let mcp_auth = McpAuthState {
+            service_token_repo: app_state.service_token_repo.clone(),
+            user_repo: app_state.user_repo.clone(),
+        };
+
+        let mcp_router = Router::new()
+            .nest_service("/mcp", mcp_service)
+            .layer(axum::middleware::from_fn_with_state(mcp_auth, pat_auth_middleware));
+
+        app = app.merge(mcp_router);
+
+        tracing::info!("MCP server mounted at POST /mcp (Streamable HTTP, PAT auth)");
+    } else {
+        tracing::info!("MCP server not available — RAG not configured");
     }
 
     // Rate limiting: replenished at 1 per second, burst from config

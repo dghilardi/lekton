@@ -646,6 +646,8 @@ mod tests {
             name: "test-scoped".to_string(),
             token_hash: TokenService::hash_token(raw_token),
             allowed_scopes: scopes.into_iter().map(String::from).collect(),
+            token_type: "service".to_string(),
+            user_id: None,
             can_write: true,
             created_by: "admin".to_string(),
             created_at: Utc::now(),

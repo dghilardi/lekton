@@ -1,15 +1,28 @@
 use leptos::prelude::*;
+use leptos::prelude::StoredValue;
 use serde::{Deserialize, Serialize};
 
 use crate::rendering::markdown::render_markdown;
 
-/// A single message in the chat UI (completed messages only).
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct UiMessage {
-    role: String,
-    content: String,
+/// Feedback state on a single assistant message.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct UiFeedback {
+    pub rating: String, // "positive" | "negative"
+    pub comment: Option<String>,
 }
 
+/// A single completed message in the chat UI.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UiMessage {
+    /// Server-assigned message ID; None for locally-added user messages
+    /// (before the session is confirmed) and for legacy loaded messages
+    /// that pre-date this field.
+    pub id: Option<String>,
+    pub role: String,
+    pub content: String,
+    /// Current feedback given by the user for this message, if any.
+    pub feedback: Option<UiFeedback>,
+}
 
 /// Session summary for the sidebar.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -114,8 +127,10 @@ fn ChatContent() -> impl IntoView {
         // Add user message to completed messages list
         messages.update(|msgs| {
             msgs.push(UiMessage {
+                id: None,
                 role: "user".into(),
                 content: msg.clone(),
+                feedback: None,
             });
         });
 
@@ -129,13 +144,15 @@ fn ChatContent() -> impl IntoView {
                 match fetch_chat_stream(sid, msg, session_id, sessions, streaming_content)
                     .await
                 {
-                    Ok(()) => {
+                    Ok(message_id) => {
                         // Commit the streamed content as a completed assistant message
                         let content = streaming_content.get_untracked();
                         messages.update(|msgs| {
                             msgs.push(UiMessage {
+                                id: message_id,
                                 role: "assistant".into(),
                                 content: content.clone(),
+                                feedback: None,
                             });
                         });
                         streaming_content.set(String::new());
@@ -187,8 +204,10 @@ fn ChatContent() -> impl IntoView {
                             msgs.into_iter().enumerate().collect::<Vec<_>>()
                         }
                         key=|(i, _)| *i
-                        children=move |(_, msg)| {
+                        children=move |(idx, msg)| {
                             let is_user = msg.role == "user";
+                            let msg_id = msg.id.clone();
+                            let initial_feedback = msg.feedback.clone();
                             view! {
                                 <div class=format!(
                                     "flex w-full group {}",
@@ -210,7 +229,7 @@ fn ChatContent() -> impl IntoView {
                                             }}
                                         </div>
 
-                                        // Bubble
+                                        // Bubble + feedback
                                         <div class="flex flex-col gap-1">
                                             <div class=format!(
                                                 "px-4 py-2.5 rounded-2xl shadow-sm text-[15px] leading-relaxed relative {}",
@@ -226,6 +245,24 @@ fn ChatContent() -> impl IntoView {
                                                     view! { <div inner_html=render_markdown(&msg.content)></div> }.into_any()
                                                 }}
                                             </div>
+
+                                            // Feedback bar — only for assistant messages with a known ID
+                                            {if !is_user {
+                                                if let Some(mid) = msg_id {
+                                                    view! {
+                                                        <MessageFeedbackBar
+                                                            message_id=mid
+                                                            initial_feedback=initial_feedback
+                                                            messages=messages
+                                                            msg_index=idx
+                                                        />
+                                                    }.into_any()
+                                                } else {
+                                                    view! { <div></div> }.into_any()
+                                                }
+                                            } else {
+                                                view! { <div></div> }.into_any()
+                                            }}
                                         </div>
                                     </div>
                                 </div>
@@ -329,6 +366,210 @@ fn ChatContent() -> impl IntoView {
     }
 }
 
+// ── Feedback bar component ───────────────────────────────────────────────────
+
+#[component]
+fn MessageFeedbackBar(
+    message_id: String,
+    initial_feedback: Option<UiFeedback>,
+    messages: RwSignal<Vec<UiMessage>>,
+    msg_index: usize,
+) -> impl IntoView {
+    // All signals are Copy — safe to capture in multiple closures.
+    let feedback = RwSignal::new(initial_feedback);
+    let show_comment_box = RwSignal::new(false);
+    let comment_input = RwSignal::new(String::new());
+
+    // StoredValue<String> is Copy so it can be used in multiple Fn closures.
+    let mid = StoredValue::new(message_id);
+
+    // Helper: sync feedback change back to the parent messages list.
+    // Captures only Copy values (RwSignal + usize) → the closure itself is Copy.
+    let update_message_feedback = move |new_fb: Option<UiFeedback>| {
+        messages.update(|msgs| {
+            if let Some(m) = msgs.get_mut(msg_index) {
+                m.feedback = new_fb;
+            }
+        });
+    };
+
+    view! {
+        <div class="flex flex-col gap-1.5 mt-0.5">
+            // Feedback buttons row
+            <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                // Thumbs up
+                <button
+                    class=move || format!(
+                        "btn btn-ghost btn-xs h-6 min-h-0 px-1.5 rounded-md gap-1 text-xs {}",
+                        if feedback.get().as_ref().map(|f| f.rating == "positive").unwrap_or(false) {
+                            "text-success bg-success/10"
+                        } else {
+                            "text-base-content/40 hover:text-success hover:bg-success/10"
+                        }
+                    )
+                    on:click=move |_| {
+                        let current = feedback.get_untracked();
+                        show_comment_box.set(false);
+                        comment_input.set(String::new());
+                        if current.as_ref().map(|f| f.rating == "positive").unwrap_or(false) {
+                            feedback.set(None);
+                            update_message_feedback(None);
+                            #[cfg(feature = "hydrate")]
+                            {
+                                let m = mid.get_value();
+                                leptos::task::spawn_local(async move {
+                                    let _ = fetch_delete_feedback(&m).await;
+                                });
+                            }
+                        } else {
+                            let fb = UiFeedback { rating: "positive".into(), comment: None };
+                            feedback.set(Some(fb.clone()));
+                            update_message_feedback(Some(fb));
+                            #[cfg(feature = "hydrate")]
+                            {
+                                let m = mid.get_value();
+                                leptos::task::spawn_local(async move {
+                                    let _ = fetch_submit_feedback(&m, "positive", None).await;
+                                });
+                            }
+                        }
+                    }
+                    title="Helpful"
+                >
+                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14Z"/>
+                        <path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/>
+                    </svg>
+                </button>
+
+                // Thumbs down
+                <button
+                    class=move || format!(
+                        "btn btn-ghost btn-xs h-6 min-h-0 px-1.5 rounded-md gap-1 text-xs {}",
+                        if feedback.get().as_ref().map(|f| f.rating == "negative").unwrap_or(false) {
+                            "text-error bg-error/10"
+                        } else {
+                            "text-base-content/40 hover:text-error hover:bg-error/10"
+                        }
+                    )
+                    on:click=move |_| {
+                        let current = feedback.get_untracked();
+                        if current.as_ref().map(|f| f.rating == "negative").unwrap_or(false) {
+                            feedback.set(None);
+                            update_message_feedback(None);
+                            show_comment_box.set(false);
+                            comment_input.set(String::new());
+                            #[cfg(feature = "hydrate")]
+                            {
+                                let m = mid.get_value();
+                                leptos::task::spawn_local(async move {
+                                    let _ = fetch_delete_feedback(&m).await;
+                                });
+                            }
+                        } else {
+                            show_comment_box.set(true);
+                            comment_input.set(
+                                current.as_ref().and_then(|f| f.comment.clone()).unwrap_or_default()
+                            );
+                        }
+                    }
+                    title="Not helpful"
+                >
+                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3H10Z"/>
+                        <path d="M17 2h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/>
+                    </svg>
+                </button>
+
+                // Existing feedback indicator — uses Show so the reactive closure
+                // only runs when feedback is Some, avoiding FnOnce capture issues.
+                <Show when=move || feedback.get().is_some() fallback=|| ()>
+                    {move || feedback.get().map(|fb| {
+                        let is_pos = fb.rating == "positive";
+                        let label = if is_pos { "Helpful" } else { "Not helpful" };
+                        let badge_class = format!(
+                            "badge badge-xs gap-1 {}",
+                            if is_pos { "badge-success badge-soft" } else { "badge-error badge-soft" }
+                        );
+                        view! {
+                            <span class=badge_class>
+                                {label}
+                                <button
+                                    class="ml-0.5 opacity-60 hover:opacity-100"
+                                    on:click=move |_| {
+                                        feedback.set(None);
+                                        update_message_feedback(None);
+                                        show_comment_box.set(false);
+                                        comment_input.set(String::new());
+                                        #[cfg(feature = "hydrate")]
+                                        {
+                                            let m = mid.get_value();
+                                            leptos::task::spawn_local(async move {
+                                                let _ = fetch_delete_feedback(&m).await;
+                                            });
+                                        }
+                                    }
+                                    title="Remove feedback"
+                                >
+                                    <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                </button>
+                            </span>
+                        }
+                    })}
+                </Show>
+            </div>
+
+            // Negative comment box (shown when thumbs-down clicked and no feedback set yet)
+            <Show when=move || show_comment_box.get() fallback=|| ()>
+                <div class="flex flex-col gap-2 p-2 bg-base-200/50 rounded-lg border border-base-300 max-w-sm">
+                    <p class="text-[11px] text-base-content/60">"What was wrong? (optional)"</p>
+                    <textarea
+                        class="textarea textarea-sm textarea-bordered text-xs resize-none bg-base-100 min-h-[52px]"
+                        placeholder="Tell us what could be improved..."
+                        prop:value=move || comment_input.get()
+                        on:input=move |ev| comment_input.set(event_target_value(&ev))
+                        rows=2
+                    />
+                    <div class="flex gap-2 justify-end">
+                        <button
+                            class="btn btn-ghost btn-xs"
+                            on:click=move |_| { show_comment_box.set(false); comment_input.set(String::new()); }
+                        >
+                            "Cancel"
+                        </button>
+                        <button
+                            class="btn btn-error btn-xs"
+                            on:click=move |_| {
+                                let comment_val = comment_input.get_untracked();
+                                let comment = if comment_val.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(comment_val.trim().to_string())
+                                };
+                                let fb = UiFeedback { rating: "negative".into(), comment: comment.clone() };
+                                feedback.set(Some(fb.clone()));
+                                update_message_feedback(Some(fb));
+                                show_comment_box.set(false);
+                                comment_input.set(String::new());
+                                #[cfg(feature = "hydrate")]
+                                {
+                                    let m = mid.get_value();
+                                    let c = comment;
+                                    leptos::task::spawn_local(async move {
+                                        let _ = fetch_submit_feedback(&m, "negative", c.as_deref()).await;
+                                    });
+                                }
+                            }
+                        >
+                            "Submit"
+                        </button>
+                    </div>
+                </div>
+            </Show>
+        </div>
+    }
+}
+
 // ── Client-side fetch helpers (hydrate only) ─────────────────────────────────
 
 #[cfg(feature = "hydrate")]
@@ -379,16 +620,20 @@ pub async fn fetch_session_messages(session_id: &str) -> Result<Vec<UiMessage>, 
 
     #[derive(serde::Deserialize)]
     struct MsgResp {
+        id: Option<String>,
         role: String,
         content: String,
+        feedback: Option<UiFeedback>,
     }
     let msgs: Vec<MsgResp> =
         serde_wasm_bindgen::from_value(json).map_err(|e| format!("{e}"))?;
     Ok(msgs
         .into_iter()
         .map(|m| UiMessage {
+            id: m.id,
             role: m.role,
             content: m.content,
+            feedback: m.feedback,
         })
         .collect())
 }
@@ -413,7 +658,56 @@ pub async fn fetch_delete_session(session_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "hydrate")]
+async fn fetch_submit_feedback(
+    message_id: &str,
+    rating: &str,
+    comment: Option<&str>,
+) -> Result<(), String> {
+    use wasm_bindgen::prelude::*;
+    use wasm_bindgen_futures::JsFuture;
+    use web_sys::{RequestInit, Headers, Request};
+
+    let window = web_sys::window().ok_or("no window")?;
+    let body = serde_json::json!({ "rating": rating, "comment": comment });
+    let opts = RequestInit::new();
+    opts.set_method("POST");
+    let headers = Headers::new().map_err(|e| format!("{e:?}"))?;
+    headers.set("Content-Type", "application/json").map_err(|e| format!("{e:?}"))?;
+    opts.set_headers(&headers);
+    opts.set_body(&JsValue::from_str(&body.to_string()));
+    let request = Request::new_with_str_and_init(
+        &format!("/api/v1/rag/messages/{message_id}/feedback"),
+        &opts,
+    )
+    .map_err(|e| format!("{e:?}"))?;
+    JsFuture::from(window.fetch_with_request(&request))
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+    Ok(())
+}
+
+#[cfg(feature = "hydrate")]
+async fn fetch_delete_feedback(message_id: &str) -> Result<(), String> {
+    use wasm_bindgen::prelude::*;
+    use wasm_bindgen_futures::JsFuture;
+
+    let window = web_sys::window().ok_or("no window")?;
+    let opts = leptos::web_sys::RequestInit::new();
+    opts.set_method("DELETE");
+    let request = leptos::web_sys::Request::new_with_str_and_init(
+        &format!("/api/v1/rag/messages/{message_id}/feedback"),
+        &opts,
+    )
+    .map_err(|e| format!("{e:?}"))?;
+    JsFuture::from(window.fetch_with_request(&request))
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+    Ok(())
+}
+
 /// Stream chat response via fetch + ReadableStream.
+/// Returns the saved message ID on success (from the `done` event).
 #[cfg(feature = "hydrate")]
 pub async fn fetch_chat_stream(
     session_id: Option<String>,
@@ -421,7 +715,7 @@ pub async fn fetch_chat_stream(
     set_session_id: RwSignal<Option<String>>,
     set_sessions: RwSignal<Vec<SessionSummary>>,
     set_streaming: RwSignal<String>,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;
     use js_sys::Reflect;
@@ -525,7 +819,11 @@ pub async fn fetch_chat_stream(
                                 return Err(msg.to_string());
                             }
                             Some("done") => {
-                                return Ok(());
+                                let message_id = event
+                                    .get("message_id")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
+                                return Ok(message_id);
                             }
                             _ => {}
                         }
@@ -535,5 +833,5 @@ pub async fn fetch_chat_stream(
         }
     }
 
-    Ok(())
+    Ok(None)
 }

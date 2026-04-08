@@ -179,6 +179,7 @@ impl TestEnv {
             reindex_state: None,
             chat_repo: None,
             chat_service: None,
+            feedback_repo: None,
         };
 
         // --- Build Router (API routes only, no Leptos SSR) ---
@@ -473,6 +474,7 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
         reindex_state: None,
         chat_repo: None,
         chat_service: None,
+        feedback_repo: None,
     };
 
     let router = Router::new()

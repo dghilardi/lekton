@@ -271,7 +271,7 @@ fn ChatContent() -> impl IntoView {
                         <div class="absolute -inset-0.5 bg-gradient-to-r from-primary/20 to-secondary/20 rounded-2xl blur opacity-0 group-focus-within:opacity-100 transition duration-300"></div>
                         <div class="relative flex items-end gap-3 bg-base-100 border border-base-200 shadow-xl rounded-2xl px-4 py-3 transition-all group-focus-within:border-primary/50 group-focus-within:ring-2 group-focus-within:ring-primary/10">
                             <textarea
-                                class="w-full bg-transparent outline-none border-0 resize-none text-sm text-base-content placeholder:text-base-content/40 leading-relaxed overflow-y-hidden"
+                                class="w-full bg-transparent outline-none border-0 resize-none text-sm text-base-content placeholder:text-base-content/40 leading-6 overflow-y-hidden"
                                 style="height: 24px; min-height: 24px;"
                                 placeholder="Type your message..."
                                 node_ref=textarea_ref
@@ -312,7 +312,7 @@ fn ChatContent() -> impl IntoView {
                                 prop:disabled=move || is_loading.get() || input.get().trim().is_empty()
                             >
                                 <Show when=move || is_loading.get() fallback=|| view! {
-                                    <svg class="w-5 h-5 translate-x-0.5 -translate-y-0.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+                                    <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
                                 }>
                                     <span class="loading loading-spinner loading-sm"></span>
                                 </Show>

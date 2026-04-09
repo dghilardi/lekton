@@ -102,7 +102,7 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                                                     {tags.iter().map(|tag| {
                                                                         let tag_text = tag.clone();
                                                                         view! {
-                                                                            <span class="badge badge-sm badge-outline">{tag_text}</span>
+                                                                            <span class="badge badge-sm badge-outline border-primary/30 text-primary/80">{tag_text}</span>
                                                                         }
                                                                     }).collect::<Vec<_>>()}
                                                                 </div>

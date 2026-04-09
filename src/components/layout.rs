@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 
 use super::contextual_sidebars::{AdminSidebar, ChatSidebar, DocsSidebar, RegistrySidebar};
+use super::logo::BrandedLogo;
 use super::navigation::NavigationTree;
 use super::search::SearchModal;
 use super::theme::ThemeToggle;
@@ -14,6 +15,8 @@ const MAX_DOCS_ITEMS: usize = 5;
 pub fn TopNavbarLinks() -> impl IntoView {
     let nav_resource = Resource::new(|| (), |_| get_navigation());
     let groups_resource = Resource::new(|| (), |_| get_navbar_groups());
+    let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
+    let is_rag = use_context::<crate::app::IsRagEnabled>();
 
     view! {
         <Suspense fallback=move || view! { <span class="loading loading-spinner loading-sm"></span> }>
@@ -52,7 +55,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
 
                     view! {
                         // ── TIER 1: xl+ — full text, max items, "Altro" overflow ──────────────
-                        <div class="hidden xl:flex items-center gap-1">
+                        <div class="hidden xl:flex items-center gap-2">
                             {t1_standalone.into_iter().map(|item| {
                                 view! {
                                     <a href=format!("/docs/{}", item.slug)
@@ -126,8 +129,6 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                 "Registry"
                             </a>
                             {move || {
-                                let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
-                                let is_rag = use_context::<crate::app::IsRagEnabled>();
                                 let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
                                 let rag_enabled = is_rag.map(|sig| sig.0.get()).unwrap_or(false);
                                 if logged_in && rag_enabled {
@@ -137,7 +138,6 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                 }
                             }}
                             {move || {
-                                let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
                                 let is_admin = current_user.and_then(|sig| sig.get()).map(|u| u.is_admin).unwrap_or(false);
                                 if is_admin {
                                     view! { <a href="/admin/tokens" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">"Admin"</a> }.into_any()
@@ -148,7 +148,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                         </div>
 
                         // ── TIER 2: lg–xl — "Docs ▾" dropdown + text system links ─────────────
-                        <div class="hidden lg:flex xl:hidden items-center gap-1">
+                        <div class="hidden lg:flex xl:hidden items-center gap-2">
                             <div class="dropdown dropdown-hover dropdown-bottom">
                                 <div tabindex="0" role="button"
                                      class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50 m-1">
@@ -182,8 +182,6 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                 "Registry"
                             </a>
                             {move || {
-                                let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
-                                let is_rag = use_context::<crate::app::IsRagEnabled>();
                                 let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
                                 let rag_enabled = is_rag.map(|sig| sig.0.get()).unwrap_or(false);
                                 if logged_in && rag_enabled {
@@ -193,7 +191,6 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                 }
                             }}
                             {move || {
-                                let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
                                 let is_admin = current_user.and_then(|sig| sig.get()).map(|u| u.is_admin).unwrap_or(false);
                                 if is_admin {
                                     view! { <a href="/admin/tokens" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">"Admin"</a> }.into_any()
@@ -204,7 +201,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                         </div>
 
                         // ── TIER 3: <lg — icons only (always visible below lg) ───────────────
-                        <div class="flex lg:hidden items-center gap-1">
+                        <div class="flex lg:hidden items-center gap-2">
                             // Book icon + docs dropdown
                             <div class="dropdown dropdown-hover dropdown-bottom">
                                 <div tabindex="0" role="button"
@@ -244,8 +241,6 @@ pub fn TopNavbarLinks() -> impl IntoView {
 
                             // Chat icon (conditional)
                             {move || {
-                                let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
-                                let is_rag = use_context::<crate::app::IsRagEnabled>();
                                 let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
                                 let rag_enabled = is_rag.map(|sig| sig.0.get()).unwrap_or(false);
                                 if logged_in && rag_enabled {
@@ -263,7 +258,6 @@ pub fn TopNavbarLinks() -> impl IntoView {
 
                             // Admin icon (conditional)
                             {move || {
-                                let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
                                 let is_admin = current_user.and_then(|sig| sig.get()).map(|u| u.is_admin).unwrap_or(false);
                                 if is_admin {
                                     view! {
@@ -313,10 +307,7 @@ pub fn Layout(children: Children) -> impl IntoView {
                     <label for="sidebar-drawer" class="btn btn-square btn-ghost drawer-button lg:hidden">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="inline-block w-5 h-5 stroke-current"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
                     </label>
-                    <a class="flex items-center gap-2 text-xl font-bold tracking-tight hover:opacity-80 transition-opacity" href="/">
-                        <svg class="w-6 h-6 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5Z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-                        <span class="hidden sm:inline truncate">"Lekton"</span>
-                    </a>
+                    <BrandedLogo />
                     <div class="flex items-center gap-1 ml-2 pl-2 sm:ml-4 sm:pl-4 border-l border-base-300">
                         <TopNavbarLinks />
                     </div>
@@ -325,16 +316,16 @@ pub fn Layout(children: Children) -> impl IntoView {
                 <div class="hidden md:flex flex-1 min-w-0 items-center justify-center">
                     <div class="w-full max-w-md">
                         <button
-                            class="btn btn-ghost bg-base-200/50 hover:bg-base-200 border border-base-300 hover:border-base-content/20 w-full justify-between shadow-sm flex-nowrap h-10 min-h-10 px-3 transition-colors font-normal text-base-content/70"
+                            class="btn btn-ghost bg-base-200/50 hover:bg-base-200 border border-base-300 hover:border-primary/30 w-full justify-between shadow-sm flex-nowrap h-11 min-h-[2.75rem] px-4 transition-all font-normal text-base-content/80 group/btn"
                             on:click=move |_| set_search_modal_open.set(true)
                         >
-                            <div class="flex items-center gap-2 overflow-hidden">
-                                <svg class="w-4 h-4 opacity-70 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <div class="flex items-center gap-3 overflow-hidden">
+                                <svg class="w-4 h-4 opacity-70 flex-shrink-0 group-hover/btn:text-primary transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
                                 </svg>
                                 <span class="truncate">"Search documentation..."</span>
                             </div>
-                            <kbd class="kbd kbd-sm bg-base-100 border-none shadow-sm opacity-80 flex-shrink-0">"Ctrl K"</kbd>
+                            <kbd class="kbd kbd-sm bg-base-100 border-none shadow-sm opacity-80 flex-shrink-0 group-hover/btn:bg-primary group-hover/btn:text-primary-content transition-colors">"Ctrl K"</kbd>
                         </button>
                     </div>
                 </div>

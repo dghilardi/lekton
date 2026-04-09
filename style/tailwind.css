@@ -198,6 +198,16 @@ body {
 }
 
 /*
+ * Logo theme switching — hide the wrong-theme logo based on data-theme.
+ * These rules are also present in the default public/custom.css; defining them
+ * here ensures correct behaviour even when no custom CSS file is mounted.
+ */
+html[data-theme="light"] .lekton-logo-dark { display: none !important; }
+html[data-theme="dark"]  .lekton-logo-light { display: none !important; }
+/* When data-theme is not yet set (pre-hydration) treat as light */
+:root:not([data-theme="dark"]) .lekton-logo-dark { display: none !important; }
+
+/*
  * Runtime customizability:
  * This import loads the user-injectable stylesheet from the public/ directory.
  * Users can modify public/custom.css (or mount a Docker volume) to override

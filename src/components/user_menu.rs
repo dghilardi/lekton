@@ -35,7 +35,7 @@ pub fn UserMenu() -> impl IntoView {
                                 <svg class="sm:hidden w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>
                                 <span class="hidden sm:inline truncate max-w-[120px]">{display}</span>
                                 {if is_admin {
-                                    view! { <span class="hidden sm:inline badge badge-error badge-xs">"Admin"</span> }.into_any()
+                                    view! { <span class="hidden sm:inline badge badge-primary badge-xs">"Admin"</span> }.into_any()
                                 } else {
                                     view! { <span /> }.into_any()
                                 }}

@@ -364,8 +364,8 @@ fn CreateTokenForm(
                     <label class="label pt-0">
                         <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60">"Permissions"</span>
                     </label>
-                    <div class="bg-base-100 rounded-lg border border-base-300 p-2 shadow-sm">
-                      <label class="label cursor-pointer justify-start gap-4 h-full">
+                    <div class="bg-base-100 rounded-lg border border-base-300 px-3 shadow-sm flex items-center min-h-12">
+                      <label class="cursor-pointer flex items-center gap-4 w-full">
                           <input
                               type="checkbox"
                               class="checkbox checkbox-primary"
@@ -378,6 +378,9 @@ fn CreateTokenForm(
                           </div>
                       </label>
                     </div>
+                    <label class="label">
+                      <span class="label-text-alt text-base-content/40 italic">"Controls write permissions for this token."</span>
+                    </label>
                 </div>
             </div>
 
@@ -993,11 +996,11 @@ fn CreatedTokenModal(
                         </div>
                     </div>
 
-                    <div class="bg-orange-50 border border-orange-200 rounded-2xl p-6 mb-8 flex items-start gap-4">
-                        <div class="text-orange-600 mt-1">
+                    <div class="bg-warning/10 border border-warning/20 rounded-2xl p-6 mb-8 flex items-start gap-4">
+                        <div class="text-warning mt-1">
                           <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                         </div>
-                        <p class="text-orange-800 text-sm font-semibold leading-relaxed">
+                        <p class="text-base-content text-sm font-semibold leading-relaxed">
                           "For security reasons, we do not store the raw token. If you lose it, you will need to deactivate it and create a new one."
                         </p>
                     </div>
@@ -1198,7 +1201,7 @@ fn RagReindexControls(
                         <span class="text-sm text-base-content/60">{move || format!("{}%", progress.get())}</span>
                     </div>
                     <progress
-                        class="progress progress-secondary w-full"
+                        class="progress progress-primary w-full"
                         value=move || progress.get().to_string()
                         max="100"
                     ></progress>

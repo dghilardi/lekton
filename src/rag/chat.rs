@@ -48,9 +48,10 @@ pub enum ChatEvent {
     /// A content delta token.
     #[serde(rename = "delta")]
     Delta { content: String },
-    /// Stream finished.
+    /// Stream finished — carries the saved message ID so the client can
+    /// attach feedback to the correct message.
     #[serde(rename = "done")]
-    Done,
+    Done { message_id: Option<String> },
     /// An error occurred.
     #[serde(rename = "error")]
     Error { message: String },
@@ -290,9 +291,10 @@ impl ChatService {
             }
 
             // Save the full assistant response
-            if !full_response.is_empty() {
+            let saved_message_id = if !full_response.is_empty() {
+                let msg_id = Uuid::new_v4().to_string();
                 let msg = ChatMessage {
-                    id: Uuid::new_v4().to_string(),
+                    id: msg_id.clone(),
                     session_id: sid.clone(),
                     role: "assistant".into(),
                     content: full_response,
@@ -304,9 +306,12 @@ impl ChatService {
                 if let Err(e) = chat_repo.touch_session(&sid).await {
                     tracing::error!("Failed to touch session: {e}");
                 }
-            }
+                Some(msg_id)
+            } else {
+                None
+            };
 
-            yield ChatEvent::Done;
+            yield ChatEvent::Done { message_id: saved_message_id };
         };
 
         Ok(Box::pin(event_stream))

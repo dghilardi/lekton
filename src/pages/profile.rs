@@ -2,8 +2,9 @@ use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
 
 use crate::app::{
-    CreatePatResult, PatInfo,
-    create_user_pat, delete_user_pat, list_user_pats, toggle_user_pat,
+    CreatePatResult, FeedbackInfo, FeedbackListResult, PatInfo,
+    create_user_pat, delete_user_pat, delete_user_feedback,
+    list_user_pats, list_user_feedback, toggle_user_pat,
     get_current_user,
 };
 
@@ -63,6 +64,11 @@ pub fn ProfilePage() -> impl IntoView {
 
             // PAT section
             <PatSection />
+
+            <div class="divider my-8" />
+
+            // Feedback history section
+            <FeedbackSection />
         </div>
     }
 }
@@ -222,6 +228,179 @@ fn CreatePatForm(on_created: impl Fn(CreatePatResult) + 'static + Copy + Send + 
                     </button>
                 </div>
             </div>
+        </div>
+    }
+}
+
+// ── Feedback history ─────────────────────────────────────────────────────────
+
+#[component]
+fn FeedbackSection() -> impl IntoView {
+    let page = RwSignal::new(0u64);
+    let per_page = 10u64;
+    let feedback: RwSignal<Option<FeedbackListResult>> = RwSignal::new(None);
+    let loading = RwSignal::new(false);
+
+    let load = Action::new(move |p: &u64| {
+        let p = *p;
+        async move {
+            loading.set(true);
+            match list_user_feedback(p, per_page).await {
+                Ok(result) => feedback.set(Some(result)),
+                Err(e) => tracing::error!("Failed to load feedback: {e}"),
+            }
+            loading.set(false);
+        }
+    });
+
+    Effect::new(move |_| { load.dispatch(page.get()); });
+
+    view! {
+        <div>
+            <h2 class="text-xl font-semibold mb-2">"AI Feedback History"</h2>
+            <p class="text-base-content/60 text-sm mb-6">
+                "Feedback you gave on AI responses. You can review and delete any item."
+            </p>
+
+            {move || {
+                if loading.get() {
+                    return view! { <div class="skeleton h-32 w-full rounded-xl" /> }.into_any();
+                }
+                match feedback.get() {
+                    None => view! { <div class="skeleton h-32 w-full rounded-xl" /> }.into_any(),
+                    Some(result) if result.items.is_empty() => view! {
+                        <div class="text-center py-8 text-base-content/50 border border-dashed border-base-300 rounded-xl">
+                            <p>"No feedback submitted yet."</p>
+                        </div>
+                    }.into_any(),
+                    Some(result) => {
+                        let total = result.total;
+                        let current_page = result.page;
+                        let total_pages = (total + per_page - 1) / per_page;
+                        view! {
+                            <div class="flex flex-col gap-2">
+                                <For
+                                    each=move || feedback.get().map(|r| r.items).unwrap_or_default()
+                                    key=|fb| fb.message_id.clone()
+                                    children=move |fb| {
+                                        view! { <FeedbackRow fb feedback load /> }
+                                    }
+                                />
+                            </div>
+
+                            // Pagination
+                            {if total_pages > 1 {
+                                view! {
+                                    <div class="flex items-center justify-between mt-4">
+                                        <span class="text-sm text-base-content/50">
+                                            {format!("{total} item{}", if total == 1 { "" } else { "s" })}
+                                        </span>
+                                        <div class="join">
+                                            <button
+                                                class="join-item btn btn-sm"
+                                                disabled=move || page.get() == 0
+                                                on:click=move |_| page.update(|p| *p = p.saturating_sub(1))
+                                            >
+                                                "«"
+                                            </button>
+                                            <button class="join-item btn btn-sm btn-disabled">
+                                                {move || format!("{} / {}", page.get() + 1, total_pages)}
+                                            </button>
+                                            <button
+                                                class="join-item btn btn-sm"
+                                                disabled=move || page.get() + 1 >= total_pages
+                                                on:click=move |_| page.update(|p| *p += 1)
+                                            >
+                                                "»"
+                                            </button>
+                                        </div>
+                                    </div>
+                                }.into_any()
+                            } else {
+                                view! { <div /> }.into_any()
+                            }}
+                        }.into_any()
+                    }
+                }
+            }}
+        </div>
+    }
+}
+
+#[component]
+fn FeedbackRow(
+    fb: FeedbackInfo,
+    feedback: RwSignal<Option<FeedbackListResult>>,
+    load: Action<u64, ()>,
+) -> impl IntoView {
+    let msg_id = fb.message_id.clone();
+    let is_positive = fb.rating == "positive";
+
+    let delete = Action::new(move |_: &()| {
+        let mid = msg_id.clone();
+        async move {
+            if delete_user_feedback(mid).await.is_ok() {
+                // Reload current page
+                let current_page = feedback.get().map(|r| r.page).unwrap_or(0);
+                load.dispatch(current_page);
+            }
+        }
+    });
+
+    view! {
+        <div class="flex items-start gap-3 p-3 rounded-xl border border-base-200 bg-base-100 hover:bg-base-50 transition-colors">
+            // Rating icon
+            <div class=format!(
+                "flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center {}",
+                if is_positive { "bg-success/15 text-success" } else { "bg-error/15 text-error" }
+            )>
+                {if is_positive {
+                    view! {
+                        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14Z"/>
+                            <path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/>
+                        </svg>
+                    }.into_any()
+                } else {
+                    view! {
+                        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3H10Z"/>
+                            <path d="M17 2h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/>
+                        </svg>
+                    }.into_any()
+                }}
+            </div>
+
+            // Content
+            <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                    <span class=format!(
+                        "badge badge-xs {}",
+                        if is_positive { "badge-success badge-soft" } else { "badge-error badge-soft" }
+                    )>
+                        {if is_positive { "Helpful" } else { "Not helpful" }}
+                    </span>
+                    <span class="text-xs text-base-content/40">{fb.created_at.clone()}</span>
+                    <a
+                        href=format!("/chat?session={}", fb.session_id)
+                        class="text-xs text-primary hover:underline"
+                    >
+                        "View session"
+                    </a>
+                </div>
+                {fb.comment.as_ref().map(|c| view! {
+                    <p class="text-sm text-base-content/70 mt-1 line-clamp-2">{c.clone()}</p>
+                })}
+            </div>
+
+            // Delete button
+            <button
+                class="btn btn-ghost btn-xs text-error opacity-50 hover:opacity-100 flex-shrink-0"
+                on:click=move |_| { delete.dispatch(()); }
+                title="Delete feedback"
+            >
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+            </button>
         </div>
     }
 }

@@ -59,6 +59,7 @@ pub struct AppState {
     pub reindex_state: Option<Arc<crate::rag::reindex::ReindexState>>,
     pub chat_repo: Option<Arc<dyn crate::db::chat_repository::ChatRepository>>,
     pub chat_service: Option<Arc<crate::rag::chat::ChatService>>,
+    pub feedback_repo: Option<Arc<dyn crate::db::feedback_repository::FeedbackRepository>>,
     /// Whether cookies should be set without the `Secure` flag (HTTP local dev).
     #[from_ref(skip)]
     pub insecure_cookies: bool,
@@ -983,6 +984,89 @@ pub async fn admin_toggle_pat(id: String, active: bool) -> Result<(), ServerFnEr
     }
 
     state.service_token_repo.set_active(&id, active).await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(())
+}
+
+// ── Feedback (user self-service) ─────────────────────────────────────────────
+
+/// A single feedback item for the user's profile history.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FeedbackInfo {
+    pub message_id: String,
+    pub session_id: String,
+    pub rating: String, // "positive" | "negative"
+    pub comment: Option<String>,
+    pub created_at: String,
+}
+
+/// Paginated list of feedback items.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FeedbackListResult {
+    pub items: Vec<FeedbackInfo>,
+    pub total: u64,
+    pub page: u64,
+    pub per_page: u64,
+}
+
+/// List the current user's feedback (paginated, newest first).
+#[server(ListUserFeedback, "/api")]
+pub async fn list_user_feedback(page: u64, per_page: u64) -> Result<FeedbackListResult, ServerFnError> {
+    use crate::db::chat_models::FeedbackRating;
+    use crate::db::feedback_repository::FeedbackListParams;
+
+    let state = expect_context::<AppState>();
+    let user = require_any_user(&state).await?;
+
+    let fb_repo = state.feedback_repo
+        .as_ref()
+        .ok_or_else(|| ServerFnError::new("Feedback not available"))?;
+
+    let per_page = per_page.clamp(1, 50);
+    let params = FeedbackListParams {
+        page,
+        per_page,
+        ..Default::default()
+    };
+
+    let result = fb_repo
+        .list_user_feedback(&user.user_id, params)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let items = result.items.into_iter().map(|fb| {
+        let rating = match fb.rating {
+            FeedbackRating::Positive => "positive".to_string(),
+            FeedbackRating::Negative => "negative".to_string(),
+        };
+        FeedbackInfo {
+            message_id: fb.message_id,
+            session_id: fb.session_id,
+            rating,
+            comment: fb.comment,
+            created_at: fb.created_at.format("%Y-%m-%d %H:%M").to_string(),
+        }
+    }).collect();
+
+    Ok(FeedbackListResult {
+        items,
+        total: result.total,
+        page: result.page,
+        per_page: result.per_page,
+    })
+}
+
+/// Delete the current user's feedback on a specific message.
+#[server(DeleteUserFeedback, "/api")]
+pub async fn delete_user_feedback(message_id: String) -> Result<(), ServerFnError> {
+    let state = expect_context::<AppState>();
+    let user = require_any_user(&state).await?;
+
+    let fb_repo = state.feedback_repo
+        .as_ref()
+        .ok_or_else(|| ServerFnError::new("Feedback not available"))?;
+
+    fb_repo.delete_feedback(&message_id, &user.user_id).await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(())
 }

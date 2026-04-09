@@ -118,6 +118,14 @@ async fn main() {
         } else {
             None
         };
+    let feedback_repo: Option<Arc<dyn lekton::db::feedback_repository::FeedbackRepository>> =
+        if config.rag.is_enabled() {
+            Some(Arc::new(
+                lekton::db::feedback_repository::MongoFeedbackRepository::new(&mongo_db),
+            ))
+        } else {
+            None
+        };
 
     // Seed default access levels (no-op if already present).
     if let Err(e) = access_level_repo.seed_defaults().await {
@@ -283,6 +291,7 @@ async fn main() {
         rag_service,
         chat_repo,
         chat_service,
+        feedback_repo,
         insecure_cookies: config.server.insecure_cookies,
         max_attachment_size_bytes: config.server.max_attachment_size_mb * 1024 * 1024,
     };
@@ -412,6 +421,10 @@ async fn main() {
             axum::routing::get(api::rag::reindex_status_handler),
         )
         .route(
+            "/api/v1/admin/rag/feedback",
+            axum::routing::get(api::rag::admin_list_feedback_handler),
+        )
+        .route(
             "/api/v1/rag/chat",
             axum::routing::post(api::rag::chat_handler),
         )
@@ -426,6 +439,11 @@ async fn main() {
         .route(
             "/api/v1/rag/sessions/{id}/messages",
             axum::routing::get(api::rag::get_session_messages_handler),
+        )
+        .route(
+            "/api/v1/rag/messages/{id}/feedback",
+            axum::routing::post(api::rag::submit_feedback_handler)
+                .delete(api::rag::delete_feedback_handler),
         );
 
     // Mount demo auth routes when demo mode is enabled, OAuth2/OIDC routes otherwise

@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **E2E CI timeout**: Run pre-built binary directly in CI instead of `cargo leptos serve --release`, which redundantly recompiled the entire project and exceeded the Playwright 180s timeout.
+
 ## [0.9.0] 2026-04-08
 
 ### Added

@@ -88,4 +88,4 @@ lekton-sync --archive-missing ./docs
 
 ## License
 
-MIT
+AGPL-3.0

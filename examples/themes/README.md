@@ -256,4 +256,4 @@ Please ensure your theme:
 
 ## 📝 License
 
-All themes in this directory are MIT licensed, same as Lekton itself.
+All themes in this directory are AGPL-3.0 licensed, same as Lekton itself.

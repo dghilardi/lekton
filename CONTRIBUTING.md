@@ -16,10 +16,10 @@ First off, thank you for considering contributing to Lekton!
 
 ## Legal: Developer Certificate of Origin (DCO) & Licensing
 
-By contributing to this repository, you agree that your contributions will be licensed under its GNU General Public License v3.0 (GPL-3.0).
+By contributing to this repository, you agree that your contributions will be licensed under its GNU Affero General Public License v3.0 (AGPL-3.0).
 
 ### Future Relicensing Rights (CLA)
-To ensure the long-term sustainability of the project, **contributors grant the project maintainers (Project Owner) the right to relicense their contributions under alternative licenses, including proprietary commercial licenses, in the future.** This allows the project to potentially adopt a dual-licensing model (e.g., GPL + Commercial).
+To ensure the long-term sustainability of the project, **contributors grant the project maintainers (Project Owner) the right to relicense their contributions under alternative licenses, including proprietary commercial licenses, in the future.** This allows the project to potentially adopt a dual-licensing model (e.g., AGPL + Commercial).
 
 **All contributions generated through the use of AI agents (Artificial Intelligence assistants) are considered provided under the direction, supervision, and full ownership of the Project Owner.**
 

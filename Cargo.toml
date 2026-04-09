@@ -7,7 +7,7 @@ name = "lekton"
 version = "0.9.1"
 authors = ["Davide Ghilardi"]
 edition = "2021"
-license = "GPL-3.0-or-later"
+license = "AGPL-3.0-or-later"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

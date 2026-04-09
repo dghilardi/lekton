@@ -33,14 +33,17 @@ export default defineConfig({
   globalSetup: './e2e/global-setup.ts',
 
   webServer: {
+    // In CI the binary is already compiled by `cargo leptos build --release`,
+    // so run it directly to avoid a redundant recompilation that exceeds the
+    // Playwright timeout.
     command: process.env.CI
-      ? 'cargo leptos serve --release'
+      ? './target/release/lekton'
       : 'cargo leptos serve',
     url: 'http://localhost:3000',
     reuseExistingServer: !process.env.CI,
     stdout: 'pipe',
     stderr: 'pipe',
-    timeout: 180_000,
+    timeout: process.env.CI ? 30_000 : 180_000,
     env: {
       LKN__AUTH__DEMO_MODE: 'true',
       LKN__AUTH__SERVICE_TOKEN: 'test-token',
@@ -54,6 +57,14 @@ export default defineConfig({
       AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID || 'minioadmin',
       AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY || 'minioadmin',
       AWS_REGION: process.env.AWS_REGION || 'us-east-1',
+      // Leptos configuration for the pre-built binary (reads from env when
+      // not launched via cargo-leptos).
+      ...(process.env.CI ? {
+        LEPTOS_OUTPUT_NAME: 'lekton',
+        LEPTOS_SITE_ROOT: 'target/site',
+        LEPTOS_SITE_ADDR: '127.0.0.1:3000',
+        LEPTOS_SITE_PKG_DIR: 'pkg',
+      } : {}),
     },
   },
 });

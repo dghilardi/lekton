@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+
+## [0.10.0] 2026-04-10
 ### Added
 - **Embedding cache**: chunk embeddings are now cached in a new MongoDB `embedding_cache` collection, keyed on `(sha256(normalised_text), model)`. Only missing embeddings are forwarded to the embedding service; hits are returned directly. Two optional config flags (default `false`): `rag.embedding_cache_store_text` persists the original chunk text alongside the vector for debugging, `rag.embedding_cache_query` extends caching to chat-query embeddings in addition to chunk embeddings.
 - **Custom LLM headers**: `rag.chat_headers` and `rag.embedding_headers` config maps allow injecting arbitrary HTTP headers into every chat/rewrite and embedding request respectively. Keys are normalised at request time: underscores (`_`) are replaced with hyphens (`-`), enabling hyphenated header names (e.g. `x-producer`) to be set via environment variables (`LKN__RAG__CHAT_HEADERS__X_PRODUCER=LEKTON`). TOML files can use quoted keys to set hyphens directly.

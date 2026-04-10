@@ -55,6 +55,11 @@ If the context does not contain enough information to answer, say so honestly.""
 rewrite_model = ""
 rewrite_max_tokens = 80
 
+# Store original chunk text alongside its embedding in the cache (for debugging).
+embedding_cache_store_text = false
+# Cache embeddings generated for chat queries (in addition to chunk embeddings).
+embedding_cache_query = false
+
 # Extra HTTP headers for chat/rewrite requests. Keys are normalised: _ → - at request time.
 # Via env: LKN__RAG__CHAT_HEADERS__X_PRODUCER=LEKTON  →  x-producer: LEKTON
 # Via file: use quoted keys to preserve hyphens: "x-producer" = "LEKTON"

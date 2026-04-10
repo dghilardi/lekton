@@ -172,6 +172,14 @@ pub struct RagConfig {
     /// Same key-normalisation rules apply as for `chat_headers`.
     #[serde(default)]
     pub embedding_headers: HashMap<String, String>,
+    /// When `true`, the original chunk text is stored alongside its embedding in the cache.
+    /// Useful for debugging but increases storage. Default: `false`.
+    #[serde(default)]
+    pub embedding_cache_store_text: bool,
+    /// When `true`, embeddings generated for chat queries are also cached.
+    /// Default: `false` (only chunk embeddings are cached).
+    #[serde(default)]
+    pub embedding_cache_query: bool,
 }
 
 impl RagConfig {

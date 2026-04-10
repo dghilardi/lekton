@@ -1,4 +1,6 @@
 #[cfg(feature = "ssr")]
+pub mod cached_embedding;
+#[cfg(feature = "ssr")]
 pub mod chat;
 #[cfg(feature = "ssr")]
 pub mod embedding;

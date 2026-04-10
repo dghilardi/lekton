@@ -276,6 +276,8 @@ mod tests {
             rewrite_max_tokens: 80,
             chat_headers: std::collections::HashMap::new(),
             embedding_headers: std::collections::HashMap::new(),
+            embedding_cache_store_text: false,
+            embedding_cache_query: false,
         };
         assert!(QdrantVectorStore::from_rag_config(&config).is_err());
     }
@@ -297,6 +299,8 @@ mod tests {
             rewrite_max_tokens: 80,
             chat_headers: std::collections::HashMap::new(),
             embedding_headers: std::collections::HashMap::new(),
+            embedding_cache_store_text: false,
+            embedding_cache_query: false,
         };
         assert!(QdrantVectorStore::from_rag_config(&config).is_ok());
     }
@@ -324,6 +328,8 @@ mod tests {
             rewrite_max_tokens: 80,
             chat_headers: std::collections::HashMap::new(),
             embedding_headers: std::collections::HashMap::new(),
+            embedding_cache_store_text: false,
+            embedding_cache_query: false,
         };
         let store = QdrantVectorStore::from_rag_config(&config).unwrap();
 

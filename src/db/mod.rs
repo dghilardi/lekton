@@ -1,4 +1,5 @@
 pub mod access_level_repository;
+pub mod embedding_cache_repository;
 pub mod asset_repository;
 pub mod auth_models;
 pub mod chat_models;

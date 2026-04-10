@@ -126,6 +126,16 @@ async fn main() {
         } else {
             None
         };
+    let embedding_cache_repo: Option<Arc<dyn lekton::db::embedding_cache_repository::EmbeddingCacheRepository>> =
+        if config.rag.is_enabled() {
+            let repo = lekton::db::embedding_cache_repository::MongoEmbeddingCacheRepository::new(&mongo_db);
+            if let Err(e) = repo.ensure_index().await {
+                tracing::warn!("Failed to create embedding cache index: {e}");
+            }
+            Some(Arc::new(repo))
+        } else {
+            None
+        };
 
     // Seed default access levels (no-op if already present).
     if let Err(e) = access_level_repo.seed_defaults().await {
@@ -195,6 +205,7 @@ async fn main() {
         Option<Arc<dyn lekton::rag::embedding::EmbeddingService>>,
         Option<Arc<dyn lekton::rag::vectorstore::VectorStore>>,
     ) = if config.rag.is_enabled() {
+        use lekton::rag::cached_embedding::CachedEmbeddingService;
         use lekton::rag::embedding::OpenAICompatibleEmbedding;
         use lekton::rag::vectorstore::QdrantVectorStore;
 
@@ -202,11 +213,32 @@ async fn main() {
             OpenAICompatibleEmbedding::from_rag_config(&config.rag),
             QdrantVectorStore::from_rag_config(&config.rag),
         ) {
-            (Ok(embedding), Ok(vectorstore)) => {
-                let embedding: Arc<dyn lekton::rag::embedding::EmbeddingService> =
-                    Arc::new(embedding);
+            (Ok(raw_embedding), Ok(vectorstore)) => {
+                let raw_embedding: Arc<dyn lekton::rag::embedding::EmbeddingService> =
+                    Arc::new(raw_embedding);
                 let vectorstore: Arc<dyn lekton::rag::vectorstore::VectorStore> =
                     Arc::new(vectorstore);
+
+                // Wrap raw embedding with the cache for chunk indexing.
+                let cached_embedding: Arc<dyn lekton::rag::embedding::EmbeddingService> =
+                    if let Some(ref cache_repo) = embedding_cache_repo {
+                        Arc::new(CachedEmbeddingService::new(
+                            raw_embedding.clone(),
+                            cache_repo.clone(),
+                            config.rag.embedding_model.clone(),
+                            config.rag.embedding_cache_store_text,
+                        ))
+                    } else {
+                        raw_embedding.clone()
+                    };
+
+                // For chat queries, use the cached embedding only if the config flag is set.
+                let query_embedding: Arc<dyn lekton::rag::embedding::EmbeddingService> =
+                    if config.rag.embedding_cache_query {
+                        cached_embedding.clone()
+                    } else {
+                        raw_embedding.clone()
+                    };
 
                 // Ensure collection exists
                 if let Err(e) = vectorstore
@@ -218,7 +250,7 @@ async fn main() {
                 } else {
                     let rag_svc = Arc::new(
                         lekton::rag::service::DefaultRagService::new(
-                            embedding.clone(),
+                            cached_embedding.clone(),
                             vectorstore.clone(),
                         ),
                     );
@@ -227,7 +259,7 @@ async fn main() {
                         match lekton::rag::chat::ChatService::from_rag_config(
                             &config.rag,
                             chat_repo.clone(),
-                            embedding.clone(),
+                            query_embedding,
                             vectorstore.clone(),
                         ) {
                             Ok(svc) => {
@@ -245,12 +277,14 @@ async fn main() {
 
                     tracing::info!(
                         collection = %config.rag.qdrant_collection,
+                        cache_query = config.rag.embedding_cache_query,
+                        store_text = config.rag.embedding_cache_store_text,
                         "RAG service initialized"
                     );
                     (
                         Some(rag_svc as Arc<dyn lekton::rag::service::RagService>),
                         chat_svc,
-                        Some(embedding),
+                        Some(cached_embedding),
                         Some(vectorstore),
                     )
                 }
@@ -292,6 +326,7 @@ async fn main() {
         chat_repo,
         chat_service,
         feedback_repo,
+        embedding_cache_repo,
         insecure_cookies: config.server.insecure_cookies,
         max_attachment_size_bytes: config.server.max_attachment_size_mb * 1024 * 1024,
     };

@@ -60,6 +60,7 @@ pub struct AppState {
     pub chat_repo: Option<Arc<dyn crate::db::chat_repository::ChatRepository>>,
     pub chat_service: Option<Arc<crate::rag::chat::ChatService>>,
     pub feedback_repo: Option<Arc<dyn crate::db::feedback_repository::FeedbackRepository>>,
+    pub embedding_cache_repo: Option<Arc<dyn crate::db::embedding_cache_repository::EmbeddingCacheRepository>>,
     /// Whether cookies should be set without the `Secure` flag (HTTP local dev).
     #[from_ref(skip)]
     pub insecure_cookies: bool,

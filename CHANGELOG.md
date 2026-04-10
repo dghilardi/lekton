@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 ### Added
+- **Custom LLM headers**: `rag.chat_headers` and `rag.embedding_headers` config maps allow injecting arbitrary HTTP headers into every chat/rewrite and embedding request respectively. Keys are normalised at request time: underscores (`_`) are replaced with hyphens (`-`), enabling hyphenated header names (e.g. `x-producer`) to be set via environment variables (`LKN__RAG__CHAT_HEADERS__X_PRODUCER=LEKTON`). TOML files can use quoted keys to set hyphens directly.
 - **AI response feedback**: Users can give a thumbs-up or thumbs-down on each assistant message in the chat. Negative feedback shows an optional free-text comment box. The selected rating is persisted immediately; clicking the active button removes the feedback. A small badge below each rated message shows the current rating with an × to remove it.
 - **Feedback history in `/profile`**: New section at the bottom of the profile page lists all feedback the user has submitted, newest first, with pagination (10 per page). Each item shows the rating badge, date, optional comment, a "View session" link, and a delete button.
 - **Admin feedback export API**: `GET /api/v1/admin/rag/feedback` — paginated, filterable list of all feedback across users. Supports query parameters: `rating` (`positive` | `negative`), `date_from` / `date_to` (RFC 3339), `user_id`, `page` (0-based), `per_page` (max 200, default 50). Callable via Bearer PAT with admin scope.

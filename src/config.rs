@@ -13,6 +13,8 @@
 //!
 //! `LEPTOS_SITE_ADDR` is also excluded: it is managed by `cargo-leptos`.
 
+use std::collections::HashMap;
+
 use serde::Deserialize;
 
 // ── Top-level config ──────────────────────────────────────────────────────────
@@ -147,6 +149,29 @@ pub struct RagConfig {
     pub rewrite_model: String,
     /// Maximum tokens for the query-rewriting LLM call.
     pub rewrite_max_tokens: u32,
+    /// Extra HTTP headers added to every chat and query-rewrite request.
+    ///
+    /// Keys are normalised before use: underscores (`_`) are replaced with hyphens (`-`).
+    /// This allows setting hyphenated header names via environment variables, which cannot
+    /// contain hyphens:
+    ///
+    /// ```text
+    /// LKN__RAG__CHAT_HEADERS__X_PRODUCER=LEKTON  →  x-producer: LEKTON
+    /// ```
+    ///
+    /// In `config/lekton.toml`, quoted keys preserve hyphens directly:
+    ///
+    /// ```toml
+    /// [rag.chat_headers]
+    /// "x-producer" = "LEKTON"
+    /// ```
+    #[serde(default)]
+    pub chat_headers: HashMap<String, String>,
+    /// Extra HTTP headers added to every embedding request.
+    ///
+    /// Same key-normalisation rules apply as for `chat_headers`.
+    #[serde(default)]
+    pub embedding_headers: HashMap<String, String>,
 }
 
 impl RagConfig {
@@ -201,4 +226,25 @@ mod tests {
         assert!(config.auth.demo_mode);
         assert_eq!(config.server.rate_limit_burst, 123);
     }
+
+    #[test]
+    #[cfg(feature = "ssr")]
+    fn test_rag_headers_from_env() {
+        // Underscores in the env-var key segment are normalised to hyphens at request time,
+        // but config-rs stores them as-is.  Verify that the raw key is loaded correctly.
+        std::env::set_var("LKN__RAG__CHAT_HEADERS__X_PRODUCER", "LEKTON");
+        std::env::set_var("LKN__RAG__EMBEDDING_HEADERS__AUTHORIZATION_EXTRA", "Bearer tok");
+
+        let config = super::AppConfig::load().expect("Failed to load config with rag header env vars");
+
+        assert_eq!(
+            config.rag.chat_headers.get("x_producer").map(String::as_str),
+            Some("LEKTON")
+        );
+        assert_eq!(
+            config.rag.embedding_headers.get("authorization_extra").map(String::as_str),
+            Some("Bearer tok")
+        );
+    }
+
 }

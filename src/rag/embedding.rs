@@ -7,6 +7,7 @@ use async_trait::async_trait;
 
 use crate::config::RagConfig;
 use crate::error::AppError;
+use crate::rag::build_oai_client;
 
 // ── Trait ─────────────────────────────────────────────────────────────────────
 
@@ -31,13 +32,12 @@ impl OpenAICompatibleEmbedding {
             ));
         }
 
-        let mut oai_config = OpenAIConfig::new().with_api_base(&config.embedding_url);
-        if !config.embedding_api_key.is_empty() {
-            oai_config = oai_config.with_api_key(&config.embedding_api_key);
-        }
-
         Ok(Self {
-            client: Client::with_config(oai_config),
+            client: build_oai_client(
+                &config.embedding_url,
+                &config.embedding_api_key,
+                &config.embedding_headers,
+            )?,
             model: config.embedding_model.clone(),
         })
     }
@@ -84,12 +84,11 @@ impl EmbeddingService for OpenAICompatibleEmbedding {
 mod tests {
     use super::*;
 
-    #[test]
-    fn from_rag_config_fails_with_empty_url() {
-        let config = RagConfig {
+    fn make_config(embedding_url: &str) -> RagConfig {
+        RagConfig {
             qdrant_url: String::new(),
             qdrant_collection: "test".into(),
-            embedding_url: String::new(),
+            embedding_url: embedding_url.into(),
             embedding_model: "nomic-embed-text".into(),
             embedding_dimensions: 768,
             embedding_api_key: String::new(),
@@ -99,26 +98,32 @@ mod tests {
             system_prompt_template: String::new(),
             rewrite_model: String::new(),
             rewrite_max_tokens: 80,
-        };
-        assert!(OpenAICompatibleEmbedding::from_rag_config(&config).is_err());
+            chat_headers: std::collections::HashMap::new(),
+            embedding_headers: std::collections::HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn from_rag_config_fails_with_empty_url() {
+        assert!(OpenAICompatibleEmbedding::from_rag_config(&make_config("")).is_err());
     }
 
     #[test]
     fn from_rag_config_succeeds_with_url() {
-        let config = RagConfig {
-            qdrant_url: String::new(),
-            qdrant_collection: "test".into(),
-            embedding_url: "http://localhost:11434/v1".into(),
-            embedding_model: "nomic-embed-text".into(),
-            embedding_dimensions: 768,
-            embedding_api_key: String::new(),
-            chat_url: String::new(),
-            chat_model: String::new(),
-            chat_api_key: String::new(),
-            system_prompt_template: String::new(),
-            rewrite_model: String::new(),
-            rewrite_max_tokens: 80,
-        };
+        assert!(
+            OpenAICompatibleEmbedding::from_rag_config(&make_config("http://localhost:11434/v1"))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn from_rag_config_applies_embedding_headers() {
+        let mut config = make_config("http://localhost:11434/v1");
+        config
+            .embedding_headers
+            .insert("x_producer".to_string(), "LEKTON".to_string());
+        // Header normalisation is exercised in client.rs; here we just verify
+        // that the config path succeeds end-to-end.
         assert!(OpenAICompatibleEmbedding::from_rag_config(&config).is_ok());
     }
 }

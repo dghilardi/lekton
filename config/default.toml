@@ -54,3 +54,11 @@ If the context does not contain enough information to answer, say so honestly.""
 # Leave empty to disable query rewriting (first-turn pass-through only).
 rewrite_model = ""
 rewrite_max_tokens = 80
+
+# Extra HTTP headers for chat/rewrite requests. Keys are normalised: _ → - at request time.
+# Via env: LKN__RAG__CHAT_HEADERS__X_PRODUCER=LEKTON  →  x-producer: LEKTON
+# Via file: use quoted keys to preserve hyphens: "x-producer" = "LEKTON"
+[rag.chat_headers]
+
+# Extra HTTP headers for embedding requests. Same normalisation rules apply.
+[rag.embedding_headers]

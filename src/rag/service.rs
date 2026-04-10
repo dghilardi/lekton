@@ -145,6 +145,8 @@ mod tests {
             system_prompt_template: String::new(),
             rewrite_model: String::new(),
             rewrite_max_tokens: 80,
+            chat_headers: std::collections::HashMap::new(),
+            embedding_headers: std::collections::HashMap::new(),
         };
         assert!(DefaultRagService::from_rag_config(&config).is_err());
     }

@@ -1,9 +1,9 @@
 #[cfg(feature = "ssr")]
 pub mod chat;
 #[cfg(feature = "ssr")]
-pub mod query_rewriter;
-#[cfg(feature = "ssr")]
 pub mod embedding;
+#[cfg(feature = "ssr")]
+pub mod query_rewriter;
 #[cfg(feature = "ssr")]
 pub mod reindex;
 #[cfg(feature = "ssr")]
@@ -12,3 +12,8 @@ pub mod service;
 pub mod splitter;
 #[cfg(feature = "ssr")]
 pub mod vectorstore;
+
+#[cfg(feature = "ssr")]
+pub mod client;
+#[cfg(feature = "ssr")]
+pub use client::build_oai_client;

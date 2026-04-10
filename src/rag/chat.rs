@@ -8,6 +8,8 @@ use async_openai::types::chat::{
     ChatCompletionRequestUserMessageContent, CreateChatCompletionRequest,
 };
 use async_openai::Client;
+
+use crate::rag::build_oai_client;
 use chrono::Utc;
 use futures::StreamExt;
 use uuid::Uuid;
@@ -68,10 +70,8 @@ impl ChatService {
             return Err(AppError::Internal("chat_url is required for RAG chat".into()));
         }
 
-        let mut oai_config = OpenAIConfig::new().with_api_base(&config.chat_url);
-        if !config.chat_api_key.is_empty() {
-            oai_config = oai_config.with_api_key(&config.chat_api_key);
-        }
+        let llm_client =
+            build_oai_client(&config.chat_url, &config.chat_api_key, &config.chat_headers)?;
 
         let mut tera = tera::Tera::default();
         let template_name = "system_prompt";
@@ -82,7 +82,7 @@ impl ChatService {
             embedding,
             vectorstore,
             chat_repo,
-            llm_client: Client::with_config(oai_config),
+            llm_client,
             chat_model: config.chat_model.clone(),
             tera,
             system_template_name: template_name.to_string(),

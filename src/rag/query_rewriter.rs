@@ -5,16 +5,19 @@
 //! self-contained standalone question, improving vector-search relevance without
 //! polluting the embedding with raw conversation history.
 
-use async_openai::config::OpenAIConfig;
-use async_openai::types::chat::{
-    ChatCompletionRequestMessage, ChatCompletionRequestUserMessage,
-    ChatCompletionRequestUserMessageContent, CreateChatCompletionRequest,
+use async_openai::{
+    config::OpenAIConfig,
+    types::chat::{
+        ChatCompletionRequestMessage, ChatCompletionRequestUserMessage,
+        ChatCompletionRequestUserMessageContent, CreateChatCompletionRequest,
+    },
+    Client,
 };
-use async_openai::Client;
 
 use crate::config::RagConfig;
 use crate::db::chat_models::ChatMessage;
 use crate::error::AppError;
+use crate::rag::build_oai_client;
 
 /// Number of recent history messages used as context for query rewriting.
 /// Keeping this smaller than `MAX_HISTORY_MESSAGES` limits the rewriting cost.
@@ -42,13 +45,17 @@ impl QueryRewriter {
             return None;
         }
 
-        let mut oai_config = OpenAIConfig::new().with_api_base(&config.chat_url);
-        if !config.chat_api_key.is_empty() {
-            oai_config = oai_config.with_api_key(&config.chat_api_key);
-        }
+        let client =
+            match build_oai_client(&config.chat_url, &config.chat_api_key, &config.chat_headers) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!("failed to build query rewriter client: {e}");
+                    return None;
+                }
+            };
 
         Some(Self {
-            client: Client::with_config(oai_config),
+            client,
             model: config.rewrite_model.clone(),
             max_tokens: config.rewrite_max_tokens,
         })

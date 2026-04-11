@@ -65,6 +65,12 @@ struct LektonConfig {
     /// Maximum attachment file size in MB (default: 10)
     #[serde(default)]
     max_attachment_size_mb: Option<u32>,
+    /// Directory containing prompt YAML files, relative to the root path.
+    #[serde(default)]
+    prompts_dir: Option<String>,
+    /// Slug prefix prepended to prompt slugs (default: "prompts")
+    #[serde(default)]
+    prompt_slug_prefix: Option<String>,
 }
 
 /// YAML front matter parsed from the top of each `.md` file.
@@ -82,6 +88,43 @@ struct FrontMatter {
     /// Must be `true` for the file to be synced to Lekton.
     #[serde(rename = "lekton-import", default)]
     lekton_import: bool,
+}
+
+/// YAML prompt definition parsed from files under the prompt directory.
+#[derive(Deserialize, Default, Clone)]
+struct PromptFile {
+    slug: Option<String>,
+    name: Option<String>,
+    description: Option<String>,
+    access_level: Option<String>,
+    status: Option<String>,
+    owner: Option<String>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+    #[serde(default)]
+    variables: Option<Vec<PromptVariable>>,
+    #[serde(default)]
+    publish_to_mcp: Option<bool>,
+    #[serde(default)]
+    default_primary: Option<bool>,
+    #[serde(default)]
+    context_cost: Option<String>,
+    prompt_body: Option<String>,
+    /// Optional explicit import flag for parity with document sync.
+    #[serde(rename = "lekton-import", default)]
+    lekton_import: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+struct PromptVariable {
+    name: String,
+    description: String,
+    #[serde(default = "default_true")]
+    required: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 // ── API types ─────────────────────────────────────────────────────────────────
@@ -108,6 +151,27 @@ struct SyncResponse {
 }
 
 #[derive(Serialize)]
+struct PromptSyncRequest {
+    service_token: String,
+    prompts: Vec<PromptSyncEntry>,
+    archive_missing: bool,
+}
+
+#[derive(Serialize)]
+struct PromptSyncEntry {
+    slug: String,
+    content_hash: String,
+    metadata_hash: String,
+}
+
+#[derive(Deserialize)]
+struct PromptSyncResponse {
+    to_upload: Vec<String>,
+    to_archive: Vec<String>,
+    unchanged: Vec<String>,
+}
+
+#[derive(Serialize)]
 struct IngestRequest {
     service_token: String,
     slug: String,
@@ -123,6 +187,28 @@ struct IngestRequest {
 
 #[derive(Deserialize)]
 struct IngestResponse {
+    changed: bool,
+}
+
+#[derive(Serialize)]
+struct PromptIngestRequest {
+    service_token: String,
+    slug: String,
+    name: String,
+    description: String,
+    prompt_body: String,
+    access_level: String,
+    status: String,
+    owner: String,
+    tags: Vec<String>,
+    variables: Vec<PromptVariable>,
+    publish_to_mcp: bool,
+    default_primary: bool,
+    context_cost: String,
+}
+
+#[derive(Deserialize)]
+struct PromptIngestResponse {
     changed: bool,
 }
 
@@ -194,6 +280,24 @@ struct DocumentInfo {
     attachments: Vec<AttachmentInfo>,
 }
 
+#[derive(Debug)]
+struct PromptInfo {
+    slug: String,
+    name: String,
+    description: String,
+    prompt_body: String,
+    content_hash: String,
+    metadata_hash: String,
+    access_level: String,
+    status: String,
+    owner: String,
+    tags: Vec<String>,
+    variables: Vec<PromptVariable>,
+    publish_to_mcp: bool,
+    default_primary: bool,
+    context_cost: String,
+}
+
 /// Compute the same `sha256:<base64url>` hash format the server uses.
 fn compute_hash(content: &str) -> String {
     let hash = Sha256::digest(content.as_bytes());
@@ -221,6 +325,36 @@ fn compute_metadata_hash(
         access_level.to_lowercase(),
         sorted_tags.join(","),
         parent_slug.unwrap_or(""),
+    );
+    compute_hash(&canonical)
+}
+
+fn compute_prompt_metadata_hash(
+    name: &str,
+    description: &str,
+    access_level: &str,
+    status: &str,
+    owner: &str,
+    tags: &[String],
+    variables: &[PromptVariable],
+    publish_to_mcp: bool,
+    default_primary: bool,
+    context_cost: &str,
+) -> String {
+    let mut sorted_tags: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
+    sorted_tags.sort_unstable();
+
+    let mut sorted_vars: Vec<String> = variables
+        .iter()
+        .map(|v| format!("{}:{}:{}", v.name, v.description, v.required))
+        .collect();
+    sorted_vars.sort_unstable();
+
+    let canonical = format!(
+        "name={name}\ndescription={description}\naccess_level={}\nstatus={status}\nowner={owner}\ntags={}\nvariables={}\npublish_to_mcp={publish_to_mcp}\ndefault_primary={default_primary}\ncontext_cost={context_cost}",
+        access_level.to_lowercase(),
+        sorted_tags.join(","),
+        sorted_vars.join("|"),
     );
     compute_hash(&canonical)
 }
@@ -529,6 +663,134 @@ fn scan_documents(root: &Path, config: &LektonConfig) -> Result<HashMap<String, 
     Ok(docs)
 }
 
+fn prompt_slug_from_path(file: &Path, root: &Path) -> String {
+    let relative = file.strip_prefix(root).unwrap_or(file);
+    let without_ext = relative.with_extension("");
+    without_ext.to_string_lossy().replace('\\', "/")
+}
+
+fn apply_prefix(prefix: Option<&str>, raw_slug: &str) -> String {
+    match prefix.map(str::trim).filter(|p| !p.is_empty()) {
+        Some(prefix) if raw_slug == prefix || raw_slug.starts_with(&format!("{prefix}/")) => {
+            raw_slug.to_string()
+        }
+        Some(prefix) => format!("{prefix}/{raw_slug}"),
+        None => raw_slug.to_string(),
+    }
+}
+
+fn scan_prompts(root: &Path, config: &LektonConfig) -> Result<HashMap<String, PromptInfo>> {
+    let prompts_dir = config
+        .prompts_dir
+        .as_deref()
+        .filter(|p| !p.is_empty())
+        .unwrap_or("prompts");
+    let prompt_root = root.join(prompts_dir);
+
+    if !prompt_root.exists() {
+        return Ok(HashMap::new());
+    }
+
+    let prompt_prefix = config.prompt_slug_prefix.as_deref().or(Some("prompts"));
+    let mut prompts = HashMap::new();
+
+    for entry in WalkDir::new(&prompt_root)
+        .follow_links(true)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_type().is_file()
+                && matches!(
+                    e.path().extension().and_then(|ext| ext.to_str()),
+                    Some("yaml") | Some("yml")
+                )
+        })
+    {
+        let path = entry.path();
+        let source = std::fs::read_to_string(path)
+            .with_context(|| format!("Failed to read {}", path.display()))?;
+        let prompt_file: PromptFile = serde_yaml::from_str(&source)
+            .with_context(|| format!("Failed to parse prompt YAML {}", path.display()))?;
+
+        if prompt_file.lekton_import == Some(false) {
+            continue;
+        }
+
+        let raw_slug = prompt_file
+            .slug
+            .clone()
+            .unwrap_or_else(|| prompt_slug_from_path(path, &prompt_root));
+        let slug = apply_prefix(prompt_prefix, &raw_slug);
+        let name = prompt_file
+            .name
+            .clone()
+            .unwrap_or_else(|| raw_slug.split('/').last().unwrap_or(&raw_slug).replace('-', " "));
+        let description = prompt_file
+            .description
+            .clone()
+            .context(format!("Prompt '{}' is missing 'description'", path.display()))?;
+        let prompt_body = prompt_file
+            .prompt_body
+            .clone()
+            .context(format!("Prompt '{}' is missing 'prompt_body'", path.display()))?;
+        let access_level = prompt_file
+            .access_level
+            .clone()
+            .or_else(|| config.default_access_level.clone())
+            .unwrap_or_else(|| "public".to_string());
+        let owner = prompt_file
+            .owner
+            .clone()
+            .or_else(|| config.default_service_owner.clone())
+            .unwrap_or_default();
+        if owner.trim().is_empty() {
+            bail!("Prompt '{}' is missing 'owner' and no default_service_owner is configured", path.display());
+        }
+        let status = prompt_file.status.clone().unwrap_or_else(|| "active".to_string());
+        let tags = prompt_file.tags.clone().unwrap_or_default();
+        let variables = prompt_file.variables.clone().unwrap_or_default();
+        let publish_to_mcp = prompt_file.publish_to_mcp.unwrap_or(false);
+        let default_primary = prompt_file.default_primary.unwrap_or(false);
+        let context_cost = prompt_file.context_cost.clone().unwrap_or_else(|| "medium".to_string());
+
+        let content_hash = compute_hash(&prompt_body);
+        let metadata_hash = compute_prompt_metadata_hash(
+            &name,
+            &description,
+            &access_level,
+            &status,
+            &owner,
+            &tags,
+            &variables,
+            publish_to_mcp,
+            default_primary,
+            &context_cost,
+        );
+
+        prompts.insert(
+            slug.clone(),
+            PromptInfo {
+                slug,
+                name,
+                description,
+                prompt_body,
+                content_hash,
+                metadata_hash,
+                access_level,
+                status,
+                owner,
+                tags,
+                variables,
+                publish_to_mcp,
+                default_primary,
+                context_cost,
+            },
+        );
+    }
+
+    Ok(prompts)
+}
+
 // ── HTTP helpers ──────────────────────────────────────────────────────────
 
 const MAX_RETRIES: u32 = 5;
@@ -597,59 +859,112 @@ async fn main() -> Result<()> {
     }
 
     let docs = scan_documents(&root, &config)?;
+    let prompts = scan_prompts(&root, &config)?;
 
-    if docs.is_empty() {
-        println!("No documents found (files must have `lekton-import: true` in their YAML front matter).");
+    if docs.is_empty() && prompts.is_empty() {
+        println!("No documents or prompts found.");
         return Ok(());
     }
 
-    println!("Found {} document(s)", docs.len());
+    println!("Found {} document(s) and {} prompt(s)", docs.len(), prompts.len());
 
     // ── Call sync API ─────────────────────────────────────────────────────────
     let client = reqwest::Client::new();
-    let sync_url = format!("{base_url}/api/v1/sync");
+    let sync_result = if !docs.is_empty() || archive_missing {
+        let sync_url = format!("{base_url}/api/v1/sync");
+        if args.verbose {
+            eprintln!("POST {sync_url}");
+        }
 
-    if args.verbose {
-        eprintln!("POST {sync_url}");
-    }
+        let sync_entries: Vec<SyncDocEntry> = docs
+            .values()
+            .map(|d| SyncDocEntry {
+                slug: d.slug.clone(),
+                content_hash: d.content_hash.clone(),
+                metadata_hash: d.metadata_hash.clone(),
+            })
+            .collect();
 
-    let sync_entries: Vec<SyncDocEntry> = docs
-        .values()
-        .map(|d| SyncDocEntry {
-            slug: d.slug.clone(),
-            content_hash: d.content_hash.clone(),
-            metadata_hash: d.metadata_hash.clone(),
-        })
-        .collect();
+        let sync_resp = client
+            .post(&sync_url)
+            .json(&SyncRequest {
+                service_token: token.clone(),
+                documents: sync_entries,
+                archive_missing,
+            })
+            .send()
+            .await
+            .context("Failed to call sync API")?;
 
-    let sync_resp = client
-        .post(&sync_url)
-        .json(&SyncRequest {
-            service_token: token.clone(),
-            documents: sync_entries,
-            archive_missing,
-        })
-        .send()
-        .await
-        .context("Failed to call sync API")?;
+        if !sync_resp.status().is_success() {
+            let status = sync_resp.status();
+            let body = sync_resp.text().await.unwrap_or_default();
+            bail!("Sync API returned {status}: {body}");
+        }
 
-    if !sync_resp.status().is_success() {
-        let status = sync_resp.status();
-        let body = sync_resp.text().await.unwrap_or_default();
-        bail!("Sync API returned {status}: {body}");
-    }
+        let result: SyncResponse = sync_resp
+            .json()
+            .await
+            .context("Failed to parse sync response")?;
 
-    let sync_result: SyncResponse = sync_resp
-        .json()
-        .await
-        .context("Failed to parse sync response")?;
+        println!(
+            "Document sync result: {} to upload, {} unchanged, {} to archive",
+            result.to_upload.len(),
+            result.unchanged.len(),
+            result.to_archive.len(),
+        );
+        result
+    } else {
+        SyncResponse { to_upload: vec![], to_archive: vec![], unchanged: vec![] }
+    };
 
-    println!(
-        "Sync result: {} to upload, {} unchanged, {} to archive",
-        sync_result.to_upload.len(),
-        sync_result.unchanged.len(),
-        sync_result.to_archive.len(),
-    );
+    let prompt_sync_result = if !prompts.is_empty() || archive_missing {
+        let sync_url = format!("{base_url}/api/v1/prompts/sync");
+        if args.verbose {
+            eprintln!("POST {sync_url}");
+        }
+
+        let sync_entries: Vec<PromptSyncEntry> = prompts
+            .values()
+            .map(|p| PromptSyncEntry {
+                slug: p.slug.clone(),
+                content_hash: p.content_hash.clone(),
+                metadata_hash: p.metadata_hash.clone(),
+            })
+            .collect();
+
+        let sync_resp = client
+            .post(&sync_url)
+            .json(&PromptSyncRequest {
+                service_token: token.clone(),
+                prompts: sync_entries,
+                archive_missing,
+            })
+            .send()
+            .await
+            .context("Failed to call prompt sync API")?;
+
+        if !sync_resp.status().is_success() {
+            let status = sync_resp.status();
+            let body = sync_resp.text().await.unwrap_or_default();
+            bail!("Prompt sync API returned {status}: {body}");
+        }
+
+        let result: PromptSyncResponse = sync_resp
+            .json()
+            .await
+            .context("Failed to parse prompt sync response")?;
+
+        println!(
+            "Prompt sync result: {} to upload, {} unchanged, {} to archive",
+            result.to_upload.len(),
+            result.unchanged.len(),
+            result.to_archive.len(),
+        );
+        result
+    } else {
+        PromptSyncResponse { to_upload: vec![], to_archive: vec![], unchanged: vec![] }
+    };
 
     // ── Collect attachments for ALL documents ────────────────────────────────
     // We check hashes for every attachment regardless of whether the document
@@ -690,9 +1005,21 @@ async fn main() -> Result<()> {
                 println!("  + {slug}");
             }
         }
+        if !prompt_sync_result.to_upload.is_empty() {
+            println!("\nWould upload prompts:");
+            for slug in &prompt_sync_result.to_upload {
+                println!("  + {slug}");
+            }
+        }
         if !sync_result.to_archive.is_empty() {
             println!("\nWould archive:");
             for slug in &sync_result.to_archive {
+                println!("  - {slug}");
+            }
+        }
+        if !prompt_sync_result.to_archive.is_empty() {
+            println!("\nWould archive prompts:");
+            for slug in &prompt_sync_result.to_archive {
                 println!("  - {slug}");
             }
         }
@@ -881,6 +1208,70 @@ async fn main() -> Result<()> {
         }
     }
 
+    // ── Upload changed prompts ───────────────────────────────────────────────
+    let prompt_ingest_url = format!("{base_url}/api/v1/prompts/ingest");
+    let mut prompts_uploaded = 0usize;
+    let mut prompt_errors = 0usize;
+
+    for slug in &prompt_sync_result.to_upload {
+        let Some(prompt) = prompts.get(slug) else {
+            eprintln!("Warning: server requested upload of unknown prompt '{slug}', skipping");
+            continue;
+        };
+
+        if args.verbose {
+            eprintln!("Uploading prompt: {slug}");
+        }
+
+        let ingest_body = PromptIngestRequest {
+            service_token: token.clone(),
+            slug: prompt.slug.clone(),
+            name: prompt.name.clone(),
+            description: prompt.description.clone(),
+            prompt_body: prompt.prompt_body.clone(),
+            access_level: prompt.access_level.clone(),
+            status: prompt.status.clone(),
+            owner: prompt.owner.clone(),
+            tags: prompt.tags.clone(),
+            variables: prompt.variables.clone(),
+            publish_to_mcp: prompt.publish_to_mcp,
+            default_primary: prompt.default_primary,
+            context_cost: prompt.context_cost.clone(),
+        };
+
+        let mut attempt = 0u32;
+        let mut backoff_ms = INITIAL_BACKOFF_MS;
+        let result = loop {
+            match client.post(&prompt_ingest_url).json(&ingest_body).send().await {
+                Ok(r) if backoff_on_429(&r, &mut attempt, &mut backoff_ms).await => continue,
+                other => break other,
+            }
+        };
+
+        match result {
+            Ok(r) if r.status().is_success() => {
+                let ingest: PromptIngestResponse = r.json().await.unwrap_or(PromptIngestResponse { changed: true });
+                prompts_uploaded += 1;
+                if args.verbose {
+                    let note = if ingest.changed { "updated" } else { "metadata only" };
+                    println!("  uploaded prompt: {slug} ({note})");
+                } else {
+                    println!("  uploaded prompt: {slug}");
+                }
+            }
+            Ok(r) => {
+                let status = r.status();
+                let body = r.text().await.unwrap_or_default();
+                eprintln!("  error: prompt {slug}: HTTP {status} — {body}");
+                prompt_errors += 1;
+            }
+            Err(e) => {
+                eprintln!("  error: prompt {slug}: {e}");
+                prompt_errors += 1;
+            }
+        }
+    }
+
     // ── Summary ───────────────────────────────────────────────────────────────
     if attachments_uploaded > 0 || attachment_errors > 0 {
         println!(
@@ -893,8 +1284,13 @@ async fn main() -> Result<()> {
         sync_result.unchanged.len(),
         sync_result.to_archive.len(),
     );
+    println!(
+        "Prompts: {prompts_uploaded} uploaded, {} unchanged, {} archived",
+        prompt_sync_result.unchanged.len(),
+        prompt_sync_result.to_archive.len(),
+    );
 
-    let total_errors = errors + attachment_errors;
+    let total_errors = errors + attachment_errors + prompt_errors;
     if total_errors > 0 {
         bail!("{total_errors} upload(s) failed");
     }
@@ -1139,5 +1535,126 @@ mod tests {
         assert!(doc.rewritten_content.contains("/api/v1/assets/attachments/guide/logo.png"));
         // Original content should still have the local path
         assert!(doc.content.contains("images/logo.png"));
+    }
+
+    #[test]
+    fn scan_prompts_reads_yaml_prompt_files() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let prompts_dir = dir.path().join("prompts");
+        std::fs::create_dir(&prompts_dir).unwrap();
+
+        let path = prompts_dir.join("code-review.yaml");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(
+                br#"name: Code Review
+description: Review a patch
+access_level: developer
+status: active
+owner: platform-team
+publish_to_mcp: true
+default_primary: true
+context_cost: medium
+prompt_body: |
+  Review this diff carefully.
+"#,
+            )
+            .unwrap();
+
+        let prompts = scan_prompts(dir.path(), &LektonConfig::default()).unwrap();
+        assert_eq!(prompts.len(), 1);
+        let prompt = prompts.values().next().unwrap();
+        assert_eq!(prompt.slug, "prompts/code-review");
+        assert_eq!(prompt.name, "Code Review");
+        assert!(prompt.publish_to_mcp);
+        assert!(prompt.default_primary);
+        assert!(prompt.content_hash.starts_with("sha256:"));
+        assert!(prompt.metadata_hash.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn scan_prompts_uses_configurable_prefix_and_defaults() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let prompts_dir = dir.path().join("ai-prompts");
+        std::fs::create_dir(&prompts_dir).unwrap();
+
+        let path = prompts_dir.join("ops.yaml");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(
+                br#"description: Ops review
+prompt_body: |
+  Analyze the incident.
+"#,
+            )
+            .unwrap();
+
+        let config = LektonConfig {
+            prompts_dir: Some("ai-prompts".to_string()),
+            prompt_slug_prefix: Some("company/prompts".to_string()),
+            default_access_level: Some("internal".to_string()),
+            default_service_owner: Some("platform-team".to_string()),
+            ..LektonConfig::default()
+        };
+
+        let prompts = scan_prompts(dir.path(), &config).unwrap();
+        let prompt = prompts.values().next().unwrap();
+        assert_eq!(prompt.slug, "company/prompts/ops");
+        assert_eq!(prompt.access_level, "internal");
+        assert_eq!(prompt.owner, "platform-team");
+        assert_eq!(prompt.status, "active");
+        assert_eq!(prompt.context_cost, "medium");
+    }
+
+    #[test]
+    fn scan_prompts_skips_prompt_with_explicit_import_false() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let prompts_dir = dir.path().join("prompts");
+        std::fs::create_dir(&prompts_dir).unwrap();
+
+        let path = prompts_dir.join("hidden.yaml");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(
+                br#"name: Hidden Prompt
+description: Should not be imported
+owner: platform-team
+lekton-import: false
+prompt_body: |
+  Ignore me.
+"#,
+            )
+            .unwrap();
+
+        let prompts = scan_prompts(dir.path(), &LektonConfig::default()).unwrap();
+        assert!(prompts.is_empty());
+    }
+
+    #[test]
+    fn scan_prompts_requires_owner_without_default() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let prompts_dir = dir.path().join("prompts");
+        std::fs::create_dir(&prompts_dir).unwrap();
+
+        let path = prompts_dir.join("missing-owner.yaml");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(
+                br#"name: Missing Owner
+description: No owner set
+prompt_body: |
+  This should fail.
+"#,
+            )
+            .unwrap();
+
+        let err = scan_prompts(dir.path(), &LektonConfig::default()).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("missing 'owner' and no default_service_owner is configured"));
     }
 }

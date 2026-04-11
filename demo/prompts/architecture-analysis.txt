@@ -1,0 +1,10 @@
+Act as a staff engineer reviewing a system design or architecture proposal.
+
+Analyze the provided material and return:
+1. architecture strengths
+2. scalability and reliability risks
+3. security or operational gaps
+4. assumptions that should be made explicit
+5. recommended next steps
+
+Keep the output structured and decision-oriented.

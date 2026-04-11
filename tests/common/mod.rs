@@ -15,9 +15,12 @@ use lekton::db::access_level_repository::{AccessLevelRepository, MongoAccessLeve
 use lekton::db::asset_repository::{AssetRepository, MongoAssetRepository};
 use lekton::db::auth_models::User;
 use lekton::db::document_version_repository::{DocumentVersionRepository, MongoDocumentVersionRepository};
+use lekton::db::prompt_repository::{MongoPromptRepository, PromptRepository};
+use lekton::db::prompt_version_repository::{MongoPromptVersionRepository, PromptVersionRepository};
 use lekton::db::repository::{DocumentRepository, MongoDocumentRepository};
 use lekton::db::schema_repository::{MongoSchemaRepository, SchemaRepository};
 use lekton::db::service_token_repository::{MongoServiceTokenRepository, ServiceTokenRepository};
+use lekton::db::user_prompt_preference_repository::{MongoUserPromptPreferenceRepository, UserPromptPreferenceRepository};
 use lekton::db::navigation_order_repository::{MongoNavigationOrderRepository, NavigationOrderRepository};
 use lekton::db::settings_repository::{MongoSettingsRepository, SettingsRepository};
 use lekton::db::user_repository::{MongoUserRepository, UserRepository};
@@ -41,6 +44,9 @@ pub struct TestEnv {
     pub access_level_repo: Arc<dyn AccessLevelRepository>,
     pub service_token_repo: Arc<dyn ServiceTokenRepository>,
     pub document_version_repo: Arc<dyn DocumentVersionRepository>,
+    pub prompt_repo: Arc<dyn PromptRepository>,
+    pub prompt_version_repo: Arc<dyn PromptVersionRepository>,
+    pub user_prompt_preference_repo: Arc<dyn UserPromptPreferenceRepository>,
     pub navigation_order_repo: Arc<dyn NavigationOrderRepository>,
     pub storage: Arc<dyn StorageClient>,
     pub search: Arc<dyn SearchService>,
@@ -86,6 +92,12 @@ impl TestEnv {
             Arc::new(MongoServiceTokenRepository::new(&mongo_db));
         let document_version_repo: Arc<dyn DocumentVersionRepository> =
             Arc::new(MongoDocumentVersionRepository::new(&mongo_db));
+        let prompt_repo: Arc<dyn PromptRepository> =
+            Arc::new(MongoPromptRepository::new(&mongo_db));
+        let prompt_version_repo: Arc<dyn PromptVersionRepository> =
+            Arc::new(MongoPromptVersionRepository::new(&mongo_db));
+        let user_prompt_preference_repo: Arc<dyn UserPromptPreferenceRepository> =
+            Arc::new(MongoUserPromptPreferenceRepository::new(&mongo_db));
         let navigation_order_repo: Arc<dyn NavigationOrderRepository> =
             Arc::new(MongoNavigationOrderRepository::new(&mongo_db));
         access_level_repo
@@ -166,6 +178,9 @@ impl TestEnv {
             service_token: "test-token".to_string(),
             service_token_repo: service_token_repo.clone(),
             document_version_repo: document_version_repo.clone(),
+            prompt_repo: prompt_repo.clone(),
+            prompt_version_repo: prompt_version_repo.clone(),
+            user_prompt_preference_repo: user_prompt_preference_repo.clone(),
             demo_mode: true,
             leptos_options,
             user_repo: user_repo.clone(),
@@ -221,6 +236,14 @@ impl TestEnv {
             .route(
                 "/api/v1/sync",
                 post(lekton::api::sync::sync_handler),
+            )
+            .route(
+                "/api/v1/prompts/ingest",
+                post(lekton::api::prompts::prompt_ingest_handler),
+            )
+            .route(
+                "/api/v1/prompts/sync",
+                post(lekton::api::prompts::prompt_sync_handler),
             )
             .route(
                 "/api/v1/assets",
@@ -306,6 +329,9 @@ impl TestEnv {
             access_level_repo,
             service_token_repo,
             document_version_repo,
+            prompt_repo,
+            prompt_version_repo,
+            user_prompt_preference_repo,
             navigation_order_repo,
             storage,
             search,
@@ -462,6 +488,9 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
         service_token: "test-token".to_string(),
         service_token_repo: env.service_token_repo.clone(),
         document_version_repo: env.document_version_repo.clone(),
+        prompt_repo: env.prompt_repo.clone(),
+        prompt_version_repo: env.prompt_version_repo.clone(),
+        user_prompt_preference_repo: env.user_prompt_preference_repo.clone(),
         demo_mode: true,
         leptos_options,
         user_repo: env.user_repo.clone(),

@@ -3496,6 +3496,7 @@ dependencies = [
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
+ "serde_yaml",
  "sha2",
  "tera",
  "testcontainers",

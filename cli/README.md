@@ -1,8 +1,8 @@
 # lekton-sync
 
-CLI tool to sync markdown documents to a [Lekton](https://github.com/dghilardi/lekton) instance.
+CLI tool to sync markdown documents and prompt definitions to a [Lekton](https://github.com/dghilardi/lekton) instance.
 
-It scans a directory for `.md` files, reads their YAML front matter, calls the Lekton sync API to compute the delta, and uploads only the documents that have changed.
+It scans a directory for `.md` files and prompt YAML files, calls the Lekton sync APIs to compute the delta, and uploads only the content that has changed.
 
 ## Installation
 
@@ -18,7 +18,7 @@ lekton-sync [OPTIONS] [ROOT]
 
 | Argument | Default | Description |
 |---|---|---|
-| `ROOT` | `.` | Root directory to scan for markdown files |
+| `ROOT` | `.` | Root directory to scan for markdown files and prompt definitions |
 | `--archive-missing` | — | Archive documents present in Lekton but not found locally |
 | `--dry-run` | — | Show what would be done without making any changes |
 | `--config <PATH>` | `<ROOT>/.lekton.yml` | Path to config file |
@@ -53,6 +53,49 @@ Document body...
 
 The slug is derived from the file path relative to the root directory (e.g. `docs/guides/intro.md` → `docs/guides/intro`), unless overridden by the `slug` field in the front matter.
 
+## Prompt format
+
+Prompt definitions are loaded from `prompts/*.yaml` by default. This directory can be changed via `.lekton.yml`.
+
+```yaml
+name: Code Review
+description: Review a patch before merge
+owner: platform-team
+access_level: developer
+status: active
+publish_to_mcp: true
+default_primary: true
+context_cost: medium
+tags: [engineering, review]
+variables:
+  - name: diff
+    description: Unified diff to inspect
+    required: true
+prompt_body: |
+  Review the following diff:
+  {{diff}}
+```
+
+Supported prompt fields:
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | No | Human-readable prompt name. Defaults to the file slug segment. |
+| `description` | Yes | Short description shown in Lekton. |
+| `owner` | Yes* | Owning team or service. Falls back to `default_service_owner` if configured. |
+| `access_level` | No | Falls back to `default_access_level`, then `public`. |
+| `status` | No | Prompt lifecycle status. Defaults to `active`. |
+| `tags` | No | Optional tags array. |
+| `variables` | No | Optional variable descriptors (`name`, `description`, `required`). |
+| `publish_to_mcp` | No | Publish this prompt to MCP discovery/context. Defaults to `false`. |
+| `default_primary` | No | Include in the default MCP context unless hidden by the user. Defaults to `false`. |
+| `context_cost` | No | Prompt context weight hint. Defaults to `medium`. |
+| `slug` | No | Overrides the slug derived from the prompt file path. |
+| `lekton-import` | No | Set to `false` to skip the prompt. |
+| `prompt_body` | Yes | Raw prompt body uploaded to Lekton. |
+
+The prompt slug is derived from the path relative to the prompt directory and prefixed with `prompts/` by default (for example `prompts/code-review.yaml` → `prompts/code-review`).
+
 ## Configuration file
 
 Place a `.lekton.yml` file in the root directory (or pass `--config`) to set project-level defaults:
@@ -62,6 +105,8 @@ url: https://lekton.example.com
 default_access_level: internal
 default_service_owner: platform-team
 slug_prefix: protocols/my-service
+prompts_dir: prompts
+prompt_slug_prefix: prompts
 archive_missing: false
 ```
 
@@ -71,6 +116,8 @@ archive_missing: false
 | `default_access_level` | Fallback access level when not set in front matter |
 | `default_service_owner` | Fallback service owner when not set in front matter |
 | `slug_prefix` | Prefix prepended to every document slug |
+| `prompts_dir` | Directory containing prompt YAML files, relative to `ROOT` |
+| `prompt_slug_prefix` | Prefix prepended to every prompt slug |
 | `archive_missing` | Archive documents not found locally (overridden by `--archive-missing`) |
 
 ## Example
@@ -82,7 +129,7 @@ export LEKTON_URL=https://lekton.example.com
 # Preview what would change
 lekton-sync --dry-run ./docs
 
-# Sync and archive documents no longer present locally
+# Sync and archive documents/prompts no longer present locally
 lekton-sync --archive-missing ./docs
 ```
 

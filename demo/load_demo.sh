@@ -10,6 +10,7 @@ SERVICE_TOKEN="${SERVICE_TOKEN:-demo-ingest-token}"
 DEMO_DIR="demo/documents"
 SCHEMA_DIR="demo/schemas"
 ASSET_DIR="demo/assets"
+PROMPT_DIR="demo/prompts"
 
 ingest_doc() {
     local slug="$1"
@@ -111,6 +112,54 @@ upload_asset() {
     fi
 }
 
+ingest_prompt() {
+    local slug="$1"
+    local name="$2"
+    local description="$3"
+    local access_level="$4"
+    local owner="$5"
+    local status="$6"
+    local publish_to_mcp="$7"
+    local default_primary="$8"
+    local context_cost="$9"
+    local file="$PROMPT_DIR/${slug}.txt"
+
+    if [ ! -f "$file" ]; then
+        echo "WARN: Prompt file not found: $file — skipping"
+        return
+    fi
+
+    local prompt_body
+    prompt_body=$(cat "$file" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+
+    echo "→ Ingesting prompt: $name (${slug}) [${access_level}]"
+
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+        -X POST "${LEKTON_URL}/api/v1/prompts/ingest" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"service_token\": \"${SERVICE_TOKEN}\",
+            \"slug\": \"prompts/${slug}\",
+            \"name\": \"${name}\",
+            \"description\": \"${description}\",
+            \"prompt_body\": \"${prompt_body}\",
+            \"access_level\": \"${access_level}\",
+            \"status\": \"${status}\",
+            \"owner\": \"${owner}\",
+            \"tags\": [\"demo\", \"prompt-library\"],
+            \"variables\": [],
+            \"publish_to_mcp\": ${publish_to_mcp},
+            \"default_primary\": ${default_primary},
+            \"context_cost\": \"${context_cost}\"
+        }")
+
+    if [ "$HTTP_CODE" = "200" ]; then
+        echo "  ✅ OK (HTTP $HTTP_CODE)"
+    else
+        echo "  ❌ FAILED (HTTP $HTTP_CODE)"
+    fi
+}
+
 echo "============================================"
 echo "  Lekton Demo Loader"
 echo "  Target: $LEKTON_URL"
@@ -153,6 +202,16 @@ echo ""
 upload_asset "architecture/diagram.svg"       "$ASSET_DIR/architecture-diagram.svg"  "image/svg+xml"
 upload_asset "deployment/sample-config.zip"    "$ASSET_DIR/sample-config.zip"         "application/zip"
 upload_asset "deployment/runbook.pdf"          "$ASSET_DIR/runbook.pdf"               "application/pdf"
+
+echo ""
+
+# --- Prompts ---
+echo "--- Loading prompts ---"
+echo ""
+
+ingest_prompt "code-review" "Code Review" "Prompt standard per revisioni codice" "developer" "platform-team" "active" true true "medium"
+ingest_prompt "architecture-analysis" "Architecture Analysis" "Prompt per analisi architetturali e design review" "architect" "platform-team" "active" true true "high"
+ingest_prompt "git-history-sanitizer" "Git History Sanitizer" "Prompt per controllare la qualità della history prima di una release" "developer" "release-team" "active" true false "medium"
 
 echo ""
 echo "============================================"

@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Prompt Library foundations**: Added backend domain models and repository traits for prompts, prompt version history, and per-user prompt preferences. The new prompt model includes MCP publication metadata (`publish_to_mcp`, `default_primary`, `context_cost`) to support a future split between prompt library discovery and directly published context prompts.
+
 ## [0.10.0] 2026-04-10
 ### Added
 - **Embedding cache**: chunk embeddings are now cached in a new MongoDB `embedding_cache` collection, keyed on `(sha256(normalised_text), model)`. Only missing embeddings are forwarded to the embedding service; hits are returned directly. Two optional config flags (default `false`): `rag.embedding_cache_store_text` persists the original chunk text alongside the vector for debugging, `rag.embedding_cache_query` extends caching to chat-query embeddings in addition to chunk embeddings.

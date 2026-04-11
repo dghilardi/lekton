@@ -9,6 +9,8 @@ All notable changes to this project will be documented in this file.
 - **Prompt ingest and sync API**: Added `POST /api/v1/prompts/ingest` and `POST /api/v1/prompts/sync` with scoped service-token validation, content/metadata hashing, YAML blob storage in S3, version archiving on body changes, and archive-missing sync behavior aligned with document ingestion.
 - **Prompt MCP tools**: Extended the MCP server with `list_prompts`, `get_prompt`, `search_prompts`, and `get_context_prompts`. The context tool combines published primary prompts with per-user favorites, excludes hidden defaults, applies RBAC, and emits warnings when the estimated prompt context cost grows too large.
 - **Prompt Library UI**: Added the `/prompts` page with per-user favorites and hidden-primary toggles, shared context-cost warnings, and a navbar/user-menu entry to manage published prompt context preferences.
+- **Demo prompt content**: Demo mode now loads a small prompt library so the UI and MCP features can be exercised end-to-end without extra setup. The demo dataset includes prompts for code review, architecture analysis, and git history sanitization.
+- **`lekton-sync` prompt support**: The CLI now scans prompt YAML files, computes prompt content/metadata hashes, calls the prompt sync API, and uploads changed prompts alongside markdown documents. New `.lekton.yml` options (`prompts_dir`, `prompt_slug_prefix`) control prompt discovery and slug generation.
 
 ## [0.10.0] 2026-04-10
 ### Added

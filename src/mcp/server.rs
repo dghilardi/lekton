@@ -16,15 +16,11 @@
 use std::sync::Arc;
 
 use rmcp::{
-    ErrorData as McpError, RoleServer, ServerHandler,
-    handler::server::{
-        router::tool::ToolRouter,
-        wrapper::Parameters,
-    },
+    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::*,
     schemars,
     service::RequestContext,
-    tool, tool_handler, tool_router,
+    tool, tool_handler, tool_router, ErrorData as McpError, RoleServer, ServerHandler,
 };
 
 use crate::auth::models::UserContext;
@@ -182,9 +178,7 @@ fn estimate_context_cost(prompts: &[&Prompt]) -> (&'static str, Vec<String>) {
             "Selected prompts add heavy context overhead; reduce favorites or hide some primary prompts".to_string(),
         );
     } else if total >= 8 {
-        warnings.push(
-            "Selected prompts may add significant context overhead".to_string(),
-        );
+        warnings.push("Selected prompts may add significant context overhead".to_string());
     }
 
     (estimated, warnings)
@@ -239,10 +233,7 @@ impl LektonMcpServer {
         name = "get_index",
         description = "Returns the tree of available documents with their slugs, titles, and hierarchy. Use this first to discover what documentation exists."
     )]
-    async fn get_index(
-        &self,
-        ctx: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
+    async fn get_index(&self, ctx: RequestContext<RoleServer>) -> Result<CallToolResult, McpError> {
         let user_ctx = user_context(&ctx)?;
         let (levels, include_draft) = user_ctx.document_visibility();
 
@@ -296,9 +287,10 @@ impl LektonMcpServer {
             .await
             .map_err(app_err)?;
 
-        let query_vector = vectors.into_iter().next().ok_or_else(|| {
-            McpError::internal_error("Embedding returned no vectors", None)
-        })?;
+        let query_vector = vectors
+            .into_iter()
+            .next()
+            .ok_or_else(|| McpError::internal_error("Embedding returned no vectors", None))?;
 
         // Search Qdrant with access-level filtering
         let results = self
@@ -344,10 +336,7 @@ impl LektonMcpServer {
             .await
             .map_err(app_err)?
             .ok_or_else(|| {
-                McpError::invalid_params(
-                    format!("Document '{}' not found", params.doc_slug),
-                    None,
-                )
+                McpError::invalid_params(format!("Document '{}' not found", params.doc_slug), None)
             })?;
 
         // Verify the user can read this document's access level
@@ -378,9 +367,8 @@ impl LektonMcpServer {
                 )
             })?;
 
-        let markdown = String::from_utf8(content_bytes).map_err(|e| {
-            McpError::internal_error(format!("Invalid UTF-8 content: {e}"), None)
-        })?;
+        let markdown = String::from_utf8(content_bytes)
+            .map_err(|e| McpError::internal_error(format!("Invalid UTF-8 content: {e}"), None))?;
 
         // Return with metadata header
         let output = format!(
@@ -440,10 +428,7 @@ impl LektonMcpServer {
             .await
             .map_err(app_err)?
             .ok_or_else(|| {
-                McpError::invalid_params(
-                    format!("Prompt '{}' not found", params.prompt_slug),
-                    None,
-                )
+                McpError::invalid_params(format!("Prompt '{}' not found", params.prompt_slug), None)
             })?;
 
         if prompt.is_archived || !can_read_prompt(&user_ctx, &prompt) {
@@ -595,12 +580,129 @@ fn prompt_catalog_entry(prompt: &Prompt) -> serde_json::Value {
     })
 }
 
+fn prompt_mcp_name(prompt: &Prompt) -> String {
+    prompt.slug.clone()
+}
+
+fn prompt_mcp_arguments(variables: &[PromptVariable]) -> Option<Vec<PromptArgument>> {
+    if variables.is_empty() {
+        return None;
+    }
+
+    Some(
+        variables
+            .iter()
+            .map(|variable| {
+                PromptArgument::new(variable.name.clone())
+                    .with_description(variable.description.clone())
+                    .with_required(variable.required)
+            })
+            .collect(),
+    )
+}
+
+fn prompt_mcp_entry(prompt: &Prompt) -> rmcp::model::Prompt {
+    rmcp::model::Prompt::new(
+        prompt_mcp_name(prompt),
+        Some(prompt.description.clone()),
+        prompt_mcp_arguments(&prompt.variables),
+    )
+    .with_title(prompt.name.clone())
+}
+
+fn render_prompt_body(
+    prompt_body: &str,
+    arguments: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> String {
+    let Some(arguments) = arguments else {
+        return prompt_body.to_string();
+    };
+
+    let mut rendered = prompt_body.to_string();
+    for (name, value) in arguments {
+        let replacement = match value {
+            serde_json::Value::String(text) => text.clone(),
+            other => other.to_string(),
+        };
+        rendered = rendered.replace(&format!("{{{{{name}}}}}"), &replacement);
+        rendered = rendered.replace(&format!("{{{{ {name} }}}}"), &replacement);
+    }
+
+    rendered
+}
+
+fn prompt_mcp_result(
+    prompt: &Prompt,
+    prompt_body: &str,
+    arguments: Option<&serde_json::Map<String, serde_json::Value>>,
+    reason: &str,
+) -> GetPromptResult {
+    let rendered_body = render_prompt_body(prompt_body, arguments);
+    GetPromptResult::new(vec![PromptMessage::new_text(
+        PromptMessageRole::User,
+        rendered_body,
+    )])
+    .with_description(format!(
+        "{} [reason: {reason}, context_cost: {:?}]",
+        prompt.description, prompt.context_cost
+    ))
+}
+
 #[tool_handler]
 impl ServerHandler for LektonMcpServer {
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResult, McpError> {
+        let user_ctx = user_context(&context)?;
+        let prompt_entries = self
+            .build_context_prompt_entries(&user_ctx)
+            .await
+            .map_err(app_err)?;
+
+        let (prompt, reason) = prompt_entries
+            .into_iter()
+            .find(|(prompt, _)| prompt_mcp_name(prompt) == request.name)
+            .ok_or_else(|| {
+                McpError::invalid_params(format!("Prompt '{}' not found", request.name), None)
+            })?;
+
+        let blob = self.load_prompt_blob(&prompt).await?;
+        Ok(prompt_mcp_result(
+            &prompt,
+            &blob.prompt_body,
+            request.arguments.as_ref(),
+            reason,
+        ))
+    }
+
+    async fn list_prompts(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, McpError> {
+        let user_ctx = user_context(&context)?;
+        let prompt_entries = self
+            .build_context_prompt_entries(&user_ctx)
+            .await
+            .map_err(app_err)?;
+
+        Ok(ListPromptsResult {
+            prompts: prompt_entries
+                .into_iter()
+                .map(|(prompt, _)| prompt_mcp_entry(&prompt))
+                .collect(),
+            meta: None,
+            next_cursor: None,
+        })
+    }
+
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(
             ServerCapabilities::builder()
                 .enable_tools()
+                .enable_prompts()
                 .build(),
         )
         .with_server_info(Implementation::new("lekton-mcp", env!("CARGO_PKG_VERSION")))
@@ -613,7 +715,8 @@ impl ServerHandler for LektonMcpServer {
              - list_prompts: Browse the prompt catalog\n\
              - get_prompt: Read a specific prompt\n\
              - search_prompts: Search prompt metadata\n\
-             - get_context_prompts: Return the prompt set selected for the current user context"
+             - get_context_prompts: Return the prompt set selected for the current user context\n\
+             Native MCP prompts are also exposed for the effective user context prompt set."
                 .to_string(),
         )
     }
@@ -627,7 +730,12 @@ mod tests {
     use crate::auth::models::AuthenticatedUser;
     use crate::db::user_prompt_preference_repository::UserPromptPreference;
 
-    fn prompt(slug: &str, default_primary: bool, publish_to_mcp: bool, cost: ContextCost) -> Prompt {
+    fn prompt(
+        slug: &str,
+        default_primary: bool,
+        publish_to_mcp: bool,
+        cost: ContextCost,
+    ) -> Prompt {
         Prompt {
             slug: slug.to_string(),
             name: slug.to_string(),
@@ -672,29 +780,39 @@ mod tests {
     fn select_context_prompts_uses_primary_plus_favorites_and_honors_hidden() {
         let prompts = vec![
             prompt("prompts/code-review", true, true, ContextCost::Low),
-            prompt("prompts/architecture-analysis", true, true, ContextCost::Medium),
-            prompt("prompts/git-history-sanitizer", false, true, ContextCost::High),
+            prompt(
+                "prompts/architecture-analysis",
+                true,
+                true,
+                ContextCost::Medium,
+            ),
+            prompt(
+                "prompts/git-history-sanitizer",
+                false,
+                true,
+                ContextCost::High,
+            ),
         ];
 
         let preferences = vec![
             UserPromptPreference {
-            id: "p1".into(),
-            user_id: "u1".into(),
-            prompt_slug: "prompts/architecture-analysis".into(),
-            is_favorite: false,
-            is_hidden: true,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        },
+                id: "p1".into(),
+                user_id: "u1".into(),
+                prompt_slug: "prompts/architecture-analysis".into(),
+                is_favorite: false,
+                is_hidden: true,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            },
             UserPromptPreference {
-            id: "p2".into(),
-            user_id: "u1".into(),
-            prompt_slug: "prompts/git-history-sanitizer".into(),
-            is_favorite: true,
-            is_hidden: false,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        },
+                id: "p2".into(),
+                user_id: "u1".into(),
+                prompt_slug: "prompts/git-history-sanitizer".into(),
+                is_favorite: true,
+                is_hidden: false,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            },
         ];
 
         let entries = select_context_prompts(&user_ctx(), &prompts, &preferences);
@@ -723,5 +841,47 @@ mod tests {
         let (cost, warnings) = estimate_context_cost(&refs);
         assert_eq!(cost, "medium");
         assert!(!warnings.is_empty());
+    }
+
+    #[test]
+    fn prompt_mcp_entry_uses_slug_and_declared_variables() {
+        let mut prompt = prompt("prompts/code-review", true, true, ContextCost::Low);
+        prompt.name = "Code Review".into();
+        prompt.description = "Review a patch before merge".into();
+        prompt.variables = vec![PromptVariable {
+            name: "diff".into(),
+            description: "Unified diff to inspect".into(),
+            required: true,
+        }];
+
+        let entry = prompt_mcp_entry(&prompt);
+        assert_eq!(entry.name, "prompts/code-review");
+        assert_eq!(entry.title.as_deref(), Some("Code Review"));
+        assert_eq!(
+            entry.description.as_deref(),
+            Some("Review a patch before merge")
+        );
+        let arguments = entry.arguments.expect("prompt arguments");
+        assert_eq!(arguments.len(), 1);
+        assert_eq!(arguments[0].name, "diff");
+        assert_eq!(arguments[0].required, Some(true));
+    }
+
+    #[test]
+    fn render_prompt_body_replaces_declared_arguments() {
+        let body = "Review the following diff:\n{{diff}}\nSummary: {{ summary }}";
+        let arguments = serde_json::Map::from_iter([
+            ("diff".into(), serde_json::Value::String("+new line".into())),
+            (
+                "summary".into(),
+                serde_json::Value::String("fast path".into()),
+            ),
+        ]);
+
+        let rendered = render_prompt_body(body, Some(&arguments));
+        assert_eq!(
+            rendered,
+            "Review the following diff:\n+new line\nSummary: fast path"
+        );
     }
 }

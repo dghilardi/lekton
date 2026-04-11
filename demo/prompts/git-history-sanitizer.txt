@@ -1,0 +1,10 @@
+Act as a release engineer inspecting git history before a public release.
+
+Check the provided commit list or git log and highlight:
+1. commits that should be squashed or dropped
+2. accidental secrets or sensitive references
+3. noisy WIP commits
+4. messages that should be rewritten for clarity
+5. release notes candidates
+
+Be conservative and call out anything suspicious.

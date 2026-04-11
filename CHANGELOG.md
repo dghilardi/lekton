@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - **Prompt Library foundations**: Added backend domain models and repository traits for prompts, prompt version history, and per-user prompt preferences. The new prompt model includes MCP publication metadata (`publish_to_mcp`, `default_primary`, `context_cost`) to support a future split between prompt library discovery and directly published context prompts.
+- **Prompt ingest and sync API**: Added `POST /api/v1/prompts/ingest` and `POST /api/v1/prompts/sync` with scoped service-token validation, content/metadata hashing, YAML blob storage in S3, version archiving on body changes, and archive-missing sync behavior aligned with document ingestion.
 
 ## [0.10.0] 2026-04-10
 ### Added

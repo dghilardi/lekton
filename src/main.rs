@@ -12,11 +12,14 @@ async fn main() {
     use lekton::db::access_level_repository::MongoAccessLevelRepository;
     use lekton::db::navigation_order_repository::MongoNavigationOrderRepository;
     use lekton::db::asset_repository::MongoAssetRepository;
+    use lekton::db::prompt_repository::MongoPromptRepository;
+    use lekton::db::prompt_version_repository::MongoPromptVersionRepository;
     use lekton::db::repository::MongoDocumentRepository;
     use lekton::db::schema_repository::MongoSchemaRepository;
     use lekton::db::settings_repository::MongoSettingsRepository;
     use lekton::db::document_version_repository::MongoDocumentVersionRepository;
     use lekton::db::service_token_repository::MongoServiceTokenRepository;
+    use lekton::db::user_prompt_preference_repository::MongoUserPromptPreferenceRepository;
     use lekton::db::user_repository::MongoUserRepository;
     use lekton::search::client::{MeilisearchService, SearchService as _};
     use lekton::storage::client::S3StorageClient;
@@ -108,6 +111,12 @@ async fn main() {
         Arc::new(MongoServiceTokenRepository::new(&mongo_db));
     let document_version_repo: Arc<dyn lekton::db::document_version_repository::DocumentVersionRepository> =
         Arc::new(MongoDocumentVersionRepository::new(&mongo_db));
+    let prompt_repo: Arc<dyn lekton::db::prompt_repository::PromptRepository> =
+        Arc::new(MongoPromptRepository::new(&mongo_db));
+    let prompt_version_repo: Arc<dyn lekton::db::prompt_version_repository::PromptVersionRepository> =
+        Arc::new(MongoPromptVersionRepository::new(&mongo_db));
+    let user_prompt_preference_repo: Arc<dyn lekton::db::user_prompt_preference_repository::UserPromptPreferenceRepository> =
+        Arc::new(MongoUserPromptPreferenceRepository::new(&mongo_db));
     let navigation_order_repo: Arc<dyn lekton::db::navigation_order_repository::NavigationOrderRepository> =
         Arc::new(MongoNavigationOrderRepository::new(&mongo_db));
     let chat_repo: Option<Arc<dyn lekton::db::chat_repository::ChatRepository>> =
@@ -311,6 +320,9 @@ async fn main() {
         service_token,
         service_token_repo,
         document_version_repo,
+        prompt_repo,
+        prompt_version_repo,
+        user_prompt_preference_repo,
         demo_mode,
         user_repo,
         access_level_repo,
@@ -390,6 +402,14 @@ async fn main() {
         .route(
             "/api/v1/sync",
             axum::routing::post(api::sync::sync_handler),
+        )
+        .route(
+            "/api/v1/prompts/ingest",
+            axum::routing::post(api::prompts::prompt_ingest_handler),
+        )
+        .route(
+            "/api/v1/prompts/sync",
+            axum::routing::post(api::prompts::prompt_sync_handler),
         )
         .route(
             "/api/v1/assets",

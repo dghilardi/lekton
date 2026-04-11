@@ -47,6 +47,9 @@ pub struct AppState {
     pub service_token: String,
     pub service_token_repo: Arc<dyn crate::db::service_token_repository::ServiceTokenRepository>,
     pub document_version_repo: Arc<dyn crate::db::document_version_repository::DocumentVersionRepository>,
+    pub prompt_repo: Arc<dyn crate::db::prompt_repository::PromptRepository>,
+    pub prompt_version_repo: Arc<dyn crate::db::prompt_version_repository::PromptVersionRepository>,
+    pub user_prompt_preference_repo: Arc<dyn crate::db::user_prompt_preference_repository::UserPromptPreferenceRepository>,
     pub demo_mode: bool,
     pub leptos_options: LeptosOptions,
     // ── Auth (phase 5) ────────────────────────────────────────────────────────

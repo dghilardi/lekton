@@ -7,6 +7,8 @@ pub mod pat;
 pub mod auth;
 pub mod errors;
 pub mod ingest;
+#[cfg(feature = "ssr")]
+pub mod prompts;
 pub mod schemas;
 #[cfg(feature = "ssr")]
 pub mod rag;

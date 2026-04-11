@@ -44,6 +44,14 @@ pub fn UserMenu() -> impl IntoView {
                                 <li class="menu-title text-xs opacity-60 px-2 pb-1 truncate">{user.email.clone()}</li>
                                 <div class="divider my-1"></div>
                                 <li>
+                                    <a href="/prompts">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6M9 16h6M9 8h6M5 6h.01M5 10h.01M5 14h.01M5 18h.01" />
+                                        </svg>
+                                        "Prompt Library"
+                                    </a>
+                                </li>
+                                <li>
                                     <a href="/profile">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a4 4 0 11-8 0 4 4 0 018 0zM21 21a9 9 0 10-18 0" />

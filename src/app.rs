@@ -8,7 +8,7 @@ use crate::db::settings_repository::NavGroup;
 
 use crate::components::Layout;
 use crate::editor::component::EditorPage;
-use crate::pages::{AdminSettingsPage, ChatPage, DocPage, HomePage, LoginPage, NotFound, ProfilePage};
+use crate::pages::{AdminSettingsPage, ChatPage, DocPage, HomePage, LoginPage, NotFound, ProfilePage, PromptsPage};
 use crate::schema::component::{SchemaListPage, SchemaViewerPage};
 use crate::search::client::SearchHit;
 
@@ -804,6 +804,29 @@ pub struct CreatePatResult {
     pub raw_token: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PromptLibraryItem {
+    pub slug: String,
+    pub name: String,
+    pub description: String,
+    pub access_level: String,
+    pub status: String,
+    pub owner: String,
+    pub tags: Vec<String>,
+    pub publish_to_mcp: bool,
+    pub default_primary: bool,
+    pub context_cost: String,
+    pub is_favorite: bool,
+    pub is_hidden: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PromptLibraryState {
+    pub items: Vec<PromptLibraryItem>,
+    pub estimated_context_cost: String,
+    pub warnings: Vec<String>,
+}
+
 /// Helper: extract the current authenticated user (any role).
 #[cfg(feature = "ssr")]
 async fn require_any_user(state: &AppState) -> Result<crate::auth::models::AuthenticatedUser, ServerFnError> {
@@ -830,6 +853,184 @@ async fn require_any_user(state: &AppState) -> Result<crate::auth::models::Authe
     }
 
     Err(ServerFnError::new("Authentication required"))
+}
+
+#[cfg(feature = "ssr")]
+async fn prompt_visibility_for_user(
+    state: &AppState,
+    user: &crate::auth::models::AuthenticatedUser,
+) -> Result<(Option<Vec<String>>, bool), ServerFnError> {
+    if user.is_admin {
+        return Ok((None, true));
+    }
+
+    let perms = state
+        .user_repo
+        .get_permissions(&user.user_id)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let user_ctx = crate::auth::models::UserContext {
+        user: user.clone(),
+        permissions: perms,
+    };
+    Ok(user_ctx.document_visibility())
+}
+
+#[cfg(feature = "ssr")]
+fn prompt_context_cost_label(weight: u32) -> String {
+    if weight >= 12 {
+        "high".to_string()
+    } else if weight >= 6 {
+        "medium".to_string()
+    } else {
+        "low".to_string()
+    }
+}
+
+#[cfg(feature = "ssr")]
+fn build_prompt_library_state(
+    prompts: Vec<crate::db::prompt_models::Prompt>,
+    preferences: Vec<crate::db::user_prompt_preference_repository::UserPromptPreference>,
+) -> PromptLibraryState {
+    use std::collections::HashMap;
+
+    let pref_by_slug: HashMap<String, crate::db::user_prompt_preference_repository::UserPromptPreference> =
+        preferences
+            .into_iter()
+            .map(|pref| (pref.prompt_slug.clone(), pref))
+            .collect();
+
+    let mut items = Vec::new();
+    let mut total_context_weight = 0u32;
+
+    for prompt in prompts {
+        let pref = pref_by_slug.get(&prompt.slug);
+        let is_favorite = pref.map(|p| p.is_favorite).unwrap_or(false);
+        let is_hidden = pref.map(|p| p.is_hidden).unwrap_or(false);
+
+        if prompt.publish_to_mcp && ((prompt.default_primary && !is_hidden) || is_favorite) {
+            total_context_weight += prompt.context_cost.weight() as u32;
+        }
+
+        items.push(PromptLibraryItem {
+            slug: prompt.slug,
+            name: prompt.name,
+            description: prompt.description,
+            access_level: prompt.access_level,
+            status: match prompt.status {
+                crate::db::prompt_models::PromptStatus::Draft => "draft".to_string(),
+                crate::db::prompt_models::PromptStatus::Active => "active".to_string(),
+                crate::db::prompt_models::PromptStatus::Deprecated => "deprecated".to_string(),
+            },
+            owner: prompt.owner,
+            tags: prompt.tags,
+            publish_to_mcp: prompt.publish_to_mcp,
+            default_primary: prompt.default_primary,
+            context_cost: match prompt.context_cost {
+                crate::db::prompt_models::ContextCost::Low => "low".to_string(),
+                crate::db::prompt_models::ContextCost::Medium => "medium".to_string(),
+                crate::db::prompt_models::ContextCost::High => "high".to_string(),
+            },
+            is_favorite,
+            is_hidden,
+        });
+    }
+
+    items.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.slug.cmp(&b.slug)));
+
+    let mut warnings = Vec::new();
+    if total_context_weight >= 12 {
+        warnings.push(
+            "Selected prompts add heavy context overhead; reduce favorites or hide some primary prompts.".to_string(),
+        );
+    } else if total_context_weight >= 8 {
+        warnings.push(
+            "Selected prompts may add significant context overhead.".to_string(),
+        );
+    }
+
+    PromptLibraryState {
+        items,
+        estimated_context_cost: prompt_context_cost_label(total_context_weight),
+        warnings,
+    }
+}
+
+#[server(GetPromptLibraryState, "/api")]
+pub async fn get_prompt_library_state() -> Result<PromptLibraryState, ServerFnError> {
+    let state = expect_context::<AppState>();
+    let user = require_any_user(&state).await?;
+    let (levels, include_draft) = prompt_visibility_for_user(&state, &user).await?;
+
+    let prompts = state
+        .prompt_repo
+        .list_by_access_levels(levels.as_deref(), include_draft)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let preferences = state
+        .user_prompt_preference_repo
+        .list_by_user_id(&user.user_id)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(build_prompt_library_state(prompts, preferences))
+}
+
+#[server(SavePromptPreference, "/api")]
+pub async fn save_prompt_preference(
+    prompt_slug: String,
+    is_favorite: bool,
+    is_hidden: bool,
+) -> Result<PromptLibraryState, ServerFnError> {
+    let state = expect_context::<AppState>();
+    let user = require_any_user(&state).await?;
+    let (levels, include_draft) = prompt_visibility_for_user(&state, &user).await?;
+
+    let prompt = state
+        .prompt_repo
+        .find_by_slug(&prompt_slug)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+        .ok_or_else(|| ServerFnError::new("Prompt not found"))?;
+
+    let allowed = user.is_admin || levels.as_ref().is_none_or(|ls| ls.contains(&prompt.access_level));
+    let can_read_draft = if user.is_admin {
+        true
+    } else {
+        include_draft
+    };
+    if !allowed || (prompt.status == crate::db::prompt_models::PromptStatus::Draft && !can_read_draft) {
+        return Err(ServerFnError::new("Prompt not found"));
+    }
+
+    let preference = crate::db::user_prompt_preference_repository::UserPromptPreference {
+        id: uuid::Uuid::new_v4().to_string(),
+        user_id: user.user_id.clone(),
+        prompt_slug: prompt_slug.clone(),
+        is_favorite,
+        is_hidden,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+
+    state
+        .user_prompt_preference_repo
+        .upsert(preference)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let prompts = state
+        .prompt_repo
+        .list_by_access_levels(levels.as_deref(), include_draft)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let preferences = state
+        .user_prompt_preference_repo
+        .list_by_user_id(&user.user_id)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(build_prompt_library_state(prompts, preferences))
 }
 
 /// List the current user's PATs.
@@ -1117,11 +1318,77 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/schemas") view=SchemaListPage />
                     <Route path=path!("/schemas/:name") view=SchemaViewerPage />
                     <Route path=path!("/chat") view=ChatPage />
+                    <Route path=path!("/prompts") view=PromptsPage />
                     <Route path=path!("/profile") view=ProfilePage />
                     <Route path=path!("/admin/:section") view=AdminSettingsPage />
                 </Routes>
             </Layout>
         </Router>
+    }
+}
+
+#[cfg(test)]
+mod prompt_library_tests {
+    use super::*;
+    use chrono::Utc;
+
+    #[test]
+    fn build_prompt_library_state_combines_primary_and_favorites_into_context_cost() {
+        let prompts = vec![
+            crate::db::prompt_models::Prompt {
+                slug: "prompts/code-review".into(),
+                name: "Code Review".into(),
+                description: "Review code".into(),
+                s3_key: "prompts/code-review.yaml".into(),
+                access_level: "internal".into(),
+                status: crate::db::prompt_models::PromptStatus::Active,
+                owner: "platform".into(),
+                last_updated: Utc::now(),
+                tags: vec![],
+                variables: vec![],
+                publish_to_mcp: true,
+                default_primary: true,
+                context_cost: crate::db::prompt_models::ContextCost::Medium,
+                content_hash: None,
+                metadata_hash: None,
+                is_archived: false,
+            },
+            crate::db::prompt_models::Prompt {
+                slug: "prompts/git-history-sanitizer".into(),
+                name: "Git History Sanitizer".into(),
+                description: "Check git history".into(),
+                s3_key: "prompts/git-history-sanitizer.yaml".into(),
+                access_level: "internal".into(),
+                status: crate::db::prompt_models::PromptStatus::Active,
+                owner: "platform".into(),
+                last_updated: Utc::now(),
+                tags: vec![],
+                variables: vec![],
+                publish_to_mcp: true,
+                default_primary: false,
+                context_cost: crate::db::prompt_models::ContextCost::High,
+                content_hash: None,
+                metadata_hash: None,
+                is_archived: false,
+            },
+        ];
+
+        let preferences = vec![
+            crate::db::user_prompt_preference_repository::UserPromptPreference {
+                id: "pref-1".into(),
+                user_id: "u1".into(),
+                prompt_slug: "prompts/git-history-sanitizer".into(),
+                is_favorite: true,
+                is_hidden: false,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            },
+        ];
+
+        let state = build_prompt_library_state(prompts, preferences);
+        assert_eq!(state.estimated_context_cost, "medium");
+        assert!(state.warnings.is_empty());
+        assert_eq!(state.items.len(), 2);
     }
 }
 

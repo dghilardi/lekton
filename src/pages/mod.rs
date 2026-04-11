@@ -4,6 +4,7 @@ mod doc;
 mod home;
 mod login;
 mod not_found;
+mod prompts;
 mod profile;
 
 pub use admin_settings::*;
@@ -12,4 +13,5 @@ pub use doc::*;
 pub use home::*;
 pub use login::*;
 pub use not_found::*;
+pub use prompts::*;
 pub use profile::*;

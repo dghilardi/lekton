@@ -2,7 +2,7 @@
 //!
 //! Documentation tools exposed to MCP clients:
 //!
-//! - **`get_index`** — returns the document tree with slugs, titles, and resource URIs.
+//! - **`get_index`** — legacy helper that returns the document tree with slugs, titles, and resource URIs.
 //! - **`search_documents`** — semantic search via Qdrant vector store.
 //!
 //! Documentation is exposed primarily as native MCP resources under the
@@ -263,7 +263,7 @@ impl LektonMcpServer {
     /// Returns the document tree visible to the authenticated user.
     #[tool(
         name = "get_index",
-        description = "Returns the tree of available documents with their slugs, titles, and hierarchy. Use this first to discover what documentation exists."
+        description = "Legacy helper that returns the tree of available documents with their slugs, titles, hierarchy, and docs:// resource URIs. Prefer list_resources for native MCP resource discovery."
     )]
     async fn get_index(&self, ctx: RequestContext<RoleServer>) -> Result<CallToolResult, McpError> {
         let user_ctx = user_context(&ctx)?;
@@ -351,18 +351,6 @@ impl LektonMcpServer {
             .map_err(|e| McpError::internal_error(format!("JSON error: {e}"), None))?;
 
         Ok(CallToolResult::success(vec![Content::text(json)]))
-    }
-
-    #[tool(
-        name = "search_docs",
-        description = "Deprecated alias for search_documents. Returns relevant documentation fragments together with the corresponding docs:// resource URI."
-    )]
-    async fn search_docs(
-        &self,
-        Parameters(params): Parameters<SearchDocsParams>,
-        ctx: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
-        self.search_documents(Parameters(params), ctx).await
     }
 
     #[tool(
@@ -748,7 +736,7 @@ impl ServerHandler for LektonMcpServer {
             )
             .with_title("Documentation Resource by Slug")
             .with_description(
-                "Use this template to read a specific documentation page once you know its slug/id from list_resources, get_index, or search_documents. Example: docs://hr/ferie",
+                "Use this template to read a specific documentation page once you know its slug/id from list_resources or search_documents. Example: docs://hr/ferie",
             )
             .with_mime_type("text/markdown")
             .no_annotation()],
@@ -800,15 +788,14 @@ impl ServerHandler for LektonMcpServer {
         .with_protocol_version(ProtocolVersion::V_2025_03_26)
         .with_instructions(
             "Lekton documentation server. Available tools:\n\
-             - get_index: Browse the document tree and inspect docs:// URIs\n\
+             - get_index: Legacy document-tree helper with docs:// URIs\n\
              - search_documents: Semantic search across documentation fragments\n\
-             - search_docs: Deprecated alias for search_documents\n\
              - list_prompts: Browse the prompt catalog\n\
              - get_prompt: Read a specific prompt\n\
              - search_prompts: Search prompt metadata\n\
              - get_context_prompts: Return the prompt set selected for the current user context\n\
              Full documentation is exposed as read-only MCP resources under docs://...\n\
-             Use list_resources to discover available documents, read_resource to load the raw markdown, and search_documents when you need vector search to find the right docs:// URI.\n\
+             Prefer list_resources to discover available documents, read_resource to load the raw markdown, and search_documents when you need vector search to find the right docs:// URI.\n\
              Native MCP prompts are also exposed for the effective user context prompt set."
                 .to_string(),
         )

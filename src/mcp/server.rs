@@ -2,9 +2,12 @@
 //!
 //! Documentation tools exposed to MCP clients:
 //!
-//! - **`get_index`** — returns the document tree with slugs and titles.
-//! - **`search_docs`** — semantic search via Qdrant vector store.
-//! - **`read_document`** — retrieves the full Markdown content of a document.
+//! - **`get_index`** — returns the document tree with slugs, titles, and resource URIs.
+//! - **`search_documents`** — semantic search via Qdrant vector store.
+//!
+//! Documentation is exposed primarily as native MCP resources under the
+//! `docs://` URI scheme, so clients can enumerate and read full documents
+//! directly without going through a read tool.
 //!
 //! Prompt tools exposed to MCP clients:
 //!
@@ -24,6 +27,7 @@ use rmcp::{
 };
 
 use crate::auth::models::UserContext;
+use crate::db::models::Document;
 use crate::db::prompt_models::{ContextCost, Prompt, PromptStatus, PromptVariable};
 use crate::db::prompt_repository::PromptRepository;
 use crate::db::repository::DocumentRepository;
@@ -46,12 +50,6 @@ pub struct SearchDocsParams {
 
 fn default_limit() -> usize {
     5
-}
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct ReadDocumentParams {
-    /// The document slug (e.g. "protocols/mqtt-v5").
-    pub doc_slug: String,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -93,6 +91,9 @@ struct StoredPromptBlob {
     context_cost: ContextCost,
     prompt_body: String,
 }
+
+const DOCS_URI_SCHEME: &str = "docs://";
+const DOCS_RESOURCE_TEMPLATE: &str = "docs://{id}";
 
 // ── MCP Server ──────────────────────────────────────────────────────────────
 
@@ -145,6 +146,37 @@ fn user_context(ctx: &RequestContext<RoleServer>) -> Result<UserContext, McpErro
 
 fn app_err(e: AppError) -> McpError {
     McpError::internal_error(format!("Internal error: {e}"), None)
+}
+
+fn document_resource_uri(slug: &str) -> String {
+    format!("{DOCS_URI_SCHEME}{slug}")
+}
+
+fn slug_from_docs_uri(uri: &str) -> Result<&str, McpError> {
+    let slug = uri
+        .strip_prefix(DOCS_URI_SCHEME)
+        .ok_or_else(|| McpError::invalid_params(format!("Unsupported resource URI '{uri}'"), None))?;
+
+    if slug.trim().is_empty() {
+        return Err(McpError::invalid_params(
+            format!("Resource URI '{uri}' does not contain a document id"),
+            None,
+        ));
+    }
+
+    Ok(slug)
+}
+
+fn can_read_document(user_ctx: &UserContext, doc: &Document) -> bool {
+    if user_ctx.user.is_admin {
+        return true;
+    }
+
+    if doc.is_draft {
+        user_ctx.can_read_draft(&doc.access_level)
+    } else {
+        user_ctx.can_read(&doc.access_level)
+    }
 }
 
 fn can_read_prompt(user_ctx: &UserContext, prompt: &Prompt) -> bool {
@@ -251,6 +283,7 @@ impl LektonMcpServer {
                 serde_json::json!({
                     "slug": d.slug,
                     "title": d.title,
+                    "resource_uri": document_resource_uri(&d.slug),
                     "parent_slug": d.parent_slug,
                     "access_level": d.access_level,
                     "tags": d.tags,
@@ -267,10 +300,10 @@ impl LektonMcpServer {
 
     /// Performs semantic search across documentation.
     #[tool(
-        name = "search_docs",
-        description = "Searches documentation using semantic similarity. Returns relevant text fragments with their source document slugs. Use this for specific questions."
+        name = "search_documents",
+        description = "Searches documentation using semantic similarity. Returns relevant text fragments together with the corresponding docs:// resource URI to read the full document."
     )]
-    async fn search_docs(
+    async fn search_documents(
         &self,
         Parameters(params): Parameters<SearchDocsParams>,
         ctx: RequestContext<RoleServer>,
@@ -302,11 +335,14 @@ impl LektonMcpServer {
         let hits: Vec<serde_json::Value> = results
             .iter()
             .map(|r| {
+                let resource_uri = document_resource_uri(&r.document_slug);
                 serde_json::json!({
                     "doc_slug": r.document_slug,
+                    "resource_uri": resource_uri,
                     "doc_title": r.document_title,
                     "score": r.score,
                     "text": r.chunk_text,
+                    "resource_hint": format!("Resource available at {}", resource_uri),
                 })
             })
             .collect();
@@ -317,70 +353,16 @@ impl LektonMcpServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    /// Retrieves the full Markdown content of a document by slug.
     #[tool(
-        name = "read_document",
-        description = "Retrieves the full text of a document by its slug. Use this when a search fragment doesn't contain enough context, or when you need the complete document."
+        name = "search_docs",
+        description = "Deprecated alias for search_documents. Returns relevant documentation fragments together with the corresponding docs:// resource URI."
     )]
-    async fn read_document(
+    async fn search_docs(
         &self,
-        Parameters(params): Parameters<ReadDocumentParams>,
+        Parameters(params): Parameters<SearchDocsParams>,
         ctx: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        let user_ctx = user_context(&ctx)?;
-
-        // Fetch the document metadata to check access and get S3 key
-        let doc = self
-            .document_repo
-            .find_by_slug(&params.doc_slug)
-            .await
-            .map_err(app_err)?
-            .ok_or_else(|| {
-                McpError::invalid_params(format!("Document '{}' not found", params.doc_slug), None)
-            })?;
-
-        // Verify the user can read this document's access level
-        if !user_ctx.user.is_admin {
-            let can_read = if doc.is_draft {
-                user_ctx.can_read_draft(&doc.access_level)
-            } else {
-                user_ctx.can_read(&doc.access_level)
-            };
-            if !can_read {
-                return Err(McpError::invalid_params(
-                    format!("Document '{}' not found", params.doc_slug),
-                    None,
-                ));
-            }
-        }
-
-        // Fetch the Markdown content from S3
-        let content_bytes = self
-            .storage_client
-            .get_object(&doc.s3_key)
-            .await
-            .map_err(app_err)?
-            .ok_or_else(|| {
-                McpError::internal_error(
-                    format!("Content not found for '{}'", params.doc_slug),
-                    None,
-                )
-            })?;
-
-        let markdown = String::from_utf8(content_bytes)
-            .map_err(|e| McpError::internal_error(format!("Invalid UTF-8 content: {e}"), None))?;
-
-        // Return with metadata header
-        let output = format!(
-            "# {}\n\n**Slug:** {}\n**Access level:** {}\n**Tags:** {}\n\n---\n\n{}",
-            doc.title,
-            doc.slug,
-            doc.access_level,
-            doc.tags.join(", "),
-            markdown,
-        );
-
-        Ok(CallToolResult::success(vec![Content::text(output)]))
+        self.search_documents(Parameters(params), ctx).await
     }
 
     #[tool(
@@ -530,6 +512,20 @@ impl LektonMcpServer {
 }
 
 impl LektonMcpServer {
+    async fn load_document_markdown(&self, doc: &Document) -> Result<String, McpError> {
+        let content_bytes = self
+            .storage_client
+            .get_object(&doc.s3_key)
+            .await
+            .map_err(app_err)?
+            .ok_or_else(|| {
+                McpError::internal_error(format!("Content not found for '{}'", doc.slug), None)
+            })?;
+
+        String::from_utf8(content_bytes)
+            .map_err(|e| McpError::internal_error(format!("Invalid UTF-8 content: {e}"), None))
+    }
+
     async fn load_prompt_blob(&self, prompt: &Prompt) -> Result<StoredPromptBlob, McpError> {
         let content_bytes = self
             .storage_client
@@ -698,24 +694,121 @@ impl ServerHandler for LektonMcpServer {
         })
     }
 
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, McpError> {
+        let user_ctx = user_context(&context)?;
+        let (levels, include_draft) = user_ctx.document_visibility();
+
+        let docs = self
+            .document_repo
+            .list_by_access_levels(levels.as_deref(), include_draft)
+            .await
+            .map_err(app_err)?;
+
+        let resources = docs
+            .into_iter()
+            .filter(|doc| !doc.is_archived)
+            .map(|doc| {
+                RawResource::new(document_resource_uri(&doc.slug), doc.slug.clone())
+                    .with_title(doc.title.clone())
+                    .with_description(format!(
+                        "Markdown documentation for '{}' (access: {}, tags: {}).",
+                        doc.slug,
+                        doc.access_level,
+                        if doc.tags.is_empty() {
+                            "none".to_string()
+                        } else {
+                            doc.tags.join(", ")
+                        }
+                    ))
+                    .with_mime_type("text/markdown")
+                    .no_annotation()
+            })
+            .collect();
+
+        Ok(ListResourcesResult {
+            resources,
+            meta: None,
+            next_cursor: None,
+        })
+    }
+
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        Ok(ListResourceTemplatesResult {
+            resource_templates: vec![RawResourceTemplate::new(
+                DOCS_RESOURCE_TEMPLATE,
+                "documentation-document",
+            )
+            .with_title("Documentation Resource by Slug")
+            .with_description(
+                "Use this template to read a specific documentation page once you know its slug/id from list_resources, get_index, or search_documents. Example: docs://hr/ferie",
+            )
+            .with_mime_type("text/markdown")
+            .no_annotation()],
+            meta: None,
+            next_cursor: None,
+        })
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResult, McpError> {
+        let user_ctx = user_context(&context)?;
+        let slug = slug_from_docs_uri(&request.uri)?;
+
+        let doc = self
+            .document_repo
+            .find_by_slug(slug)
+            .await
+            .map_err(app_err)?
+            .ok_or_else(|| {
+                McpError::invalid_params(format!("Document resource '{}' not found", request.uri), None)
+            })?;
+
+        if doc.is_archived || !can_read_document(&user_ctx, &doc) {
+            return Err(McpError::invalid_params(
+                format!("Document resource '{}' not found", request.uri),
+                None,
+            ));
+        }
+
+        let markdown = self.load_document_markdown(&doc).await?;
+
+        Ok(ReadResourceResult::new(vec![
+            ResourceContents::text(markdown, request.uri).with_mime_type("text/markdown"),
+        ]))
+    }
+
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(
             ServerCapabilities::builder()
                 .enable_tools()
                 .enable_prompts()
+                .enable_resources()
                 .build(),
         )
         .with_server_info(Implementation::new("lekton-mcp", env!("CARGO_PKG_VERSION")))
         .with_protocol_version(ProtocolVersion::V_2025_03_26)
         .with_instructions(
             "Lekton documentation server. Available tools:\n\
-             - get_index: Browse the document tree\n\
-             - search_docs: Semantic search across documentation\n\
-             - read_document: Read the full text of a specific document\n\
+             - get_index: Browse the document tree and inspect docs:// URIs\n\
+             - search_documents: Semantic search across documentation fragments\n\
+             - search_docs: Deprecated alias for search_documents\n\
              - list_prompts: Browse the prompt catalog\n\
              - get_prompt: Read a specific prompt\n\
              - search_prompts: Search prompt metadata\n\
              - get_context_prompts: Return the prompt set selected for the current user context\n\
+             Full documentation is exposed as read-only MCP resources under docs://...\n\
+             Use list_resources to discover available documents, read_resource to load the raw markdown, and search_documents when you need vector search to find the right docs:// URI.\n\
              Native MCP prompts are also exposed for the effective user context prompt set."
                 .to_string(),
         )
@@ -883,5 +976,18 @@ mod tests {
             rendered,
             "Review the following diff:\n+new line\nSummary: fast path"
         );
+    }
+
+    #[test]
+    fn docs_resource_uri_round_trip_uses_slug() {
+        let uri = document_resource_uri("hr/ferie");
+        assert_eq!(uri, "docs://hr/ferie");
+        assert_eq!(slug_from_docs_uri(&uri).unwrap(), "hr/ferie");
+    }
+
+    #[test]
+    fn docs_resource_uri_requires_docs_scheme_and_non_empty_slug() {
+        assert!(slug_from_docs_uri("file://notes").is_err());
+        assert!(slug_from_docs_uri("docs://").is_err());
     }
 }

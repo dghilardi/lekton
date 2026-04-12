@@ -5,8 +5,10 @@ use leptos_router::params::Params;
 use crate::app::{
     admin_list_pats, admin_toggle_pat,
     create_service_token, deactivate_service_token, get_custom_css, get_navigation,
-    get_navigation_order, get_rag_reindex_status, list_service_tokens, save_custom_css,
-    save_navigation_order, trigger_rag_reindex, AdminPatInfo, CreateTokenResult, NavItem,
+    get_navigation_order, get_rag_reindex_status, list_documentation_feedback, list_service_tokens,
+    mark_documentation_feedback_duplicate, resolve_documentation_feedback, save_custom_css,
+    save_navigation_order, trigger_rag_reindex, AdminPatInfo, CreateTokenResult,
+    DocumentationFeedbackAdminItem, DocumentationFeedbackAdminListResult, NavItem,
     NavigationOrderEntry, ServiceTokenInfo,
 };
 
@@ -75,6 +77,7 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
                        let title = match section().as_str() {
                            "tokens" => "Service Tokens",
                            "pats" => "Personal Access Tokens",
+                           "documentation-feedback" => "Documentation Feedback",
                            "navigation" => "Navigation Setup",
                            "css" => "Visual Customization",
                            "rag" => "RAG Index Management",
@@ -90,6 +93,7 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
                 {move || match section2().as_str() {
                     "tokens" => view! { <ServiceTokenManager set_created_token=set_created_token /> }.into_any(),
                     "pats" => view! { <AdminPatManager /> }.into_any(),
+                    "documentation-feedback" => view! { <DocumentationFeedbackAdminPanel /> }.into_any(),
                     "navigation" => view! { <NavigationOrderEditor /> }.into_any(),
                     "css" => view! { <CustomCssEditor /> }.into_any(),
                     "rag" => view! { <RagReindexSection /> }.into_any(),
@@ -423,6 +427,365 @@ fn CreateTokenForm(
             </div>
         </div>
     }
+}
+
+#[component]
+fn DocumentationFeedbackAdminPanel() -> impl IntoView {
+    let (refresh_counter, set_refresh_counter) = signal(0u32);
+    let (page, set_page) = signal(0u64);
+    let (query, set_query) = signal(String::new());
+    let (kind_filter, set_kind_filter) = signal(String::new());
+    let (status_filter, set_status_filter) = signal("open".to_string());
+
+    let list_resource = Resource::new(
+        move || (
+            refresh_counter.get(),
+            page.get(),
+            query.get(),
+            kind_filter.get(),
+            status_filter.get(),
+        ),
+        move |(_, page, query, kind, status)| async move {
+            list_documentation_feedback(
+                page,
+                20,
+                (!query.trim().is_empty()).then_some(query),
+                (!kind.trim().is_empty()).then_some(kind),
+                (!status.trim().is_empty()).then_some(status),
+            )
+            .await
+        },
+    );
+
+    let trigger_refresh = move || set_refresh_counter.update(|value| *value += 1);
+
+    view! {
+        <div class="card bg-base-100 shadow-xl border border-base-200 overflow-hidden">
+            <div class="card-body p-0">
+                <div class="p-8 pb-4">
+                    <div class="flex items-center gap-3 mb-2">
+                        <svg class="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h8M8 14h6"></path>
+                        </svg>
+                        <h2 class="card-title text-2xl">"Documentation Feedback Registry"</h2>
+                    </div>
+                    <p class="text-base-content/60">
+                        "Admin-only registry of MCP-reported documentation gaps and improvement proposals. Use this to resolve, deduplicate, and prioritize documentation maintenance without turning Lekton into a ticket tracker."
+                    </p>
+                </div>
+
+                <div class="px-8 pb-6">
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <label class="form-control md:col-span-2">
+                            <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Search"</span>
+                            <input
+                                type="text"
+                                class="input input-bordered focus:input-primary"
+                                placeholder="Search title, summary, docs:// URI, or proposal"
+                                prop:value=move || query.get()
+                                on:input=move |ev| {
+                                    set_page.set(0);
+                                    set_query.set(event_target_value(&ev));
+                                }
+                            />
+                        </label>
+
+                        <label class="form-control">
+                            <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Kind"</span>
+                            <select
+                                class="select select-bordered focus:select-primary"
+                                prop:value=move || kind_filter.get()
+                                on:change=move |ev| {
+                                    set_page.set(0);
+                                    set_kind_filter.set(event_target_value(&ev));
+                                }
+                            >
+                                <option value="">"All kinds"</option>
+                                <option value="missing_info">"Missing info"</option>
+                                <option value="improvement">"Improvement"</option>
+                            </select>
+                        </label>
+
+                        <label class="form-control">
+                            <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Status"</span>
+                            <select
+                                class="select select-bordered focus:select-primary"
+                                prop:value=move || status_filter.get()
+                                on:change=move |ev| {
+                                    set_page.set(0);
+                                    set_status_filter.set(event_target_value(&ev));
+                                }
+                            >
+                                <option value="open">"Open"</option>
+                                <option value="resolved">"Resolved"</option>
+                                <option value="">"All statuses"</option>
+                            </select>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="px-8 pb-8">
+                    <Suspense fallback=move || view! {
+                        <div class="flex flex-col items-center justify-center py-12 gap-4">
+                            <span class="loading loading-spinner loading-lg text-primary"></span>
+                            <p class="text-sm font-medium animate-pulse">"Loading documentation feedback..."</p>
+                        </div>
+                    }>
+                        {move || list_resource.get().map(|result| match result {
+                            Ok(result) => view! {
+                                <DocumentationFeedbackList
+                                    result=result
+                                    page=page
+                                    set_page=set_page
+                                    trigger_refresh=trigger_refresh
+                                />
+                            }.into_any(),
+                            Err(e) => view! {
+                                <div class="alert alert-error shadow-sm border-none bg-error/10 text-error">
+                                    <span>{format!("Failed to load documentation feedback: {e}")}</span>
+                                </div>
+                            }.into_any(),
+                        })}
+                    </Suspense>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+#[component]
+fn DocumentationFeedbackList(
+    result: DocumentationFeedbackAdminListResult,
+    page: ReadSignal<u64>,
+    set_page: WriteSignal<u64>,
+    trigger_refresh: impl Fn() + Copy + Send + Sync + 'static,
+) -> impl IntoView {
+    if result.items.is_empty() {
+        return view! {
+            <div class="flex flex-col items-center justify-center py-10 px-4 text-center border-2 border-dashed border-base-300 rounded-xl bg-base-200/20">
+                <h3 class="font-bold text-lg text-base-content/70">"No matching feedback items"</h3>
+                <p class="text-sm text-base-content/50 max-w-xl mt-1">
+                    "The registry is empty for the selected filters. MCP agents will populate it through the documentation feedback tools."
+                </p>
+            </div>
+        }.into_any();
+    }
+
+    let total_pages = result.total.div_ceil(result.per_page).max(1);
+    let has_prev = result.page > 0;
+    let has_next = result.page + 1 < total_pages;
+
+    view! {
+        <div class="space-y-5">
+            <div class="flex items-center justify-between text-sm text-base-content/60">
+                <span>{format!("{} total item(s)", result.total)}</span>
+                <span>{format!("Page {} of {}", result.page + 1, total_pages)}</span>
+            </div>
+
+            <div class="space-y-4">
+                {result
+                    .items
+                    .into_iter()
+                    .map(|item| view! { <DocumentationFeedbackCard item=item trigger_refresh=trigger_refresh /> })
+                    .collect::<Vec<_>>()}
+            </div>
+
+            <div class="flex items-center justify-end gap-3 pt-2">
+                <button
+                    class="btn btn-outline btn-sm"
+                    disabled=!has_prev
+                    on:click=move |_| set_page.update(|value| {
+                        if *value > 0 {
+                            *value -= 1;
+                        }
+                    })
+                >
+                    "Previous"
+                </button>
+                <button
+                    class="btn btn-outline btn-sm"
+                    disabled=!has_next
+                    on:click=move |_| set_page.update(|value| *value += 1)
+                >
+                    "Next"
+                </button>
+            </div>
+        </div>
+    }.into_any()
+}
+
+#[component]
+fn DocumentationFeedbackCard(
+    item: DocumentationFeedbackAdminItem,
+    trigger_refresh: impl Fn() + Copy + Send + Sync + 'static,
+) -> impl IntoView {
+    let status_is_open = item.status == "open";
+    let item_id_for_resolve = item.id.clone();
+    let item_id_for_duplicate = item.id.clone();
+    let (resolution_note, set_resolution_note) = signal(item.resolution_note.clone().unwrap_or_default());
+    let (duplicate_of, set_duplicate_of) = signal(item.duplicate_of.clone().unwrap_or_default());
+    let (error, set_error) = signal(Option::<String>::None);
+
+    let resolve_action = Action::new(move |_: &()| {
+        let id = item_id_for_resolve.clone();
+        let note = resolution_note.get_untracked();
+        async move {
+            set_error.set(None);
+            match resolve_documentation_feedback(id, (!note.trim().is_empty()).then_some(note)).await {
+                Ok(()) => trigger_refresh(),
+                Err(err) => set_error.set(Some(err.to_string())),
+            }
+        }
+    });
+
+    let duplicate_action = Action::new(move |_: &()| {
+        let id = item_id_for_duplicate.clone();
+        let duplicate_of_value = duplicate_of.get_untracked();
+        let note = resolution_note.get_untracked();
+        async move {
+            set_error.set(None);
+            match mark_documentation_feedback_duplicate(
+                id,
+                duplicate_of_value,
+                (!note.trim().is_empty()).then_some(note),
+            )
+            .await
+            {
+                Ok(()) => trigger_refresh(),
+                Err(err) => set_error.set(Some(err.to_string())),
+            }
+        }
+    });
+
+    view! {
+        <div class="rounded-2xl border border-base-200 bg-base-100 shadow-sm">
+            <div class="p-6 space-y-5">
+                <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div class="space-y-2">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class=move || format!(
+                                "badge badge-sm font-semibold {}",
+                                if item.kind == "missing_info" { "badge-warning" } else { "badge-info" }
+                            )>
+                                {item.kind.clone()}
+                            </span>
+                            <span class=move || format!(
+                                "badge badge-sm badge-outline {}",
+                                if item.status == "open" { "badge-primary" } else { "badge-ghost" }
+                            )>
+                                {item.status.clone()}
+                            </span>
+                            <span class="text-xs text-base-content/50 font-mono">{item.id.clone()}</span>
+                        </div>
+                        <h3 class="text-lg font-bold">{item.title.clone()}</h3>
+                        <p class="text-sm text-base-content/70">{item.summary.clone()}</p>
+                    </div>
+                    <div class="text-sm text-base-content/55 md:text-right">
+                        <div>{item.created_by.clone()}</div>
+                        <div>{item.created_at.clone()}</div>
+                    </div>
+                </div>
+
+                <Show when=move || error.get().is_some()>
+                    <div class="alert alert-error shadow-sm border-none bg-error/10 text-error text-sm">
+                        <span>{move || error.get().unwrap_or_default()}</span>
+                    </div>
+                </Show>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 text-sm">
+                    <DocumentationFeedbackDetail title="Related resources" values=item.related_resources.clone() />
+                    <DocumentationFeedbackDetail title="Search queries" values=item.search_queries.clone() />
+                    <DocumentationFeedbackOptional title="User goal" value=item.user_goal.clone() />
+                    <DocumentationFeedbackOptional title="Missing information" value=item.missing_information.clone() />
+                    <DocumentationFeedbackOptional title="Impact" value=item.impact.clone() />
+                    <DocumentationFeedbackOptional title="Suggested target resource" value=item.suggested_target_resource.clone() />
+                    <DocumentationFeedbackOptional title="Target resource" value=item.target_resource_uri.clone() />
+                    <DocumentationFeedbackOptional title="Problem summary" value=item.problem_summary.clone() />
+                    <DocumentationFeedbackOptional title="Proposal" value=item.proposal.clone() />
+                    <DocumentationFeedbackDetail title="Supporting resources" values=item.supporting_resources.clone() />
+                    <DocumentationFeedbackOptional title="Expected benefit" value=item.expected_benefit.clone() />
+                    <DocumentationFeedbackDetail title="Related feedback ids" values=item.related_feedback_ids.clone() />
+                    <DocumentationFeedbackOptional title="Duplicate of" value=item.duplicate_of.clone() />
+                    <DocumentationFeedbackOptional title="Resolution note" value=item.resolution_note.clone() />
+                </div>
+
+                <Show when=move || status_is_open>
+                    <div class="border-t border-base-200 pt-5 space-y-4">
+                        <label class="form-control">
+                            <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Resolution note"</span>
+                            <textarea
+                                class="textarea textarea-bordered min-h-28 focus:textarea-primary"
+                                placeholder="Optional note describing how the item was resolved or why it was marked duplicate."
+                                prop:value=move || resolution_note.get()
+                                on:input=move |ev| set_resolution_note.set(event_target_value(&ev))
+                            ></textarea>
+                        </label>
+
+                        <div class="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-3 items-end">
+                            <label class="form-control">
+                                <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Duplicate of"</span>
+                                <input
+                                    type="text"
+                                    class="input input-bordered focus:input-primary font-mono"
+                                    placeholder="Existing feedback id"
+                                    prop:value=move || duplicate_of.get()
+                                    on:input=move |ev| set_duplicate_of.set(event_target_value(&ev))
+                                />
+                            </label>
+
+                            <button
+                                class="btn btn-outline"
+                                on:click=move |_| { resolve_action.dispatch(()); }
+                            >
+                                "Resolve"
+                            </button>
+
+                            <button
+                                class="btn btn-primary"
+                                disabled=move || duplicate_of.get().trim().is_empty()
+                                on:click=move |_| { duplicate_action.dispatch(()); }
+                            >
+                                "Mark Duplicate"
+                            </button>
+                        </div>
+                    </div>
+                </Show>
+            </div>
+        </div>
+    }
+}
+
+#[component]
+fn DocumentationFeedbackDetail(title: &'static str, values: Vec<String>) -> impl IntoView {
+    if values.is_empty() {
+        return view! { <div></div> }.into_any();
+    }
+
+    view! {
+        <div class="space-y-2">
+            <div class="text-xs font-bold uppercase tracking-wider text-base-content/50">{title}</div>
+            <div class="flex flex-wrap gap-2">
+                {values.into_iter().map(|value| view! {
+                    <span class="badge badge-outline badge-sm font-mono whitespace-normal py-3">{value}</span>
+                }).collect::<Vec<_>>()}
+            </div>
+        </div>
+    }.into_any()
+}
+
+#[component]
+fn DocumentationFeedbackOptional(title: &'static str, value: Option<String>) -> impl IntoView {
+    let Some(value) = value.filter(|value| !value.trim().is_empty()) else {
+        return view! { <div></div> }.into_any();
+    };
+
+    view! {
+        <div class="space-y-2">
+            <div class="text-xs font-bold uppercase tracking-wider text-base-content/50">{title}</div>
+            <div class="rounded-xl bg-base-200/40 px-4 py-3 whitespace-pre-wrap">{value}</div>
+        </div>
+    }.into_any()
 }
 
 /// Flattened item for the ordering UI.

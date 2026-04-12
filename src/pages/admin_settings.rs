@@ -65,7 +65,7 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
 
     view! {
         <div class="max-w-5xl mx-auto space-y-8 pb-20">
-            <header class="flex items-center gap-4 border-b border-base-200 pb-8">
+            <header class="flex flex-col items-start gap-4 border-b border-base-200 pb-8 sm:flex-row sm:items-center">
                 <div class="p-3 bg-primary/10 rounded-2xl text-primary">
                     <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
@@ -74,7 +74,8 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
                 </div>
                 <div>
                    {move || {
-                       let title = match section().as_str() {
+                       let current_section = section();
+                       let title = match current_section.as_str() {
                            "tokens" => "Service Tokens",
                            "pats" => "Personal Access Tokens",
                            "documentation-feedback" => "Documentation Feedback",
@@ -83,9 +84,17 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
                            "rag" => "RAG Index Management",
                            _ => "Administration",
                        };
-                       view! { <h1 class="text-4xl font-extrabold tracking-tight">{title}</h1> }
+                       let subtitle = match current_section.as_str() {
+                           "documentation-feedback" => "Review MCP-reported documentation gaps, resolve them, and keep the registry tidy.",
+                           _ => "Manage your instance configuration, service tokens, and theming.",
+                       };
+                       view! {
+                           <>
+                               <h1 class="text-4xl font-extrabold tracking-tight">{title}</h1>
+                               <p class="text-base-content/60 mt-1">{subtitle}</p>
+                           </>
+                       }
                    }}
-                  <p class="text-base-content/60 mt-1">"Manage your instance configuration, service tokens, and theming."</p>
                 </div>
             </header>
 
@@ -476,12 +485,12 @@ fn DocumentationFeedbackAdminPanel() -> impl IntoView {
                 </div>
 
                 <div class="px-8 pb-6">
-                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div class="grid grid-cols-1 gap-4 md:grid-cols-4 md:items-end">
                         <label class="form-control md:col-span-2">
                             <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Search"</span>
                             <input
                                 type="text"
-                                class="input input-bordered focus:input-primary"
+                                class="input input-bordered h-12 focus:input-primary"
                                 placeholder="Search title, summary, docs:// URI, or proposal"
                                 prop:value=move || query.get()
                                 on:input=move |ev| {
@@ -494,7 +503,7 @@ fn DocumentationFeedbackAdminPanel() -> impl IntoView {
                         <label class="form-control">
                             <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Kind"</span>
                             <select
-                                class="select select-bordered focus:select-primary"
+                                class="select select-bordered h-12 focus:select-primary"
                                 prop:value=move || kind_filter.get()
                                 on:change=move |ev| {
                                     set_page.set(0);
@@ -510,7 +519,7 @@ fn DocumentationFeedbackAdminPanel() -> impl IntoView {
                         <label class="form-control">
                             <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Status"</span>
                             <select
-                                class="select select-bordered focus:select-primary"
+                                class="select select-bordered h-12 focus:select-primary"
                                 prop:value=move || status_filter.get()
                                 on:change=move |ev| {
                                     set_page.set(0);
@@ -578,7 +587,7 @@ fn DocumentationFeedbackList(
 
     view! {
         <div class="space-y-5">
-            <div class="flex items-center justify-between text-sm text-base-content/60">
+            <div class="flex flex-wrap items-center justify-between gap-2 text-sm text-base-content/60">
                 <span>{format!("{} total item(s)", result.total)}</span>
                 <span>{format!("Page {} of {}", result.page + 1, total_pages)}</span>
             </div>
@@ -658,11 +667,60 @@ fn DocumentationFeedbackCard(
         }
     });
 
+    let detail_sections = {
+        let mut sections = Vec::new();
+
+        if let Some(view) = documentation_feedback_detail_view("Related resources", item.related_resources.clone()) {
+            sections.push(view);
+        }
+        if let Some(view) = documentation_feedback_detail_view("Search queries", item.search_queries.clone()) {
+            sections.push(view);
+        }
+        if let Some(view) = documentation_feedback_optional_view("User goal", item.user_goal.clone()) {
+            sections.push(view);
+        }
+        if let Some(view) = documentation_feedback_optional_view("Missing information", item.missing_information.clone()) {
+            sections.push(view);
+        }
+        if let Some(view) = documentation_feedback_optional_view("Impact", item.impact.clone()) {
+            sections.push(view);
+        }
+        if let Some(view) = documentation_feedback_optional_view("Suggested target resource", item.suggested_target_resource.clone()) {
+            sections.push(view);
+        }
+        if let Some(view) = documentation_feedback_optional_view("Target resource", item.target_resource_uri.clone()) {
+            sections.push(view);
+        }
+        if let Some(view) = documentation_feedback_optional_view("Problem summary", item.problem_summary.clone()) {
+            sections.push(view);
+        }
+        if let Some(view) = documentation_feedback_optional_view("Proposal", item.proposal.clone()) {
+            sections.push(view);
+        }
+        if let Some(view) = documentation_feedback_detail_view("Supporting resources", item.supporting_resources.clone()) {
+            sections.push(view);
+        }
+        if let Some(view) = documentation_feedback_optional_view("Expected benefit", item.expected_benefit.clone()) {
+            sections.push(view);
+        }
+        if let Some(view) = documentation_feedback_detail_view("Related feedback ids", item.related_feedback_ids.clone()) {
+            sections.push(view);
+        }
+        if let Some(view) = documentation_feedback_optional_view("Duplicate of", item.duplicate_of.clone()) {
+            sections.push(view);
+        }
+        if let Some(view) = documentation_feedback_optional_view("Resolution note", item.resolution_note.clone()) {
+            sections.push(view);
+        }
+
+        sections
+    };
+
     view! {
         <div class="rounded-2xl border border-base-200 bg-base-100 shadow-sm">
             <div class="p-6 space-y-5">
                 <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                    <div class="space-y-2">
+                    <div class="space-y-2 min-w-0">
                         <div class="flex flex-wrap items-center gap-2">
                             <span class=move || format!(
                                 "badge badge-sm font-semibold {}",
@@ -676,14 +734,14 @@ fn DocumentationFeedbackCard(
                             )>
                                 {item.status.clone()}
                             </span>
-                            <span class="text-xs text-base-content/50 font-mono">{item.id.clone()}</span>
+                            <span class="text-xs text-base-content/50 font-mono break-all">{item.id.clone()}</span>
                         </div>
                         <h3 class="text-lg font-bold">{item.title.clone()}</h3>
-                        <p class="text-sm text-base-content/70">{item.summary.clone()}</p>
+                        <p class="text-sm text-base-content/70 break-words">{item.summary.clone()}</p>
                     </div>
-                    <div class="text-sm text-base-content/55 md:text-right">
-                        <div>{item.created_by.clone()}</div>
-                        <div>{item.created_at.clone()}</div>
+                    <div class="self-start rounded-xl bg-base-200/40 px-3 py-2 text-xs leading-relaxed text-base-content/60 md:max-w-xs md:text-right">
+                        <div class="font-medium break-words text-base-content/75">{item.created_by.clone()}</div>
+                        <div class="whitespace-nowrap">{item.created_at.clone()}</div>
                     </div>
                 </div>
 
@@ -693,61 +751,52 @@ fn DocumentationFeedbackCard(
                     </div>
                 </Show>
 
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 text-sm">
-                    <DocumentationFeedbackDetail title="Related resources" values=item.related_resources.clone() />
-                    <DocumentationFeedbackDetail title="Search queries" values=item.search_queries.clone() />
-                    <DocumentationFeedbackOptional title="User goal" value=item.user_goal.clone() />
-                    <DocumentationFeedbackOptional title="Missing information" value=item.missing_information.clone() />
-                    <DocumentationFeedbackOptional title="Impact" value=item.impact.clone() />
-                    <DocumentationFeedbackOptional title="Suggested target resource" value=item.suggested_target_resource.clone() />
-                    <DocumentationFeedbackOptional title="Target resource" value=item.target_resource_uri.clone() />
-                    <DocumentationFeedbackOptional title="Problem summary" value=item.problem_summary.clone() />
-                    <DocumentationFeedbackOptional title="Proposal" value=item.proposal.clone() />
-                    <DocumentationFeedbackDetail title="Supporting resources" values=item.supporting_resources.clone() />
-                    <DocumentationFeedbackOptional title="Expected benefit" value=item.expected_benefit.clone() />
-                    <DocumentationFeedbackDetail title="Related feedback ids" values=item.related_feedback_ids.clone() />
-                    <DocumentationFeedbackOptional title="Duplicate of" value=item.duplicate_of.clone() />
-                    <DocumentationFeedbackOptional title="Resolution note" value=item.resolution_note.clone() />
+                <div class="grid grid-cols-1 gap-5 text-sm lg:grid-cols-2">
+                    {detail_sections}
                 </div>
 
                 <Show when=move || status_is_open>
-                    <div class="border-t border-base-200 pt-5 space-y-4">
-                        <label class="form-control">
-                            <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Resolution note"</span>
-                            <textarea
-                                class="textarea textarea-bordered min-h-28 focus:textarea-primary"
-                                placeholder="Optional note describing how the item was resolved or why it was marked duplicate."
-                                prop:value=move || resolution_note.get()
-                                on:input=move |ev| set_resolution_note.set(event_target_value(&ev))
-                            ></textarea>
-                        </label>
-
-                        <div class="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-3 items-end">
+                    <div class="border-t border-base-200 pt-5">
+                        <div class="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
                             <label class="form-control">
-                                <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Duplicate of"</span>
-                                <input
-                                    type="text"
-                                    class="input input-bordered focus:input-primary font-mono"
-                                    placeholder="Existing feedback id"
-                                    prop:value=move || duplicate_of.get()
-                                    on:input=move |ev| set_duplicate_of.set(event_target_value(&ev))
-                                />
+                                <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Resolution note"</span>
+                                <textarea
+                                    class="textarea textarea-bordered min-h-28 focus:textarea-primary"
+                                    placeholder="Optional note describing how the item was resolved or why it was marked duplicate."
+                                    prop:value=move || resolution_note.get()
+                                    on:input=move |ev| set_resolution_note.set(event_target_value(&ev))
+                                ></textarea>
                             </label>
 
-                            <button
-                                class="btn btn-outline"
-                                on:click=move |_| { resolve_action.dispatch(()); }
-                            >
-                                "Resolve"
-                            </button>
+                            <div class="flex h-full flex-col gap-3">
+                                <label class="form-control flex-1">
+                                    <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Duplicate of"</span>
+                                    <input
+                                        type="text"
+                                        class="input input-bordered h-12 focus:input-primary font-mono"
+                                        placeholder="Existing feedback id"
+                                        prop:value=move || duplicate_of.get()
+                                        on:input=move |ev| set_duplicate_of.set(event_target_value(&ev))
+                                    />
+                                </label>
 
-                            <button
-                                class="btn btn-primary"
-                                disabled=move || duplicate_of.get().trim().is_empty()
-                                on:click=move |_| { duplicate_action.dispatch(()); }
-                            >
-                                "Mark Duplicate"
-                            </button>
+                                <div class="flex flex-col gap-3 sm:flex-row xl:justify-end">
+                                    <button
+                                        class="btn btn-outline sm:flex-1 xl:flex-none"
+                                        on:click=move |_| { resolve_action.dispatch(()); }
+                                    >
+                                        "Resolve"
+                                    </button>
+
+                                    <button
+                                        class="btn btn-primary sm:flex-1 xl:flex-none"
+                                        disabled=move || duplicate_of.get().trim().is_empty()
+                                        on:click=move |_| { duplicate_action.dispatch(()); }
+                                    >
+                                        "Mark Duplicate"
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </Show>
@@ -756,36 +805,50 @@ fn DocumentationFeedbackCard(
     }
 }
 
-#[component]
-fn DocumentationFeedbackDetail(title: &'static str, values: Vec<String>) -> impl IntoView {
+fn documentation_feedback_detail_view(title: &'static str, values: Vec<String>) -> Option<AnyView> {
     if values.is_empty() {
-        return view! { <div></div> }.into_any();
+        return None;
     }
 
-    view! {
+    let multiline = title == "Search queries";
+
+    Some(view! {
         <div class="space-y-2">
             <div class="text-xs font-bold uppercase tracking-wider text-base-content/50">{title}</div>
-            <div class="flex flex-wrap gap-2">
-                {values.into_iter().map(|value| view! {
-                    <span class="badge badge-outline badge-sm font-mono whitespace-normal py-3">{value}</span>
-                }).collect::<Vec<_>>()}
-            </div>
+            {if multiline {
+                view! {
+                    <div class="space-y-2">
+                        {values.into_iter().map(|value| view! {
+                            <div class="rounded-xl border border-base-300/70 bg-base-200/30 px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words overflow-hidden">
+                                {value}
+                            </div>
+                        }).collect::<Vec<_>>()}
+                    </div>
+                }.into_any()
+            } else {
+                view! {
+                    <div class="flex flex-wrap gap-2">
+                        {values.into_iter().map(|value| view! {
+                            <span class="badge badge-outline badge-sm max-w-full font-mono whitespace-normal break-all py-3">{value}</span>
+                        }).collect::<Vec<_>>()}
+                    </div>
+                }.into_any()
+            }}
         </div>
-    }.into_any()
+    }.into_any())
 }
 
-#[component]
-fn DocumentationFeedbackOptional(title: &'static str, value: Option<String>) -> impl IntoView {
+fn documentation_feedback_optional_view(title: &'static str, value: Option<String>) -> Option<AnyView> {
     let Some(value) = value.filter(|value| !value.trim().is_empty()) else {
-        return view! { <div></div> }.into_any();
+        return None;
     };
 
-    view! {
+    Some(view! {
         <div class="space-y-2">
             <div class="text-xs font-bold uppercase tracking-wider text-base-content/50">{title}</div>
-            <div class="rounded-xl bg-base-200/40 px-4 py-3 whitespace-pre-wrap">{value}</div>
+            <div class="rounded-xl bg-base-200/40 px-4 py-3 whitespace-pre-wrap break-words">{value}</div>
         </div>
-    }.into_any()
+    }.into_any())
 }
 
 /// Flattened item for the ordering UI.

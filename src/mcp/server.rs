@@ -27,6 +27,10 @@ use rmcp::{
 };
 
 use crate::auth::models::UserContext;
+use crate::db::documentation_feedback_models::{
+    DocumentationFeedback, DocumentationFeedbackKind, DocumentationFeedbackStatus,
+};
+use crate::db::documentation_feedback_repository::DocumentationFeedbackRepository;
 use crate::db::models::Document;
 use crate::db::prompt_models::{ContextCost, Prompt, PromptStatus, PromptVariable};
 use crate::db::prompt_repository::PromptRepository;
@@ -71,6 +75,51 @@ fn default_prompt_limit() -> usize {
     10
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SearchDocumentationFeedbackParams {
+    /// Query string used to find similar open feedback items before creating a new one.
+    pub query: String,
+    /// Optional feedback type filter: "missing_info" or "improvement".
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// Optional status filter. Defaults to "open".
+    #[serde(default)]
+    pub status: Option<String>,
+    /// Maximum number of results to return (default: 5, max: 20).
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ReportMissingDocumentationParams {
+    pub title: String,
+    pub summary: String,
+    pub user_goal: String,
+    pub searched_resources: Vec<String>,
+    pub search_queries_used: Vec<String>,
+    pub missing_information: String,
+    pub impact: String,
+    #[serde(default)]
+    pub suggested_target_resource: Option<String>,
+    #[serde(default)]
+    pub related_feedback_ids: Vec<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ProposeDocumentationImprovementParams {
+    pub title: String,
+    pub summary: String,
+    pub target_resource_uri: String,
+    pub problem_summary: String,
+    pub proposal: String,
+    pub supporting_resources: Vec<String>,
+    pub expected_benefit: String,
+    #[serde(default)]
+    pub search_queries_used: Vec<String>,
+    #[serde(default)]
+    pub related_feedback_ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 struct StoredPromptBlob {
     slug: String,
@@ -103,6 +152,7 @@ pub struct LektonMcpServer {
     document_repo: Arc<dyn DocumentRepository>,
     prompt_repo: Arc<dyn PromptRepository>,
     user_prompt_preference_repo: Arc<dyn UserPromptPreferenceRepository>,
+    documentation_feedback_repo: Arc<dyn DocumentationFeedbackRepository>,
     storage_client: Arc<dyn StorageClient>,
     embedding_service: Arc<dyn EmbeddingService>,
     vector_store: Arc<dyn VectorStore>,
@@ -114,6 +164,7 @@ impl LektonMcpServer {
         document_repo: Arc<dyn DocumentRepository>,
         prompt_repo: Arc<dyn PromptRepository>,
         user_prompt_preference_repo: Arc<dyn UserPromptPreferenceRepository>,
+        documentation_feedback_repo: Arc<dyn DocumentationFeedbackRepository>,
         storage_client: Arc<dyn StorageClient>,
         embedding_service: Arc<dyn EmbeddingService>,
         vector_store: Arc<dyn VectorStore>,
@@ -122,6 +173,7 @@ impl LektonMcpServer {
             document_repo,
             prompt_repo,
             user_prompt_preference_repo,
+            documentation_feedback_repo,
             storage_client,
             embedding_service,
             vector_store,
@@ -188,6 +240,53 @@ fn can_read_prompt(user_ctx: &UserContext, prompt: &Prompt) -> bool {
         PromptStatus::Draft => user_ctx.can_read_draft(&prompt.access_level),
         PromptStatus::Active | PromptStatus::Deprecated => user_ctx.can_read(&prompt.access_level),
     }
+}
+
+fn parse_feedback_kind(value: Option<&str>) -> Result<Option<DocumentationFeedbackKind>, McpError> {
+    value
+        .map(|raw| raw.parse::<DocumentationFeedbackKind>())
+        .transpose()
+        .map_err(|err| McpError::invalid_params(err, None))
+}
+
+fn parse_feedback_status(
+    value: Option<&str>,
+    default_open: bool,
+) -> Result<Option<DocumentationFeedbackStatus>, McpError> {
+    match value {
+        Some(raw) => raw
+            .parse::<DocumentationFeedbackStatus>()
+            .map(Some)
+            .map_err(|err| McpError::invalid_params(err, None)),
+        None if default_open => Ok(Some(DocumentationFeedbackStatus::Open)),
+        None => Ok(None),
+    }
+}
+
+fn validate_docs_resource_uri(uri: &str) -> Result<(), McpError> {
+    slug_from_docs_uri(uri).map(|_| ())
+}
+
+fn validate_docs_resource_uris(uris: &[String]) -> Result<(), McpError> {
+    for uri in uris {
+        validate_docs_resource_uri(uri)?;
+    }
+    Ok(())
+}
+
+fn feedback_summary_entry(feedback: &DocumentationFeedback) -> serde_json::Value {
+    serde_json::json!({
+        "id": feedback.id,
+        "kind": feedback.kind,
+        "status": feedback.status,
+        "title": feedback.title,
+        "summary": feedback.summary,
+        "related_resources": feedback.related_resources,
+        "duplicate_of": feedback.duplicate_of,
+        "related_feedback_ids": feedback.related_feedback_ids,
+        "created_by": feedback.created_by,
+        "created_at": feedback.created_at,
+    })
 }
 
 fn estimate_context_cost(prompts: &[&Prompt]) -> (&'static str, Vec<String>) {
@@ -349,6 +448,178 @@ impl LektonMcpServer {
 
         let json = serde_json::to_string_pretty(&hits)
             .map_err(|e| McpError::internal_error(format!("JSON error: {e}"), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "search_documentation_feedback",
+        description = "Searches the documentation feedback registry for similar open missing-info reports or improvement proposals before creating a new one."
+    )]
+    async fn search_documentation_feedback(
+        &self,
+        Parameters(params): Parameters<SearchDocumentationFeedbackParams>,
+        _ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let query = params.query.trim();
+        if query.is_empty() {
+            return Err(McpError::invalid_params(
+                "query cannot be empty for search_documentation_feedback",
+                None,
+            ));
+        }
+
+        let kind = parse_feedback_kind(params.kind.as_deref())?;
+        let status = parse_feedback_status(params.status.as_deref(), true)?;
+        let limit = params.limit.clamp(1, 20);
+
+        let results = self
+            .documentation_feedback_repo
+            .search(query, kind, status, limit)
+            .await
+            .map_err(app_err)?;
+
+        let json = serde_json::to_string_pretty(
+            &results
+                .iter()
+                .map(feedback_summary_entry)
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|e| McpError::internal_error(format!("JSON error: {e}"), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "report_missing_documentation",
+        description = "Creates a structured documentation-gap report when required guidance is missing after checking docs:// resources and search results."
+    )]
+    async fn report_missing_documentation(
+        &self,
+        Parameters(params): Parameters<ReportMissingDocumentationParams>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let user_ctx = user_context(&ctx)?;
+        validate_docs_resource_uris(&params.searched_resources)?;
+        if let Some(target) = params.suggested_target_resource.as_deref() {
+            validate_docs_resource_uri(target)?;
+        }
+
+        let feedback = DocumentationFeedback {
+            id: uuid::Uuid::new_v4().to_string(),
+            kind: DocumentationFeedbackKind::MissingInfo,
+            status: DocumentationFeedbackStatus::Open,
+            title: params.title.trim().to_string(),
+            summary: params.summary.trim().to_string(),
+            related_resources: params.searched_resources,
+            search_queries: params.search_queries_used,
+            created_by: user_ctx.user.email,
+            created_at: chrono::Utc::now(),
+            duplicate_of: None,
+            resolution_note: None,
+            related_feedback_ids: params.related_feedback_ids,
+            user_goal: Some(params.user_goal.trim().to_string()),
+            missing_information: Some(params.missing_information.trim().to_string()),
+            impact: Some(params.impact.trim().to_string()),
+            suggested_target_resource: params
+                .suggested_target_resource
+                .map(|value| value.trim().to_string()),
+            target_resource_uri: None,
+            problem_summary: None,
+            proposal: None,
+            supporting_resources: vec![],
+            expected_benefit: None,
+        };
+
+        if feedback.title.is_empty()
+            || feedback.summary.is_empty()
+            || feedback.user_goal.as_deref().unwrap_or("").is_empty()
+            || feedback.missing_information.as_deref().unwrap_or("").is_empty()
+            || feedback.impact.as_deref().unwrap_or("").is_empty()
+        {
+            return Err(McpError::invalid_params(
+                "title, summary, user_goal, missing_information, and impact are required",
+                None,
+            ));
+        }
+
+        self.documentation_feedback_repo
+            .create(feedback.clone())
+            .await
+            .map_err(app_err)?;
+
+        let json = serde_json::to_string_pretty(&serde_json::json!({
+            "id": feedback.id,
+            "kind": feedback.kind,
+            "status": feedback.status,
+            "created_at": feedback.created_at,
+        }))
+        .map_err(|e| McpError::internal_error(format!("JSON error: {e}"), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "propose_documentation_improvement",
+        description = "Creates a structured proposal to improve documentation discoverability or consolidate fragmented guidance."
+    )]
+    async fn propose_documentation_improvement(
+        &self,
+        Parameters(params): Parameters<ProposeDocumentationImprovementParams>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let user_ctx = user_context(&ctx)?;
+        validate_docs_resource_uri(&params.target_resource_uri)?;
+        validate_docs_resource_uris(&params.supporting_resources)?;
+
+        let feedback = DocumentationFeedback {
+            id: uuid::Uuid::new_v4().to_string(),
+            kind: DocumentationFeedbackKind::Improvement,
+            status: DocumentationFeedbackStatus::Open,
+            title: params.title.trim().to_string(),
+            summary: params.summary.trim().to_string(),
+            related_resources: vec![params.target_resource_uri.clone()],
+            search_queries: params.search_queries_used,
+            created_by: user_ctx.user.email,
+            created_at: chrono::Utc::now(),
+            duplicate_of: None,
+            resolution_note: None,
+            related_feedback_ids: params.related_feedback_ids,
+            user_goal: None,
+            missing_information: None,
+            impact: None,
+            suggested_target_resource: None,
+            target_resource_uri: Some(params.target_resource_uri),
+            problem_summary: Some(params.problem_summary.trim().to_string()),
+            proposal: Some(params.proposal.trim().to_string()),
+            supporting_resources: params.supporting_resources,
+            expected_benefit: Some(params.expected_benefit.trim().to_string()),
+        };
+
+        if feedback.title.is_empty()
+            || feedback.summary.is_empty()
+            || feedback.problem_summary.as_deref().unwrap_or("").is_empty()
+            || feedback.proposal.as_deref().unwrap_or("").is_empty()
+            || feedback.expected_benefit.as_deref().unwrap_or("").is_empty()
+        {
+            return Err(McpError::invalid_params(
+                "title, summary, problem_summary, proposal, and expected_benefit are required",
+                None,
+            ));
+        }
+
+        self.documentation_feedback_repo
+            .create(feedback.clone())
+            .await
+            .map_err(app_err)?;
+
+        let json = serde_json::to_string_pretty(&serde_json::json!({
+            "id": feedback.id,
+            "kind": feedback.kind,
+            "status": feedback.status,
+            "created_at": feedback.created_at,
+        }))
+        .map_err(|e| McpError::internal_error(format!("JSON error: {e}"), None))?;
 
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
@@ -790,12 +1061,16 @@ impl ServerHandler for LektonMcpServer {
             "Lekton documentation server. Available tools:\n\
              - get_index: Legacy document-tree helper with docs:// URIs\n\
              - search_documents: Semantic search across documentation fragments\n\
+             - search_documentation_feedback: Search existing feedback before opening a new report\n\
+             - report_missing_documentation: Report a documentation gap after verifying docs:// resources and search results\n\
+             - propose_documentation_improvement: Suggest a concrete improvement to existing documentation\n\
              - list_prompts: Browse the prompt catalog\n\
              - get_prompt: Read a specific prompt\n\
              - search_prompts: Search prompt metadata\n\
              - get_context_prompts: Return the prompt set selected for the current user context\n\
              Full documentation is exposed as read-only MCP resources under docs://...\n\
              Prefer list_resources to discover available documents, read_resource to load the raw markdown, and search_documents when you need vector search to find the right docs:// URI.\n\
+             Before creating documentation feedback, first use search_documentation_feedback to reduce duplicate reports.\n\
              Native MCP prompts are also exposed for the effective user context prompt set."
                 .to_string(),
         )

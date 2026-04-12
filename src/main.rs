@@ -18,6 +18,7 @@ async fn main() {
     use lekton::db::schema_repository::MongoSchemaRepository;
     use lekton::db::settings_repository::MongoSettingsRepository;
     use lekton::db::document_version_repository::MongoDocumentVersionRepository;
+    use lekton::db::documentation_feedback_repository::MongoDocumentationFeedbackRepository;
     use lekton::db::service_token_repository::MongoServiceTokenRepository;
     use lekton::db::user_prompt_preference_repository::MongoUserPromptPreferenceRepository;
     use lekton::db::user_repository::MongoUserRepository;
@@ -135,6 +136,12 @@ async fn main() {
         } else {
             None
         };
+    let documentation_feedback_repo_impl = MongoDocumentationFeedbackRepository::new(&mongo_db);
+    if let Err(e) = documentation_feedback_repo_impl.ensure_indexes().await {
+        tracing::warn!("Failed to create documentation feedback indexes: {e}");
+    }
+    let documentation_feedback_repo: Arc<dyn lekton::db::documentation_feedback_repository::DocumentationFeedbackRepository> =
+        Arc::new(documentation_feedback_repo_impl);
     let embedding_cache_repo: Option<Arc<dyn lekton::db::embedding_cache_repository::EmbeddingCacheRepository>> =
         if config.rag.is_enabled() {
             let repo = lekton::db::embedding_cache_repository::MongoEmbeddingCacheRepository::new(&mongo_db);
@@ -338,6 +345,7 @@ async fn main() {
         chat_repo,
         chat_service,
         feedback_repo,
+        documentation_feedback_repo,
         embedding_cache_repo,
         insecure_cookies: config.server.insecure_cookies,
         max_attachment_size_bytes: config.server.max_attachment_size_mb * 1024 * 1024,
@@ -537,6 +545,7 @@ async fn main() {
         let doc_repo = app_state.document_repo.clone();
         let prompt_repo = app_state.prompt_repo.clone();
         let user_prompt_preference_repo = app_state.user_prompt_preference_repo.clone();
+        let documentation_feedback_repo = app_state.documentation_feedback_repo.clone();
         let storage = app_state.storage_client.clone();
         let emb = emb.clone();
         let vs = vs.clone();
@@ -547,6 +556,7 @@ async fn main() {
                     doc_repo.clone(),
                     prompt_repo.clone(),
                     user_prompt_preference_repo.clone(),
+                    documentation_feedback_repo.clone(),
                     storage.clone(),
                     emb.clone(),
                     vs.clone(),

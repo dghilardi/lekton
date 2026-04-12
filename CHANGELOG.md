@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **MCP documentation access model**: The MCP server now exposes documentation as native read-only `docs://...` resources with discovery and direct reads, while semantic search returns matching resource URIs instead of relying on a full-document read tool.
+
 ## [0.11.0] 2026-04-11
 
 ### Added

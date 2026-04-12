@@ -15,6 +15,7 @@ use lekton::db::access_level_repository::{AccessLevelRepository, MongoAccessLeve
 use lekton::db::asset_repository::{AssetRepository, MongoAssetRepository};
 use lekton::db::auth_models::User;
 use lekton::db::document_version_repository::{DocumentVersionRepository, MongoDocumentVersionRepository};
+use lekton::db::documentation_feedback_repository::{DocumentationFeedbackRepository, MongoDocumentationFeedbackRepository};
 use lekton::db::prompt_repository::{MongoPromptRepository, PromptRepository};
 use lekton::db::prompt_version_repository::{MongoPromptVersionRepository, PromptVersionRepository};
 use lekton::db::repository::{DocumentRepository, MongoDocumentRepository};
@@ -48,6 +49,7 @@ pub struct TestEnv {
     pub prompt_version_repo: Arc<dyn PromptVersionRepository>,
     pub user_prompt_preference_repo: Arc<dyn UserPromptPreferenceRepository>,
     pub navigation_order_repo: Arc<dyn NavigationOrderRepository>,
+    pub documentation_feedback_repo: Arc<dyn DocumentationFeedbackRepository>,
     pub storage: Arc<dyn StorageClient>,
     pub search: Arc<dyn SearchService>,
     pub token_service: Arc<TokenService>,
@@ -100,6 +102,8 @@ impl TestEnv {
             Arc::new(MongoUserPromptPreferenceRepository::new(&mongo_db));
         let navigation_order_repo: Arc<dyn NavigationOrderRepository> =
             Arc::new(MongoNavigationOrderRepository::new(&mongo_db));
+        let documentation_feedback_repo: Arc<dyn DocumentationFeedbackRepository> =
+            Arc::new(MongoDocumentationFeedbackRepository::new(&mongo_db));
         access_level_repo
             .seed_defaults()
             .await
@@ -195,6 +199,7 @@ impl TestEnv {
             chat_repo: None,
             chat_service: None,
             feedback_repo: None,
+            documentation_feedback_repo: documentation_feedback_repo.clone(),
             embedding_cache_repo: None,
         };
 
@@ -333,6 +338,7 @@ impl TestEnv {
             prompt_version_repo,
             user_prompt_preference_repo,
             navigation_order_repo,
+            documentation_feedback_repo,
             storage,
             search,
             token_service,
@@ -505,6 +511,7 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
         chat_repo: None,
         chat_service: None,
         feedback_repo: None,
+        documentation_feedback_repo: env.documentation_feedback_repo.clone(),
         embedding_cache_repo: None,
     };
 

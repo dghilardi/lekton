@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Integration test harness aligned with documentation feedback registry**: Updated shared `AppState` test wiring to provide the new `documentation_feedback_repo`, preventing GitHub Actions integration builds from failing after the documentation feedback subsystem was introduced.
+
 ## [0.12.0] 2026-04-12
 
 ### Changed

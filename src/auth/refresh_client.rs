@@ -173,6 +173,32 @@ mod inner {
 #[cfg(feature = "hydrate")]
 pub use inner::{is_auth_error, try_refresh, with_auth_retry};
 
+// ── SSR passthrough ───────────────────────────────────────────────────────────
+//
+// In the SSR build, components are rendered on the server where a token refresh
+// is not meaningful (each request is stateless).  We expose no-op versions of
+// the same functions so page components can call `with_auth_retry(...)` without
+// `#[cfg]` guards.
+
+/// SSR stub: returns `true` when the error is the [`UNAUTHORIZED_SENTINEL`].
+/// Same logic as the hydrate version; extracted so it compiles in all targets.
+#[cfg(not(feature = "hydrate"))]
+pub fn is_auth_error(err: &leptos::server_fn::error::ServerFnError) -> bool {
+    use crate::auth::models::UNAUTHORIZED_SENTINEL;
+    matches!(err, leptos::server_fn::error::ServerFnError::ServerError(msg) if msg == UNAUTHORIZED_SENTINEL)
+}
+
+/// SSR stub: no refresh is possible during server-side rendering; just calls
+/// `f()` directly and returns its result unchanged.
+#[cfg(not(feature = "hydrate"))]
+pub async fn with_auth_retry<T, F, Fut>(f: F) -> Result<T, leptos::server_fn::error::ServerFnError>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Result<T, leptos::server_fn::error::ServerFnError>>,
+{
+    f().await
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

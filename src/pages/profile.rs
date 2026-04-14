@@ -7,6 +7,7 @@ use crate::app::{
     list_user_pats, list_user_feedback, toggle_user_pat,
     get_current_user,
 };
+use crate::auth::refresh_client::with_auth_retry;
 
 /// User profile page — shows account info and PAT management.
 #[component]
@@ -80,7 +81,7 @@ fn PatSection() -> impl IntoView {
 
     // Load PATs on mount
     let load_pats = Action::new(move |_: &()| async move {
-        match list_user_pats().await {
+        match with_auth_retry(list_user_pats).await {
             Ok(tokens) => pats.set(tokens),
             Err(e) => tracing::error!("Failed to load PATs: {e}"),
         }
@@ -184,7 +185,7 @@ fn CreatePatForm(on_created: impl Fn(CreatePatResult) + 'static + Copy + Send + 
         async move {
             loading.set(true);
             error.set(None);
-            match create_user_pat(n).await {
+            match with_auth_retry(|| create_user_pat(n.clone())).await {
                 Ok(result) => {
                     name.set(String::new());
                     on_created(result);
@@ -245,7 +246,7 @@ fn FeedbackSection() -> impl IntoView {
         let p = *p;
         async move {
             loading.set(true);
-            match list_user_feedback(p, per_page).await {
+            match with_auth_retry(|| list_user_feedback(p, per_page)).await {
                 Ok(result) => feedback.set(Some(result)),
                 Err(e) => tracing::error!("Failed to load feedback: {e}"),
             }
@@ -339,7 +340,7 @@ fn FeedbackRow(
     let delete = Action::new(move |_: &()| {
         let mid = msg_id.clone();
         async move {
-            if delete_user_feedback(mid).await.is_ok() {
+            if with_auth_retry(|| delete_user_feedback(mid.clone())).await.is_ok() {
                 // Reload current page
                 let current_page = feedback.get().map(|r| r.page).unwrap_or(0);
                 load.dispatch(current_page);
@@ -418,7 +419,7 @@ fn PatRow(
         let active = *active;
         let id = id.clone();
         async move {
-            if toggle_user_pat(id, active).await.is_ok() {
+            if with_auth_retry(|| toggle_user_pat(id.clone(), active)).await.is_ok() {
                 load_pats.dispatch(());
             }
         }
@@ -428,7 +429,7 @@ fn PatRow(
     let delete = Action::new(move |_: &()| {
         let id = id_del.clone();
         async move {
-            if delete_user_pat(id).await.is_ok() {
+            if with_auth_retry(|| delete_user_pat(id.clone())).await.is_ok() {
                 load_pats.dispatch(());
             }
         }

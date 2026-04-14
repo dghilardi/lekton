@@ -11,6 +11,7 @@ use crate::app::{
     DocumentationFeedbackAdminItem, DocumentationFeedbackAdminListResult, NavItem,
     NavigationOrderEntry, ServiceTokenInfo,
 };
+use crate::auth::refresh_client::with_auth_retry;
 
 
 #[derive(Params, PartialEq, Clone, Debug)]
@@ -241,7 +242,7 @@ fn TokenRow(
         let id = id.clone();
         async move {
             set_deactivating.set(true);
-            let result = deactivate_service_token(id).await;
+            let result = with_auth_retry(|| deactivate_service_token(id.clone())).await;
             set_deactivating.set(false);
             if result.is_ok() {
                 trigger_refresh();
@@ -326,7 +327,7 @@ fn CreateTokenForm(
         async move {
             set_error.set(None);
             set_submitting.set(true);
-            let result = create_service_token(name_val, scopes_val, can_write_val).await;
+            let result = with_auth_retry(|| create_service_token(name_val.clone(), scopes_val.clone(), can_write_val)).await;
             set_submitting.set(false);
             match result {
                 Ok(token_result) => {
@@ -641,7 +642,7 @@ fn DocumentationFeedbackCard(
         let note = resolution_note.get_untracked();
         async move {
             set_error.set(None);
-            match resolve_documentation_feedback(id, (!note.trim().is_empty()).then_some(note)).await {
+            match with_auth_retry(|| resolve_documentation_feedback(id.clone(), (!note.trim().is_empty()).then_some(note.clone()))).await {
                 Ok(()) => trigger_refresh(),
                 Err(err) => set_error.set(Some(err.to_string())),
             }
@@ -654,11 +655,11 @@ fn DocumentationFeedbackCard(
         let note = resolution_note.get_untracked();
         async move {
             set_error.set(None);
-            match mark_documentation_feedback_duplicate(
-                id,
-                duplicate_of_value,
-                (!note.trim().is_empty()).then_some(note),
-            )
+            match with_auth_retry(|| mark_documentation_feedback_duplicate(
+                id.clone(),
+                duplicate_of_value.clone(),
+                (!note.trim().is_empty()).then_some(note.clone()),
+            ))
             .await
             {
                 Ok(()) => trigger_refresh(),
@@ -933,7 +934,7 @@ fn NavigationOrderEditor() -> impl IntoView {
                 })
                 .collect();
 
-            let result = save_navigation_order(entries).await;
+            let result = with_auth_retry(|| save_navigation_order(entries.clone())).await;
             set_saving.set(false);
 
             match result {
@@ -1308,7 +1309,7 @@ fn CustomCssEditor() -> impl IntoView {
         async move {
             set_saving.set(true);
             set_message.set(None);
-            let result = save_custom_css(new_css.clone()).await;
+            let result = with_auth_retry(|| save_custom_css(new_css.clone())).await;
             set_saving.set(false);
             match result {
                 Ok(msg) => {
@@ -1516,7 +1517,7 @@ fn RagReindexSection() -> impl IntoView {
     );
 
     let trigger_action = Action::new(move |_: &()| async move {
-        let result = trigger_rag_reindex().await;
+        let result = with_auth_retry(trigger_rag_reindex).await;
         // Start polling after triggering
         set_is_polling.set(true);
         set_poll_counter.update(|c| *c += 1);
@@ -1668,7 +1669,7 @@ fn AdminPatManager() -> impl IntoView {
         let id = id.clone();
         let active = *active;
         async move {
-            if admin_toggle_pat(id, active).await.is_ok() {
+            if with_auth_retry(|| admin_toggle_pat(id.clone(), active)).await.is_ok() {
                 pats_resource.refetch();
             }
         }

@@ -656,6 +656,11 @@ pub struct CreateTokenResult {
 }
 
 /// Helper: extract the current user and verify admin.
+///
+/// Returns [`UNAUTHORIZED_SENTINEL`] when the caller is not authenticated at
+/// all (so the client knows it should attempt a token refresh).
+/// Returns a distinct "forbidden" message when the caller is authenticated but
+/// lacks admin privileges (no refresh makes sense in that case).
 #[cfg(feature = "ssr")]
 async fn require_admin_user(state: &AppState) -> Result<crate::auth::models::AuthenticatedUser, ServerFnError> {
     use axum_extra::extract::CookieJar;
@@ -673,6 +678,7 @@ async fn require_admin_user(state: &AppState) -> Result<crate::auth::models::Aut
         if user.is_admin {
             return Ok(user);
         }
+        // Authenticated but not admin — 403, no refresh needed.
         return Err(ServerFnError::new("Admin privileges required"));
     }
 
@@ -683,11 +689,13 @@ async fn require_admin_user(state: &AppState) -> Result<crate::auth::models::Aut
                 if user.is_admin {
                     return Ok(user);
                 }
+                return Err(ServerFnError::new("Admin privileges required"));
             }
         }
     }
 
-    Err(ServerFnError::new("Admin privileges required"))
+    // Not authenticated — 401, client should attempt refresh.
+    Err(ServerFnError::new(crate::auth::models::UNAUTHORIZED_SENTINEL))
 }
 
 /// List all service tokens (admin only).
@@ -853,7 +861,7 @@ async fn require_any_user(state: &AppState) -> Result<crate::auth::models::Authe
         }
     }
 
-    Err(ServerFnError::new("Authentication required"))
+    Err(ServerFnError::new(crate::auth::models::UNAUTHORIZED_SENTINEL))
 }
 
 #[cfg(feature = "ssr")]

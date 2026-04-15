@@ -246,7 +246,7 @@ async fn main() {
         use lekton::rag::provider::LlmProvider;
         use lekton::rag::vectorstore::QdrantVectorStore;
 
-        let llm_provider = match LlmProvider::initialize().await {
+        let llm_provider = match LlmProvider::initialize(&config.rag).await {
             Ok(provider) => {
                 tracing::info!(provider = provider.kind(), "LLM provider initialized");
                 Some(Arc::new(provider))

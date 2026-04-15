@@ -95,6 +95,8 @@ mod tests {
             chat_url: String::new(),
             chat_model: String::new(),
             chat_api_key: String::new(),
+            vertex_project_id: String::new(),
+            vertex_location: String::new(),
             system_prompt_template: String::new(),
             rewrite_model: String::new(),
             rewrite_max_tokens: 80,
@@ -112,10 +114,10 @@ mod tests {
 
     #[test]
     fn from_rag_config_succeeds_with_url() {
-        assert!(
-            OpenAICompatibleEmbedding::from_rag_config(&make_config("http://localhost:11434/v1"))
-                .is_ok()
-        );
+        assert!(OpenAICompatibleEmbedding::from_rag_config(&make_config(
+            "http://localhost:11434/v1"
+        ))
+        .is_ok());
     }
 
     #[test]

@@ -44,6 +44,8 @@ embedding_api_key = ""
 chat_url = ""
 chat_model = ""
 chat_api_key = ""
+vertex_project_id = ""
+vertex_location = ""
 system_prompt_template = """You are a helpful assistant for an internal developer portal. \
 Answer the user's question based on the following context extracted from the documentation.
 

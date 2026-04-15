@@ -139,8 +139,15 @@ pub struct RagConfig {
     pub chat_url: String,
     /// Chat model name (e.g. `meta-llama/llama-3-70b`).
     pub chat_model: String,
-    /// API key for the chat endpoint. Optional.
+    /// API key for the chat endpoint. Used for OpenRouter and other static-key providers.
     pub chat_api_key: String,
+    /// Google Cloud project ID used to route chat requests to Vertex AI.
+    /// When set, the app initializes the Vertex AI provider instead of OpenRouter.
+    #[serde(default)]
+    pub vertex_project_id: String,
+    /// Vertex AI location. Defaults to `us-central1` when empty.
+    #[serde(default)]
+    pub vertex_location: String,
     /// Tera template for the system prompt. Available variables: `{{context}}`, `{{question}}`.
     pub system_prompt_template: String,
     /// Model used to rewrite follow-up questions into standalone queries before embedding.
@@ -241,18 +248,42 @@ mod tests {
         // Underscores in the env-var key segment are normalised to hyphens at request time,
         // but config-rs stores them as-is.  Verify that the raw key is loaded correctly.
         std::env::set_var("LKN__RAG__CHAT_HEADERS__X_PRODUCER", "LEKTON");
-        std::env::set_var("LKN__RAG__EMBEDDING_HEADERS__AUTHORIZATION_EXTRA", "Bearer tok");
+        std::env::set_var(
+            "LKN__RAG__EMBEDDING_HEADERS__AUTHORIZATION_EXTRA",
+            "Bearer tok",
+        );
 
-        let config = super::AppConfig::load().expect("Failed to load config with rag header env vars");
+        let config =
+            super::AppConfig::load().expect("Failed to load config with rag header env vars");
 
         assert_eq!(
-            config.rag.chat_headers.get("x_producer").map(String::as_str),
+            config
+                .rag
+                .chat_headers
+                .get("x_producer")
+                .map(String::as_str),
             Some("LEKTON")
         );
         assert_eq!(
-            config.rag.embedding_headers.get("authorization_extra").map(String::as_str),
+            config
+                .rag
+                .embedding_headers
+                .get("authorization_extra")
+                .map(String::as_str),
             Some("Bearer tok")
         );
     }
 
+    #[test]
+    #[cfg(feature = "ssr")]
+    fn test_rag_vertex_provider_from_env() {
+        std::env::set_var("LKN__RAG__VERTEX_PROJECT_ID", "test-project");
+        std::env::set_var("LKN__RAG__VERTEX_LOCATION", "europe-west1");
+
+        let config =
+            super::AppConfig::load().expect("Failed to load config with Vertex AI env vars");
+
+        assert_eq!(config.rag.vertex_project_id, "test-project");
+        assert_eq!(config.rag.vertex_location, "europe-west1");
+    }
 }

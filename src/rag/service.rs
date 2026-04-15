@@ -38,10 +38,7 @@ pub struct DefaultRagService {
 
 impl DefaultRagService {
     /// Create from pre-built service components.
-    pub fn new(
-        embedding: Arc<dyn EmbeddingService>,
-        vectorstore: Arc<dyn VectorStore>,
-    ) -> Self {
+    pub fn new(embedding: Arc<dyn EmbeddingService>, vectorstore: Arc<dyn VectorStore>) -> Self {
         Self {
             embedding,
             vectorstore,
@@ -93,7 +90,11 @@ impl RagService for DefaultRagService {
             .enumerate()
             .filter_map(|(idx, (text, vector))| {
                 if vector.is_empty() {
-                    tracing::warn!(slug, idx, "RAG: embedding returned empty vector for chunk, skipping");
+                    tracing::warn!(
+                        slug,
+                        idx,
+                        "RAG: embedding returned empty vector for chunk, skipping"
+                    );
                     return None;
                 }
                 Some(VectorPoint {
@@ -142,6 +143,8 @@ mod tests {
             chat_url: String::new(),
             chat_model: String::new(),
             chat_api_key: String::new(),
+            vertex_project_id: String::new(),
+            vertex_location: String::new(),
             system_prompt_template: String::new(),
             rewrite_model: String::new(),
             rewrite_max_tokens: 80,

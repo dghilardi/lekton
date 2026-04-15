@@ -75,9 +75,7 @@ pub struct QdrantVectorStore {
 impl QdrantVectorStore {
     pub fn from_rag_config(config: &RagConfig) -> Result<Self, AppError> {
         if config.qdrant_url.is_empty() {
-            return Err(AppError::Internal(
-                "qdrant_url is required for RAG".into(),
-            ));
+            return Err(AppError::Internal("qdrant_url is required for RAG".into()));
         }
         let client = Qdrant::from_url(&config.qdrant_url)
             .build()
@@ -101,11 +99,9 @@ impl VectorStore for QdrantVectorStore {
         if !exists {
             self.client
                 .create_collection(
-                    CreateCollectionBuilder::new(&self.collection)
-                        .vectors_config(VectorParamsBuilder::new(
-                            dimensions as u64,
-                            Distance::Cosine,
-                        )),
+                    CreateCollectionBuilder::new(&self.collection).vectors_config(
+                        VectorParamsBuilder::new(dimensions as u64, Distance::Cosine),
+                    ),
                 )
                 .await
                 .map_err(|e| AppError::Internal(format!("qdrant create_collection: {e}")))?;
@@ -135,19 +131,13 @@ impl VectorStore for QdrantVectorStore {
                 payload.insert("is_draft", p.payload.is_draft);
                 payload.insert("chunk_index", p.payload.chunk_index as i64);
                 // Store tags as a list of strings
-                let tag_values: Vec<qdrant_client::qdrant::Value> = p
-                    .payload
-                    .tags
-                    .into_iter()
-                    .map(|t| t.into())
-                    .collect();
+                let tag_values: Vec<qdrant_client::qdrant::Value> =
+                    p.payload.tags.into_iter().map(|t| t.into()).collect();
                 payload.insert(
                     "tags",
                     qdrant_client::qdrant::Value {
                         kind: Some(qdrant_client::qdrant::value::Kind::ListValue(
-                            qdrant_client::qdrant::ListValue {
-                                values: tag_values,
-                            },
+                            qdrant_client::qdrant::ListValue { values: tag_values },
                         )),
                     },
                 );
@@ -271,6 +261,8 @@ mod tests {
             chat_url: String::new(),
             chat_model: String::new(),
             chat_api_key: String::new(),
+            vertex_project_id: String::new(),
+            vertex_location: String::new(),
             system_prompt_template: String::new(),
             rewrite_model: String::new(),
             rewrite_max_tokens: 80,
@@ -294,6 +286,8 @@ mod tests {
             chat_url: String::new(),
             chat_model: String::new(),
             chat_api_key: String::new(),
+            vertex_project_id: String::new(),
+            vertex_location: String::new(),
             system_prompt_template: String::new(),
             rewrite_model: String::new(),
             rewrite_max_tokens: 80,
@@ -323,6 +317,8 @@ mod tests {
             chat_url: String::new(),
             chat_model: String::new(),
             chat_api_key: String::new(),
+            vertex_project_id: String::new(),
+            vertex_location: String::new(),
             system_prompt_template: String::new(),
             rewrite_model: String::new(),
             rewrite_max_tokens: 80,
@@ -333,11 +329,8 @@ mod tests {
         };
         let store = QdrantVectorStore::from_rag_config(&config).unwrap();
 
-        let result = rt.block_on(async {
-            store
-                .search(vec![0.0; 768], 10, Some(&[]), false)
-                .await
-        });
+        let result =
+            rt.block_on(async { store.search(vec![0.0; 768], 10, Some(&[]), false).await });
         assert!(result.unwrap().is_empty());
     }
 }

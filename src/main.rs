@@ -2,38 +2,44 @@
 #[tokio::main]
 async fn main() {
     use axum::Router;
-    use leptos::prelude::*;
-    use leptos_axum::{generate_route_list, LeptosRoutes};
     use lekton::api;
     use lekton::app::App;
     use lekton::auth::provider::build_provider;
     use lekton::auth::token_service::TokenService;
-    use std::net::SocketAddr;
     use lekton::db::access_level_repository::MongoAccessLevelRepository;
-    use lekton::db::navigation_order_repository::MongoNavigationOrderRepository;
     use lekton::db::asset_repository::MongoAssetRepository;
+    use lekton::db::document_version_repository::MongoDocumentVersionRepository;
+    use lekton::db::documentation_feedback_repository::MongoDocumentationFeedbackRepository;
+    use lekton::db::navigation_order_repository::MongoNavigationOrderRepository;
     use lekton::db::prompt_repository::MongoPromptRepository;
     use lekton::db::prompt_version_repository::MongoPromptVersionRepository;
     use lekton::db::repository::MongoDocumentRepository;
     use lekton::db::schema_repository::MongoSchemaRepository;
-    use lekton::db::settings_repository::MongoSettingsRepository;
-    use lekton::db::document_version_repository::MongoDocumentVersionRepository;
-    use lekton::db::documentation_feedback_repository::MongoDocumentationFeedbackRepository;
     use lekton::db::service_token_repository::MongoServiceTokenRepository;
+    use lekton::db::settings_repository::MongoSettingsRepository;
     use lekton::db::user_prompt_preference_repository::MongoUserPromptPreferenceRepository;
     use lekton::db::user_repository::MongoUserRepository;
     use lekton::search::client::{MeilisearchService, SearchService as _};
     use lekton::storage::client::S3StorageClient;
+    use leptos::prelude::*;
+    use leptos_axum::{generate_route_list, LeptosRoutes};
+    use std::net::SocketAddr;
     use std::sync::Arc;
     use tower_http::services::ServeDir;
 
     // Load configuration first — fast-fail on bad config before anything else starts.
-    let config = lekton::config::AppConfig::load()
-        .expect("Failed to load application configuration");
+    let config =
+        lekton::config::AppConfig::load().expect("Failed to load application configuration");
 
     // Debug config loading
-    println!("[DEBUG] LKN__AUTH__DEMO_MODE env: {:?}", std::env::var("LKN__AUTH__DEMO_MODE"));
-    println!("[DEBUG] Loaded config auth.demo_mode: {}", config.auth.demo_mode);
+    println!(
+        "[DEBUG] LKN__AUTH__DEMO_MODE env: {:?}",
+        std::env::var("LKN__AUTH__DEMO_MODE")
+    );
+    println!(
+        "[DEBUG] Loaded config auth.demo_mode: {}",
+        config.auth.demo_mode
+    );
     use std::io::Write;
     std::io::stdout().flush().ok();
 
@@ -59,11 +65,14 @@ async fn main() {
             );
         }
 
-        tracing::warn!("⚠️  DEMO MODE ENABLED — built-in credentials are active. Do NOT use in production!");
+        tracing::warn!(
+            "⚠️  DEMO MODE ENABLED — built-in credentials are active. Do NOT use in production!"
+        );
     }
 
     // Load Leptos options from Cargo.toml metadata
-    let conf = get_configuration(None).expect("Failed to load Leptos configuration from Cargo.toml");
+    let conf =
+        get_configuration(None).expect("Failed to load Leptos configuration from Cargo.toml");
     let leptos_options = conf.leptos_options;
     let addr = leptos_options.site_addr;
     let site_root = leptos_options.site_root.to_string();
@@ -80,7 +89,11 @@ async fn main() {
             if let Some(rest) = mongo_uri
                 .strip_prefix("mongodb+srv://")
                 .map(|r| ("mongodb+srv://", r))
-                .or_else(|| mongo_uri.strip_prefix("mongodb://").map(|r| ("mongodb://", r)))
+                .or_else(|| {
+                    mongo_uri
+                        .strip_prefix("mongodb://")
+                        .map(|r| ("mongodb://", r))
+                })
             {
                 // Strip any existing credentials (user:pass@host → host)
                 let host_part = rest.1.find('@').map_or(rest.1, |i| &rest.1[i + 1..]);
@@ -110,16 +123,20 @@ async fn main() {
         Arc::new(MongoAccessLevelRepository::new(&mongo_db));
     let service_token_repo: Arc<dyn lekton::db::service_token_repository::ServiceTokenRepository> =
         Arc::new(MongoServiceTokenRepository::new(&mongo_db));
-    let document_version_repo: Arc<dyn lekton::db::document_version_repository::DocumentVersionRepository> =
-        Arc::new(MongoDocumentVersionRepository::new(&mongo_db));
+    let document_version_repo: Arc<
+        dyn lekton::db::document_version_repository::DocumentVersionRepository,
+    > = Arc::new(MongoDocumentVersionRepository::new(&mongo_db));
     let prompt_repo: Arc<dyn lekton::db::prompt_repository::PromptRepository> =
         Arc::new(MongoPromptRepository::new(&mongo_db));
-    let prompt_version_repo: Arc<dyn lekton::db::prompt_version_repository::PromptVersionRepository> =
-        Arc::new(MongoPromptVersionRepository::new(&mongo_db));
-    let user_prompt_preference_repo: Arc<dyn lekton::db::user_prompt_preference_repository::UserPromptPreferenceRepository> =
-        Arc::new(MongoUserPromptPreferenceRepository::new(&mongo_db));
-    let navigation_order_repo: Arc<dyn lekton::db::navigation_order_repository::NavigationOrderRepository> =
-        Arc::new(MongoNavigationOrderRepository::new(&mongo_db));
+    let prompt_version_repo: Arc<
+        dyn lekton::db::prompt_version_repository::PromptVersionRepository,
+    > = Arc::new(MongoPromptVersionRepository::new(&mongo_db));
+    let user_prompt_preference_repo: Arc<
+        dyn lekton::db::user_prompt_preference_repository::UserPromptPreferenceRepository,
+    > = Arc::new(MongoUserPromptPreferenceRepository::new(&mongo_db));
+    let navigation_order_repo: Arc<
+        dyn lekton::db::navigation_order_repository::NavigationOrderRepository,
+    > = Arc::new(MongoNavigationOrderRepository::new(&mongo_db));
     let chat_repo: Option<Arc<dyn lekton::db::chat_repository::ChatRepository>> =
         if config.rag.is_enabled() {
             Some(Arc::new(
@@ -140,18 +157,21 @@ async fn main() {
     if let Err(e) = documentation_feedback_repo_impl.ensure_indexes().await {
         tracing::warn!("Failed to create documentation feedback indexes: {e}");
     }
-    let documentation_feedback_repo: Arc<dyn lekton::db::documentation_feedback_repository::DocumentationFeedbackRepository> =
-        Arc::new(documentation_feedback_repo_impl);
-    let embedding_cache_repo: Option<Arc<dyn lekton::db::embedding_cache_repository::EmbeddingCacheRepository>> =
-        if config.rag.is_enabled() {
-            let repo = lekton::db::embedding_cache_repository::MongoEmbeddingCacheRepository::new(&mongo_db);
-            if let Err(e) = repo.ensure_index().await {
-                tracing::warn!("Failed to create embedding cache index: {e}");
-            }
-            Some(Arc::new(repo))
-        } else {
-            None
-        };
+    let documentation_feedback_repo: Arc<
+        dyn lekton::db::documentation_feedback_repository::DocumentationFeedbackRepository,
+    > = Arc::new(documentation_feedback_repo_impl);
+    let embedding_cache_repo: Option<
+        Arc<dyn lekton::db::embedding_cache_repository::EmbeddingCacheRepository>,
+    > = if config.rag.is_enabled() {
+        let repo =
+            lekton::db::embedding_cache_repository::MongoEmbeddingCacheRepository::new(&mongo_db);
+        if let Err(e) = repo.ensure_index().await {
+            tracing::warn!("Failed to create embedding cache index: {e}");
+        }
+        Some(Arc::new(repo))
+    } else {
+        None
+    };
 
     // Seed default access levels (no-op if already present).
     if let Err(e) = access_level_repo.seed_defaults().await {
@@ -223,7 +243,19 @@ async fn main() {
     ) = if config.rag.is_enabled() {
         use lekton::rag::cached_embedding::CachedEmbeddingService;
         use lekton::rag::embedding::OpenAICompatibleEmbedding;
+        use lekton::rag::provider::LlmProvider;
         use lekton::rag::vectorstore::QdrantVectorStore;
+
+        let llm_provider = match LlmProvider::initialize(&config.rag).await {
+            Ok(provider) => {
+                tracing::info!(provider = provider.kind(), "LLM provider initialized");
+                Some(Arc::new(provider))
+            }
+            Err(e) => {
+                tracing::warn!("Failed to initialize LLM provider: {e} — RAG chat disabled");
+                None
+            }
+        };
 
         match (
             OpenAICompatibleEmbedding::from_rag_config(&config.rag),
@@ -264,31 +296,37 @@ async fn main() {
                     tracing::warn!("Failed to ensure Qdrant collection: {e} — RAG disabled");
                     (None, None, None, None)
                 } else {
-                    let rag_svc = Arc::new(
-                        lekton::rag::service::DefaultRagService::new(
-                            cached_embedding.clone(),
-                            vectorstore.clone(),
-                        ),
-                    );
+                    let rag_svc = Arc::new(lekton::rag::service::DefaultRagService::new(
+                        cached_embedding.clone(),
+                        vectorstore.clone(),
+                    ));
 
-                    let chat_svc = if let Some(ref chat_repo) = chat_repo {
-                        match lekton::rag::chat::ChatService::from_rag_config(
-                            &config.rag,
-                            chat_repo.clone(),
-                            query_embedding,
-                            vectorstore.clone(),
-                        ) {
-                            Ok(svc) => {
-                                tracing::info!("RAG chat service initialized");
-                                Some(Arc::new(svc))
-                            }
-                            Err(e) => {
-                                tracing::warn!("RAG chat not available: {e}");
-                                None
+                    let chat_svc = match (&chat_repo, &llm_provider) {
+                        (Some(chat_repo), Some(llm_provider)) => {
+                            match lekton::rag::chat::ChatService::from_rag_config(
+                                &config.rag,
+                                llm_provider.clone(),
+                                chat_repo.clone(),
+                                query_embedding,
+                                vectorstore.clone(),
+                            ) {
+                                Ok(svc) => {
+                                    tracing::info!("RAG chat service initialized");
+                                    Some(Arc::new(svc))
+                                }
+                                Err(e) => {
+                                    tracing::warn!("RAG chat not available: {e}");
+                                    None
+                                }
                             }
                         }
-                    } else {
-                        None
+                        (Some(_), None) => {
+                            tracing::warn!(
+                                "RAG chat disabled because no LLM provider is available"
+                            );
+                            None
+                        }
+                        (None, _) => None,
                     };
 
                     tracing::info!(
@@ -407,10 +445,7 @@ async fn main() {
             "/api/v1/schemas/{name}/{version}",
             axum::routing::get(api::schemas::get_schema_version_handler),
         )
-        .route(
-            "/api/v1/sync",
-            axum::routing::post(api::sync::sync_handler),
-        )
+        .route("/api/v1/sync", axum::routing::post(api::sync::sync_handler))
         .route(
             "/api/v1/prompts/ingest",
             axum::routing::post(api::prompts::prompt_ingest_handler),
@@ -514,9 +549,15 @@ async fn main() {
         use lekton::auth::demo_auth;
 
         app = app
-            .route("/api/auth/login", axum::routing::post(demo_auth::login_handler))
+            .route(
+                "/api/auth/login",
+                axum::routing::post(demo_auth::login_handler),
+            )
             .route("/api/auth/me", axum::routing::get(demo_auth::me_handler))
-            .route("/api/auth/logout", axum::routing::post(demo_auth::logout_handler));
+            .route(
+                "/api/auth/logout",
+                axum::routing::post(demo_auth::logout_handler),
+            );
 
         tracing::info!("Demo auth routes mounted: /api/auth/login, /api/auth/me, /api/auth/logout");
     } else {
@@ -524,9 +565,18 @@ async fn main() {
 
         app = app
             .route("/auth/login", axum::routing::get(auth_api::login_handler))
-            .route("/auth/callback", axum::routing::get(auth_api::callback_handler))
-            .route("/auth/refresh", axum::routing::post(auth_api::refresh_handler))
-            .route("/auth/logout", axum::routing::post(auth_api::logout_handler))
+            .route(
+                "/auth/callback",
+                axum::routing::get(auth_api::callback_handler),
+            )
+            .route(
+                "/auth/refresh",
+                axum::routing::post(auth_api::refresh_handler),
+            )
+            .route(
+                "/auth/logout",
+                axum::routing::post(auth_api::logout_handler),
+            )
             .route("/auth/me", axum::routing::get(auth_api::me_handler));
 
         tracing::info!("OAuth2/OIDC auth routes mounted: /auth/login, /auth/callback, /auth/refresh, /auth/logout, /auth/me");
@@ -534,12 +584,11 @@ async fn main() {
 
     // MCP server (requires RAG — needs embedding + vectorstore)
     if let (Some(ref emb), Some(ref vs)) = (&embedding_service, &vector_store) {
-        use lekton::mcp::auth::{McpAuthState, pat_auth_middleware};
+        use lekton::mcp::auth::{pat_auth_middleware, McpAuthState};
         use lekton::mcp::server::LektonMcpServer;
         use rmcp::transport::streamable_http_server::{
+            session::local::LocalSessionManager, tower::StreamableHttpService,
             StreamableHttpServerConfig,
-            session::local::LocalSessionManager,
-            tower::StreamableHttpService,
         };
 
         let doc_repo = app_state.document_repo.clone();
@@ -571,9 +620,9 @@ async fn main() {
             user_repo: app_state.user_repo.clone(),
         };
 
-        let mcp_router = Router::new()
-            .nest_service("/mcp", mcp_service)
-            .layer(axum::middleware::from_fn_with_state(mcp_auth, pat_auth_middleware));
+        let mcp_router = Router::new().nest_service("/mcp", mcp_service).layer(
+            axum::middleware::from_fn_with_state(mcp_auth, pat_auth_middleware),
+        );
 
         app = app.merge(mcp_router);
 
@@ -603,7 +652,12 @@ async fn main() {
     });
 
     // CORS: same-origin by default; set cors_allowed_origins for cross-origin access.
-    let cors = match config.server.cors_allowed_origins.as_deref().filter(|s| !s.is_empty()) {
+    let cors = match config
+        .server
+        .cors_allowed_origins
+        .as_deref()
+        .filter(|s| !s.is_empty())
+    {
         Some(origins) => {
             let allowed: Vec<_> = origins
                 .split(',')
@@ -617,7 +671,10 @@ async fn main() {
                     axum::http::Method::PUT,
                     axum::http::Method::DELETE,
                 ])
-                .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::AUTHORIZATION])
+                .allow_headers([
+                    axum::http::header::CONTENT_TYPE,
+                    axum::http::header::AUTHORIZATION,
+                ])
                 .allow_credentials(true)
         }
         None => {
@@ -630,9 +687,7 @@ async fn main() {
         // Leptos SSR routes
         .leptos_routes(&app_state, routes, {
             let options = app_state.leptos_options.clone();
-            move || {
-                lekton::app::shell(options.clone())
-            }
+            move || lekton::app::shell(options.clone())
         })
         // Static files (including custom.css)
         .fallback_service(ServeDir::new(&site_root))
@@ -645,9 +700,12 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .expect("Failed to bind TCP listener");
-    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-        .await
-        .expect("Server exited with error");
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .expect("Server exited with error");
 }
 
 // When compiled for WASM (client-side), there's no main function.

@@ -5,19 +5,18 @@
 //! self-contained standalone question, improving vector-search relevance without
 //! polluting the embedding with raw conversation history.
 
-use async_openai::{
-    config::OpenAIConfig,
-    types::chat::{
-        ChatCompletionRequestMessage, ChatCompletionRequestUserMessage,
-        ChatCompletionRequestUserMessageContent, CreateChatCompletionRequest,
-    },
-    Client,
+use std::{collections::HashMap, sync::Arc};
+
+use async_openai::types::chat::{
+    ChatCompletionRequestMessage, ChatCompletionRequestUserMessage,
+    ChatCompletionRequestUserMessageContent, CreateChatCompletionRequest,
 };
 
 use crate::config::RagConfig;
 use crate::db::chat_models::ChatMessage;
 use crate::error::AppError;
-use crate::rag::build_oai_client;
+
+use super::provider::LlmProvider;
 
 /// Number of recent history messages used as context for query rewriting.
 /// Keeping this smaller than `MAX_HISTORY_MESSAGES` limits the rewriting cost.
@@ -31,33 +30,26 @@ Output ONLY the rewritten question — no explanations, no prefixes, no punctuat
 beyond what is necessary.";
 
 pub struct QueryRewriter {
-    client: Client<OpenAIConfig>,
+    llm_provider: Arc<LlmProvider>,
     model: String,
     max_tokens: u32,
+    headers: HashMap<String, String>,
 }
 
 impl QueryRewriter {
     /// Build a rewriter from `RagConfig`.
     ///
     /// Returns `None` when `rewrite_model` is empty (feature disabled).
-    pub fn from_rag_config(config: &RagConfig) -> Option<Self> {
+    pub fn from_rag_config(config: &RagConfig, llm_provider: Arc<LlmProvider>) -> Option<Self> {
         if config.rewrite_model.is_empty() {
             return None;
         }
 
-        let client =
-            match build_oai_client(&config.chat_url, &config.chat_api_key, &config.chat_headers) {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::error!("failed to build query rewriter client: {e}");
-                    return None;
-                }
-            };
-
         Some(Self {
-            client,
+            llm_provider,
             model: config.rewrite_model.clone(),
             max_tokens: config.rewrite_max_tokens,
+            headers: config.chat_headers.clone(),
         })
     }
 
@@ -83,9 +75,10 @@ impl QueryRewriter {
         let messages = vec![
             ChatCompletionRequestMessage::System(
                 async_openai::types::chat::ChatCompletionRequestSystemMessage {
-                    content: async_openai::types::chat::ChatCompletionRequestSystemMessageContent::Text(
-                        REWRITE_SYSTEM.to_string(),
-                    ),
+                    content:
+                        async_openai::types::chat::ChatCompletionRequestSystemMessageContent::Text(
+                            REWRITE_SYSTEM.to_string(),
+                        ),
                     name: None,
                 },
             ),
@@ -103,8 +96,12 @@ impl QueryRewriter {
             ..Default::default()
         };
 
-        let response = self
-            .client
+        let client = self
+            .llm_provider
+            .get_client_with_headers(&self.headers)
+            .await?;
+
+        let response = client
             .chat()
             .create(request)
             .await

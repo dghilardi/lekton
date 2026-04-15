@@ -1,4 +1,4 @@
-# Agent Guidelines (AGENT.md)
+# Agent Guidelines (AGENTS.md)
 
 Welcome, fellow Agent. This document provides context and standards for AI coding assistants working on **Lekton**.
 
@@ -20,8 +20,9 @@ Lekton is a dynamic IDP built with **Leptos (frontend)** and **Axum (backend)**.
 1.  **Strict Typing:** Ensure all API boundaries are strictly typed.
 2.  **RBAC First:** Every new endpoint must verify `access_level` using the `AccessLevel` enum.
 3.  **Trait-Based Services:** Database and storage access must be behind traits (`DocumentRepository`, `StorageClient`) to enable mock testing.
-4.  **Documentation:** Keep `docs/REQUIREMENTS.md` and `docs/ADRs/` updated with major design changes.
-5.  **Trunk-Based Development:** Prefer small, frequent commits to the main branch. Use feature flags for long-running changes.
+4.  **Centralized Configuration:** New application configuration must be modeled in the typed `config-rs` configuration (`src/config.rs` + `config/default.toml`) and loaded through `AppConfig`. Avoid introducing new scattered `std::env::var` reads in runtime code unless there is a strong, explicit reason.
+5.  **Documentation:** Keep `docs/REQUIREMENTS.md` and `docs/ADRs/` updated with major design changes.
+6.  **Trunk-Based Development:** Prefer small, frequent commits to the main branch. Use feature flags for long-running changes.
 
 ## 📁 Project Structure
 ```
@@ -48,6 +49,7 @@ src/
 
 ## 📝 Maintenance
 -   **Changelog:** Update `CHANGELOG.md` for every significant change.
+-   **DCO:** Every commit pushed to GitHub must include a `Signed-off-by:` trailer. Prefer `git commit -s` and `git commit --amend -s` so PRs pass the DCO check.
 -   **Tests:** Every feature requires unit tests. Integration tests for API endpoints.
 -   **Documentation:** If you change an interface, update the relevant Markdown documentation.
 

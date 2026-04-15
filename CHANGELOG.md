@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.0] 2026-04-15
+
 ### Changed
 - **LLM provider factory for chat requests**: RAG chat now initializes a shared LLM provider once at startup from the typed `config-rs` configuration, falls back to OpenRouter for open source deployments, and builds `async-openai` clients per request so Google Cloud Vertex AI access tokens can be refreshed automatically.
 

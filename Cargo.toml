@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "lekton"
-version = "0.12.1"
+version = "0.13.0"
 authors = ["Davide Ghilardi"]
 edition = "2021"
 license = "AGPL-3.0-or-later"

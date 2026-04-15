@@ -1,15 +1,11 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
-use async_openai::config::OpenAIConfig;
 use async_openai::types::chat::{
     ChatCompletionRequestAssistantMessage, ChatCompletionRequestAssistantMessageContent,
     ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage,
     ChatCompletionRequestSystemMessageContent, ChatCompletionRequestUserMessage,
     ChatCompletionRequestUserMessageContent, CreateChatCompletionRequest,
 };
-use async_openai::Client;
-
-use crate::rag::build_oai_client;
 use chrono::Utc;
 use futures::StreamExt;
 use uuid::Uuid;
@@ -20,6 +16,7 @@ use crate::db::chat_models::{ChatMessage, ChatSession};
 use crate::db::chat_repository::ChatRepository;
 use crate::error::AppError;
 use crate::rag::embedding::EmbeddingService;
+use crate::rag::provider::LlmProvider;
 use crate::rag::query_rewriter::QueryRewriter;
 use crate::rag::vectorstore::VectorStore;
 
@@ -33,8 +30,9 @@ pub struct ChatService {
     embedding: Arc<dyn EmbeddingService>,
     vectorstore: Arc<dyn VectorStore>,
     chat_repo: Arc<dyn ChatRepository>,
-    llm_client: Client<OpenAIConfig>,
+    llm_provider: Arc<LlmProvider>,
     chat_model: String,
+    chat_headers: HashMap<String, String>,
     tera: tera::Tera,
     system_template_name: String,
     query_rewriter: Option<QueryRewriter>,
@@ -62,16 +60,16 @@ pub enum ChatEvent {
 impl ChatService {
     pub fn from_rag_config(
         config: &RagConfig,
+        llm_provider: Arc<LlmProvider>,
         chat_repo: Arc<dyn ChatRepository>,
         embedding: Arc<dyn EmbeddingService>,
         vectorstore: Arc<dyn VectorStore>,
     ) -> Result<Self, AppError> {
-        if config.chat_url.is_empty() {
-            return Err(AppError::Internal("chat_url is required for RAG chat".into()));
+        if config.chat_model.is_empty() {
+            return Err(AppError::Internal(
+                "chat_model is required for RAG chat".into(),
+            ));
         }
-
-        let llm_client =
-            build_oai_client(&config.chat_url, &config.chat_api_key, &config.chat_headers)?;
 
         let mut tera = tera::Tera::default();
         let template_name = "system_prompt";
@@ -82,11 +80,12 @@ impl ChatService {
             embedding,
             vectorstore,
             chat_repo,
-            llm_client,
+            llm_provider: llm_provider.clone(),
             chat_model: config.chat_model.clone(),
+            chat_headers: config.chat_headers.clone(),
             tera,
             system_template_name: template_name.to_string(),
-            query_rewriter: QueryRewriter::from_rag_config(config),
+            query_rewriter: QueryRewriter::from_rag_config(config, llm_provider),
         })
     }
 
@@ -98,10 +97,7 @@ impl ChatService {
         user_ctx: &UserContext,
         session_id: Option<String>,
         user_message: String,
-    ) -> Result<
-        std::pin::Pin<Box<dyn futures::Stream<Item = ChatEvent> + Send>>,
-        AppError,
-    > {
+    ) -> Result<std::pin::Pin<Box<dyn futures::Stream<Item = ChatEvent> + Send>>, AppError> {
         // 1. Resolve or create session
         let session_id = match session_id {
             Some(id) => {
@@ -180,7 +176,12 @@ impl ChatService {
         // 7. Build context string from search results
         let context = search_results
             .iter()
-            .map(|r| format!("[{}] ({})\n{}", r.document_title, r.document_slug, r.chunk_text))
+            .map(|r| {
+                format!(
+                    "[{}] ({})\n{}",
+                    r.document_title, r.document_slug, r.chunk_text
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n\n---\n\n");
 
@@ -249,8 +250,12 @@ impl ChatService {
             ..Default::default()
         };
 
-        let mut stream = self
-            .llm_client
+        let llm_client = self
+            .llm_provider
+            .get_client_with_headers(&self.chat_headers)
+            .await?;
+
+        let mut stream = llm_client
             .chat()
             .create_stream(request)
             .await

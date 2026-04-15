@@ -48,6 +48,7 @@ src/
 
 ## 📝 Maintenance
 -   **Changelog:** Update `CHANGELOG.md` for every significant change.
+-   **DCO:** Every commit pushed to GitHub must include a `Signed-off-by:` trailer. Prefer `git commit -s` and `git commit --amend -s` so PRs pass the DCO check.
 -   **Tests:** Every feature requires unit tests. Integration tests for API endpoints.
 -   **Documentation:** If you change an interface, update the relevant Markdown documentation.
 

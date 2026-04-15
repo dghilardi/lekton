@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.1] 2026-04-15
+
 ### Added
 - **Minimal `lekton-sync` Docker image**: Added a dedicated multi-stage `cli/Dockerfile` that builds only the sync CLI and runs it from a small distroless runtime. Tagged releases now also publish a separate `lekton-sync` Docker image, and the CLI docs include CI usage examples.
 

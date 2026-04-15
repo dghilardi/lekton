@@ -10,6 +10,36 @@ It scans a directory for `.md` files and prompt YAML files, calls the Lekton syn
 cargo install lekton-sync
 ```
 
+### Docker
+
+Build a minimal container image from the repository root:
+
+```sh
+docker build -f cli/Dockerfile -t lekton-sync .
+```
+
+Run it by mounting the documentation workspace and passing the usual environment variables:
+
+```sh
+docker run --rm \
+  -e LEKTON_URL=https://lekton.example.com \
+  -e LEKTON_TOKEN=your-service-token \
+  -v "$PWD:/workspace" \
+  lekton-sync /workspace
+```
+
+This image contains only the `lekton-sync` binary in a distroless runtime, so it fits well in documentation CI pipelines without installing Rust toolchains on the runner.
+
+Tagged releases can also publish a ready-to-use Docker image via GitHub Actions:
+
+```sh
+docker run --rm \
+  -e LEKTON_URL=https://lekton.example.com \
+  -e LEKTON_TOKEN=your-service-token \
+  -v "$PWD:/workspace" \
+  docker.io/<your-dockerhub-namespace>/lekton-sync:0.13.0 /workspace
+```
+
 ## Usage
 
 ```sh
@@ -131,6 +161,19 @@ lekton-sync --dry-run ./docs
 
 # Sync and archive documents/prompts no longer present locally
 lekton-sync --archive-missing ./docs
+```
+
+### GitHub Actions example
+
+```yaml
+- name: Sync docs to Lekton
+  run: |
+    docker run --rm \
+      -e LEKTON_URL="${{ secrets.LEKTON_URL }}" \
+      -e LEKTON_TOKEN="${{ secrets.LEKTON_TOKEN }}" \
+      -v "${{ github.workspace }}:/workspace" \
+      docker.io/${{ secrets.DOCKERHUB_USERNAME }}/lekton-sync:${{ github.ref_name }} \
+      --archive-missing /workspace/docs
 ```
 
 ## License

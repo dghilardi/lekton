@@ -7,7 +7,7 @@ use async_trait::async_trait;
 
 use crate::config::RagConfig;
 use crate::error::AppError;
-use crate::rag::build_oai_client;
+use crate::rag::{build_oai_client, client::format_llm_error};
 
 // ── Trait ─────────────────────────────────────────────────────────────────────
 
@@ -63,7 +63,12 @@ impl EmbeddingService for OpenAICompatibleEmbedding {
             .embeddings()
             .create(request)
             .await
-            .map_err(|e| AppError::Internal(format!("embedding request failed: {e}")))?;
+            .map_err(|e| {
+                AppError::Internal(format!(
+                    "embedding request failed: {}",
+                    format_llm_error(&e)
+                ))
+            })?;
 
         // Sort by index to guarantee ordering matches input
         let mut embeddings = response.data;

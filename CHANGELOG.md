@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Vertex AI chat and rewrite failures now surface the provider's actual error message instead of a misleading OpenAI response deserialization error.
+
 ## [0.13.2] 2026-04-16
 
 ### Fixed

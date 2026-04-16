@@ -15,6 +15,7 @@ use async_openai::types::chat::{
 use crate::config::RagConfig;
 use crate::db::chat_models::ChatMessage;
 use crate::error::AppError;
+use crate::rag::client::format_llm_error;
 
 use super::provider::LlmProvider;
 
@@ -105,7 +106,12 @@ impl QueryRewriter {
             .chat()
             .create(request)
             .await
-            .map_err(|e| AppError::Internal(format!("query rewrite LLM call failed: {e}")))?;
+            .map_err(|e| {
+                AppError::Internal(format!(
+                    "query rewrite LLM call failed: {}",
+                    format_llm_error(&e)
+                ))
+            })?;
 
         let rewritten = response
             .choices

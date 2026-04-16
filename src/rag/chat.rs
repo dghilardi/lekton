@@ -15,6 +15,7 @@ use crate::config::RagConfig;
 use crate::db::chat_models::{ChatMessage, ChatSession};
 use crate::db::chat_repository::ChatRepository;
 use crate::error::AppError;
+use crate::rag::client::format_llm_error;
 use crate::rag::embedding::EmbeddingService;
 use crate::rag::provider::LlmProvider;
 use crate::rag::query_rewriter::QueryRewriter;
@@ -259,7 +260,10 @@ impl ChatService {
             .chat()
             .create_stream(request)
             .await
-            .map_err(|e| AppError::Internal(format!("LLM stream creation failed: {e}")))?;
+            .map_err(|e| AppError::Internal(format!(
+                "LLM stream creation failed: {}",
+                format_llm_error(&e)
+            )))?;
 
         // 11. Build SSE event stream
         let chat_repo = self.chat_repo.clone();
@@ -286,9 +290,10 @@ impl ChatService {
                         }
                     }
                     Err(e) => {
-                        tracing::error!("LLM stream error: {e}");
+                        let error_message = format_llm_error(&e);
+                        tracing::error!("LLM stream error: {error_message}");
                         yield ChatEvent::Error {
-                            message: format!("LLM error: {e}"),
+                            message: format!("LLM error: {error_message}"),
                         };
                         return;
                     }

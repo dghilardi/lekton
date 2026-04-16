@@ -12,7 +12,7 @@ use crate::auth::refresh_client::with_auth_retry;
 /// User profile page — shows account info and PAT management.
 #[component]
 pub fn ProfilePage() -> impl IntoView {
-    let user_resource = LocalResource::new(get_current_user);
+    let user_resource = LocalResource::new(|| with_auth_retry(get_current_user));
     let navigate = use_navigate();
 
     // Redirect to login if not authenticated

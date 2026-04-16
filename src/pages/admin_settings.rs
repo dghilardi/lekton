@@ -124,7 +124,10 @@ fn ServiceTokenManager(set_created_token: WriteSignal<Option<CreateTokenResult>>
     let (refresh_counter, set_refresh_counter) = signal(0u32);
 
     // Load tokens
-    let tokens_resource = Resource::new(move || refresh_counter.get(), |_| list_service_tokens());
+    let tokens_resource = Resource::new(
+        move || refresh_counter.get(),
+        |_| async move { with_auth_retry(list_service_tokens).await },
+    );
 
     let trigger_refresh = move || set_refresh_counter.update(|c| *c += 1);
 
@@ -456,13 +459,15 @@ fn DocumentationFeedbackAdminPanel() -> impl IntoView {
             status_filter.get(),
         ),
         move |(_, page, query, kind, status)| async move {
-            list_documentation_feedback(
-                page,
-                20,
-                (!query.trim().is_empty()).then_some(query),
-                (!kind.trim().is_empty()).then_some(kind),
-                (!status.trim().is_empty()).then_some(status),
-            )
+            with_auth_retry(|| {
+                list_documentation_feedback(
+                    page,
+                    20,
+                    (!query.trim().is_empty()).then_some(query.clone()),
+                    (!kind.trim().is_empty()).then_some(kind.clone()),
+                    (!status.trim().is_empty()).then_some(status.clone()),
+                )
+            })
             .await
         },
     );
@@ -884,8 +889,8 @@ fn NavigationOrderEditor() -> impl IntoView {
     let (dragging_idx, set_dragging_idx) = signal(Option::<usize>::None);
 
     // Load nav tree and existing weights
-    let nav_resource = Resource::new(|| (), |_| get_navigation());
-    let order_resource = Resource::new(|| (), |_| get_navigation_order());
+    let nav_resource = Resource::new(|| (), |_| async move { with_auth_retry(get_navigation).await });
+    let order_resource = Resource::new(|| (), |_| async move { with_auth_retry(get_navigation_order).await });
 
     // Merge nav tree with existing weights to build the orderable list
     let _ = Effect::new(move |_| {
@@ -1295,7 +1300,7 @@ fn CustomCssEditor() -> impl IntoView {
     let (saving, set_saving) = signal(false);
     let (message, set_message) = signal(Option::<(bool, String)>::None);
 
-    let load_resource = Resource::new(|| (), |_| get_custom_css());
+    let load_resource = Resource::new(|| (), |_| async move { with_auth_retry(get_custom_css).await });
 
     let _ = Effect::new(move |_| {
         if let Some(Ok(loaded_css)) = load_resource.get() {
@@ -1513,7 +1518,7 @@ fn RagReindexSection() -> impl IntoView {
 
     let status_resource = Resource::new(
         move || poll_counter.get(),
-        |_| get_rag_reindex_status(),
+        |_| async move { with_auth_retry(get_rag_reindex_status).await },
     );
 
     let trigger_action = Action::new(move |_: &()| async move {
@@ -1662,7 +1667,7 @@ fn AdminPatManager() -> impl IntoView {
 
     let pats_resource = Resource::new(
         move || page.get(),
-        move |p| admin_list_pats(p, ADMIN_PAT_PER_PAGE),
+        move |p| async move { with_auth_retry(|| admin_list_pats(p, ADMIN_PAT_PER_PAGE)).await },
     );
 
     let toggle_action = Action::new(move |(id, active): &(String, bool)| {

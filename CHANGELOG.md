@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.2] 2026-04-16
+
 ### Fixed
 - Install rustls `aws-lc-rs` CryptoProvider at startup to prevent a panic when both `aws-lc-rs` and `ring` are present in the dependency tree (introduced by `gcp_auth`).
 

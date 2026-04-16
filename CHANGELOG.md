@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- `lekton-sync` now recognises document front matter field names written in `kebab-case`, `snake_case`, or `camelCase` for the supported metadata keys.
+
 ## [0.13.1] 2026-04-15
 
 ### Added

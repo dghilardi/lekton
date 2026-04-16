@@ -78,15 +78,19 @@ struct LektonConfig {
 struct FrontMatter {
     slug: Option<String>,
     title: Option<String>,
+    #[serde(alias = "access-level", alias = "accessLevel")]
     access_level: Option<String>,
+    #[serde(alias = "service-owner", alias = "serviceOwner")]
     service_owner: Option<String>,
     #[serde(default)]
     tags: Option<Vec<String>>,
+    #[serde(alias = "parent-slug", alias = "parentSlug")]
     parent_slug: Option<String>,
     order: Option<i32>,
+    #[serde(alias = "is-hidden", alias = "isHidden")]
     is_hidden: Option<bool>,
     /// Must be `true` for the file to be synced to Lekton.
-    #[serde(rename = "lekton-import", default)]
+    #[serde(rename = "lekton-import", alias = "lektonImport", alias = "lekton_import", default)]
     lekton_import: bool,
 }
 
@@ -1334,6 +1338,48 @@ mod tests {
         let (fm, body) = parse_front_matter(src);
         assert!(fm.title.is_none());
         assert_eq!(body, src);
+    }
+
+    #[test]
+    fn parse_front_matter_accepts_kebab_case_keys() {
+        let src = "---\naccess-level: public\nservice-owner: docs\nparent-slug: guides\nis-hidden: true\nlekton-import: true\n---\n# Body";
+        let (fm, _) = parse_front_matter(src);
+        assert_eq!(fm.access_level.as_deref(), Some("public"));
+        assert_eq!(fm.service_owner.as_deref(), Some("docs"));
+        assert_eq!(fm.parent_slug.as_deref(), Some("guides"));
+        assert_eq!(fm.is_hidden, Some(true));
+        assert!(fm.lekton_import);
+    }
+
+    #[test]
+    fn parse_front_matter_accepts_camel_case_keys() {
+        let src = "---\naccessLevel: developer\nserviceOwner: platform\nparentSlug: docs\nisHidden: true\nlektonImport: true\n---\n# Body";
+        let (fm, _) = parse_front_matter(src);
+        assert_eq!(fm.access_level.as_deref(), Some("developer"));
+        assert_eq!(fm.service_owner.as_deref(), Some("platform"));
+        assert_eq!(fm.parent_slug.as_deref(), Some("docs"));
+        assert_eq!(fm.is_hidden, Some(true));
+        assert!(fm.lekton_import);
+    }
+
+    #[test]
+    fn scan_document_accepts_camel_case_front_matter_fields() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("guide.md");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(
+                b"---\ntitle: Guide\naccessLevel: public\nserviceOwner: docs\nparentSlug: handbook\nisHidden: true\nlektonImport: true\n---\n# Guide body\n",
+            )
+            .unwrap();
+        let docs = scan_documents(dir.path(), &LektonConfig::default()).unwrap();
+        assert_eq!(docs.len(), 1);
+        let doc = docs.values().next().unwrap();
+        assert_eq!(doc.access_level, "public");
+        assert_eq!(doc.service_owner, "docs");
+        assert_eq!(doc.parent_slug.as_deref(), Some("handbook"));
+        assert!(doc.is_hidden);
     }
 
     #[test]

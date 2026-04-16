@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Install rustls `aws-lc-rs` CryptoProvider at startup to prevent a panic when both `aws-lc-rs` and `ring` are present in the dependency tree (introduced by `gcp_auth`).
+
 ### Changed
 - `lekton-sync` now recognises document front matter field names written in `kebab-case`, `snake_case`, or `camelCase` for the supported metadata keys.
 

@@ -27,6 +27,13 @@ async fn main() {
     use std::sync::Arc;
     use tower_http::services::ServeDir;
 
+    // Install a default rustls CryptoProvider before any TLS connections are made.
+    // Both `aws-lc-rs` and `ring` end up in the dependency tree (via gcp_auth + other crates),
+    // so rustls cannot auto-detect the provider and panics unless we set one explicitly.
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .expect("Failed to install rustls CryptoProvider");
+
     // Load configuration first — fast-fail on bad config before anything else starts.
     let config =
         lekton::config::AppConfig::load().expect("Failed to load application configuration");

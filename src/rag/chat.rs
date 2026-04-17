@@ -269,9 +269,10 @@ impl ChatService {
         ));
 
         let llm_messages = summarize_messages(&messages);
+        let chat_model = self.chat_model.clone();
         tracing::debug!(
             session_id = %session_id,
-            model = %self.chat_model,
+            model = %chat_model,
             messages = ?llm_messages,
             "RAG: sending chat request to LLM"
         );
@@ -279,7 +280,7 @@ impl ChatService {
         // 10. Create streaming LLM request
         let request = CreateChatCompletionRequest {
             messages,
-            model: self.chat_model.clone(),
+            model: chat_model.clone(),
             stream: Some(true),
             ..Default::default()
         };
@@ -337,7 +338,7 @@ impl ChatService {
             let saved_message_id = if !full_response.is_empty() {
                 tracing::debug!(
                     session_id = %sid,
-                    model = %self.chat_model,
+                    model = %chat_model,
                     response = %preview_text(&full_response, 4_000),
                     "RAG: received chat response from LLM"
                 );

@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- RAG chat SSR builds no longer fail because the streaming response generator captures `&self` while logging the configured chat model.
+
 ## [0.13.4] 2026-04-17
 
 ### Changed

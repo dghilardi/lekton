@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.4] 2026-04-17
+
 ### Changed
 - RAG chat now emits debug logs for query rewriting, vector-store retrieval, and the prompt/response exchanged with the chat LLM to make the full chain easier to inspect.
 

@@ -73,6 +73,13 @@ impl QueryRewriter {
             "Conversation history:\n{history_text}\n\nFollow-up question: {user_message}\n\nStandalone question:"
         );
 
+        tracing::debug!(
+            original_query = %user_message,
+            rewrite_prompt = %user_prompt,
+            history_messages = history.len(),
+            "RAG: rewriting follow-up query"
+        );
+
         let messages = vec![
             ChatCompletionRequestMessage::System(
                 async_openai::types::chat::ChatCompletionRequestSystemMessage {
@@ -122,7 +129,11 @@ impl QueryRewriter {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| user_message.to_string());
 
-        tracing::debug!(original = user_message, rewritten = %rewritten, "query rewritten");
+        tracing::debug!(
+            original_query = %user_message,
+            rewritten_query = %rewritten,
+            "RAG: query rewritten"
+        );
 
         Ok(rewritten)
     }

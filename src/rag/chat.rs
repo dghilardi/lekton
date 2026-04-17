@@ -155,8 +155,16 @@ impl ChatService {
             None => user_message.clone(),
         };
 
+        tracing::debug!(
+            session_id = %session_id,
+            original_query = %user_message,
+            retrieval_query = %retrieval_query,
+            history_messages = history.len(),
+            "RAG: retrieval query ready"
+        );
+
         // 5. Embed the (possibly rewritten) retrieval query
-        let query_vectors = self.embedding.embed(&[retrieval_query]).await?;
+        let query_vectors = self.embedding.embed(&[retrieval_query.clone()]).await?;
         let query_vector = query_vectors
             .into_iter()
             .next()
@@ -164,6 +172,15 @@ impl ChatService {
 
         // 6. Search vector store with user's access filters
         let (allowed_levels, include_draft) = user_ctx.document_visibility();
+        tracing::debug!(
+            session_id = %session_id,
+            retrieval_query = %retrieval_query,
+            vector_dimensions = query_vector.len(),
+            limit = MAX_CONTEXT_CHUNKS,
+            allowed_levels = ?allowed_levels,
+            include_draft,
+            "RAG: searching vector store"
+        );
         let search_results = self
             .vectorstore
             .search(
@@ -173,6 +190,14 @@ impl ChatService {
                 include_draft,
             )
             .await?;
+
+        let search_results_summary = summarize_search_results(&search_results);
+        tracing::debug!(
+            session_id = %session_id,
+            retrieval_query = %retrieval_query,
+            results = ?search_results_summary,
+            "RAG: vector store returned results"
+        );
 
         // 7. Build context string from search results
         let context = search_results
@@ -243,6 +268,14 @@ impl ChatService {
             },
         ));
 
+        let llm_messages = summarize_messages(&messages);
+        tracing::debug!(
+            session_id = %session_id,
+            model = %self.chat_model,
+            messages = ?llm_messages,
+            "RAG: sending chat request to LLM"
+        );
+
         // 10. Create streaming LLM request
         let request = CreateChatCompletionRequest {
             messages,
@@ -302,6 +335,12 @@ impl ChatService {
 
             // Save the full assistant response
             let saved_message_id = if !full_response.is_empty() {
+                tracing::debug!(
+                    session_id = %sid,
+                    model = %self.chat_model,
+                    response = %preview_text(&full_response, 4_000),
+                    "RAG: received chat response from LLM"
+                );
                 let msg_id = Uuid::new_v4().to_string();
                 let msg = ChatMessage {
                     id: msg_id.clone(),
@@ -325,6 +364,77 @@ impl ChatService {
         };
 
         Ok(Box::pin(event_stream))
+    }
+}
+
+fn summarize_messages(messages: &[ChatCompletionRequestMessage]) -> Vec<String> {
+    messages.iter().map(summarize_message).collect()
+}
+
+fn summarize_message(message: &ChatCompletionRequestMessage) -> String {
+    match message {
+        ChatCompletionRequestMessage::System(msg) => {
+            format!("system: {}", preview_system_content(&msg.content))
+        }
+        ChatCompletionRequestMessage::User(msg) => {
+            format!("user: {}", preview_user_content(&msg.content))
+        }
+        ChatCompletionRequestMessage::Assistant(msg) => {
+            let content = msg
+                .content
+                .as_ref()
+                .map(preview_assistant_content)
+                .unwrap_or_else(|| "<empty>".to_string());
+            format!("assistant: {content}")
+        }
+        other => format!("{other:?}"),
+    }
+}
+
+fn preview_system_content(content: &ChatCompletionRequestSystemMessageContent) -> String {
+    match content {
+        ChatCompletionRequestSystemMessageContent::Text(text) => preview_text(text, 1_500),
+        other => format!("{other:?}"),
+    }
+}
+
+fn preview_user_content(content: &ChatCompletionRequestUserMessageContent) -> String {
+    match content {
+        ChatCompletionRequestUserMessageContent::Text(text) => preview_text(text, 1_500),
+        other => format!("{other:?}"),
+    }
+}
+
+fn preview_assistant_content(content: &ChatCompletionRequestAssistantMessageContent) -> String {
+    match content {
+        ChatCompletionRequestAssistantMessageContent::Text(text) => preview_text(text, 1_500),
+        other => format!("{other:?}"),
+    }
+}
+
+fn summarize_search_results(results: &[crate::rag::vectorstore::VectorSearchResult]) -> Vec<String> {
+    results
+        .iter()
+        .map(|result| {
+            format!(
+                "score={:.4} slug={} title={} chunk={}",
+                result.score,
+                result.document_slug,
+                result.document_title,
+                preview_text(&result.chunk_text, 240)
+            )
+        })
+        .collect()
+}
+
+fn preview_text(text: &str, max_chars: usize) -> String {
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut chars = normalized.chars();
+    let preview: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{preview}...")
+    } else {
+        preview
     }
 }
 

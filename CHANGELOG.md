@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.14.2] 2026-04-18
+
 ### Added
 - **Logged-in session cookie** (`lekton_logged_in`): A non-httpOnly indicator cookie is now set alongside the refresh token on login and refresh, enabling dual-mode endpoints (navigation, search, document pages) to distinguish "anonymous visitor" from "logged-in user with expired access token" and return 401 instead of silently falling back to public-only data.
 

@@ -1,11 +1,12 @@
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
 
+use crate::auth::refresh_client::with_auth_retry;
 use crate::app::{get_current_user, get_prompt_library_state, save_prompt_preference, PromptLibraryItem, PromptLibraryState};
 
 #[component]
 pub fn PromptsPage() -> impl IntoView {
-    let user_resource = LocalResource::new(get_current_user);
+    let user_resource = LocalResource::new(|| with_auth_retry(get_current_user));
     let navigate = use_navigate();
 
     Effect::new(move |_| {
@@ -31,8 +32,8 @@ fn PromptLibraryPanel() -> impl IntoView {
     let filter = RwSignal::new(String::new());
     let saving_slug = RwSignal::new(None::<String>);
 
-    let load = Action::new(move |_: &()| async move {
-        match get_prompt_library_state().await {
+    let load = Action::new_local(move |_: &()| async move {
+        match with_auth_retry(get_prompt_library_state).await {
             Ok(value) => state.set(Some(value)),
             Err(err) => tracing::error!("Failed to load prompt library: {err}"),
         }
@@ -94,13 +95,16 @@ fn PromptLibraryPanel() -> impl IntoView {
                                 key=|item| item.slug.clone()
                                 children=move |item| {
                                     let slug = item.slug.clone();
-                                    let toggle = Action::new(move |(is_favorite, is_hidden): &(bool, bool)| {
+                                    let toggle = Action::new_local(move |(is_favorite, is_hidden): &(bool, bool)| {
                                         let slug = slug.clone();
                                         let is_favorite = *is_favorite;
                                         let is_hidden = *is_hidden;
                                         async move {
                                             saving_slug.set(Some(slug.clone()));
-                                            let result = save_prompt_preference(slug, is_favorite, is_hidden).await;
+                                            let result = with_auth_retry(|| {
+                                                save_prompt_preference(slug.clone(), is_favorite, is_hidden)
+                                            })
+                                            .await;
                                             saving_slug.set(None);
                                             result
                                         }

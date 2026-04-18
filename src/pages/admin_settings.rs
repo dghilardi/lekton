@@ -124,10 +124,10 @@ fn ServiceTokenManager(set_created_token: WriteSignal<Option<CreateTokenResult>>
     let (refresh_counter, set_refresh_counter) = signal(0u32);
 
     // Load tokens
-    let tokens_resource = Resource::new(
-        move || refresh_counter.get(),
-        |_| async move { with_auth_retry(list_service_tokens).await },
-    );
+    let tokens_resource = LocalResource::new(move || {
+        let _ = refresh_counter.get();
+        with_auth_retry(list_service_tokens)
+    });
 
     let trigger_refresh = move || set_refresh_counter.update(|c| *c += 1);
 
@@ -241,7 +241,7 @@ fn TokenRow(
     let (deactivating, set_deactivating) = signal(false);
 
     #[cfg(feature = "hydrate")]
-    let deactivate_action = Action::new(move |_: &()| {
+    let deactivate_action = Action::new_local(move |_: &()| {
         let id = id.clone();
         async move {
             set_deactivating.set(true);
@@ -323,7 +323,7 @@ fn CreateTokenForm(
     let (error, set_error) = signal(Option::<String>::None);
     let (submitting, set_submitting) = signal(false);
 
-    let submit_action = Action::new(move |_: &()| {
+    let submit_action = Action::new_local(move |_: &()| {
         let name_val = name.get_untracked();
         let scopes_val = scopes.get_untracked();
         let can_write_val = can_write.get_untracked();
@@ -450,15 +450,13 @@ fn DocumentationFeedbackAdminPanel() -> impl IntoView {
     let (kind_filter, set_kind_filter) = signal(String::new());
     let (status_filter, set_status_filter) = signal("open".to_string());
 
-    let list_resource = Resource::new(
-        move || (
-            refresh_counter.get(),
-            page.get(),
-            query.get(),
-            kind_filter.get(),
-            status_filter.get(),
-        ),
-        move |(_, page, query, kind, status)| async move {
+    let list_resource = LocalResource::new(move || {
+        let page = page.get();
+        let query = query.get();
+        let kind = kind_filter.get();
+        let status = status_filter.get();
+        let _ = refresh_counter.get();
+        async move {
             with_auth_retry(|| {
                 list_documentation_feedback(
                     page,
@@ -469,8 +467,8 @@ fn DocumentationFeedbackAdminPanel() -> impl IntoView {
                 )
             })
             .await
-        },
-    );
+        }
+    });
 
     let trigger_refresh = move || set_refresh_counter.update(|value| *value += 1);
 
@@ -642,7 +640,7 @@ fn DocumentationFeedbackCard(
     let (duplicate_of, set_duplicate_of) = signal(item.duplicate_of.clone().unwrap_or_default());
     let (error, set_error) = signal(Option::<String>::None);
 
-    let resolve_action = Action::new(move |_: &()| {
+    let resolve_action = Action::new_local(move |_: &()| {
         let id = item_id_for_resolve.clone();
         let note = resolution_note.get_untracked();
         async move {
@@ -654,7 +652,7 @@ fn DocumentationFeedbackCard(
         }
     });
 
-    let duplicate_action = Action::new(move |_: &()| {
+    let duplicate_action = Action::new_local(move |_: &()| {
         let id = item_id_for_duplicate.clone();
         let duplicate_of_value = duplicate_of.get_untracked();
         let note = resolution_note.get_untracked();
@@ -889,8 +887,8 @@ fn NavigationOrderEditor() -> impl IntoView {
     let (dragging_idx, set_dragging_idx) = signal(Option::<usize>::None);
 
     // Load nav tree and existing weights
-    let nav_resource = Resource::new(|| (), |_| async move { with_auth_retry(get_navigation).await });
-    let order_resource = Resource::new(|| (), |_| async move { with_auth_retry(get_navigation_order).await });
+    let nav_resource = LocalResource::new(|| with_auth_retry(get_navigation));
+    let order_resource = LocalResource::new(|| with_auth_retry(get_navigation_order));
 
     // Merge nav tree with existing weights to build the orderable list
     let _ = Effect::new(move |_| {
@@ -923,7 +921,7 @@ fn NavigationOrderEditor() -> impl IntoView {
         current != original_slugs.get()
     };
 
-    let save_action = Action::new(move |_: &()| {
+    let save_action = Action::new_local(move |_: &()| {
         let current_items = items.get_untracked();
         async move {
             set_saving.set(true);
@@ -1300,7 +1298,7 @@ fn CustomCssEditor() -> impl IntoView {
     let (saving, set_saving) = signal(false);
     let (message, set_message) = signal(Option::<(bool, String)>::None);
 
-    let load_resource = Resource::new(|| (), |_| async move { with_auth_retry(get_custom_css).await });
+    let load_resource = LocalResource::new(|| with_auth_retry(get_custom_css));
 
     let _ = Effect::new(move |_| {
         if let Some(Ok(loaded_css)) = load_resource.get() {
@@ -1309,7 +1307,7 @@ fn CustomCssEditor() -> impl IntoView {
         }
     });
 
-    let save_action = Action::new(move |new_css: &String| {
+    let save_action = Action::new_local(move |new_css: &String| {
         let new_css = new_css.clone();
         async move {
             set_saving.set(true);
@@ -1516,12 +1514,12 @@ fn RagReindexSection() -> impl IntoView {
     let (poll_counter, set_poll_counter) = signal(0u32);
     let (is_polling, set_is_polling) = signal(false);
 
-    let status_resource = Resource::new(
-        move || poll_counter.get(),
-        |_| async move { with_auth_retry(get_rag_reindex_status).await },
-    );
+    let status_resource = LocalResource::new(move || {
+        let _ = poll_counter.get();
+        with_auth_retry(get_rag_reindex_status)
+    });
 
-    let trigger_action = Action::new(move |_: &()| async move {
+    let trigger_action = Action::new_local(move |_: &()| async move {
         let result = with_auth_retry(trigger_rag_reindex).await;
         // Start polling after triggering
         set_is_polling.set(true);
@@ -1591,7 +1589,7 @@ fn RagReindexSection() -> impl IntoView {
 
 #[component]
 fn RagReindexControls(
-    status_resource: Resource<Result<(bool, u32, bool), ServerFnError>>,
+    status_resource: LocalResource<Result<(bool, u32, bool), ServerFnError>>,
     trigger_action: Action<(), Result<String, ServerFnError>>,
     is_polling: ReadSignal<bool>,
 ) -> impl IntoView {
@@ -1665,12 +1663,12 @@ const ADMIN_PAT_PER_PAGE: u64 = 20;
 fn AdminPatManager() -> impl IntoView {
     let page = RwSignal::new(1u64);
 
-    let pats_resource = Resource::new(
-        move || page.get(),
-        move |p| async move { with_auth_retry(|| admin_list_pats(p, ADMIN_PAT_PER_PAGE)).await },
-    );
+    let pats_resource = LocalResource::new(move || {
+        let page = page.get();
+        with_auth_retry(move || admin_list_pats(page, ADMIN_PAT_PER_PAGE))
+    });
 
-    let toggle_action = Action::new(move |(id, active): &(String, bool)| {
+    let toggle_action = Action::new_local(move |(id, active): &(String, bool)| {
         let id = id.clone();
         let active = *active;
         async move {

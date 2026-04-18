@@ -95,6 +95,10 @@ pub struct AuthConfig {
     pub jwt_access_ttl_secs: u64,
     /// Refresh token lifetime in days.
     pub jwt_refresh_ttl_days: i64,
+    /// Expected JWT issuer for access tokens created by Lekton.
+    pub jwt_issuer: String,
+    /// Expected JWT audience for access tokens created by Lekton.
+    pub jwt_audience: String,
     /// OAuth2 provider type: `"oidc"` (default) or `"oauth2"`.
     pub provider_type: String,
     /// OAuth2 client ID.

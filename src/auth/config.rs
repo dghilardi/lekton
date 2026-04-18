@@ -96,6 +96,8 @@ mod tests {
             jwt_secret: None,
             jwt_access_ttl_secs: 900,
             jwt_refresh_ttl_days: 30,
+            jwt_issuer: "lekton".to_string(),
+            jwt_audience: "lekton".to_string(),
             provider_type: "oidc".to_string(),
             client_id: None, // missing
             client_secret: None,

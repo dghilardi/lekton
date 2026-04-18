@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.6] 2026-04-18
+
 ### Fixed
 - Tiptap browser assets now load as ES modules from the SSR shell, avoiding local editor boot failures before hydration.
 

@@ -13,8 +13,12 @@
 //!
 //! 3. **Retry** the original call after a successful refresh.
 //!
-//! 4. **Redirect** to `/login` when the refresh itself fails (revoked or
-//!    expired refresh token → the session is truly dead).
+//! 4. **Bootstrap** an existing session on first load by attempting one silent
+//!    refresh when the app has no current user yet.
+//!
+//! 5. **Redirect** to `/login` when the refresh itself fails during a normal
+//!    authenticated operation (revoked or expired refresh token → the session
+//!    is truly dead).
 //!
 //! # Usage
 //!
@@ -88,8 +92,7 @@ mod inner {
     /// headers).
     pub async fn try_refresh() -> RefreshResult {
         // Step 1: try to grab the in-flight future (no await here → safe).
-        let existing: Option<SharedRefreshFut> =
-            REFRESH_IN_FLIGHT.with(|r| r.borrow().clone());
+        let existing: Option<SharedRefreshFut> = REFRESH_IN_FLIGHT.with(|r| r.borrow().clone());
 
         if let Some(fut) = existing {
             // Another caller already started a refresh — join it.
@@ -136,6 +139,30 @@ mod inner {
         }
     }
 
+    /// Bootstrap helper for "who am I?" style calls that return `Option<T>`.
+    ///
+    /// On the first app load, browsers do not send expired access-token
+    /// cookies, so the server returns `Ok(None)` instead of the shared auth
+    /// sentinel. In that case we attempt one silent refresh without redirecting
+    /// to `/login`; anonymous visitors should stay anonymous, while callers
+    /// with a valid refresh token recover their session seamlessly.
+    pub async fn with_auth_bootstrap<T, F, Fut>(f: F) -> Result<Option<T>, ServerFnError>
+    where
+        F: Fn() -> Fut,
+        Fut: Future<Output = Result<Option<T>, ServerFnError>>,
+    {
+        let initial = f().await;
+
+        if !should_attempt_bootstrap_refresh(&initial) {
+            return initial;
+        }
+
+        match try_refresh().await {
+            Ok(()) => f().await,
+            Err(_) => Ok(None),
+        }
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     /// POST to `/auth/refresh` and return whether it succeeded.
@@ -167,11 +194,15 @@ mod inner {
             let _ = window.location().set_href("/login");
         }
     }
+
+    fn should_attempt_bootstrap_refresh<T>(result: &Result<Option<T>, ServerFnError>) -> bool {
+        matches!(result, Ok(None)) || matches!(result, Err(err) if is_auth_error(err))
+    }
 }
 
 // Re-export the public API at module level when the hydrate feature is active.
 #[cfg(feature = "hydrate")]
-pub use inner::{is_auth_error, try_refresh, with_auth_retry};
+pub use inner::{is_auth_error, try_refresh, with_auth_bootstrap, with_auth_retry};
 
 // ── SSR passthrough ───────────────────────────────────────────────────────────
 //
@@ -199,14 +230,26 @@ where
     f().await
 }
 
+/// SSR stub: bootstrap reads are also a passthrough on the server.
+#[cfg(not(feature = "hydrate"))]
+pub async fn with_auth_bootstrap<T, F, Fut>(
+    f: F,
+) -> Result<Option<T>, leptos::server_fn::error::ServerFnError>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Result<Option<T>, leptos::server_fn::error::ServerFnError>>,
+{
+    f().await
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     // `is_auth_error` depends on ServerFnError which is available in all
     // build configurations, so we can test it without the hydrate feature.
-    use leptos::server_fn::error::ServerFnError;
     use crate::auth::models::UNAUTHORIZED_SENTINEL;
+    use leptos::server_fn::error::ServerFnError;
 
     fn auth_err() -> ServerFnError {
         ServerFnError::new(UNAUTHORIZED_SENTINEL)
@@ -214,6 +257,11 @@ mod tests {
 
     fn other_err(msg: &str) -> ServerFnError {
         ServerFnError::new(msg)
+    }
+
+    fn should_attempt_bootstrap_refresh<T>(result: &Result<Option<T>, ServerFnError>) -> bool {
+        matches!(result, Ok(None))
+            || matches!(result, Err(err) if matches!(err, ServerFnError::ServerError(msg) if msg == UNAUTHORIZED_SENTINEL))
     }
 
     /// Replicate the detection logic so the test works without the hydrate
@@ -240,5 +288,26 @@ mod tests {
         // A message containing the sentinel as a substring must not match.
         assert!(!is_auth_error(&other_err("not unauthorized")));
         assert!(!is_auth_error(&other_err("unauthorized access attempt")));
+    }
+
+    #[test]
+    fn bootstrap_refresh_runs_for_missing_user() {
+        assert!(should_attempt_bootstrap_refresh::<()>(&Ok::<
+            Option<()>,
+            ServerFnError,
+        >(None),));
+    }
+
+    #[test]
+    fn bootstrap_refresh_runs_for_auth_sentinel() {
+        assert!(should_attempt_bootstrap_refresh::<()>(&Err(auth_err())));
+    }
+
+    #[test]
+    fn bootstrap_refresh_skips_authenticated_and_other_errors() {
+        assert!(!should_attempt_bootstrap_refresh(&Ok(Some(()))));
+        assert!(!should_attempt_bootstrap_refresh::<()>(&Err(other_err(
+            "forbidden"
+        ))));
     }
 }

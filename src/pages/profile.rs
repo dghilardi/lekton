@@ -2,17 +2,15 @@ use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
 
 use crate::app::{
-    CreatePatResult, FeedbackInfo, FeedbackListResult, PatInfo,
-    create_user_pat, delete_user_pat, delete_user_feedback,
-    list_user_pats, list_user_feedback, toggle_user_pat,
-    get_current_user,
+    create_user_pat, delete_user_feedback, delete_user_pat, get_current_user, list_user_feedback,
+    list_user_pats, toggle_user_pat, CreatePatResult, FeedbackInfo, FeedbackListResult, PatInfo,
 };
-use crate::auth::refresh_client::with_auth_retry;
+use crate::auth::refresh_client::{with_auth_bootstrap, with_auth_retry};
 
 /// User profile page — shows account info and PAT management.
 #[component]
 pub fn ProfilePage() -> impl IntoView {
-    let user_resource = LocalResource::new(|| with_auth_retry(get_current_user));
+    let user_resource = LocalResource::new(|| with_auth_bootstrap(get_current_user));
     let navigate = use_navigate();
 
     // Redirect to login if not authenticated
@@ -87,7 +85,9 @@ fn PatSection() -> impl IntoView {
         }
     });
 
-    Effect::new(move |_| { load_pats.dispatch(()); });
+    Effect::new(move |_| {
+        load_pats.dispatch(());
+    });
 
     let on_created = move |result: CreatePatResult| {
         new_token.set(Some(result));
@@ -175,7 +175,9 @@ fn PatSection() -> impl IntoView {
 }
 
 #[component]
-fn CreatePatForm(on_created: impl Fn(CreatePatResult) + 'static + Copy + Send + Sync) -> impl IntoView {
+fn CreatePatForm(
+    on_created: impl Fn(CreatePatResult) + 'static + Copy + Send + Sync,
+) -> impl IntoView {
     let name = RwSignal::new(String::new());
     let error = RwSignal::new(None::<String>);
     let loading = RwSignal::new(false);
@@ -254,7 +256,9 @@ fn FeedbackSection() -> impl IntoView {
         }
     });
 
-    Effect::new(move |_| { load.dispatch(page.get()); });
+    Effect::new(move |_| {
+        load.dispatch(page.get());
+    });
 
     view! {
         <div>
@@ -340,7 +344,10 @@ fn FeedbackRow(
     let delete = Action::new_local(move |_: &()| {
         let mid = msg_id.clone();
         async move {
-            if with_auth_retry(|| delete_user_feedback(mid.clone())).await.is_ok() {
+            if with_auth_retry(|| delete_user_feedback(mid.clone()))
+                .await
+                .is_ok()
+            {
                 // Reload current page
                 let current_page = feedback.get().map(|r| r.page).unwrap_or(0);
                 load.dispatch(current_page);
@@ -419,7 +426,10 @@ fn PatRow(
         let active = *active;
         let id = id.clone();
         async move {
-            if with_auth_retry(|| toggle_user_pat(id.clone(), active)).await.is_ok() {
+            if with_auth_retry(|| toggle_user_pat(id.clone(), active))
+                .await
+                .is_ok()
+            {
                 load_pats.dispatch(());
             }
         }
@@ -429,7 +439,10 @@ fn PatRow(
     let delete = Action::new_local(move |_: &()| {
         let id = id_del.clone();
         async move {
-            if with_auth_retry(|| delete_user_pat(id.clone())).await.is_ok() {
+            if with_auth_retry(|| delete_user_pat(id.clone()))
+                .await
+                .is_ok()
+            {
                 load_pats.dispatch(());
             }
         }

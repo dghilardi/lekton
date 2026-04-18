@@ -1594,7 +1594,7 @@ pub fn App() -> impl IntoView {
     provide_meta_context();
 
     let user_resource =
-        LocalResource::new(|| crate::auth::refresh_client::with_auth_retry(get_current_user));
+        LocalResource::new(|| crate::auth::refresh_client::with_auth_bootstrap(get_current_user));
     let demo_mode_resource = LocalResource::new(get_is_demo_mode);
     let rag_resource = LocalResource::new(get_is_rag_enabled);
 

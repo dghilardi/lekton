@@ -1,12 +1,15 @@
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
 
-use crate::auth::refresh_client::with_auth_retry;
-use crate::app::{get_current_user, get_prompt_library_state, save_prompt_preference, PromptLibraryItem, PromptLibraryState};
+use crate::app::{
+    get_current_user, get_prompt_library_state, save_prompt_preference, PromptLibraryItem,
+    PromptLibraryState,
+};
+use crate::auth::refresh_client::{with_auth_bootstrap, with_auth_retry};
 
 #[component]
 pub fn PromptsPage() -> impl IntoView {
-    let user_resource = LocalResource::new(|| with_auth_retry(get_current_user));
+    let user_resource = LocalResource::new(|| with_auth_bootstrap(get_current_user));
     let navigate = use_navigate();
 
     Effect::new(move |_| {

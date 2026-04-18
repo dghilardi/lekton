@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- OAuth/OIDC sessions now perform a silent refresh on app bootstrap when the access-token cookie has expired but the refresh-token cookie is still valid, so reloading the page restores the logged-in state instead of showing the user as anonymous.
+
 ## [0.13.7] 2026-04-18
 
 ### Changed

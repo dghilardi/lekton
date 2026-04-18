@@ -5,6 +5,14 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Error sentinel returned by server functions when the caller is not
+/// authenticated (expired or missing access token).
+///
+/// The client uses this exact string to distinguish a "needs refresh"
+/// condition from other errors.  Using a constant prevents typo-divergence
+/// between the server helpers that emit it and the client code that detects it.
+pub const UNAUTHORIZED_SENTINEL: &str = "unauthorized";
+
 /// Minimal user identity carried in the JWT and returned to clients.
 ///
 /// Does **not** include permissions — those are loaded from the database on
@@ -118,6 +126,18 @@ impl UserContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_unauthorized_sentinel_is_non_empty() {
+        assert!(!UNAUTHORIZED_SENTINEL.is_empty());
+    }
+
+    #[test]
+    fn test_unauthorized_sentinel_is_stable() {
+        // The sentinel value is part of the client/server contract.
+        // If you change it, update refresh_client.rs too.
+        assert_eq!(UNAUTHORIZED_SENTINEL, "unauthorized");
+    }
 
     #[test]
     fn test_authenticated_user_roundtrip() {

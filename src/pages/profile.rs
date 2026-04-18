@@ -7,11 +7,12 @@ use crate::app::{
     list_user_pats, list_user_feedback, toggle_user_pat,
     get_current_user,
 };
+use crate::auth::refresh_client::with_auth_retry;
 
 /// User profile page — shows account info and PAT management.
 #[component]
 pub fn ProfilePage() -> impl IntoView {
-    let user_resource = LocalResource::new(get_current_user);
+    let user_resource = LocalResource::new(|| with_auth_retry(get_current_user));
     let navigate = use_navigate();
 
     // Redirect to login if not authenticated
@@ -79,8 +80,8 @@ fn PatSection() -> impl IntoView {
     let new_token = RwSignal::new(None::<CreatePatResult>);
 
     // Load PATs on mount
-    let load_pats = Action::new(move |_: &()| async move {
-        match list_user_pats().await {
+    let load_pats = Action::new_local(move |_: &()| async move {
+        match with_auth_retry(list_user_pats).await {
             Ok(tokens) => pats.set(tokens),
             Err(e) => tracing::error!("Failed to load PATs: {e}"),
         }
@@ -179,12 +180,12 @@ fn CreatePatForm(on_created: impl Fn(CreatePatResult) + 'static + Copy + Send + 
     let error = RwSignal::new(None::<String>);
     let loading = RwSignal::new(false);
 
-    let submit = Action::new(move |n: &String| {
+    let submit = Action::new_local(move |n: &String| {
         let n = n.clone();
         async move {
             loading.set(true);
             error.set(None);
-            match create_user_pat(n).await {
+            match with_auth_retry(|| create_user_pat(n.clone())).await {
                 Ok(result) => {
                     name.set(String::new());
                     on_created(result);
@@ -241,11 +242,11 @@ fn FeedbackSection() -> impl IntoView {
     let feedback: RwSignal<Option<FeedbackListResult>> = RwSignal::new(None);
     let loading = RwSignal::new(false);
 
-    let load = Action::new(move |p: &u64| {
+    let load = Action::new_local(move |p: &u64| {
         let p = *p;
         async move {
             loading.set(true);
-            match list_user_feedback(p, per_page).await {
+            match with_auth_retry(|| list_user_feedback(p, per_page)).await {
                 Ok(result) => feedback.set(Some(result)),
                 Err(e) => tracing::error!("Failed to load feedback: {e}"),
             }
@@ -336,10 +337,10 @@ fn FeedbackRow(
     let msg_id = fb.message_id.clone();
     let is_positive = fb.rating == "positive";
 
-    let delete = Action::new(move |_: &()| {
+    let delete = Action::new_local(move |_: &()| {
         let mid = msg_id.clone();
         async move {
-            if delete_user_feedback(mid).await.is_ok() {
+            if with_auth_retry(|| delete_user_feedback(mid.clone())).await.is_ok() {
                 // Reload current page
                 let current_page = feedback.get().map(|r| r.page).unwrap_or(0);
                 load.dispatch(current_page);
@@ -414,21 +415,21 @@ fn PatRow(
     let id = token.id.clone();
     let is_active = token.is_active;
 
-    let toggle = Action::new(move |active: &bool| {
+    let toggle = Action::new_local(move |active: &bool| {
         let active = *active;
         let id = id.clone();
         async move {
-            if toggle_user_pat(id, active).await.is_ok() {
+            if with_auth_retry(|| toggle_user_pat(id.clone(), active)).await.is_ok() {
                 load_pats.dispatch(());
             }
         }
     });
 
     let id_del = token.id.clone();
-    let delete = Action::new(move |_: &()| {
+    let delete = Action::new_local(move |_: &()| {
         let id = id_del.clone();
         async move {
-            if delete_user_pat(id).await.is_ok() {
+            if with_auth_retry(|| delete_user_pat(id.clone())).await.is_ok() {
                 load_pats.dispatch(());
             }
         }

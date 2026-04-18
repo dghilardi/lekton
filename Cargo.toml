@@ -112,6 +112,7 @@ web-sys = { version = "0.3", features = [
 console_error_panic_hook = { version = "0.1", optional = true }
 serde-wasm-bindgen = { version = "0.6", optional = true }
 gloo-timers = { version = "0.3", features = ["futures"], optional = true }
+gloo-net = { version = "0.6", features = ["http"], optional = true }
 
 # HTTP client (for OIDC discovery)
 reqwest = { version = "0.12", features = ["json"], optional = true }
@@ -149,6 +150,7 @@ hydrate = [
     "dep:web-sys",
     "dep:serde-wasm-bindgen",
     "dep:gloo-timers",
+    "dep:gloo-net",
 ]
 ssr = [
     "dep:axum",

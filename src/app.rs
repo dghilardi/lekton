@@ -324,8 +324,10 @@ pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
 
 /// Server function to get the currently authenticated user from the JWT cookie.
 ///
-/// Returns `None` for anonymous requests.  Both demo mode (session cookie)
-/// and production OIDC mode (JWT cookie) are handled transparently.
+/// Returns `None` for truly anonymous requests. If an access-token cookie is
+/// present but no longer validates (typically because it expired), returns the
+/// shared unauthorized sentinel so the client can attempt a refresh before
+/// treating the session as logged out.
 #[server(GetCurrentUser, "/api")]
 pub async fn get_current_user() -> Result<Option<crate::auth::models::AuthenticatedUser>, ServerFnError> {
     use axum_extra::extract::CookieJar;
@@ -335,13 +337,13 @@ pub async fn get_current_user() -> Result<Option<crate::auth::models::Authentica
     let state = expect_context::<AppState>();
     let jar: CookieJar = leptos_axum::extract().await?;
 
-    // Try production JWT first
-    if let Some(token_user) = jar
-        .get(ACCESS_TOKEN_COOKIE)
-        .and_then(|c| state.token_service.validate_access_token(c.value()).ok())
-        .map(|claims| TokenService::claims_to_user(&claims))
-    {
-        return Ok(Some(token_user));
+    // Try production JWT first. If the cookie exists but the token is no
+    // longer valid, surface the auth sentinel so the client can refresh.
+    if let Some(cookie) = jar.get(ACCESS_TOKEN_COOKIE) {
+        return match state.token_service.validate_access_token(cookie.value()) {
+            Ok(claims) => Ok(Some(TokenService::claims_to_user(&claims))),
+            Err(_) => Err(ServerFnError::new(crate::auth::models::UNAUTHORIZED_SENTINEL)),
+        };
     }
 
     // Fall back to demo mode session cookie
@@ -656,6 +658,11 @@ pub struct CreateTokenResult {
 }
 
 /// Helper: extract the current user and verify admin.
+///
+/// Returns [`UNAUTHORIZED_SENTINEL`] when the caller is not authenticated at
+/// all (so the client knows it should attempt a token refresh).
+/// Returns a distinct "forbidden" message when the caller is authenticated but
+/// lacks admin privileges (no refresh makes sense in that case).
 #[cfg(feature = "ssr")]
 async fn require_admin_user(state: &AppState) -> Result<crate::auth::models::AuthenticatedUser, ServerFnError> {
     use axum_extra::extract::CookieJar;
@@ -673,6 +680,7 @@ async fn require_admin_user(state: &AppState) -> Result<crate::auth::models::Aut
         if user.is_admin {
             return Ok(user);
         }
+        // Authenticated but not admin — 403, no refresh needed.
         return Err(ServerFnError::new("Admin privileges required"));
     }
 
@@ -683,11 +691,13 @@ async fn require_admin_user(state: &AppState) -> Result<crate::auth::models::Aut
                 if user.is_admin {
                     return Ok(user);
                 }
+                return Err(ServerFnError::new("Admin privileges required"));
             }
         }
     }
 
-    Err(ServerFnError::new("Admin privileges required"))
+    // Not authenticated — 401, client should attempt refresh.
+    Err(ServerFnError::new(crate::auth::models::UNAUTHORIZED_SENTINEL))
 }
 
 /// List all service tokens (admin only).
@@ -853,7 +863,7 @@ async fn require_any_user(state: &AppState) -> Result<crate::auth::models::Authe
         }
     }
 
-    Err(ServerFnError::new("Authentication required"))
+    Err(ServerFnError::new(crate::auth::models::UNAUTHORIZED_SENTINEL))
 }
 
 #[cfg(feature = "ssr")]
@@ -1443,7 +1453,7 @@ pub async fn mark_documentation_feedback_duplicate(
 pub fn App() -> impl IntoView {
     provide_meta_context();
 
-    let user_resource = LocalResource::new(get_current_user);
+    let user_resource = LocalResource::new(|| crate::auth::refresh_client::with_auth_retry(get_current_user));
     let demo_mode_resource = LocalResource::new(get_is_demo_mode);
     let rag_resource = LocalResource::new(get_is_rag_enabled);
 

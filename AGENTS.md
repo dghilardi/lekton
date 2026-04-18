@@ -20,9 +20,10 @@ Lekton is a dynamic IDP built with **Leptos (frontend)** and **Axum (backend)**.
 1.  **Strict Typing:** Ensure all API boundaries are strictly typed.
 2.  **RBAC First:** Every new endpoint must verify `access_level` using the `AccessLevel` enum.
 3.  **Trait-Based Services:** Database and storage access must be behind traits (`DocumentRepository`, `StorageClient`) to enable mock testing.
-4.  **Centralized Configuration:** New application configuration must be modeled in the typed `config-rs` configuration (`src/config.rs` + `config/default.toml`) and loaded through `AppConfig`. Avoid introducing new scattered `std::env::var` reads in runtime code unless there is a strong, explicit reason.
-5.  **Documentation:** Keep `docs/REQUIREMENTS.md` and `docs/ADRs/` updated with major design changes.
-6.  **Trunk-Based Development:** Prefer small, frequent commits to the main branch. Use feature flags for long-running changes.
+4.  **Auth Refresh Contract:** For client-side calls to authenticated server functions that return the shared unauthorized sentinel, wrap the call with `auth::refresh_client::with_auth_retry(...)`. Do not duplicate ad hoc auth-refresh, retry, or login-redirect logic in page components.
+5.  **Centralized Configuration:** New application configuration must be modeled in the typed `config-rs` configuration (`src/config.rs` + `config/default.toml`) and loaded through `AppConfig`. Avoid introducing new scattered `std::env::var` reads in runtime code unless there is a strong, explicit reason.
+6.  **Documentation:** Keep `docs/REQUIREMENTS.md` and `docs/ADRs/` updated with major design changes.
+7.  **Trunk-Based Development:** Prefer small, frequent commits to the main branch. Use feature flags for long-running changes.
 
 ## 📁 Project Structure
 ```

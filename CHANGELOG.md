@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.8] 2026-04-18
+
 ### Changed
 - Rust code formatting is now enforced across the workspace with a dedicated CI check, and the contributor/agent documentation now explicitly requires running `cargo fmt --all` (or `just fmt`) before merge.
 

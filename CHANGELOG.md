@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.14.1] 2026-04-18
+
 ### Fixed
 - Service tokens created via admin API now work with asset endpoints (`check-hashes`, `upload`, `delete`) and schema ingestion. Previously these endpoints only accepted the legacy `LEKTON_SERVICE_TOKEN` env var.
 

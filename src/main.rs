@@ -606,6 +606,13 @@ async fn main() {
         let emb = emb.clone();
         let vs = vs.clone();
 
+        let mcp_config = if config.mcp.allowed_hosts.is_empty() {
+            StreamableHttpServerConfig::default().disable_allowed_hosts()
+        } else {
+            StreamableHttpServerConfig::default()
+                .with_allowed_hosts(config.mcp.allowed_hosts.clone())
+        };
+
         let mcp_service = StreamableHttpService::new(
             move || {
                 Ok(LektonMcpServer::new(
@@ -619,7 +626,7 @@ async fn main() {
                 ))
             },
             LocalSessionManager::default().into(),
-            StreamableHttpServerConfig::default(),
+            mcp_config,
         );
 
         let mcp_auth = McpAuthState {

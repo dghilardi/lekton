@@ -26,6 +26,7 @@ pub struct AppConfig {
     pub storage: StorageConfig,
     pub search: SearchConfig,
     pub auth: AuthConfig,
+    pub mcp: McpConfig,
     pub rag: RagConfig,
 }
 
@@ -121,6 +122,22 @@ pub struct AuthConfig {
     pub userinfo_email_field: Option<String>,
     /// Comma-separated dot-notation paths to name field(s) in the userinfo response.
     pub userinfo_name_field: Option<String>,
+}
+
+// ── MCP ─────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct McpConfig {
+    /// Allowed `Host` header values for the MCP Streamable HTTP endpoint.
+    /// Used by rmcp's DNS rebinding protection.
+    /// When empty, the host check is disabled (any host is accepted).
+    /// Default: `["localhost", "127.0.0.1", "::1"]`.
+    #[serde(default = "default_mcp_allowed_hosts")]
+    pub allowed_hosts: Vec<String>,
+}
+
+fn default_mcp_allowed_hosts() -> Vec<String> {
+    vec!["localhost".into(), "127.0.0.1".into(), "::1".into()]
 }
 
 // ── RAG ──────────────────────────────────────────────────────────────────────

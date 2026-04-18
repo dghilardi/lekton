@@ -35,6 +35,11 @@ jwt_audience = "lekton"
 provider_type = "oidc"
 scopes = "openid profile email"
 
+[mcp]
+# Allowed Host header values for the MCP Streamable HTTP endpoint (DNS rebinding protection).
+# Empty list disables the check (any host is accepted).
+allowed_hosts = ["localhost", "127.0.0.1", "::1"]
+
 [rag]
 # Leave empty to disable RAG entirely.
 qdrant_url = ""

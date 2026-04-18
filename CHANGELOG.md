@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.14.0] 2026-04-18
+
 ### Added
 - RAG chat responses now expose document source references in the SSE stream, persist them with assistant messages, and render them in session history with RBAC filtering reapplied on replay.
 - Added a `lekton-sync-ci` Docker image target based on `debian:bookworm-slim` for Jenkins-style runners that require shell-capable containers, while keeping the default `lekton-sync` image distroless.

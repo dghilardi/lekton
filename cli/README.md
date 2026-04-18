@@ -12,10 +12,16 @@ cargo install lekton-sync
 
 ### Docker
 
-Build a minimal container image from the repository root:
+Build the default minimal container image from the repository root:
 
 ```sh
 docker build -f cli/Dockerfile -t lekton-sync .
+```
+
+Build a Jenkins-friendly variant with a `debian:bookworm-slim` runtime:
+
+```sh
+docker build -f cli/Dockerfile --target ci -t lekton-sync-ci .
 ```
 
 Run it by mounting the documentation workspace and passing the usual environment variables:
@@ -30,6 +36,8 @@ docker run --rm \
 
 This image contains only the `lekton-sync` binary in a distroless runtime, so it fits well in documentation CI pipelines without installing Rust toolchains on the runner.
 
+When you need a shell-capable image for CI systems that keep sidecars alive with commands such as `sleep infinity`, use the `ci` target instead. It ships the same `lekton-sync` binary on top of `debian:bookworm-slim`.
+
 Tagged releases can also publish a ready-to-use Docker image via GitHub Actions:
 
 ```sh
@@ -39,6 +47,8 @@ docker run --rm \
   -v "$PWD:/workspace" \
   docker.io/<your-dockerhub-namespace>/lekton-sync:0.13.0 /workspace
 ```
+
+The publish workflow also builds a companion `lekton-sync-ci` image for Jenkins/Kubernetes-style runners.
 
 ## Usage
 

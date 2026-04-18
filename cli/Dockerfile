@@ -23,3 +23,16 @@ COPY --from=builder /app/target/release/lekton-sync /usr/local/bin/lekton-sync
 
 ENTRYPOINT ["/usr/local/bin/lekton-sync"]
 CMD ["--help"]
+
+FROM debian:bookworm-slim AS ci
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=builder /app/target/release/lekton-sync /usr/local/bin/lekton-sync
+
+ENTRYPOINT ["/usr/local/bin/lekton-sync"]
+CMD ["--help"]

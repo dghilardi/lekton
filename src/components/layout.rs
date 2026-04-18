@@ -1,13 +1,13 @@
 use leptos::prelude::*;
 
 use super::contextual_sidebars::{AdminSidebar, ChatSidebar, DocsSidebar, RegistrySidebar};
+use super::custom_css::RuntimeCustomCss;
 use super::logo::BrandedLogo;
 use super::navigation::NavigationTree;
 use super::search::SearchModal;
 use super::theme::ThemeToggle;
 use super::user_menu::UserMenu;
-use super::custom_css::RuntimeCustomCss;
-use crate::app::{get_navigation, get_navbar_groups};
+use crate::app::{get_navbar_groups, get_navigation};
 
 const MAX_DOCS_ITEMS: usize = 5;
 

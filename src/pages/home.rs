@@ -46,7 +46,11 @@ pub fn HomePage() -> impl IntoView {
 
 /// A feature card component for the home page.
 #[component]
-fn FeatureCard(title: &'static str, description: &'static str, icon: &'static str) -> impl IntoView {
+fn FeatureCard(
+    title: &'static str,
+    description: &'static str,
+    icon: &'static str,
+) -> impl IntoView {
     view! {
         <div class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow">
             <div class="card-body items-center text-center">

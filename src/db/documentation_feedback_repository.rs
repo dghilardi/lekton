@@ -37,11 +37,7 @@ pub trait DocumentationFeedbackRepository: Send + Sync {
         &self,
         params: DocumentationFeedbackListParams,
     ) -> Result<DocumentationFeedbackPage, AppError>;
-    async fn resolve(
-        &self,
-        id: &str,
-        resolution_note: Option<String>,
-    ) -> Result<(), AppError>;
+    async fn resolve(&self, id: &str, resolution_note: Option<String>) -> Result<(), AppError>;
     async fn mark_duplicate(
         &self,
         id: &str,
@@ -64,8 +60,8 @@ impl MongoDocumentationFeedbackRepository {
     }
 
     pub async fn ensure_indexes(&self) -> Result<(), AppError> {
-        use mongodb::IndexModel;
         use mongodb::options::IndexOptions;
+        use mongodb::IndexModel;
 
         self.collection
             .create_index(
@@ -75,7 +71,9 @@ impl MongoDocumentationFeedbackRepository {
                     .build(),
             )
             .await
-            .map_err(|e| AppError::Database(format!("create documentation_feedback id index: {e}")))?;
+            .map_err(|e| {
+                AppError::Database(format!("create documentation_feedback id index: {e}"))
+            })?;
 
         self.collection
             .create_index(
@@ -84,7 +82,9 @@ impl MongoDocumentationFeedbackRepository {
                     .build(),
             )
             .await
-            .map_err(|e| AppError::Database(format!("create documentation_feedback status index: {e}")))?;
+            .map_err(|e| {
+                AppError::Database(format!("create documentation_feedback status index: {e}"))
+            })?;
 
         Ok(())
     }
@@ -171,11 +171,7 @@ impl DocumentationFeedbackRepository for MongoDocumentationFeedbackRepository {
         })
     }
 
-    async fn resolve(
-        &self,
-        id: &str,
-        resolution_note: Option<String>,
-    ) -> Result<(), AppError> {
+    async fn resolve(&self, id: &str, resolution_note: Option<String>) -> Result<(), AppError> {
         let result = self
             .collection
             .update_one(
@@ -218,7 +214,9 @@ impl DocumentationFeedbackRepository for MongoDocumentationFeedbackRepository {
                 },
             )
             .await
-            .map_err(|e| AppError::Database(format!("mark documentation_feedback duplicate: {e}")))?;
+            .map_err(|e| {
+                AppError::Database(format!("mark documentation_feedback duplicate: {e}"))
+            })?;
 
         if result.matched_count == 0 {
             return Err(AppError::NotFound(format!(
@@ -285,7 +283,9 @@ fn build_filter(
 
 #[cfg(feature = "ssr")]
 fn regex_escape(s: &str) -> String {
-    let special = ['.', '*', '+', '?', '(', ')', '[', ']', '{', '}', '\\', '^', '$', '|'];
+    let special = [
+        '.', '*', '+', '?', '(', ')', '[', ']', '{', '}', '\\', '^', '$', '|',
+    ];
     let mut escaped = String::with_capacity(s.len());
     for c in s.chars() {
         if special.contains(&c) {

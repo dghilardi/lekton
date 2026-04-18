@@ -63,10 +63,8 @@ pub trait FeedbackRepository: Send + Sync {
     ) -> Result<FeedbackPage, AppError>;
 
     /// Paginated list of all feedback with optional filters (admin export).
-    async fn list_all_feedback(
-        &self,
-        params: FeedbackListParams,
-    ) -> Result<FeedbackPage, AppError>;
+    async fn list_all_feedback(&self, params: FeedbackListParams)
+        -> Result<FeedbackPage, AppError>;
 
     /// Delete all feedback belonging to a session (called when session is deleted).
     async fn delete_session_feedback(&self, session_id: &str) -> Result<(), AppError>;
@@ -194,16 +192,10 @@ fn apply_filters(filter: &mut mongodb::bson::Document, params: &FeedbackListPara
     }
     let mut date_range = mongodb::bson::Document::new();
     if let Some(from) = params.date_from {
-        date_range.insert(
-            "$gte",
-            mongodb::bson::DateTime::from_chrono(from),
-        );
+        date_range.insert("$gte", mongodb::bson::DateTime::from_chrono(from));
     }
     if let Some(to) = params.date_to {
-        date_range.insert(
-            "$lt",
-            mongodb::bson::DateTime::from_chrono(to),
-        );
+        date_range.insert("$lt", mongodb::bson::DateTime::from_chrono(to));
     }
     if !date_range.is_empty() {
         filter.insert("created_at", date_range);

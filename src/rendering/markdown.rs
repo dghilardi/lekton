@@ -28,7 +28,7 @@ pub fn render_markdown(raw: &str) -> String {
     let parser = Parser::new_ext(raw, options);
     let mut html_output = String::new();
     html::push_html(&mut html_output, parser);
-    
+
     // Post-process to add IDs to headings
     add_heading_ids_simple(&html_output)
 }
@@ -37,45 +37,45 @@ pub fn render_markdown(raw: &str) -> String {
 fn add_heading_ids_simple(html: &str) -> String {
     // For h2-h6 tags, add id attribute based on text content
     let mut result = html.to_string();
-    
+
     for level in 2..=6 {
         let pattern = format!("<h{}>", level);
         let closing = format!("</h{}>", level);
-        
+
         let mut new_result = String::new();
         let mut last_end = 0;
-        
+
         while let Some(start) = result[last_end..].find(&pattern) {
             let abs_start = last_end + start;
             let content_start = abs_start + pattern.len();
-            
+
             // Find the closing tag
             if let Some(end_pos) = result[content_start..].find(&closing) {
                 let abs_end = content_start + end_pos;
                 let heading_text = &result[content_start..abs_end];
-                
+
                 // Strip any HTML tags from the heading text
                 let clean_text = strip_html_tags(heading_text);
                 let id = slugify(&clean_text);
-                
+
                 // Add everything up to this heading
                 new_result.push_str(&result[last_end..abs_start]);
                 // Add heading with ID
                 new_result.push_str(&format!("<h{} id=\"{}\">", level, id));
                 new_result.push_str(heading_text);
                 new_result.push_str(&closing);
-                
+
                 last_end = abs_end + closing.len();
             } else {
                 break;
             }
         }
-        
+
         // Add the rest
         new_result.push_str(&result[last_end..]);
         result = new_result;
     }
-    
+
     result
 }
 
@@ -83,7 +83,7 @@ fn add_heading_ids_simple(html: &str) -> String {
 fn strip_html_tags(text: &str) -> String {
     let mut result = String::new();
     let mut in_tag = false;
-    
+
     for ch in text.chars() {
         match ch {
             '<' => in_tag = true,
@@ -92,7 +92,7 @@ fn strip_html_tags(text: &str) -> String {
             _ => {}
         }
     }
-    
+
     result.trim().to_string()
 }
 
@@ -301,19 +301,19 @@ Even more content.
 ## Section Three
 "#;
         let headings = extract_headings(input);
-        
+
         assert_eq!(headings.len(), 5);
         assert_eq!(headings[0].text, "Section One");
         assert_eq!(headings[0].level, 2);
         assert_eq!(headings[0].id, "section-one");
-        
+
         assert_eq!(headings[1].text, "Section Two");
         assert_eq!(headings[1].level, 2);
-        
+
         assert_eq!(headings[2].text, "Subsection 2.1");
         assert_eq!(headings[2].level, 3);
         assert_eq!(headings[2].id, "subsection-2-1");
-        
+
         assert_eq!(headings[3].text, "Subsection 2.2");
         assert_eq!(headings[3].level, 3);
     }
@@ -322,7 +322,7 @@ Even more content.
     fn test_extract_headings_with_code() {
         let input = "## Using `cargo run`\n\n### The `main` function";
         let headings = extract_headings(input);
-        
+
         assert_eq!(headings.len(), 2);
         assert_eq!(headings[0].text, "Using cargo run");
         assert_eq!(headings[1].text, "The main function");
@@ -339,7 +339,7 @@ Even more content.
     fn test_extract_headings_h1_excluded() {
         let input = "# Title\n\n## Subtitle";
         let headings = extract_headings(input);
-        
+
         // H1 should be excluded from TOC
         assert_eq!(headings.len(), 1);
         assert_eq!(headings[0].text, "Subtitle");

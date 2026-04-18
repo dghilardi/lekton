@@ -105,10 +105,8 @@ mod tests {
 
     #[test]
     fn prompt_variable_required_defaults_true() {
-        let var: PromptVariable = serde_json::from_str(
-            r#"{"name":"input","description":"Input text"}"#,
-        )
-        .unwrap();
+        let var: PromptVariable =
+            serde_json::from_str(r#"{"name":"input","description":"Input text"}"#).unwrap();
         assert!(var.required);
     }
 

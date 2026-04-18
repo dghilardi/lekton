@@ -1,8 +1,7 @@
-use leptos::prelude::*;
-use serde::{Deserialize, Serialize};
 #[cfg(feature = "hydrate")]
 use crate::components::diagnostics::internal::{record_audit_event, render_integrity_overlay};
-
+use leptos::prelude::*;
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LogoConfig {
@@ -37,7 +36,10 @@ pub async fn check_logo_availability() -> Result<LogoConfig, ServerFnError> {
         None
     };
 
-    Ok(LogoConfig { light_url, dark_url })
+    Ok(LogoConfig {
+        light_url,
+        dark_url,
+    })
 }
 
 #[component]
@@ -66,7 +68,6 @@ pub fn BrandedLogo() -> impl IntoView {
 
     #[cfg(not(feature = "hydrate"))]
     let on_logo_click = move |_ev: leptos::ev::MouseEvent| {};
-
 
     view! {
         <a class="flex items-center gap-3 text-xl font-bold tracking-tight hover:opacity-80 transition-opacity" href="/" on:click=on_logo_click>

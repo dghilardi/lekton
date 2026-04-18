@@ -18,31 +18,35 @@ extern "C" {
 
 /// Server function to fetch document content for editing.
 #[server(GetDocContent, "/api")]
-pub async fn get_doc_content(
-    slug: String,
-) -> Result<Option<(String, String)>, ServerFnError> {
+pub async fn get_doc_content(slug: String) -> Result<Option<(String, String)>, ServerFnError> {
     use crate::db::repository::DocumentRepository;
     use crate::rendering::markdown::render_markdown;
     use crate::storage::client::StorageClient;
 
     let state = expect_context::<crate::app::AppState>();
 
-    let doc = state.document_repo.find_by_slug(&slug).await
+    let doc = state
+        .document_repo
+        .find_by_slug(&slug)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let Some(doc) = doc else {
         return Ok(None);
     };
 
-    let content_bytes = state.storage_client.get_object(&doc.s3_key).await
+    let content_bytes = state
+        .storage_client
+        .get_object(&doc.s3_key)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let Some(content_bytes) = content_bytes else {
         return Ok(None);
     };
 
-    let raw_markdown = String::from_utf8(content_bytes)
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let raw_markdown =
+        String::from_utf8(content_bytes).map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let html = render_markdown(&raw_markdown);
 
@@ -67,38 +71,51 @@ pub async fn save_doc_content(
 
     let links_out = crate::rendering::links::extract_internal_links_from_html(&html_content);
 
-    let old_doc = state.document_repo.find_by_slug(&slug).await
+    let old_doc = state
+        .document_repo
+        .find_by_slug(&slug)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    let (old_links, access_level, is_draft, service_owner, tags, backlinks, parent_slug, order, is_hidden) =
-        match old_doc {
-            Some(d) => (
-                d.links_out,
-                d.access_level,
-                d.is_draft,
-                d.service_owner,
-                d.tags,
-                d.backlinks,
-                d.parent_slug,
-                d.order,
-                d.is_hidden,
-            ),
-            None => (
-                vec![],
-                "public".to_string(),
-                false,
-                "web-editor".to_string(),
-                vec![],
-                vec![],
-                None,
-                0,
-                false,
-            ),
-        };
+    let (
+        old_links,
+        access_level,
+        is_draft,
+        service_owner,
+        tags,
+        backlinks,
+        parent_slug,
+        order,
+        is_hidden,
+    ) = match old_doc {
+        Some(d) => (
+            d.links_out,
+            d.access_level,
+            d.is_draft,
+            d.service_owner,
+            d.tags,
+            d.backlinks,
+            d.parent_slug,
+            d.order,
+            d.is_hidden,
+        ),
+        None => (
+            vec![],
+            "public".to_string(),
+            false,
+            "web-editor".to_string(),
+            vec![],
+            vec![],
+            None,
+            0,
+            false,
+        ),
+    };
 
     let s3_key = format!("docs/{}.md", slug.replace('/', "_"));
 
-    state.storage_client
+    state
+        .storage_client
         .put_object(&s3_key, html_content.clone().into_bytes())
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -117,19 +134,24 @@ pub async fn save_doc_content(
         parent_slug,
         order,
         is_hidden,
-        content_hash: None,   // Editor saves don't compute content hash
-        metadata_hash: None,  // Populated on next lekton-sync run
+        content_hash: None,  // Editor saves don't compute content hash
+        metadata_hash: None, // Populated on next lekton-sync run
         is_archived: false,
     };
 
-    let search_doc = state.search_service.as_ref().map(|_| {
-        crate::search::client::build_search_document(&doc, &html_content)
-    });
+    let search_doc = state
+        .search_service
+        .as_ref()
+        .map(|_| crate::search::client::build_search_document(&doc, &html_content));
 
-    state.document_repo.create_or_update(doc).await
+    state
+        .document_repo
+        .create_or_update(doc)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    state.document_repo
+    state
+        .document_repo
         .update_backlinks(&slug, &old_links, &links_out)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -147,10 +169,7 @@ pub fn EditorPage() -> impl IntoView {
     let params = leptos_router::hooks::use_params_map();
     let slug = move || params.read().get("slug").unwrap_or_default();
 
-    let doc_resource = Resource::new(
-        move || slug(),
-        |slug| get_doc_content(slug),
-    );
+    let doc_resource = Resource::new(move || slug(), |slug| get_doc_content(slug));
 
     let (msg, set_msg) = signal(TiptapInstanceMsg::Noop);
     let (value, set_value) = signal(String::new());

@@ -205,9 +205,9 @@ fn document_resource_uri(slug: &str) -> String {
 }
 
 fn slug_from_docs_uri(uri: &str) -> Result<&str, McpError> {
-    let slug = uri
-        .strip_prefix(DOCS_URI_SCHEME)
-        .ok_or_else(|| McpError::invalid_params(format!("Unsupported resource URI '{uri}'"), None))?;
+    let slug = uri.strip_prefix(DOCS_URI_SCHEME).ok_or_else(|| {
+        McpError::invalid_params(format!("Unsupported resource URI '{uri}'"), None)
+    })?;
 
     if slug.trim().is_empty() {
         return Err(McpError::invalid_params(
@@ -534,7 +534,11 @@ impl LektonMcpServer {
         if feedback.title.is_empty()
             || feedback.summary.is_empty()
             || feedback.user_goal.as_deref().unwrap_or("").is_empty()
-            || feedback.missing_information.as_deref().unwrap_or("").is_empty()
+            || feedback
+                .missing_information
+                .as_deref()
+                .unwrap_or("")
+                .is_empty()
             || feedback.impact.as_deref().unwrap_or("").is_empty()
         {
             return Err(McpError::invalid_params(
@@ -600,7 +604,11 @@ impl LektonMcpServer {
             || feedback.summary.is_empty()
             || feedback.problem_summary.as_deref().unwrap_or("").is_empty()
             || feedback.proposal.as_deref().unwrap_or("").is_empty()
-            || feedback.expected_benefit.as_deref().unwrap_or("").is_empty()
+            || feedback
+                .expected_benefit
+                .as_deref()
+                .unwrap_or("")
+                .is_empty()
         {
             return Err(McpError::invalid_params(
                 "title, summary, problem_summary, proposal, and expected_benefit are required",
@@ -1030,7 +1038,10 @@ impl ServerHandler for LektonMcpServer {
             .await
             .map_err(app_err)?
             .ok_or_else(|| {
-                McpError::invalid_params(format!("Document resource '{}' not found", request.uri), None)
+                McpError::invalid_params(
+                    format!("Document resource '{}' not found", request.uri),
+                    None,
+                )
             })?;
 
         if doc.is_archived || !can_read_document(&user_ctx, &doc) {
@@ -1042,9 +1053,11 @@ impl ServerHandler for LektonMcpServer {
 
         let markdown = self.load_document_markdown(&doc).await?;
 
-        Ok(ReadResourceResult::new(vec![
-            ResourceContents::text(markdown, request.uri).with_mime_type("text/markdown"),
-        ]))
+        Ok(ReadResourceResult::new(vec![ResourceContents::text(
+            markdown,
+            request.uri,
+        )
+        .with_mime_type("text/markdown")]))
     }
 
     fn get_info(&self) -> ServerInfo {

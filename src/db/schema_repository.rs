@@ -19,11 +19,7 @@ pub trait SchemaRepository: Send + Sync {
 
     /// Add a new version to an existing schema.
     /// Returns an error if the schema doesn't exist or the version already exists.
-    async fn add_version(
-        &self,
-        schema_name: &str,
-        version: SchemaVersion,
-    ) -> Result<(), AppError>;
+    async fn add_version(&self, schema_name: &str, version: SchemaVersion) -> Result<(), AppError>;
 
     /// Delete a schema by name.
     async fn delete(&self, name: &str) -> Result<(), AppError>;
@@ -65,42 +61,27 @@ impl SchemaRepository for MongoSchemaRepository {
     async fn find_by_name(&self, name: &str) -> Result<Option<Schema>, AppError> {
         use mongodb::bson::doc;
 
-        Ok(self.collection
-            .find_one(doc! { "name": name })
-            .await?)
+        Ok(self.collection.find_one(doc! { "name": name }).await?)
     }
 
     async fn list_all(&self) -> Result<Vec<Schema>, AppError> {
         use mongodb::bson::doc;
         use mongodb::options::FindOptions;
 
-        let options = FindOptions::builder()
-            .sort(doc! { "name": 1 })
-            .build();
+        let options = FindOptions::builder().sort(doc! { "name": 1 }).build();
 
-        let mut cursor = self
-            .collection
-            .find(doc! {})
-            .with_options(options)
-            .await?;
+        let mut cursor = self.collection.find(doc! {}).with_options(options).await?;
 
         let mut schemas = Vec::new();
         use futures::TryStreamExt;
-        while let Some(schema) = cursor
-            .try_next()
-            .await?
-        {
+        while let Some(schema) = cursor.try_next().await? {
             schemas.push(schema);
         }
 
         Ok(schemas)
     }
 
-    async fn add_version(
-        &self,
-        schema_name: &str,
-        version: SchemaVersion,
-    ) -> Result<(), AppError> {
+    async fn add_version(&self, schema_name: &str, version: SchemaVersion) -> Result<(), AppError> {
         use mongodb::bson::{doc, to_bson};
 
         // Check if the schema exists
@@ -124,8 +105,7 @@ impl SchemaRepository for MongoSchemaRepository {
             )));
         }
 
-        let version_bson =
-            to_bson(&version)?;
+        let version_bson = to_bson(&version)?;
 
         self.collection
             .update_one(
@@ -140,16 +120,10 @@ impl SchemaRepository for MongoSchemaRepository {
     async fn delete(&self, name: &str) -> Result<(), AppError> {
         use mongodb::bson::doc;
 
-        let result = self
-            .collection
-            .delete_one(doc! { "name": name })
-            .await?;
+        let result = self.collection.delete_one(doc! { "name": name }).await?;
 
         if result.deleted_count == 0 {
-            return Err(AppError::NotFound(format!(
-                "Schema '{}' not found",
-                name
-            )));
+            return Err(AppError::NotFound(format!("Schema '{}' not found", name)));
         }
 
         Ok(())

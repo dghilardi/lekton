@@ -109,16 +109,12 @@ impl QueryRewriter {
             .get_client_with_headers(&self.headers)
             .await?;
 
-        let response = client
-            .chat()
-            .create(request)
-            .await
-            .map_err(|e| {
-                AppError::Internal(format!(
-                    "query rewrite LLM call failed: {}",
-                    format_llm_error(&e)
-                ))
-            })?;
+        let response = client.chat().create(request).await.map_err(|e| {
+            AppError::Internal(format!(
+                "query rewrite LLM call failed: {}",
+                format_llm_error(&e)
+            ))
+        })?;
 
         let rewritten = response
             .choices

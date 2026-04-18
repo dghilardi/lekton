@@ -294,10 +294,12 @@ impl ChatService {
             .chat()
             .create_stream(request)
             .await
-            .map_err(|e| AppError::Internal(format!(
-                "LLM stream creation failed: {}",
-                format_llm_error(&e)
-            )))?;
+            .map_err(|e| {
+                AppError::Internal(format!(
+                    "LLM stream creation failed: {}",
+                    format_llm_error(&e)
+                ))
+            })?;
 
         // 11. Build SSE event stream
         let chat_repo = self.chat_repo.clone();
@@ -413,7 +415,9 @@ fn preview_assistant_content(content: &ChatCompletionRequestAssistantMessageCont
     }
 }
 
-fn summarize_search_results(results: &[crate::rag::vectorstore::VectorSearchResult]) -> Vec<String> {
+fn summarize_search_results(
+    results: &[crate::rag::vectorstore::VectorSearchResult],
+) -> Vec<String> {
     results
         .iter()
         .map(|result| {

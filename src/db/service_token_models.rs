@@ -62,7 +62,9 @@ impl ServiceToken {
     /// - Exact scope `"a/b"` matches only slug `"a/b"`.
     /// - Prefix scope `"a/*"` matches `"a"`, `"a/b"`, `"a/b/c"`, etc.
     pub fn matches_slug(&self, slug: &str) -> bool {
-        self.allowed_scopes.iter().any(|scope| scope_matches(scope, slug))
+        self.allowed_scopes
+            .iter()
+            .any(|scope| scope_matches(scope, slug))
     }
 }
 

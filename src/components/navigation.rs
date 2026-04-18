@@ -18,7 +18,8 @@ pub fn NavigationItem(item: NavItem, #[prop(optional)] level: u32) -> impl IntoV
                         <NavigationItem item=child level=level + 1 />
                     }
                 }).collect::<Vec<_>>()}
-            }.into_any()
+            }
+            .into_any()
         } else {
             view! {
                 <li>

@@ -142,10 +142,7 @@ impl ServiceTokenRepository for MongoServiceTokenRepository {
 
         let result = self
             .collection
-            .update_one(
-                doc! { "id": id },
-                doc! { "$set": { "is_active": false } },
-            )
+            .update_one(doc! { "id": id }, doc! { "$set": { "is_active": false } })
             .await?;
 
         if result.matched_count == 0 {
@@ -200,10 +197,7 @@ impl ServiceTokenRepository for MongoServiceTokenRepository {
 
         let result = self
             .collection
-            .update_one(
-                doc! { "id": id },
-                doc! { "$set": { "is_active": active } },
-            )
+            .update_one(doc! { "id": id }, doc! { "$set": { "is_active": active } })
             .await?;
 
         if result.matched_count == 0 {

@@ -108,13 +108,11 @@ fn format_error_object(error: &serde_json::Map<String, Value>) -> Option<String>
     }
 
     let status = error.get("status").and_then(Value::as_str);
-    let code = error
-        .get("code")
-        .and_then(|value| match value {
-            Value::String(value) => Some(value.clone()),
-            Value::Number(value) => Some(value.to_string()),
-            _ => None,
-        });
+    let code = error.get("code").and_then(|value| match value {
+        Value::String(value) => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    });
 
     let mut parts = Vec::new();
 
@@ -158,11 +156,7 @@ mod tests {
 
     #[test]
     fn builds_client_with_api_key() {
-        let result = build_oai_client(
-            "http://localhost:11434/v1",
-            "sk-test",
-            &HashMap::new(),
-        );
+        let result = build_oai_client("http://localhost:11434/v1", "sk-test", &HashMap::new());
         assert!(result.is_ok());
     }
 
@@ -173,7 +167,10 @@ mod tests {
         let mut headers = HashMap::new();
         headers.insert("x_producer".to_string(), "LEKTON".to_string());
         let result = build_oai_client("http://localhost:11434/v1", "", &headers);
-        assert!(result.is_ok(), "header with underscore should be accepted after normalisation");
+        assert!(
+            result.is_ok(),
+            "header with underscore should be accepted after normalisation"
+        );
     }
 
     #[test]

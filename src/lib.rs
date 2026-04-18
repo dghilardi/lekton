@@ -3,18 +3,18 @@
 pub mod api;
 pub mod app;
 pub mod auth;
+pub mod components;
 #[cfg(feature = "ssr")]
 pub mod config;
-pub mod components;
 pub mod db;
 pub mod editor;
 pub mod error;
 #[cfg(feature = "ssr")]
 pub mod mcp;
 pub mod pages;
+pub mod rag;
 pub mod rendering;
 pub mod schema;
-pub mod rag;
 pub mod search;
 pub mod storage;
 #[cfg(test)]

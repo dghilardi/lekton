@@ -22,10 +22,7 @@ pub async fn get_schema_detail(name: String) -> Result<SchemaDetail, ServerFnErr
 
 /// Server function to get raw schema content for a specific version.
 #[server(GetSchemaContent, "/api")]
-pub async fn get_schema_content(
-    name: String,
-    version: String,
-) -> Result<String, ServerFnError> {
+pub async fn get_schema_content(name: String, version: String) -> Result<String, ServerFnError> {
     let state = expect_context::<crate::app::AppState>();
     crate::api::schemas::process_get_schema_content(
         state.schema_repo.as_ref(),
@@ -107,10 +104,7 @@ fn SchemaCard(schema: SchemaListItem) -> impl IntoView {
     };
 
     let href = format!("/schemas/{}", schema.name);
-    let version_text = schema
-        .latest_version
-        .as_deref()
-        .unwrap_or("no versions");
+    let version_text = schema.latest_version.as_deref().unwrap_or("no versions");
 
     view! {
         <a href=href class="card bg-base-100 border border-base-200/50 hover:border-primary/30 shadow-sm hover:shadow-md transition-all cursor-pointer group">
@@ -139,10 +133,7 @@ pub fn SchemaViewerPage() -> impl IntoView {
     let params = leptos_router::hooks::use_params_map();
     let name = move || params.read().get("name").unwrap_or_default();
 
-    let schema_resource = Resource::new(
-        move || name(),
-        |name| get_schema_detail(name),
-    );
+    let schema_resource = Resource::new(move || name(), |name| get_schema_detail(name));
 
     let (selected_version, set_selected_version) = signal(String::new());
 
@@ -334,7 +325,8 @@ fn VersionStatusBar(versions: Vec<SchemaVersionInfo>) -> impl IntoView {
                 }
             }).collect::<Vec<_>>()}
         </div>
-    }.into_any()
+    }
+    .into_any()
 }
 
 /// Spec viewer component that renders the schema content.

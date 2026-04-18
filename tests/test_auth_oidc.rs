@@ -96,7 +96,10 @@ async fn refresh_with_revoked_token_fails() {
         .await
         .unwrap()
         .unwrap();
-    env.user_repo.revoke_refresh_token(&stored.id).await.unwrap();
+    env.user_repo
+        .revoke_refresh_token(&stored.id)
+        .await
+        .unwrap();
 
     let refresh_cookie = cookie::Cookie::build(("lekton_refresh_token", refresh_raw))
         .path("/auth/refresh")
@@ -125,9 +128,7 @@ async fn me_with_valid_jwt() {
     let env = common::TestEnv::start().await;
     let server = env.server();
 
-    let user = env
-        .create_test_user("user-1", "user@test.com", false)
-        .await;
+    let user = env.create_test_user("user-1", "user@test.com", false).await;
 
     let response = server
         .get("/auth/me")
@@ -146,9 +147,7 @@ async fn me_with_expired_jwt_fails() {
     let env = common::TestEnv::start().await;
     let server = env.server_permissive();
 
-    let user = env
-        .create_test_user("user-1", "user@test.com", false)
-        .await;
+    let user = env.create_test_user("user-1", "user@test.com", false).await;
 
     // Create a token service with 0-second TTL (already expired)
     let expired_service = TokenService::new("test-secret-key-at-least-32-bytes!!", 0, 30);

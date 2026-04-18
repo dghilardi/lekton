@@ -115,10 +115,7 @@ impl UserContext {
             .filter(|p| p.can_read)
             .map(|p| p.access_level_name.clone())
             .collect();
-        let include_draft = self
-            .permissions
-            .iter()
-            .any(|p| p.can_read_draft);
+        let include_draft = self.permissions.iter().any(|p| p.can_read_draft);
         (Some(levels), include_draft)
     }
 }
@@ -207,10 +204,13 @@ mod tests {
 
         #[test]
         fn test_regular_user_respects_permissions() {
-            let ctx = make_context(false, vec![
-                make_perm("public", true, false, false),
-                make_perm("internal", true, true, true),
-            ]);
+            let ctx = make_context(
+                false,
+                vec![
+                    make_perm("public", true, false, false),
+                    make_perm("internal", true, true, true),
+                ],
+            );
             assert!(ctx.can_read("public"));
             assert!(!ctx.can_write("public"));
             assert!(ctx.can_write("internal"));
@@ -220,10 +220,13 @@ mod tests {
 
         #[test]
         fn test_readable_levels_excludes_write_only() {
-            let ctx = make_context(false, vec![
-                make_perm("public", true, false, false),
-                make_perm("internal", false, true, false), // write-only, unusual but valid
-            ]);
+            let ctx = make_context(
+                false,
+                vec![
+                    make_perm("public", true, false, false),
+                    make_perm("internal", false, true, false), // write-only, unusual but valid
+                ],
+            );
             let levels = ctx.readable_levels().unwrap();
             assert!(levels.contains(&"public".to_string()));
             assert!(!levels.contains(&"internal".to_string()));
@@ -231,10 +234,13 @@ mod tests {
 
         #[test]
         fn test_document_visibility_includes_draft() {
-            let ctx = make_context(false, vec![
-                make_perm("public", true, false, false),
-                make_perm("internal", true, false, true),
-            ]);
+            let ctx = make_context(
+                false,
+                vec![
+                    make_perm("public", true, false, false),
+                    make_perm("internal", true, false, true),
+                ],
+            );
             let (levels, include_draft) = ctx.document_visibility();
             let levels = levels.unwrap();
             assert!(levels.contains(&"public".to_string()));
@@ -244,9 +250,7 @@ mod tests {
 
         #[test]
         fn test_document_visibility_no_draft() {
-            let ctx = make_context(false, vec![
-                make_perm("public", true, false, false),
-            ]);
+            let ctx = make_context(false, vec![make_perm("public", true, false, false)]);
             let (_, include_draft) = ctx.document_visibility();
             assert!(!include_draft);
         }

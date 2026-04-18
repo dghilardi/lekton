@@ -1,5 +1,5 @@
-use leptos::prelude::*;
 use leptos::prelude::StoredValue;
+use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::rendering::markdown::render_markdown;
@@ -70,13 +70,8 @@ pub fn ChatPage() -> impl IntoView {
         });
     }
 
-    let current_user =
-        use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
-    let is_logged_in = move || {
-        current_user
-            .map(|sig| sig.get().is_some())
-            .unwrap_or(false)
-    };
+    let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
+    let is_logged_in = move || current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
 
     view! {
         <Show when=is_logged_in fallback=|| view! {
@@ -141,9 +136,7 @@ fn ChatContent() -> impl IntoView {
             let sid = session_id.get_untracked();
             use leptos::task::spawn_local;
             spawn_local(async move {
-                match fetch_chat_stream(sid, msg, session_id, sessions, streaming_content)
-                    .await
-                {
+                match fetch_chat_stream(sid, msg, session_id, sessions, streaming_content).await {
                     Ok(message_id) => {
                         // Commit the streamed content as a completed assistant message
                         let content = streaming_content.get_untracked();
@@ -578,12 +571,9 @@ pub async fn fetch_sessions() -> Result<Vec<SessionSummary>, String> {
     use wasm_bindgen_futures::JsFuture;
 
     let window = leptos::web_sys::window().ok_or("no window")?;
-    let resp_value = JsFuture::from(
-        window
-            .fetch_with_str("/api/v1/rag/sessions"),
-    )
-    .await
-    .map_err(|e| format!("{e:?}"))?;
+    let resp_value = JsFuture::from(window.fetch_with_str("/api/v1/rag/sessions"))
+        .await
+        .map_err(|e| format!("{e:?}"))?;
 
     let resp: leptos::web_sys::Response = resp_value.dyn_into().map_err(|_| "not a Response")?;
     if !resp.ok() {
@@ -625,8 +615,7 @@ pub async fn fetch_session_messages(session_id: &str) -> Result<Vec<UiMessage>, 
         content: String,
         feedback: Option<UiFeedback>,
     }
-    let msgs: Vec<MsgResp> =
-        serde_wasm_bindgen::from_value(json).map_err(|e| format!("{e}"))?;
+    let msgs: Vec<MsgResp> = serde_wasm_bindgen::from_value(json).map_err(|e| format!("{e}"))?;
     Ok(msgs
         .into_iter()
         .map(|m| UiMessage {
@@ -666,14 +655,16 @@ async fn fetch_submit_feedback(
 ) -> Result<(), String> {
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;
-    use web_sys::{RequestInit, Headers, Request};
+    use web_sys::{Headers, Request, RequestInit};
 
     let window = web_sys::window().ok_or("no window")?;
     let body = serde_json::json!({ "rating": rating, "comment": comment });
     let opts = RequestInit::new();
     opts.set_method("POST");
     let headers = Headers::new().map_err(|e| format!("{e:?}"))?;
-    headers.set("Content-Type", "application/json").map_err(|e| format!("{e:?}"))?;
+    headers
+        .set("Content-Type", "application/json")
+        .map_err(|e| format!("{e:?}"))?;
     opts.set_headers(&headers);
     opts.set_body(&JsValue::from_str(&body.to_string()));
     let request = Request::new_with_str_and_init(
@@ -716,10 +707,12 @@ pub async fn fetch_chat_stream(
     set_sessions: RwSignal<Vec<SessionSummary>>,
     set_streaming: RwSignal<String>,
 ) -> Result<Option<String>, String> {
+    use js_sys::Reflect;
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;
-    use js_sys::Reflect;
-    use web_sys::{RequestInit, Headers, Request, Response, ReadableStreamDefaultReader, TextDecoder};
+    use web_sys::{
+        Headers, ReadableStreamDefaultReader, Request, RequestInit, Response, TextDecoder,
+    };
 
     let window = web_sys::window().ok_or("No window")?;
 
@@ -737,8 +730,8 @@ pub async fn fetch_chat_stream(
     opts.set_headers(&headers);
     opts.set_body(&JsValue::from_str(&body.to_string()));
 
-    let request = Request::new_with_str_and_init("/api/v1/rag/chat", &opts)
-        .map_err(|e| format!("{e:?}"))?;
+    let request =
+        Request::new_with_str_and_init("/api/v1/rag/chat", &opts).map_err(|e| format!("{e:?}"))?;
 
     let resp_value = JsFuture::from(window.fetch_with_request(&request))
         .await
@@ -773,8 +766,8 @@ pub async fn fetch_chat_stream(
             break;
         }
 
-        let value = Reflect::get(&chunk, &JsValue::from_str("value"))
-            .map_err(|e| format!("{e:?}"))?;
+        let value =
+            Reflect::get(&chunk, &JsValue::from_str("value")).map_err(|e| format!("{e:?}"))?;
 
         // Decode bytes to string
         let value_obj: js_sys::Object = value.into();
@@ -805,8 +798,7 @@ pub async fn fetch_chat_stream(
                                 }
                             }
                             Some("delta") => {
-                                if let Some(content) =
-                                    event.get("content").and_then(|c| c.as_str())
+                                if let Some(content) = event.get("content").and_then(|c| c.as_str())
                                 {
                                     set_streaming.update(|s| s.push_str(content));
                                 }

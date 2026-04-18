@@ -28,10 +28,7 @@ pub async fn upload_image_handler(
             continue;
         }
 
-        let file_name = field
-            .file_name()
-            .unwrap_or("upload.bin")
-            .to_string();
+        let file_name = field.file_name().unwrap_or("upload.bin").to_string();
 
         let content_type = field
             .content_type()
@@ -40,9 +37,7 @@ pub async fn upload_image_handler(
 
         // Only allow image types
         if !content_type.starts_with("image/") {
-            return Err(AppError::BadRequest(
-                "Only image files are allowed".into(),
-            ));
+            return Err(AppError::BadRequest("Only image files are allowed".into()));
         }
 
         let data = field
@@ -54,11 +49,18 @@ pub async fn upload_image_handler(
         let timestamp = chrono::Utc::now().timestamp_millis();
         let sanitized_name = file_name
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '.' || c == '-' { c } else { '_' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '.' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect::<String>();
         let s3_key = format!("images/{}_{}", timestamp, sanitized_name);
 
-        state.storage_client
+        state
+            .storage_client
             .put_object(&s3_key, data.to_vec())
             .await?;
 
@@ -68,7 +70,9 @@ pub async fn upload_image_handler(
         return Ok(axum::Json(UploadResponse { url }));
     }
 
-    Err(AppError::BadRequest("No file field found in request".into()))
+    Err(AppError::BadRequest(
+        "No file field found in request".into(),
+    ))
 }
 
 /// Axum handler for `GET /api/v1/image/:filename`.
@@ -82,7 +86,8 @@ pub async fn serve_image_handler(
 
     let s3_key = format!("images/{}", filename);
 
-    let data = state.storage_client
+    let data = state
+        .storage_client
         .get_object(&s3_key)
         .await?
         .ok_or_else(|| AppError::NotFound("Image not found".into()))?;
@@ -102,8 +107,5 @@ pub async fn serve_image_handler(
         "application/octet-stream"
     };
 
-    Ok((
-        [(axum::http::header::CONTENT_TYPE, content_type)],
-        data,
-    ).into_response())
+    Ok(([(axum::http::header::CONTENT_TYPE, content_type)], data).into_response())
 }

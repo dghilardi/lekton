@@ -11,10 +11,28 @@ use crate::error::AppError;
 /// The `"public"` level is a system level and cannot be deleted.
 /// The others are pre-populated for convenience but can be modified.
 pub const DEFAULT_ACCESS_LEVELS: &[(&str, &str, &str, u32, bool)] = &[
-    ("public",    "Public",    "Publicly accessible content",           0,  true),
-    ("internal",  "Internal",  "Internal company documentation",        10, false),
-    ("developer", "Developer", "Developer-focused documentation",       20, false),
-    ("architect", "Architect", "Architecture-level documentation",      30, false),
+    ("public", "Public", "Publicly accessible content", 0, true),
+    (
+        "internal",
+        "Internal",
+        "Internal company documentation",
+        10,
+        false,
+    ),
+    (
+        "developer",
+        "Developer",
+        "Developer-focused documentation",
+        20,
+        false,
+    ),
+    (
+        "architect",
+        "Architect",
+        "Architecture-level documentation",
+        30,
+        false,
+    ),
 ];
 
 /// CRUD operations for `AccessLevelEntity`.
@@ -71,9 +89,7 @@ impl AccessLevelRepository for MongoAccessLevelRepository {
             )));
         }
 
-        self.collection
-            .insert_one(&level)
-            .await?;
+        self.collection.insert_one(&level).await?;
 
         Ok(())
     }
@@ -81,9 +97,7 @@ impl AccessLevelRepository for MongoAccessLevelRepository {
     async fn find_by_name(&self, name: &str) -> Result<Option<AccessLevelEntity>, AppError> {
         use mongodb::bson::doc;
 
-        Ok(self.collection
-            .find_one(doc! { "name": name })
-            .await?)
+        Ok(self.collection.find_one(doc! { "name": name }).await?)
     }
 
     async fn list_all(&self) -> Result<Vec<AccessLevelEntity>, AppError> {
@@ -101,10 +115,7 @@ impl AccessLevelRepository for MongoAccessLevelRepository {
             .await?;
 
         let mut levels = Vec::new();
-        while let Some(level) = cursor
-            .try_next()
-            .await?
-        {
+        while let Some(level) = cursor.try_next().await? {
             levels.push(level);
         }
         Ok(levels)
@@ -148,9 +159,7 @@ impl AccessLevelRepository for MongoAccessLevelRepository {
             )));
         }
 
-        self.collection
-            .delete_one(doc! { "name": name })
-            .await?;
+        self.collection.delete_one(doc! { "name": name }).await?;
 
         Ok(())
     }
@@ -169,10 +178,7 @@ impl AccessLevelRepository for MongoAccessLevelRepository {
     async fn seed_defaults(&self) -> Result<(), AppError> {
         use mongodb::bson::doc;
 
-        let count = self
-            .collection
-            .count_documents(doc! {})
-            .await?;
+        let count = self.collection.count_documents(doc! {}).await?;
 
         if count > 0 {
             return Ok(());
@@ -187,9 +193,7 @@ impl AccessLevelRepository for MongoAccessLevelRepository {
                 is_system: *is_system,
                 created_at: Utc::now(),
             };
-            self.collection
-                .insert_one(&level)
-                .await?;
+            self.collection.insert_one(&level).await?;
         }
 
         Ok(())
@@ -212,9 +216,15 @@ mod tests {
 
     #[test]
     fn test_default_levels_sorted_by_sort_order() {
-        let orders: Vec<u32> = DEFAULT_ACCESS_LEVELS.iter().map(|(.., order, _)| *order).collect();
+        let orders: Vec<u32> = DEFAULT_ACCESS_LEVELS
+            .iter()
+            .map(|(.., order, _)| *order)
+            .collect();
         let mut sorted = orders.clone();
         sorted.sort();
-        assert_eq!(orders, sorted, "DEFAULT_ACCESS_LEVELS must be ordered by sort_order");
+        assert_eq!(
+            orders, sorted,
+            "DEFAULT_ACCESS_LEVELS must be ordered by sort_order"
+        );
     }
 }

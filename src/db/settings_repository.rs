@@ -63,10 +63,7 @@ impl SettingsRepository for MongoSettingsRepository {
     async fn get_settings(&self) -> Result<AppSettings, AppError> {
         use mongodb::bson::doc;
 
-        let result = self
-            .collection
-            .find_one(doc! { "key": "global" })
-            .await?;
+        let result = self.collection.find_one(doc! { "key": "global" }).await?;
 
         Ok(result.unwrap_or_default())
     }

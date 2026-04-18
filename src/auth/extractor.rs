@@ -144,7 +144,11 @@ where
 /// sent on same-site requests, which is fine for API calls from our own frontend.
 ///
 /// `secure` should be `!app_state.insecure_cookies`.
-pub fn access_token_cookie(value: String, ttl_secs: u64, secure: bool) -> axum_extra::extract::cookie::Cookie<'static> {
+pub fn access_token_cookie(
+    value: String,
+    ttl_secs: u64,
+    secure: bool,
+) -> axum_extra::extract::cookie::Cookie<'static> {
     axum_extra::extract::cookie::Cookie::build((ACCESS_TOKEN_COOKIE, value))
         .path("/")
         .http_only(true)
@@ -161,7 +165,11 @@ pub fn access_token_cookie(value: String, ttl_secs: u64, secure: bool) -> axum_e
 /// frontend, never from a cross-site redirect.
 ///
 /// `secure` should be `!app_state.insecure_cookies`.
-pub fn refresh_token_cookie(value: String, ttl_days: i64, secure: bool) -> axum_extra::extract::cookie::Cookie<'static> {
+pub fn refresh_token_cookie(
+    value: String,
+    ttl_days: i64,
+    secure: bool,
+) -> axum_extra::extract::cookie::Cookie<'static> {
     axum_extra::extract::cookie::Cookie::build((REFRESH_TOKEN_COOKIE, value))
         .path("/auth/refresh")
         .http_only(true)
@@ -178,7 +186,10 @@ pub fn refresh_token_cookie(value: String, ttl_days: i64, secure: bool) -> axum_
 /// navigation.
 ///
 /// `secure` should be `!app_state.insecure_cookies`.
-pub fn auth_state_cookie(value: String, secure: bool) -> axum_extra::extract::cookie::Cookie<'static> {
+pub fn auth_state_cookie(
+    value: String,
+    secure: bool,
+) -> axum_extra::extract::cookie::Cookie<'static> {
     axum_extra::extract::cookie::Cookie::build((AUTH_STATE_COOKIE, value))
         .path("/auth/callback")
         .http_only(true)
@@ -218,7 +229,11 @@ mod tests {
     use crate::auth::token_service::TokenService;
 
     fn make_token_service() -> Arc<TokenService> {
-        Arc::new(TokenService::new("test-secret-key-at-least-32-bytes!!", 3600, 30))
+        Arc::new(TokenService::new(
+            "test-secret-key-at-least-32-bytes!!",
+            3600,
+            30,
+        ))
     }
 
     #[test]

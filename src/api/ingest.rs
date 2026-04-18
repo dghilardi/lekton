@@ -2,25 +2,25 @@ use crate::db::models::{IngestRequest, IngestResponse};
 use crate::error::AppError;
 
 #[cfg(feature = "ssr")]
-use chrono::Utc;
-#[cfg(feature = "ssr")]
 use crate::db::access_level_repository::AccessLevelRepository;
 #[cfg(feature = "ssr")]
-use crate::db::models::Document;
-#[cfg(feature = "ssr")]
 use crate::db::document_version_repository::DocumentVersionRepository;
+#[cfg(feature = "ssr")]
+use crate::db::models::Document;
 #[cfg(feature = "ssr")]
 use crate::db::repository::DocumentRepository;
 #[cfg(feature = "ssr")]
 use crate::db::service_token_repository::ServiceTokenRepository;
 #[cfg(feature = "ssr")]
-use crate::rendering::links::extract_internal_links;
-#[cfg(feature = "ssr")]
 use crate::rag::service::RagService;
+#[cfg(feature = "ssr")]
+use crate::rendering::links::extract_internal_links;
 #[cfg(feature = "ssr")]
 use crate::search::client::SearchService;
 #[cfg(feature = "ssr")]
 use crate::storage::client::StorageClient;
+#[cfg(feature = "ssr")]
+use chrono::Utc;
 
 /// Bundles the service references needed by [`process_ingest`].
 #[cfg(feature = "ssr")]
@@ -53,21 +53,15 @@ pub async fn process_ingest(
         return Err(AppError::BadRequest("Slug cannot be empty".into()));
     }
     if request.slug.contains("..") {
-        return Err(AppError::BadRequest(
-            "Slug must not contain '..'".into(),
-        ));
+        return Err(AppError::BadRequest("Slug must not contain '..'".into()));
     }
     if request.slug.starts_with('/') {
-        return Err(AppError::BadRequest(
-            "Slug must not start with '/'".into(),
-        ));
+        return Err(AppError::BadRequest("Slug must not start with '/'".into()));
     }
 
     // 3. Validate the access_level name exists in the registry.
     if request.access_level.trim().is_empty() {
-        return Err(AppError::BadRequest(
-            "Access level cannot be empty".into(),
-        ));
+        return Err(AppError::BadRequest("Access level cannot be empty".into()));
     }
     // Normalise to lowercase so "Public" and "public" are the same.
     let access_level = request.access_level.to_lowercase();
@@ -229,7 +223,8 @@ pub async fn process_ingest(
     };
 
     // 10. Build search document before ownership transfer
-    let search_doc = ctx.search
+    let search_doc = ctx
+        .search
         .as_ref()
         .map(|_| crate::search::client::build_search_document(&doc, &raw_content));
 
@@ -247,7 +242,8 @@ pub async fn process_ingest(
     //     Note: this is not atomic with the create_or_update above.
     //     Both operations are idempotent, so partial failure leaves
     //     consistent (if stale) state that self-heals on re-ingest.
-    ctx.repo.update_backlinks(&request.slug, &old_links, &links_out)
+    ctx.repo
+        .update_backlinks(&request.slug, &old_links, &links_out)
         .await?;
 
     // 12. Index in Meilisearch (if available)
@@ -422,13 +418,27 @@ mod tests {
 
     #[async_trait]
     impl AccessLevelRepository for MockAccessLevelRepo {
-        async fn create(&self, _level: AccessLevelEntity) -> Result<(), AppError> { Ok(()) }
-        async fn find_by_name(&self, _name: &str) -> Result<Option<AccessLevelEntity>, AppError> { Ok(None) }
-        async fn list_all(&self) -> Result<Vec<AccessLevelEntity>, AppError> { Ok(vec![]) }
-        async fn update(&self, _level: AccessLevelEntity) -> Result<(), AppError> { Ok(()) }
-        async fn delete(&self, _name: &str) -> Result<(), AppError> { Ok(()) }
-        async fn exists(&self, _name: &str) -> Result<bool, AppError> { Ok(true) }
-        async fn seed_defaults(&self) -> Result<(), AppError> { Ok(()) }
+        async fn create(&self, _level: AccessLevelEntity) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn find_by_name(&self, _name: &str) -> Result<Option<AccessLevelEntity>, AppError> {
+            Ok(None)
+        }
+        async fn list_all(&self) -> Result<Vec<AccessLevelEntity>, AppError> {
+            Ok(vec![])
+        }
+        async fn update(&self, _level: AccessLevelEntity) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn delete(&self, _name: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn exists(&self, _name: &str) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        async fn seed_defaults(&self) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     /// A mock service token repo for unit tests.
@@ -457,13 +467,31 @@ mod tests {
             Ok(())
         }
         async fn find_by_hash(&self, token_hash: &str) -> Result<Option<ServiceToken>, AppError> {
-            Ok(self.tokens.lock().unwrap().iter().find(|t| t.token_hash == token_hash).cloned())
+            Ok(self
+                .tokens
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|t| t.token_hash == token_hash)
+                .cloned())
         }
         async fn find_by_name(&self, name: &str) -> Result<Option<ServiceToken>, AppError> {
-            Ok(self.tokens.lock().unwrap().iter().find(|t| t.name == name).cloned())
+            Ok(self
+                .tokens
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|t| t.name == name)
+                .cloned())
         }
         async fn find_by_id(&self, id: &str) -> Result<Option<ServiceToken>, AppError> {
-            Ok(self.tokens.lock().unwrap().iter().find(|t| t.id == id).cloned())
+            Ok(self
+                .tokens
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|t| t.id == id)
+                .cloned())
         }
         async fn list_all(&self) -> Result<Vec<ServiceToken>, AppError> {
             Ok(self.tokens.lock().unwrap().clone())
@@ -478,13 +506,29 @@ mod tests {
         async fn touch_last_used(&self, _id: &str) -> Result<(), AppError> {
             Ok(())
         }
-        async fn check_scope_overlap(&self, _scopes: &[String], _exclude_id: Option<&str>) -> Result<bool, AppError> {
+        async fn check_scope_overlap(
+            &self,
+            _scopes: &[String],
+            _exclude_id: Option<&str>,
+        ) -> Result<bool, AppError> {
             Ok(false)
         }
-        async fn set_active(&self, _: &str, _: bool) -> Result<(), AppError> { Ok(()) }
-        async fn list_by_user_id(&self, _: &str) -> Result<Vec<ServiceToken>, AppError> { Ok(vec![]) }
-        async fn list_pats_paginated(&self, _: u64, _: u64) -> Result<(Vec<ServiceToken>, u64), AppError> { Ok((vec![], 0)) }
-        async fn delete_pat(&self, _: &str, _: &str) -> Result<(), AppError> { Ok(()) }
+        async fn set_active(&self, _: &str, _: bool) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn list_by_user_id(&self, _: &str) -> Result<Vec<ServiceToken>, AppError> {
+            Ok(vec![])
+        }
+        async fn list_pats_paginated(
+            &self,
+            _: u64,
+            _: u64,
+        ) -> Result<(Vec<ServiceToken>, u64), AppError> {
+            Ok((vec![], 0))
+        }
+        async fn delete_pat(&self, _: &str, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     struct MockRepo {
@@ -619,10 +663,29 @@ mod tests {
 
     #[async_trait]
     impl crate::db::document_version_repository::DocumentVersionRepository for MockVersionRepo {
-        async fn create(&self, _: crate::db::document_version_repository::DocumentVersion) -> Result<(), AppError> { Ok(()) }
-        async fn find_latest(&self, _: &str) -> Result<Option<crate::db::document_version_repository::DocumentVersion>, AppError> { Ok(None) }
-        async fn list_by_slug(&self, _: &str) -> Result<Vec<crate::db::document_version_repository::DocumentVersion>, AppError> { Ok(vec![]) }
-        async fn next_version_number(&self, _: &str) -> Result<u64, AppError> { Ok(1) }
+        async fn create(
+            &self,
+            _: crate::db::document_version_repository::DocumentVersion,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn find_latest(
+            &self,
+            _: &str,
+        ) -> Result<Option<crate::db::document_version_repository::DocumentVersion>, AppError>
+        {
+            Ok(None)
+        }
+        async fn list_by_slug(
+            &self,
+            _: &str,
+        ) -> Result<Vec<crate::db::document_version_repository::DocumentVersion>, AppError>
+        {
+            Ok(vec![])
+        }
+        async fn next_version_number(&self, _: &str) -> Result<u64, AppError> {
+            Ok(1)
+        }
     }
 
     fn make_ctx<'a>(
@@ -919,14 +982,20 @@ mod tests {
         let request1 = make_request("valid-token", "docs/hello");
         let r1 = process_ingest(&ctx, request1).await.unwrap();
         assert!(r1.changed);
-        assert_eq!(storage.put_count.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(
+            storage.put_count.load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
 
         // Second ingest with identical content and metadata
         let request2 = make_request("valid-token", "docs/hello");
         let r2 = process_ingest(&ctx, request2).await.unwrap();
         assert!(!r2.changed);
         // S3 upload should NOT have happened again
-        assert_eq!(storage.put_count.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(
+            storage.put_count.load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
     }
 
     #[tokio::test]
@@ -946,7 +1015,10 @@ mod tests {
         let r2 = process_ingest(&ctx, request2).await.unwrap();
         assert!(r2.changed);
         // 3 puts: initial upload + history copy + new upload
-        assert_eq!(storage.put_count.load(std::sync::atomic::Ordering::Relaxed), 3);
+        assert_eq!(
+            storage.put_count.load(std::sync::atomic::Ordering::Relaxed),
+            3
+        );
     }
 
     #[tokio::test]
@@ -966,7 +1038,10 @@ mod tests {
         let r2 = process_ingest(&ctx, request2).await.unwrap();
         assert!(r2.changed);
         // S3 upload should NOT happen (content is the same)
-        assert_eq!(storage.put_count.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(
+            storage.put_count.load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
 
         // But DB should be updated with new title
         let doc = repo.find_by_slug("docs/hello").await.unwrap().unwrap();
@@ -1015,14 +1090,29 @@ mod tests {
 
         let request1 = make_request("valid-token", "docs/hello");
         process_ingest(&ctx, request1).await.unwrap();
-        let hash1 = repo.find_by_slug("docs/hello").await.unwrap().unwrap().metadata_hash.unwrap();
+        let hash1 = repo
+            .find_by_slug("docs/hello")
+            .await
+            .unwrap()
+            .unwrap()
+            .metadata_hash
+            .unwrap();
 
         let mut request2 = make_request("valid-token", "docs/hello");
         request2.access_level = "public".to_string();
         process_ingest(&ctx, request2).await.unwrap();
-        let hash2 = repo.find_by_slug("docs/hello").await.unwrap().unwrap().metadata_hash.unwrap();
+        let hash2 = repo
+            .find_by_slug("docs/hello")
+            .await
+            .unwrap()
+            .unwrap()
+            .metadata_hash
+            .unwrap();
 
-        assert_ne!(hash1, hash2, "metadata_hash must change when access_level changes");
+        assert_ne!(
+            hash1, hash2,
+            "metadata_hash must change when access_level changes"
+        );
     }
 
     #[tokio::test]
@@ -1034,13 +1124,28 @@ mod tests {
 
         let request1 = make_request("valid-token", "docs/hello");
         process_ingest(&ctx, request1).await.unwrap();
-        let hash1 = repo.find_by_slug("docs/hello").await.unwrap().unwrap().metadata_hash.unwrap();
+        let hash1 = repo
+            .find_by_slug("docs/hello")
+            .await
+            .unwrap()
+            .unwrap()
+            .metadata_hash
+            .unwrap();
 
         // Second ingest with identical data — unchanged, no DB write
         let request2 = make_request("valid-token", "docs/hello");
         process_ingest(&ctx, request2).await.unwrap();
-        let hash2 = repo.find_by_slug("docs/hello").await.unwrap().unwrap().metadata_hash.unwrap();
+        let hash2 = repo
+            .find_by_slug("docs/hello")
+            .await
+            .unwrap()
+            .unwrap()
+            .metadata_hash
+            .unwrap();
 
-        assert_eq!(hash1, hash2, "metadata_hash must be stable when nothing changes");
+        assert_eq!(
+            hash1, hash2,
+            "metadata_hash must be stable when nothing changes"
+        );
     }
 }

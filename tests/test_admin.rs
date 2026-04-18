@@ -13,7 +13,9 @@ async fn access_level_list_returns_seeded_defaults() {
     env.access_level_repo.seed_defaults().await.unwrap();
 
     // Create admin user and get auth cookie
-    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
+    let admin = env
+        .create_test_user("admin-1", "admin@test.com", true)
+        .await;
 
     let response = server
         .get("/api/v1/admin/access-levels")
@@ -35,7 +37,9 @@ async fn access_level_list_returns_seeded_defaults() {
 async fn access_level_create_success() {
     let env = common::TestEnv::start().await;
     let server = env.server();
-    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
+    let admin = env
+        .create_test_user("admin-1", "admin@test.com", true)
+        .await;
 
     let response = server
         .post("/api/v1/admin/access-levels")
@@ -59,7 +63,9 @@ async fn access_level_create_success() {
 async fn access_level_create_duplicate_fails() {
     let env = common::TestEnv::start().await;
     let server = env.server_permissive();
-    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
+    let admin = env
+        .create_test_user("admin-1", "admin@test.com", true)
+        .await;
 
     let payload = json!({
         "name": "duplicate-level",
@@ -88,7 +94,9 @@ async fn access_level_create_duplicate_fails() {
 async fn access_level_create_empty_name_fails() {
     let env = common::TestEnv::start().await;
     let server = env.server_permissive();
-    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
+    let admin = env
+        .create_test_user("admin-1", "admin@test.com", true)
+        .await;
 
     let response = server
         .post("/api/v1/admin/access-levels")
@@ -108,7 +116,9 @@ async fn access_level_create_empty_name_fails() {
 async fn access_level_update_success() {
     let env = common::TestEnv::start().await;
     let server = env.server();
-    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
+    let admin = env
+        .create_test_user("admin-1", "admin@test.com", true)
+        .await;
 
     // Create first
     server
@@ -143,7 +153,9 @@ async fn access_level_update_success() {
 async fn access_level_update_not_found() {
     let env = common::TestEnv::start().await;
     let server = env.server_permissive();
-    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
+    let admin = env
+        .create_test_user("admin-1", "admin@test.com", true)
+        .await;
 
     let response = server
         .put("/api/v1/admin/access-levels/nonexistent")
@@ -162,7 +174,9 @@ async fn access_level_update_not_found() {
 async fn access_level_delete_success() {
     let env = common::TestEnv::start().await;
     let server = env.server();
-    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
+    let admin = env
+        .create_test_user("admin-1", "admin@test.com", true)
+        .await;
 
     // Create a custom level
     server
@@ -185,7 +199,11 @@ async fn access_level_delete_success() {
     response.assert_status(axum::http::StatusCode::NO_CONTENT);
 
     // Verify it's gone
-    let found = env.access_level_repo.find_by_name("deletable").await.unwrap();
+    let found = env
+        .access_level_repo
+        .find_by_name("deletable")
+        .await
+        .unwrap();
     assert!(found.is_none());
 }
 
@@ -193,7 +211,9 @@ async fn access_level_delete_success() {
 async fn access_level_delete_system_level_fails() {
     let env = common::TestEnv::start().await;
     let server = env.server_permissive();
-    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
+    let admin = env
+        .create_test_user("admin-1", "admin@test.com", true)
+        .await;
 
     // Seed defaults so "public" (is_system=true) exists
     env.access_level_repo.seed_defaults().await.unwrap();
@@ -213,9 +233,13 @@ async fn admin_list_users() {
     let env = common::TestEnv::start().await;
     let server = env.server();
 
-    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
-    env.create_test_user("user-1", "user1@test.com", false).await;
-    env.create_test_user("user-2", "user2@test.com", false).await;
+    let admin = env
+        .create_test_user("admin-1", "admin@test.com", true)
+        .await;
+    env.create_test_user("user-1", "user1@test.com", false)
+        .await;
+    env.create_test_user("user-2", "user2@test.com", false)
+        .await;
 
     let response = server
         .get("/api/v1/admin/users")
@@ -232,8 +256,11 @@ async fn admin_get_user_permissions() {
     let env = common::TestEnv::start().await;
     let server = env.server();
 
-    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
-    env.create_test_user("user-1", "user1@test.com", false).await;
+    let admin = env
+        .create_test_user("admin-1", "admin@test.com", true)
+        .await;
+    env.create_test_user("user-1", "user1@test.com", false)
+        .await;
 
     // Set a permission for user-1
     use lekton::db::auth_models::UserPermission;
@@ -267,8 +294,11 @@ async fn admin_set_user_permissions() {
     let env = common::TestEnv::start().await;
     let server = env.server();
 
-    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
-    env.create_test_user("user-1", "user1@test.com", false).await;
+    let admin = env
+        .create_test_user("admin-1", "admin@test.com", true)
+        .await;
+    env.create_test_user("user-1", "user1@test.com", false)
+        .await;
 
     let response = server
         .put("/api/v1/admin/users/user-1/permissions")
@@ -307,8 +337,11 @@ async fn admin_delete_user_permission() {
     let env = common::TestEnv::start().await;
     let server = env.server();
 
-    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
-    env.create_test_user("user-1", "user1@test.com", false).await;
+    let admin = env
+        .create_test_user("admin-1", "admin@test.com", true)
+        .await;
+    env.create_test_user("user-1", "user1@test.com", false)
+        .await;
 
     // Set permissions first
     use lekton::db::auth_models::UserPermission;
@@ -398,7 +431,9 @@ async fn admin_set_permissions_nonexistent_user() {
     let env = common::TestEnv::start().await;
     let server = env.server_permissive();
 
-    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
+    let admin = env
+        .create_test_user("admin-1", "admin@test.com", true)
+        .await;
 
     let response = server
         .put("/api/v1/admin/users/nonexistent-user/permissions")
@@ -424,7 +459,9 @@ async fn admin_create_service_token_returns_raw_token() {
     let env = common::TestEnv::start().await;
     let server = env.server();
 
-    let admin = env.create_test_user("st-admin-1", "st-admin@test.com", true).await;
+    let admin = env
+        .create_test_user("st-admin-1", "st-admin@test.com", true)
+        .await;
 
     let response = server
         .post("/api/v1/admin/service-tokens")
@@ -448,7 +485,9 @@ async fn admin_list_service_tokens_hides_hash() {
     let env = common::TestEnv::start().await;
     let server = env.server();
 
-    let admin = env.create_test_user("st-admin-2", "st-admin2@test.com", true).await;
+    let admin = env
+        .create_test_user("st-admin-2", "st-admin2@test.com", true)
+        .await;
 
     // Create a token first
     server
@@ -484,7 +523,9 @@ async fn admin_deactivate_service_token() {
     let env = common::TestEnv::start().await;
     let server = env.server();
 
-    let admin = env.create_test_user("st-admin-3", "st-admin3@test.com", true).await;
+    let admin = env
+        .create_test_user("st-admin-3", "st-admin3@test.com", true)
+        .await;
 
     // Create
     let create_resp = server
@@ -523,7 +564,9 @@ async fn admin_create_token_rejects_overlapping_scopes() {
     let env = common::TestEnv::start().await;
     let server = env.server_permissive();
 
-    let admin = env.create_test_user("st-admin-4", "st-admin4@test.com", true).await;
+    let admin = env
+        .create_test_user("st-admin-4", "st-admin4@test.com", true)
+        .await;
 
     // Create first token
     server
@@ -555,7 +598,9 @@ async fn admin_non_admin_cannot_manage_tokens() {
     let env = common::TestEnv::start().await;
     let server = env.server_permissive();
 
-    let user = env.create_test_user("st-nonadmin", "nonadmin@test.com", false).await;
+    let user = env
+        .create_test_user("st-nonadmin", "nonadmin@test.com", false)
+        .await;
 
     let response = server
         .get("/api/v1/admin/service-tokens")

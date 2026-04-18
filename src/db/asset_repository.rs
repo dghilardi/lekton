@@ -60,31 +60,20 @@ impl AssetRepository for MongoAssetRepository {
     async fn find_by_key(&self, key: &str) -> Result<Option<Asset>, AppError> {
         use mongodb::bson::doc;
 
-        Ok(self.collection
-            .find_one(doc! { "key": key })
-            .await?)
+        Ok(self.collection.find_one(doc! { "key": key }).await?)
     }
 
     async fn list_all(&self) -> Result<Vec<Asset>, AppError> {
         use mongodb::bson::doc;
         use mongodb::options::FindOptions;
 
-        let options = FindOptions::builder()
-            .sort(doc! { "key": 1 })
-            .build();
+        let options = FindOptions::builder().sort(doc! { "key": 1 }).build();
 
-        let mut cursor = self
-            .collection
-            .find(doc! {})
-            .with_options(options)
-            .await?;
+        let mut cursor = self.collection.find(doc! {}).with_options(options).await?;
 
         let mut assets = Vec::new();
         use futures::TryStreamExt;
-        while let Some(asset) = cursor
-            .try_next()
-            .await?
-        {
+        while let Some(asset) = cursor.try_next().await? {
             assets.push(asset);
         }
 
@@ -111,9 +100,7 @@ impl AssetRepository for MongoAssetRepository {
             options: String::new(),
         };
 
-        let options = FindOptions::builder()
-            .sort(doc! { "key": 1 })
-            .build();
+        let options = FindOptions::builder().sort(doc! { "key": 1 }).build();
 
         let mut cursor = self
             .collection
@@ -123,10 +110,7 @@ impl AssetRepository for MongoAssetRepository {
 
         let mut assets = Vec::new();
         use futures::TryStreamExt;
-        while let Some(asset) = cursor
-            .try_next()
-            .await?
-        {
+        while let Some(asset) = cursor.try_next().await? {
             assets.push(asset);
         }
 
@@ -136,16 +120,10 @@ impl AssetRepository for MongoAssetRepository {
     async fn delete(&self, key: &str) -> Result<(), AppError> {
         use mongodb::bson::doc;
 
-        let result = self
-            .collection
-            .delete_one(doc! { "key": key })
-            .await?;
+        let result = self.collection.delete_one(doc! { "key": key }).await?;
 
         if result.deleted_count == 0 {
-            return Err(AppError::NotFound(format!(
-                "Asset '{}' not found",
-                key
-            )));
+            return Err(AppError::NotFound(format!("Asset '{}' not found", key)));
         }
 
         Ok(())

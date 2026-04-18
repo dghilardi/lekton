@@ -110,7 +110,9 @@ pub async fn process_prompt_ingest(
     let s3_key = format!("prompts/{}.yaml", request.slug.replace('/', "_"));
 
     let existing = ctx.repo.find_by_slug(&request.slug).await?;
-    let old_content_hash = existing.as_ref().and_then(|prompt| prompt.content_hash.clone());
+    let old_content_hash = existing
+        .as_ref()
+        .and_then(|prompt| prompt.content_hash.clone());
 
     let content_changed = old_content_hash.as_deref() != Some(new_content_hash.as_str());
     let metadata_changed = existing.as_ref().map_or(true, |prompt| {
@@ -227,7 +229,8 @@ pub async fn process_prompt_sync(
 ) -> Result<PromptSyncResponse, AppError> {
     use std::collections::HashMap;
 
-    let scopes = validate_sync_token(service_token_repo, legacy_token, &request.service_token).await?;
+    let scopes =
+        validate_sync_token(service_token_repo, legacy_token, &request.service_token).await?;
 
     for entry in &request.prompts {
         if !slug_matches_scopes(&entry.slug, &scopes) {
@@ -268,8 +271,12 @@ pub async fn process_prompt_sync(
     for entry in &request.prompts {
         match server_prompts.get(&entry.slug) {
             Some((server_content_hash, server_metadata_hash)) => {
-                let content_ok = server_content_hash.as_deref() == Some(entry.content_hash.as_str());
-                let metadata_ok = match (entry.metadata_hash.as_deref(), server_metadata_hash.as_deref()) {
+                let content_ok =
+                    server_content_hash.as_deref() == Some(entry.content_hash.as_str());
+                let metadata_ok = match (
+                    entry.metadata_hash.as_deref(),
+                    server_metadata_hash.as_deref(),
+                ) {
                     (Some(client), Some(server)) => client == server,
                     (Some(_), None) => false,
                     (None, _) => true,
@@ -358,7 +365,9 @@ async fn validate_prompt_request(
         return Err(AppError::BadRequest("Prompt name cannot be empty".into()));
     }
     if request.description.trim().is_empty() {
-        return Err(AppError::BadRequest("Prompt description cannot be empty".into()));
+        return Err(AppError::BadRequest(
+            "Prompt description cannot be empty".into(),
+        ));
     }
     if request.prompt_body.trim().is_empty() {
         return Err(AppError::BadRequest("Prompt body cannot be empty".into()));
@@ -385,7 +394,9 @@ async fn validate_prompt_request(
     let mut variable_names = std::collections::HashSet::new();
     for var in &request.variables {
         if var.name.trim().is_empty() {
-            return Err(AppError::BadRequest("Prompt variable name cannot be empty".into()));
+            return Err(AppError::BadRequest(
+                "Prompt variable name cannot be empty".into(),
+            ));
         }
         if !variable_names.insert(var.name.to_lowercase()) {
             return Err(AppError::BadRequest(format!(
@@ -421,7 +432,9 @@ async fn validate_prompt_token(
         return Err(AppError::Auth("Service token is deactivated".into()));
     }
     if !token.can_write {
-        return Err(AppError::Forbidden("Token does not have write permission".into()));
+        return Err(AppError::Forbidden(
+            "Token does not have write permission".into(),
+        ));
     }
     if !token.matches_slug(slug) {
         return Err(AppError::Forbidden(
@@ -430,7 +443,10 @@ async fn validate_prompt_token(
     }
 
     if let Err(err) = ctx.service_token_repo.touch_last_used(&token.id).await {
-        tracing::warn!("Failed to update last_used_at for token {}: {err}", token.id);
+        tracing::warn!(
+            "Failed to update last_used_at for token {}: {err}",
+            token.id
+        );
     }
 
     Ok(())
@@ -474,7 +490,10 @@ async fn validate_sync_token(
     }
 
     if let Err(err) = service_token_repo.touch_last_used(&token.id).await {
-        tracing::warn!("Failed to update last_used_at for token {}: {err}", token.id);
+        tracing::warn!(
+            "Failed to update last_used_at for token {}: {err}",
+            token.id
+        );
     }
 
     Ok(token.allowed_scopes)
@@ -547,13 +566,27 @@ mod tests {
 
     #[async_trait]
     impl AccessLevelRepository for MockAccessLevelRepo {
-        async fn create(&self, _level: AccessLevelEntity) -> Result<(), AppError> { Ok(()) }
-        async fn find_by_name(&self, _name: &str) -> Result<Option<AccessLevelEntity>, AppError> { Ok(None) }
-        async fn list_all(&self) -> Result<Vec<AccessLevelEntity>, AppError> { Ok(vec![]) }
-        async fn update(&self, _level: AccessLevelEntity) -> Result<(), AppError> { Ok(()) }
-        async fn delete(&self, _name: &str) -> Result<(), AppError> { Ok(()) }
-        async fn exists(&self, name: &str) -> Result<bool, AppError> { Ok(!name.trim().is_empty()) }
-        async fn seed_defaults(&self) -> Result<(), AppError> { Ok(()) }
+        async fn create(&self, _level: AccessLevelEntity) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn find_by_name(&self, _name: &str) -> Result<Option<AccessLevelEntity>, AppError> {
+            Ok(None)
+        }
+        async fn list_all(&self) -> Result<Vec<AccessLevelEntity>, AppError> {
+            Ok(vec![])
+        }
+        async fn update(&self, _level: AccessLevelEntity) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn delete(&self, _name: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn exists(&self, name: &str) -> Result<bool, AppError> {
+            Ok(!name.trim().is_empty())
+        }
+        async fn seed_defaults(&self) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     #[derive(Default)]
@@ -571,7 +604,13 @@ mod tests {
         }
 
         async fn find_by_slug(&self, slug: &str) -> Result<Option<Prompt>, AppError> {
-            Ok(self.prompts.lock().unwrap().iter().find(|p| p.slug == slug).cloned())
+            Ok(self
+                .prompts
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|p| p.slug == slug)
+                .cloned())
         }
 
         async fn list_by_access_levels(
@@ -599,7 +638,13 @@ mod tests {
         }
 
         async fn set_archived(&self, slug: &str, archived: bool) -> Result<(), AppError> {
-            if let Some(prompt) = self.prompts.lock().unwrap().iter_mut().find(|p| p.slug == slug) {
+            if let Some(prompt) = self
+                .prompts
+                .lock()
+                .unwrap()
+                .iter_mut()
+                .find(|p| p.slug == slug)
+            {
                 prompt.is_archived = archived;
             }
             Ok(())
@@ -653,7 +698,10 @@ mod tests {
         }
 
         async fn next_version_number(&self, slug: &str) -> Result<u64, AppError> {
-            Ok(self.find_latest(slug).await?.map_or(1, |version| version.version + 1))
+            Ok(self
+                .find_latest(slug)
+                .await?
+                .map_or(1, |version| version.version + 1))
         }
     }
 
@@ -685,14 +733,24 @@ mod tests {
 
     #[async_trait]
     impl ServiceTokenRepository for MockServiceTokenRepo {
-        async fn create(&self, _token: ServiceToken) -> Result<(), AppError> { Ok(()) }
-        async fn find_by_id(&self, _id: &str) -> Result<Option<ServiceToken>, AppError> { Ok(None) }
-        async fn find_by_name(&self, _name: &str) -> Result<Option<ServiceToken>, AppError> { Ok(None) }
+        async fn create(&self, _token: ServiceToken) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn find_by_id(&self, _id: &str) -> Result<Option<ServiceToken>, AppError> {
+            Ok(None)
+        }
+        async fn find_by_name(&self, _name: &str) -> Result<Option<ServiceToken>, AppError> {
+            Ok(None)
+        }
         async fn find_by_hash(&self, hash: &str) -> Result<Option<ServiceToken>, AppError> {
             Ok((self.token.token_hash == hash).then(|| self.token.clone()))
         }
-        async fn list_all(&self) -> Result<Vec<ServiceToken>, AppError> { Ok(vec![self.token.clone()]) }
-        async fn deactivate(&self, _id: &str) -> Result<(), AppError> { Ok(()) }
+        async fn list_all(&self) -> Result<Vec<ServiceToken>, AppError> {
+            Ok(vec![self.token.clone()])
+        }
+        async fn deactivate(&self, _id: &str) -> Result<(), AppError> {
+            Ok(())
+        }
         async fn touch_last_used(&self, id: &str) -> Result<(), AppError> {
             self.touched.lock().unwrap().push(id.to_string());
             Ok(())
@@ -701,15 +759,25 @@ mod tests {
             &self,
             _scopes: &[String],
             _exclude_id: Option<&str>,
-        ) -> Result<bool, AppError> { Ok(false) }
-        async fn set_active(&self, _id: &str, _active: bool) -> Result<(), AppError> { Ok(()) }
-        async fn list_by_user_id(&self, _user_id: &str) -> Result<Vec<ServiceToken>, AppError> { Ok(vec![]) }
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        async fn set_active(&self, _id: &str, _active: bool) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn list_by_user_id(&self, _user_id: &str) -> Result<Vec<ServiceToken>, AppError> {
+            Ok(vec![])
+        }
         async fn list_pats_paginated(
             &self,
             _page: u64,
             _per_page: u64,
-        ) -> Result<(Vec<ServiceToken>, u64), AppError> { Ok((vec![], 0)) }
-        async fn delete_pat(&self, _id: &str, _user_id: &str) -> Result<(), AppError> { Ok(()) }
+        ) -> Result<(Vec<ServiceToken>, u64), AppError> {
+            Ok((vec![], 0))
+        }
+        async fn delete_pat(&self, _id: &str, _user_id: &str) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     fn make_request() -> PromptIngestRequest {
@@ -763,7 +831,11 @@ mod tests {
         let response = process_prompt_ingest(&ctx, make_request()).await.unwrap();
 
         assert!(response.changed);
-        let prompt = repo.find_by_slug("prompts/code-review").await.unwrap().unwrap();
+        let prompt = repo
+            .find_by_slug("prompts/code-review")
+            .await
+            .unwrap()
+            .unwrap();
         assert!(prompt.content_hash.unwrap().starts_with("sha256:"));
         assert!(prompt.metadata_hash.unwrap().starts_with("sha256:"));
         let stored = storage.get_object(&response.s3_key).await.unwrap().unwrap();
@@ -784,7 +856,14 @@ mod tests {
         let response = process_prompt_ingest(&ctx, make_request()).await.unwrap();
 
         assert!(!response.changed);
-        assert_eq!(versions.list_by_slug("prompts/code-review").await.unwrap().len(), 0);
+        assert_eq!(
+            versions
+                .list_by_slug("prompts/code-review")
+                .await
+                .unwrap()
+                .len(),
+            0
+        );
     }
 
     #[tokio::test]
@@ -805,7 +884,11 @@ mod tests {
         let history = versions.list_by_slug("prompts/code-review").await.unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].version, 1);
-        let archived = storage.get_object(&history[0].s3_key).await.unwrap().unwrap();
+        let archived = storage
+            .get_object(&history[0].s3_key)
+            .await
+            .unwrap()
+            .unwrap();
         let archived_yaml = String::from_utf8(archived).unwrap();
         assert!(archived_yaml.contains("prompt_body: Review this patch"));
     }
@@ -880,7 +963,13 @@ mod tests {
         assert_eq!(response.unchanged, vec!["prompts/code-review"]);
         assert_eq!(response.to_upload, vec!["prompts/new"]);
         assert_eq!(response.to_archive, vec!["prompts/old"]);
-        assert!(repo.find_by_slug("prompts/old").await.unwrap().unwrap().is_archived);
+        assert!(
+            repo.find_by_slug("prompts/old")
+                .await
+                .unwrap()
+                .unwrap()
+                .is_archived
+        );
     }
 
     #[tokio::test]
@@ -900,6 +989,8 @@ mod tests {
         });
 
         let err = process_prompt_ingest(&ctx, request).await.unwrap_err();
-        assert!(matches!(err, AppError::BadRequest(msg) if msg.contains("Duplicate prompt variable")));
+        assert!(
+            matches!(err, AppError::BadRequest(msg) if msg.contains("Duplicate prompt variable"))
+        );
     }
 }

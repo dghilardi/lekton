@@ -9,7 +9,8 @@ pub fn UserMenu() -> impl IntoView {
     let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>()
         .expect("UserMenu must be inside App");
     let is_demo_mode = use_context::<IsDemoMode>()
-        .expect("UserMenu must be inside App").0;
+        .expect("UserMenu must be inside App")
+        .0;
 
     let logout_action = Action::new(|_: &()| async move {
         let _ = logout_user().await;

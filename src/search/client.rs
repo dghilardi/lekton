@@ -75,7 +75,11 @@ impl MeilisearchService {
         if search.url.is_empty() {
             return Err(AppError::Internal("search.url is not configured".into()));
         }
-        let api_key = if search.api_key.is_empty() { None } else { Some(search.api_key.as_str()) };
+        let api_key = if search.api_key.is_empty() {
+            None
+        } else {
+            Some(search.api_key.as_str())
+        };
         Self::new(&search.url, api_key)
     }
 

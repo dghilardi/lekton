@@ -304,7 +304,9 @@ pub async fn submit_feedback_handler(
         .ok_or_else(|| AppError::NotFound("Message not found".into()))?;
 
     if message.role != "assistant" {
-        return Err(AppError::BadRequest("Feedback can only be given on assistant messages".into()));
+        return Err(AppError::BadRequest(
+            "Feedback can only be given on assistant messages".into(),
+        ));
     }
 
     let session = chat_repo
@@ -319,7 +321,11 @@ pub async fn submit_feedback_handler(
     let rating = match body.rating.as_str() {
         "positive" => FeedbackRating::Positive,
         "negative" => FeedbackRating::Negative,
-        _ => return Err(AppError::BadRequest("rating must be 'positive' or 'negative'".into())),
+        _ => {
+            return Err(AppError::BadRequest(
+                "rating must be 'positive' or 'negative'".into(),
+            ))
+        }
     };
 
     let now = chrono::Utc::now();
@@ -474,10 +480,7 @@ async fn build_user_context(
     state: &AppState,
     user: &crate::auth::models::AuthenticatedUser,
 ) -> Result<UserContext, AppError> {
-    let permissions = state
-        .user_repo
-        .get_permissions(&user.user_id)
-        .await?;
+    let permissions = state.user_repo.get_permissions(&user.user_id).await?;
     Ok(UserContext {
         user: user.clone(),
         permissions,

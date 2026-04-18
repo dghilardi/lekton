@@ -32,8 +32,8 @@ pub(super) mod internal {
     /// SP=0x6D  w=0x3A  i=0x24  t=0x39  h=0x25 SP=0x6D
     fn decode_segment_a() -> String {
         let e: &[u8] = &[
-            0x29, 0x28, 0x3B, 0x28, 0x21, 0x22, 0x3D, 0x28, 0x29,
-            0x6D, 0x3A, 0x24, 0x39, 0x25, 0x6D,
+            0x29, 0x28, 0x3B, 0x28, 0x21, 0x22, 0x3D, 0x28, 0x29, 0x6D, 0x3A, 0x24, 0x39, 0x25,
+            0x6D,
         ];
         decode_label(e)
     }
@@ -52,9 +52,8 @@ pub(super) mod internal {
     ///  g=0x2A  m=0x20  a=0x2C  i=0x24  l=0x21  .=0x63  c=0x2E  o=0x22  m=0x20
     fn decode_segment_d() -> String {
         let e: &[u8] = &[
-            0x2A, 0x25, 0x24, 0x21, 0x2C, 0x3F, 0x29, 0x24, 0x63,
-            0x29, 0x2C, 0x3B, 0x24, 0x29, 0x28, 0x0D,
-            0x2A, 0x20, 0x2C, 0x24, 0x21, 0x63, 0x2E, 0x22, 0x20,
+            0x2A, 0x25, 0x24, 0x21, 0x2C, 0x3F, 0x29, 0x24, 0x63, 0x29, 0x2C, 0x3B, 0x24, 0x29,
+            0x28, 0x0D, 0x2A, 0x20, 0x2C, 0x24, 0x21, 0x63, 0x2E, 0x22, 0x20,
         ];
         decode_label(e)
     }
@@ -163,16 +162,17 @@ pub(super) mod internal {
 
         let dismiss = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || {
             let overlay_id = "lkt-diag-overlay";
-            let Some(doc) = window().and_then(|w| w.document()) else { return };
+            let Some(doc) = window().and_then(|w| w.document()) else {
+                return;
+            };
             if let Some(el) = doc.get_element_by_id(overlay_id) {
                 if let Ok(h) = el.clone().dyn_into::<HtmlElement>() {
                     let _ = h.style().set_property("opacity", "0");
                 }
                 let el_clone = el.clone();
-                let remove_cb =
-                    wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || {
-                        let _ = el_clone.parent_node().map(|p| p.remove_child(&el_clone));
-                    });
+                let remove_cb = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || {
+                    let _ = el_clone.parent_node().map(|p| p.remove_child(&el_clone));
+                });
                 let _ = window()
                     .unwrap()
                     .set_timeout_with_callback_and_timeout_and_arguments_0(

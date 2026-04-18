@@ -48,11 +48,17 @@ pub struct AuthFlowState {
 
 impl AuthFlowState {
     pub fn new_oauth2(csrf_token: String) -> Self {
-        Self { csrf_token, nonce: None }
+        Self {
+            csrf_token,
+            nonce: None,
+        }
     }
 
     pub fn new_oidc(csrf_token: String, nonce: String) -> Self {
-        Self { csrf_token, nonce: Some(nonce) }
+        Self {
+            csrf_token,
+            nonce: Some(nonce),
+        }
     }
 }
 
@@ -88,7 +94,10 @@ pub trait AuthProvider: Send + Sync {
 /// Resolve a dot-notation path (e.g. `"data.loginEmail"`) against a JSON value.
 ///
 /// Returns `None` if any segment along the path is missing or not an object.
-fn resolve_json_path<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+fn resolve_json_path<'a>(
+    value: &'a serde_json::Value,
+    path: &str,
+) -> Option<&'a serde_json::Value> {
     let mut current = value;
     for segment in path.split('.') {
         current = current.get(segment)?;
@@ -132,7 +141,9 @@ fn extract_name_field(
         let parts: Vec<String> = paths
             .split(',')
             .filter_map(|p| {
-                resolve_json_path(json, p.trim()).and_then(|v| v.as_str()).map(str::to_string)
+                resolve_json_path(json, p.trim())
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
             })
             .filter(|s| !s.is_empty())
             .collect();
@@ -248,7 +259,9 @@ impl AuthProvider for OAuth2AuthProvider {
     ) -> Result<UserInfo, AppError> {
         // 1. Verify CSRF state
         if returned_state != stored_state.csrf_token {
-            return Err(AppError::Auth("OAuth2 state mismatch (CSRF check failed)".into()));
+            return Err(AppError::Auth(
+                "OAuth2 state mismatch (CSRF check failed)".into(),
+            ));
         }
 
         // 2. Exchange code for access token
@@ -306,7 +319,11 @@ impl AuthProvider for OAuth2AuthProvider {
         let email = extract_field(&profile, self.email_field.as_deref(), &["email"])
             .ok_or_else(|| AppError::Auth("No email in userinfo response".into()))?;
 
-        let name = extract_name_field(&profile, self.name_field.as_deref(), &["name", "display_name"]);
+        let name = extract_name_field(
+            &profile,
+            self.name_field.as_deref(),
+            &["name", "display_name"],
+        );
 
         Ok(UserInfo { sub, email, name })
     }
@@ -400,7 +417,9 @@ impl AuthProvider for OidcAuthProvider {
     ) -> Result<UserInfo, AppError> {
         // 1. CSRF check
         if returned_state != stored_state.csrf_token {
-            return Err(AppError::Auth("OIDC state mismatch (CSRF check failed)".into()));
+            return Err(AppError::Auth(
+                "OIDC state mismatch (CSRF check failed)".into(),
+            ));
         }
 
         let expected_nonce = stored_state
@@ -425,7 +444,9 @@ impl AuthProvider for OidcAuthProvider {
 
         if !token_resp.status().is_success() {
             let body = token_resp.text().await.unwrap_or_default();
-            return Err(AppError::Auth(format!("OIDC token exchange failed: {body}")));
+            return Err(AppError::Auth(format!(
+                "OIDC token exchange failed: {body}"
+            )));
         }
 
         let token_body: serde_json::Value = token_resp
@@ -469,7 +490,9 @@ impl AuthProvider for OidcAuthProvider {
 ///
 /// Returns `None` when required auth fields are not set
 /// (auth is then unavailable but the server starts in degraded mode).
-pub async fn build_provider(auth: &crate::config::AuthConfig) -> Option<std::sync::Arc<dyn AuthProvider>> {
+pub async fn build_provider(
+    auth: &crate::config::AuthConfig,
+) -> Option<std::sync::Arc<dyn AuthProvider>> {
     let config = match AuthProviderConfig::from_app_config(auth) {
         Ok(c) => c,
         Err(e) => {
@@ -551,8 +574,14 @@ mod tests {
         let (url, state) = provider.login_url().unwrap();
 
         assert!(url.contains("my-client-id"), "URL should contain client_id");
-        assert!(url.contains(&state.csrf_token), "URL should contain csrf_token as state");
-        assert!(url.contains("read%3Auser"), "URL should contain encoded scope");
+        assert!(
+            url.contains(&state.csrf_token),
+            "URL should contain csrf_token as state"
+        );
+        assert!(
+            url.contains("read%3Auser"),
+            "URL should contain encoded scope"
+        );
         assert!(state.nonce.is_none());
     }
 

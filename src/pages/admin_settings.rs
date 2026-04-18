@@ -3,16 +3,14 @@ use leptos_router::hooks::use_params;
 use leptos_router::params::Params;
 
 use crate::app::{
-    admin_list_pats, admin_toggle_pat,
-    create_service_token, deactivate_service_token, get_custom_css, get_navigation,
-    get_navigation_order, get_rag_reindex_status, list_documentation_feedback, list_service_tokens,
-    mark_documentation_feedback_duplicate, resolve_documentation_feedback, save_custom_css,
-    save_navigation_order, trigger_rag_reindex, AdminPatInfo, CreateTokenResult,
-    DocumentationFeedbackAdminItem, DocumentationFeedbackAdminListResult, NavItem,
-    NavigationOrderEntry, ServiceTokenInfo,
+    admin_list_pats, admin_toggle_pat, create_service_token, deactivate_service_token,
+    get_custom_css, get_navigation, get_navigation_order, get_rag_reindex_status,
+    list_documentation_feedback, list_service_tokens, mark_documentation_feedback_duplicate,
+    resolve_documentation_feedback, save_custom_css, save_navigation_order, trigger_rag_reindex,
+    AdminPatInfo, CreateTokenResult, DocumentationFeedbackAdminItem,
+    DocumentationFeedbackAdminListResult, NavItem, NavigationOrderEntry, ServiceTokenInfo,
 };
 use crate::auth::refresh_client::with_auth_retry;
-
 
 #[derive(Params, PartialEq, Clone, Debug)]
 pub struct AdminParams {
@@ -32,7 +30,13 @@ pub fn AdminSettingsPage() -> impl IntoView {
     };
 
     let params = use_params::<AdminParams>();
-    let section = move || params.with(|p| p.as_ref().map(|p| p.section.clone()).unwrap_or_else(|_| "tokens".to_string()));
+    let section = move || {
+        params.with(|p| {
+            p.as_ref()
+                .map(|p| p.section.clone())
+                .unwrap_or_else(|_| "tokens".to_string())
+        })
+    };
 
     view! {
         <Show
@@ -234,7 +238,10 @@ fn TokenRow(
     let name = token.name.clone();
     let scopes: Vec<String> = token.allowed_scopes.clone();
     let created_at = token.created_at.clone();
-    let last_used = token.last_used_at.clone().unwrap_or_else(|| "Never".to_string());
+    let last_used = token
+        .last_used_at
+        .clone()
+        .unwrap_or_else(|| "Never".to_string());
     let is_active = token.is_active;
     let can_write = token.can_write;
 
@@ -330,7 +337,10 @@ fn CreateTokenForm(
         async move {
             set_error.set(None);
             set_submitting.set(true);
-            let result = with_auth_retry(|| create_service_token(name_val.clone(), scopes_val.clone(), can_write_val)).await;
+            let result = with_auth_retry(|| {
+                create_service_token(name_val.clone(), scopes_val.clone(), can_write_val)
+            })
+            .await;
             set_submitting.set(false);
             match result {
                 Ok(token_result) => {
@@ -636,7 +646,8 @@ fn DocumentationFeedbackCard(
     let status_is_open = item.status == "open";
     let item_id_for_resolve = item.id.clone();
     let item_id_for_duplicate = item.id.clone();
-    let (resolution_note, set_resolution_note) = signal(item.resolution_note.clone().unwrap_or_default());
+    let (resolution_note, set_resolution_note) =
+        signal(item.resolution_note.clone().unwrap_or_default());
     let (duplicate_of, set_duplicate_of) = signal(item.duplicate_of.clone().unwrap_or_default());
     let (error, set_error) = signal(Option::<String>::None);
 
@@ -645,7 +656,14 @@ fn DocumentationFeedbackCard(
         let note = resolution_note.get_untracked();
         async move {
             set_error.set(None);
-            match with_auth_retry(|| resolve_documentation_feedback(id.clone(), (!note.trim().is_empty()).then_some(note.clone()))).await {
+            match with_auth_retry(|| {
+                resolve_documentation_feedback(
+                    id.clone(),
+                    (!note.trim().is_empty()).then_some(note.clone()),
+                )
+            })
+            .await
+            {
                 Ok(()) => trigger_refresh(),
                 Err(err) => set_error.set(Some(err.to_string())),
             }
@@ -658,11 +676,13 @@ fn DocumentationFeedbackCard(
         let note = resolution_note.get_untracked();
         async move {
             set_error.set(None);
-            match with_auth_retry(|| mark_documentation_feedback_duplicate(
-                id.clone(),
-                duplicate_of_value.clone(),
-                (!note.trim().is_empty()).then_some(note.clone()),
-            ))
+            match with_auth_retry(|| {
+                mark_documentation_feedback_duplicate(
+                    id.clone(),
+                    duplicate_of_value.clone(),
+                    (!note.trim().is_empty()).then_some(note.clone()),
+                )
+            })
             .await
             {
                 Ok(()) => trigger_refresh(),
@@ -674,46 +694,76 @@ fn DocumentationFeedbackCard(
     let detail_sections = {
         let mut sections = Vec::new();
 
-        if let Some(view) = documentation_feedback_detail_view("Related resources", item.related_resources.clone()) {
+        if let Some(view) =
+            documentation_feedback_detail_view("Related resources", item.related_resources.clone())
+        {
             sections.push(view);
         }
-        if let Some(view) = documentation_feedback_detail_view("Search queries", item.search_queries.clone()) {
+        if let Some(view) =
+            documentation_feedback_detail_view("Search queries", item.search_queries.clone())
+        {
             sections.push(view);
         }
-        if let Some(view) = documentation_feedback_optional_view("User goal", item.user_goal.clone()) {
+        if let Some(view) =
+            documentation_feedback_optional_view("User goal", item.user_goal.clone())
+        {
             sections.push(view);
         }
-        if let Some(view) = documentation_feedback_optional_view("Missing information", item.missing_information.clone()) {
+        if let Some(view) = documentation_feedback_optional_view(
+            "Missing information",
+            item.missing_information.clone(),
+        ) {
             sections.push(view);
         }
         if let Some(view) = documentation_feedback_optional_view("Impact", item.impact.clone()) {
             sections.push(view);
         }
-        if let Some(view) = documentation_feedback_optional_view("Suggested target resource", item.suggested_target_resource.clone()) {
+        if let Some(view) = documentation_feedback_optional_view(
+            "Suggested target resource",
+            item.suggested_target_resource.clone(),
+        ) {
             sections.push(view);
         }
-        if let Some(view) = documentation_feedback_optional_view("Target resource", item.target_resource_uri.clone()) {
+        if let Some(view) = documentation_feedback_optional_view(
+            "Target resource",
+            item.target_resource_uri.clone(),
+        ) {
             sections.push(view);
         }
-        if let Some(view) = documentation_feedback_optional_view("Problem summary", item.problem_summary.clone()) {
+        if let Some(view) =
+            documentation_feedback_optional_view("Problem summary", item.problem_summary.clone())
+        {
             sections.push(view);
         }
-        if let Some(view) = documentation_feedback_optional_view("Proposal", item.proposal.clone()) {
+        if let Some(view) = documentation_feedback_optional_view("Proposal", item.proposal.clone())
+        {
             sections.push(view);
         }
-        if let Some(view) = documentation_feedback_detail_view("Supporting resources", item.supporting_resources.clone()) {
+        if let Some(view) = documentation_feedback_detail_view(
+            "Supporting resources",
+            item.supporting_resources.clone(),
+        ) {
             sections.push(view);
         }
-        if let Some(view) = documentation_feedback_optional_view("Expected benefit", item.expected_benefit.clone()) {
+        if let Some(view) =
+            documentation_feedback_optional_view("Expected benefit", item.expected_benefit.clone())
+        {
             sections.push(view);
         }
-        if let Some(view) = documentation_feedback_detail_view("Related feedback ids", item.related_feedback_ids.clone()) {
+        if let Some(view) = documentation_feedback_detail_view(
+            "Related feedback ids",
+            item.related_feedback_ids.clone(),
+        ) {
             sections.push(view);
         }
-        if let Some(view) = documentation_feedback_optional_view("Duplicate of", item.duplicate_of.clone()) {
+        if let Some(view) =
+            documentation_feedback_optional_view("Duplicate of", item.duplicate_of.clone())
+        {
             sections.push(view);
         }
-        if let Some(view) = documentation_feedback_optional_view("Resolution note", item.resolution_note.clone()) {
+        if let Some(view) =
+            documentation_feedback_optional_view("Resolution note", item.resolution_note.clone())
+        {
             sections.push(view);
         }
 
@@ -842,7 +892,10 @@ fn documentation_feedback_detail_view(title: &'static str, values: Vec<String>) 
     }.into_any())
 }
 
-fn documentation_feedback_optional_view(title: &'static str, value: Option<String>) -> Option<AnyView> {
+fn documentation_feedback_optional_view(
+    title: &'static str,
+    value: Option<String>,
+) -> Option<AnyView> {
     let Some(value) = value.filter(|value| !value.trim().is_empty()) else {
         return None;
     };
@@ -1223,7 +1276,10 @@ fn NavigationOrderEditor() -> impl IntoView {
 }
 
 /// Reorder sections in-place based on weight map, preserving hierarchy.
-fn reorder_by_weights(sections: &mut Vec<OrderableItem>, weights: &std::collections::HashMap<String, i32>) {
+fn reorder_by_weights(
+    sections: &mut Vec<OrderableItem>,
+    weights: &std::collections::HashMap<String, i32>,
+) {
     // Group items by (level, parent_prefix) and sort within each group
     // We need to identify groups of siblings at the same level
     let mut i = 0;
@@ -1256,7 +1312,8 @@ fn reorder_by_weights(sections: &mut Vec<OrderableItem>, weights: &std::collecti
             let mut groups: Vec<Vec<OrderableItem>> = Vec::new();
             for &si in sibling_indices.iter().rev() {
                 // Find the subtree: from si to next sibling (or end)
-                let subtree_end = sibling_indices.iter()
+                let subtree_end = sibling_indices
+                    .iter()
                     .find(|&&j| j > si && sections[j].level == level)
                     .copied()
                     .unwrap_or(end);
@@ -1269,7 +1326,8 @@ fn reorder_by_weights(sections: &mut Vec<OrderableItem>, weights: &std::collecti
             groups.sort_by(|a, b| {
                 let aw = weights.get(&a[0].slug).copied().unwrap_or(i32::MAX);
                 let bw = weights.get(&b[0].slug).copied().unwrap_or(i32::MAX);
-                aw.cmp(&bw).then_with(|| a[0].title.to_lowercase().cmp(&b[0].title.to_lowercase()))
+                aw.cmp(&bw)
+                    .then_with(|| a[0].title.to_lowercase().cmp(&b[0].title.to_lowercase()))
             });
 
             // Reconstruct the range
@@ -1672,7 +1730,10 @@ fn AdminPatManager() -> impl IntoView {
         let id = id.clone();
         let active = *active;
         async move {
-            if with_auth_retry(|| admin_toggle_pat(id.clone(), active)).await.is_ok() {
+            if with_auth_retry(|| admin_toggle_pat(id.clone(), active))
+                .await
+                .is_ok()
+            {
                 pats_resource.refetch();
             }
         }

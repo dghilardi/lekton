@@ -84,9 +84,7 @@ impl DocumentVersionRepository for MongoDocumentVersionRepository {
         use mongodb::bson::doc;
         use mongodb::options::FindOptions;
 
-        let options = FindOptions::builder()
-            .sort(doc! { "version": -1 })
-            .build();
+        let options = FindOptions::builder().sort(doc! { "version": -1 }).build();
 
         let mut cursor = self
             .collection

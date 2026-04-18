@@ -29,7 +29,10 @@ async fn seed_defaults_idempotent() {
     env.access_level_repo.seed_defaults().await.unwrap();
     let second_count = env.access_level_repo.list_all().await.unwrap().len();
 
-    assert_eq!(first_count, second_count, "seed_defaults must be idempotent");
+    assert_eq!(
+        first_count, second_count,
+        "seed_defaults must be idempotent"
+    );
 }
 
 #[tokio::test]
@@ -63,5 +66,8 @@ async fn list_all_sorted_by_sort_order() {
 
     let mut sorted = orders.clone();
     sorted.sort();
-    assert_eq!(orders, sorted, "list_all should return levels sorted by sort_order");
+    assert_eq!(
+        orders, sorted,
+        "list_all should return levels sorted by sort_order"
+    );
 }

@@ -1,8 +1,8 @@
 mod common;
 
+use lekton::auth::token_service::TokenService;
 use lekton::db::service_token_models::{scopes_overlap, ServiceToken};
 use lekton::db::service_token_repository::ServiceTokenRepository;
-use lekton::auth::token_service::TokenService;
 
 // ── Repository CRUD ──────────────────────────────────────────────────────────
 
@@ -152,10 +152,7 @@ async fn deactivate_sets_inactive() {
 async fn deactivate_nonexistent_returns_error() {
     let env = common::TestEnv::start().await;
 
-    let result = env
-        .service_token_repo
-        .deactivate("nonexistent-id")
-        .await;
+    let result = env.service_token_repo.deactivate("nonexistent-id").await;
     assert!(result.is_err());
 }
 

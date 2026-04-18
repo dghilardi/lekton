@@ -59,7 +59,10 @@ pub struct LoginResponse {
 }
 
 /// Validate demo credentials and return the corresponding [`AuthenticatedUser`].
-pub fn authenticate_demo_user(username: &str, password: &str) -> Result<AuthenticatedUser, AppError> {
+pub fn authenticate_demo_user(
+    username: &str,
+    password: &str,
+) -> Result<AuthenticatedUser, AppError> {
     DEMO_USERS
         .iter()
         .find(|u| u.username == username && u.password == password)
@@ -122,9 +125,7 @@ pub async fn me_handler(
 
 /// `POST /api/auth/logout` — Clears the demo session cookie.
 #[cfg(feature = "ssr")]
-pub async fn logout_handler(
-    jar: axum_extra::extract::CookieJar,
-) -> axum_extra::extract::CookieJar {
+pub async fn logout_handler(jar: axum_extra::extract::CookieJar) -> axum_extra::extract::CookieJar {
     let cookie = axum_extra::extract::cookie::Cookie::build(("lekton_demo_user", ""))
         .path("/")
         .removal()

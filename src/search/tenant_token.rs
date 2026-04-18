@@ -180,7 +180,9 @@ mod tests {
         .unwrap();
 
         let payload = decode_payload(&token);
-        let filter = payload["searchRules"]["documents"]["filter"].as_str().unwrap();
+        let filter = payload["searchRules"]["documents"]["filter"]
+            .as_str()
+            .unwrap();
         assert!(filter.contains("\"public\""));
         assert!(filter.contains("is_draft = false"));
     }

@@ -86,7 +86,15 @@ async fn schema_ingest_adds_version_to_existing() {
     let name = format!("api-{}", uuid::Uuid::new_v4());
 
     // Ingest v1
-    ingest_schema(&server, &name, "openapi", "1.0.0", "stable", &openapi_spec()).await;
+    ingest_schema(
+        &server,
+        &name,
+        "openapi",
+        "1.0.0",
+        "stable",
+        &openapi_spec(),
+    )
+    .await;
 
     // Ingest v2
     ingest_schema(&server, &name, "openapi", "2.0.0", "beta", &openapi_spec()).await;
@@ -106,7 +114,15 @@ async fn schema_ingest_updates_existing_version() {
     let name = format!("api-{}", uuid::Uuid::new_v4());
 
     // Ingest v1 as stable
-    ingest_schema(&server, &name, "openapi", "1.0.0", "stable", &openapi_spec()).await;
+    ingest_schema(
+        &server,
+        &name,
+        "openapi",
+        "1.0.0",
+        "stable",
+        &openapi_spec(),
+    )
+    .await;
 
     // Re-ingest v1 as deprecated
     ingest_schema(
@@ -172,7 +188,15 @@ async fn schema_list_returns_all_schemas() {
     let name_a = format!("api-a-{}", uuid::Uuid::new_v4());
     let name_b = format!("api-b-{}", uuid::Uuid::new_v4());
 
-    ingest_schema(&server, &name_a, "openapi", "1.0.0", "stable", &openapi_spec()).await;
+    ingest_schema(
+        &server,
+        &name_a,
+        "openapi",
+        "1.0.0",
+        "stable",
+        &openapi_spec(),
+    )
+    .await;
     ingest_schema(
         &server,
         &name_b,
@@ -201,8 +225,24 @@ async fn schema_get_returns_detail_with_versions() {
 
     let name = format!("api-{}", uuid::Uuid::new_v4());
 
-    ingest_schema(&server, &name, "openapi", "1.0.0", "deprecated", &openapi_spec()).await;
-    ingest_schema(&server, &name, "openapi", "2.0.0", "stable", &openapi_spec()).await;
+    ingest_schema(
+        &server,
+        &name,
+        "openapi",
+        "1.0.0",
+        "deprecated",
+        &openapi_spec(),
+    )
+    .await;
+    ingest_schema(
+        &server,
+        &name,
+        "openapi",
+        "2.0.0",
+        "stable",
+        &openapi_spec(),
+    )
+    .await;
 
     let response = server.get(&format!("/api/v1/schemas/{}", name)).await;
     let detail: SchemaDetail = response.json();
@@ -235,9 +275,7 @@ async fn schema_get_version_content() {
 
     ingest_schema(&server, &name, "openapi", "1.0.0", "stable", &spec).await;
 
-    let response = server
-        .get(&format!("/api/v1/schemas/{}/1.0.0", name))
-        .await;
+    let response = server.get(&format!("/api/v1/schemas/{}/1.0.0", name)).await;
 
     let content = response.text();
     assert!(content.contains("openapi"));
@@ -251,12 +289,18 @@ async fn schema_get_version_not_found() {
 
     let name = format!("api-{}", uuid::Uuid::new_v4());
 
-    ingest_schema(&server, &name, "openapi", "1.0.0", "stable", &openapi_spec()).await;
+    ingest_schema(
+        &server,
+        &name,
+        "openapi",
+        "1.0.0",
+        "stable",
+        &openapi_spec(),
+    )
+    .await;
 
     let server = env.server_permissive();
-    let response = server
-        .get(&format!("/api/v1/schemas/{}/9.9.9", name))
-        .await;
+    let response = server.get(&format!("/api/v1/schemas/{}/9.9.9", name)).await;
 
     response.assert_status_not_found();
 }
@@ -287,7 +331,15 @@ async fn schema_full_lifecycle() {
     let name = format!("lifecycle-api-{}", uuid::Uuid::new_v4());
 
     // 1. Ingest v1
-    ingest_schema(&server, &name, "openapi", "1.0.0", "stable", &openapi_spec()).await;
+    ingest_schema(
+        &server,
+        &name,
+        "openapi",
+        "1.0.0",
+        "stable",
+        &openapi_spec(),
+    )
+    .await;
 
     // 2. Ingest v2 beta
     ingest_schema(&server, &name, "openapi", "2.0.0", "beta", &openapi_spec()).await;

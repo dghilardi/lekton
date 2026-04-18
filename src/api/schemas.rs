@@ -110,10 +110,7 @@ pub async fn process_schema_ingest(
     } else {
         "yaml"
     };
-    let s3_key = format!(
-        "schemas/{}/{}.{}",
-        request.name, request.version, extension
-    );
+    let s3_key = format!("schemas/{}/{}.{}", request.name, request.version, extension);
 
     // 7. Upload content to S3
     storage
@@ -141,9 +138,7 @@ pub async fn process_schema_ingest(
                 v.status = new_version.status;
                 schema_repo.create_or_update(schema).await?;
             } else {
-                schema_repo
-                    .add_version(&request.name, new_version)
-                    .await?;
+                schema_repo.add_version(&request.name, new_version).await?;
             }
         }
         None => {
@@ -198,9 +193,8 @@ pub async fn process_get_schema(
 ) -> Result<SchemaDetail, AppError> {
     let schema = schema_repo.find_by_name(name).await?;
 
-    let schema = schema.ok_or_else(|| {
-        AppError::NotFound(format!("Schema '{}' not found", name))
-    })?;
+    let schema =
+        schema.ok_or_else(|| AppError::NotFound(format!("Schema '{}' not found", name)))?;
 
     Ok(SchemaDetail {
         name: schema.name,
@@ -226,9 +220,8 @@ pub async fn process_get_schema_content(
 ) -> Result<String, AppError> {
     let schema = schema_repo.find_by_name(name).await?;
 
-    let schema = schema.ok_or_else(|| {
-        AppError::NotFound(format!("Schema '{}' not found", name))
-    })?;
+    let schema =
+        schema.ok_or_else(|| AppError::NotFound(format!("Schema '{}' not found", name)))?;
 
     let ver = schema
         .versions
@@ -357,9 +350,7 @@ mod tests {
             let schema = schemas
                 .iter_mut()
                 .find(|s| s.name == schema_name)
-                .ok_or_else(|| {
-                    AppError::NotFound(format!("Schema '{}' not found", schema_name))
-                })?;
+                .ok_or_else(|| AppError::NotFound(format!("Schema '{}' not found", schema_name)))?;
 
             if schema.versions.iter().any(|v| v.version == version.version) {
                 return Err(AppError::BadRequest(format!(
@@ -377,10 +368,7 @@ mod tests {
             let len_before = schemas.len();
             schemas.retain(|s| s.name != name);
             if schemas.len() == len_before {
-                return Err(AppError::NotFound(format!(
-                    "Schema '{}' not found",
-                    name
-                )));
+                return Err(AppError::NotFound(format!("Schema '{}' not found", name)));
             }
             Ok(())
         }
@@ -404,8 +392,7 @@ mod tests {
         let storage = MockStorage::new();
         let request = make_schema_request("valid-token", "test-api", "1.0.0");
 
-        let result =
-            process_schema_ingest(&repo, &storage, request, "valid-token").await;
+        let result = process_schema_ingest(&repo, &storage, request, "valid-token").await;
 
         assert!(result.is_ok());
         let response = result.unwrap();
@@ -426,8 +413,7 @@ mod tests {
         let storage = MockStorage::new();
         let request = make_schema_request("wrong-token", "test-api", "1.0.0");
 
-        let result =
-            process_schema_ingest(&repo, &storage, request, "valid-token").await;
+        let result = process_schema_ingest(&repo, &storage, request, "valid-token").await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -442,8 +428,7 @@ mod tests {
         let storage = MockStorage::new();
         let request = make_schema_request("valid-token", "", "1.0.0");
 
-        let result =
-            process_schema_ingest(&repo, &storage, request, "valid-token").await;
+        let result = process_schema_ingest(&repo, &storage, request, "valid-token").await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -459,8 +444,7 @@ mod tests {
         let mut request = make_schema_request("valid-token", "test-api", "1.0.0");
         request.schema_type = "graphql".to_string();
 
-        let result =
-            process_schema_ingest(&repo, &storage, request, "valid-token").await;
+        let result = process_schema_ingest(&repo, &storage, request, "valid-token").await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -476,8 +460,7 @@ mod tests {
         let mut request = make_schema_request("valid-token", "test-api", "1.0.0");
         request.status = "released".to_string();
 
-        let result =
-            process_schema_ingest(&repo, &storage, request, "valid-token").await;
+        let result = process_schema_ingest(&repo, &storage, request, "valid-token").await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -537,10 +520,9 @@ mod tests {
         let mut request = make_schema_request("valid-token", "test-api", "1.0.0");
         request.content = "openapi: '3.0.0'\ninfo:\n  title: Test".to_string();
 
-        let result =
-            process_schema_ingest(&repo, &storage, request, "valid-token")
-                .await
-                .unwrap();
+        let result = process_schema_ingest(&repo, &storage, request, "valid-token")
+            .await
+            .unwrap();
 
         assert!(result.s3_key.ends_with(".yaml"));
     }
@@ -603,10 +585,9 @@ mod tests {
             .await
             .unwrap();
 
-        let content =
-            process_get_schema_content(&repo, &storage, "test-api", "1.0.0")
-                .await
-                .unwrap();
+        let content = process_get_schema_content(&repo, &storage, "test-api", "1.0.0")
+            .await
+            .unwrap();
 
         assert!(content.contains("openapi"));
     }
@@ -621,8 +602,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result =
-            process_get_schema_content(&repo, &storage, "test-api", "9.9.9").await;
+        let result = process_get_schema_content(&repo, &storage, "test-api", "9.9.9").await;
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::NotFound(msg) => assert!(msg.contains("9.9.9")),

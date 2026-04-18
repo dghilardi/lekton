@@ -8,8 +8,8 @@ use crate::storage::client::StorageClient;
 
 /// Compute the SHA-256 content hash for an asset in `sha256:<base64url>` format.
 pub fn compute_content_hash(data: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
     use base64::engine::{general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    use sha2::{Digest, Sha256};
     let hash = Sha256::digest(data);
     format!("sha256:{}", URL_SAFE_NO_PAD.encode(hash))
 }
@@ -137,10 +137,9 @@ pub async fn process_serve_asset(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Asset '{}' not found", key)))?;
 
-    let data = storage
-        .get_object(&asset.s3_key)
-        .await?
-        .ok_or_else(|| AppError::Storage(format!("Asset content missing in storage for '{}'", key)))?;
+    let data = storage.get_object(&asset.s3_key).await?.ok_or_else(|| {
+        AppError::Storage(format!("Asset content missing in storage for '{}'", key))
+    })?;
 
     Ok((asset.content_type, data))
 }
@@ -356,8 +355,7 @@ pub async fn upload_asset_handler(
 
     let service_token =
         service_token.ok_or_else(|| AppError::BadRequest("Missing service_token field".into()))?;
-    let data =
-        file_data.ok_or_else(|| AppError::BadRequest("Missing file field".into()))?;
+    let data = file_data.ok_or_else(|| AppError::BadRequest("Missing file field".into()))?;
     let content_type = content_type.unwrap_or_else(|| "application/octet-stream".to_string());
 
     let response = process_upload_asset(
@@ -391,11 +389,7 @@ pub async fn serve_asset_handler(
     )
     .await?;
 
-    Ok((
-        [(axum::http::header::CONTENT_TYPE, content_type)],
-        data,
-    )
-        .into_response())
+    Ok(([(axum::http::header::CONTENT_TYPE, content_type)], data).into_response())
 }
 
 /// Axum handler for `GET /api/v1/assets`.
@@ -404,11 +398,7 @@ pub async fn list_assets_handler(
     axum::extract::State(state): axum::extract::State<crate::app::AppState>,
     axum::extract::Query(query): axum::extract::Query<ListAssetsQuery>,
 ) -> Result<axum::Json<Vec<AssetListItem>>, AppError> {
-    let items = process_list_assets(
-        state.asset_repo.as_ref(),
-        query.prefix.as_deref(),
-    )
-    .await?;
+    let items = process_list_assets(state.asset_repo.as_ref(), query.prefix.as_deref()).await?;
 
     Ok(axum::Json(items))
 }
@@ -459,12 +449,7 @@ pub async fn editor_upload_asset_handler(
     {
         let name = field.name().unwrap_or("").to_string();
         if name == "file" {
-            file_name = Some(
-                field
-                    .file_name()
-                    .unwrap_or("upload.bin")
-                    .to_string(),
-            );
+            file_name = Some(field.file_name().unwrap_or("upload.bin").to_string());
             content_type = Some(
                 field
                     .content_type()
@@ -556,10 +541,7 @@ mod tests {
             let len_before = assets.len();
             assets.retain(|a| a.key != key);
             if assets.len() == len_before {
-                return Err(AppError::NotFound(format!(
-                    "Asset '{}' not found",
-                    key
-                )));
+                return Err(AppError::NotFound(format!("Asset '{}' not found", key)));
             }
             Ok(())
         }
@@ -572,8 +554,14 @@ mod tests {
         let data = b"hello world".to_vec();
 
         let result = process_upload_asset(
-            &repo, &storage, "project/file.txt", "text/plain", data,
-            "ci-bot", "valid-token", "valid-token",
+            &repo,
+            &storage,
+            "project/file.txt",
+            "text/plain",
+            data,
+            "ci-bot",
+            "valid-token",
+            "valid-token",
             DEFAULT_MAX_ATTACHMENT_SIZE,
         )
         .await;
@@ -601,8 +589,14 @@ mod tests {
         let storage = MockStorage::new();
 
         let result = process_upload_asset(
-            &repo, &storage, "file.txt", "text/plain", vec![1, 2, 3],
-            "ci-bot", "valid-token", "wrong-token",
+            &repo,
+            &storage,
+            "file.txt",
+            "text/plain",
+            vec![1, 2, 3],
+            "ci-bot",
+            "valid-token",
+            "wrong-token",
             DEFAULT_MAX_ATTACHMENT_SIZE,
         )
         .await;
@@ -620,8 +614,14 @@ mod tests {
         let storage = MockStorage::new();
 
         let result = process_upload_asset(
-            &repo, &storage, "", "text/plain", vec![1],
-            "ci-bot", "valid-token", "valid-token",
+            &repo,
+            &storage,
+            "",
+            "text/plain",
+            vec![1],
+            "ci-bot",
+            "valid-token",
+            "valid-token",
             DEFAULT_MAX_ATTACHMENT_SIZE,
         )
         .await;
@@ -639,8 +639,14 @@ mod tests {
         let storage = MockStorage::new();
 
         let result = process_upload_asset(
-            &repo, &storage, "project/../secret/file.txt", "text/plain", vec![1],
-            "ci-bot", "valid-token", "valid-token",
+            &repo,
+            &storage,
+            "project/../secret/file.txt",
+            "text/plain",
+            vec![1],
+            "ci-bot",
+            "valid-token",
+            "valid-token",
             DEFAULT_MAX_ATTACHMENT_SIZE,
         )
         .await;
@@ -658,8 +664,14 @@ mod tests {
         let storage = MockStorage::new();
 
         let result = process_upload_asset(
-            &repo, &storage, "/absolute/path.txt", "text/plain", vec![1],
-            "ci-bot", "valid-token", "valid-token",
+            &repo,
+            &storage,
+            "/absolute/path.txt",
+            "text/plain",
+            vec![1],
+            "ci-bot",
+            "valid-token",
+            "valid-token",
             DEFAULT_MAX_ATTACHMENT_SIZE,
         )
         .await;
@@ -678,8 +690,14 @@ mod tests {
 
         // Upload initial version
         process_upload_asset(
-            &repo, &storage, "logo.png", "image/png", vec![1, 2, 3],
-            "ci-bot", "valid-token", "valid-token",
+            &repo,
+            &storage,
+            "logo.png",
+            "image/png",
+            vec![1, 2, 3],
+            "ci-bot",
+            "valid-token",
+            "valid-token",
             DEFAULT_MAX_ATTACHMENT_SIZE,
         )
         .await
@@ -693,8 +711,14 @@ mod tests {
 
         // Upload replacement
         process_upload_asset(
-            &repo, &storage, "logo.png", "image/png", vec![4, 5, 6, 7],
-            "ci-bot", "valid-token", "valid-token",
+            &repo,
+            &storage,
+            "logo.png",
+            "image/png",
+            vec![4, 5, 6, 7],
+            "ci-bot",
+            "valid-token",
+            "valid-token",
             DEFAULT_MAX_ATTACHMENT_SIZE,
         )
         .await
@@ -713,8 +737,14 @@ mod tests {
 
         // Upload first
         process_upload_asset(
-            &repo, &storage, "docs/manual.pdf", "application/pdf", content.clone(),
-            "ci-bot", "valid-token", "valid-token",
+            &repo,
+            &storage,
+            "docs/manual.pdf",
+            "application/pdf",
+            content.clone(),
+            "ci-bot",
+            "valid-token",
+            "valid-token",
             DEFAULT_MAX_ATTACHMENT_SIZE,
         )
         .await
@@ -750,8 +780,14 @@ mod tests {
 
         for name in &["a/file1.txt", "b/file2.txt", "c/file3.txt"] {
             process_upload_asset(
-                &repo, &storage, name, "text/plain", vec![1],
-                "ci-bot", "valid-token", "valid-token",
+                &repo,
+                &storage,
+                name,
+                "text/plain",
+                vec![1],
+                "ci-bot",
+                "valid-token",
+                "valid-token",
                 DEFAULT_MAX_ATTACHMENT_SIZE,
             )
             .await
@@ -767,17 +803,29 @@ mod tests {
         let repo = MockAssetRepo::new();
         let storage = MockStorage::new();
 
-        for name in &["project-a/config.yaml", "project-a/logo.png", "project-b/readme.md"] {
+        for name in &[
+            "project-a/config.yaml",
+            "project-a/logo.png",
+            "project-b/readme.md",
+        ] {
             process_upload_asset(
-                &repo, &storage, name, "text/plain", vec![1],
-                "ci-bot", "valid-token", "valid-token",
+                &repo,
+                &storage,
+                name,
+                "text/plain",
+                vec![1],
+                "ci-bot",
+                "valid-token",
+                "valid-token",
                 DEFAULT_MAX_ATTACHMENT_SIZE,
             )
             .await
             .unwrap();
         }
 
-        let list = process_list_assets(&repo, Some("project-a/")).await.unwrap();
+        let list = process_list_assets(&repo, Some("project-a/"))
+            .await
+            .unwrap();
         assert_eq!(list.len(), 2);
     }
 
@@ -787,15 +835,25 @@ mod tests {
         let storage = MockStorage::new();
 
         process_upload_asset(
-            &repo, &storage, "temp/file.txt", "text/plain", vec![1, 2, 3],
-            "ci-bot", "valid-token", "valid-token",
+            &repo,
+            &storage,
+            "temp/file.txt",
+            "text/plain",
+            vec![1, 2, 3],
+            "ci-bot",
+            "valid-token",
+            "valid-token",
             DEFAULT_MAX_ATTACHMENT_SIZE,
         )
         .await
         .unwrap();
 
         let result = process_delete_asset(
-            &repo, &storage, "temp/file.txt", "valid-token", "valid-token",
+            &repo,
+            &storage,
+            "temp/file.txt",
+            "valid-token",
+            "valid-token",
         )
         .await;
 
@@ -805,7 +863,12 @@ mod tests {
         assert!(repo.find_by_key("temp/file.txt").await.unwrap().is_none());
 
         // Verify removed from storage
-        assert!(storage.objects.lock().unwrap().get("assets/temp/file.txt").is_none());
+        assert!(storage
+            .objects
+            .lock()
+            .unwrap()
+            .get("assets/temp/file.txt")
+            .is_none());
     }
 
     #[tokio::test]
@@ -814,7 +877,11 @@ mod tests {
         let storage = MockStorage::new();
 
         let result = process_delete_asset(
-            &repo, &storage, "nonexistent.txt", "valid-token", "valid-token",
+            &repo,
+            &storage,
+            "nonexistent.txt",
+            "valid-token",
+            "valid-token",
         )
         .await;
 
@@ -831,17 +898,21 @@ mod tests {
         let storage = MockStorage::new();
 
         process_upload_asset(
-            &repo, &storage, "file.txt", "text/plain", vec![1],
-            "ci-bot", "valid-token", "valid-token",
+            &repo,
+            &storage,
+            "file.txt",
+            "text/plain",
+            vec![1],
+            "ci-bot",
+            "valid-token",
+            "valid-token",
             DEFAULT_MAX_ATTACHMENT_SIZE,
         )
         .await
         .unwrap();
 
-        let result = process_delete_asset(
-            &repo, &storage, "file.txt", "valid-token", "wrong-token",
-        )
-        .await;
+        let result =
+            process_delete_asset(&repo, &storage, "file.txt", "valid-token", "wrong-token").await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -908,8 +979,14 @@ mod tests {
 
         // Upload an asset so it exists with a known hash
         process_upload_asset(
-            &repo, &storage, "existing.txt", "text/plain", b"hello".to_vec(),
-            "ci-bot", "valid-token", "valid-token",
+            &repo,
+            &storage,
+            "existing.txt",
+            "text/plain",
+            b"hello".to_vec(),
+            "ci-bot",
+            "valid-token",
+            "valid-token",
             DEFAULT_MAX_ATTACHMENT_SIZE,
         )
         .await
@@ -919,17 +996,32 @@ mod tests {
 
         let entries = vec![
             // Same hash — should NOT be in to_upload
-            CheckHashEntry { key: "existing.txt".to_string(), content_hash: existing_hash.clone() },
+            CheckHashEntry {
+                key: "existing.txt".to_string(),
+                content_hash: existing_hash.clone(),
+            },
             // Different hash — should be in to_upload
-            CheckHashEntry { key: "existing.txt".to_string(), content_hash: "sha256:different".to_string() },
+            CheckHashEntry {
+                key: "existing.txt".to_string(),
+                content_hash: "sha256:different".to_string(),
+            },
             // Missing key — should be in to_upload
-            CheckHashEntry { key: "missing.txt".to_string(), content_hash: "sha256:whatever".to_string() },
+            CheckHashEntry {
+                key: "missing.txt".to_string(),
+                content_hash: "sha256:whatever".to_string(),
+            },
         ];
 
         // Use a unique key for the "different hash" case
         let entries = vec![
-            CheckHashEntry { key: "existing.txt".to_string(), content_hash: existing_hash },
-            CheckHashEntry { key: "missing.txt".to_string(), content_hash: "sha256:whatever".to_string() },
+            CheckHashEntry {
+                key: "existing.txt".to_string(),
+                content_hash: existing_hash,
+            },
+            CheckHashEntry {
+                key: "missing.txt".to_string(),
+                content_hash: "sha256:whatever".to_string(),
+            },
         ];
 
         let result = process_check_hashes(&repo, &entries, "valid-token", "valid-token")
@@ -958,8 +1050,14 @@ mod tests {
         let storage = MockStorage::new();
 
         process_upload_asset(
-            &repo, &storage, "file.txt", "text/plain", b"version1".to_vec(),
-            "ci-bot", "valid-token", "valid-token",
+            &repo,
+            &storage,
+            "file.txt",
+            "text/plain",
+            b"version1".to_vec(),
+            "ci-bot",
+            "valid-token",
+            "valid-token",
             DEFAULT_MAX_ATTACHMENT_SIZE,
         )
         .await
@@ -967,9 +1065,10 @@ mod tests {
 
         let new_hash = compute_content_hash(b"version2");
 
-        let entries = vec![
-            CheckHashEntry { key: "file.txt".to_string(), content_hash: new_hash },
-        ];
+        let entries = vec![CheckHashEntry {
+            key: "file.txt".to_string(),
+            content_hash: new_hash,
+        }];
 
         let result = process_check_hashes(&repo, &entries, "valid-token", "valid-token")
             .await

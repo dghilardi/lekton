@@ -10,8 +10,14 @@ async fn ingest_creates_document() {
 
     let slug = format!("ingest-create-{}", uuid::Uuid::new_v4());
 
-    env.ingest(&server, &slug, "Test Document", "# Hello\nWorld", "developer")
-        .await;
+    env.ingest(
+        &server,
+        &slug,
+        "Test Document",
+        "# Hello\nWorld",
+        "developer",
+    )
+    .await;
 
     // Verify document exists in MongoDB
     let doc = env.repo.find_by_slug(&slug).await.unwrap();
@@ -153,8 +159,14 @@ async fn ingest_preserves_hierarchy_on_update() {
     assert_eq!(doc.order, 5);
 
     // Re-ingest without parent_slug (should preserve existing)
-    env.ingest(&server, &slug, "Child Doc Updated", "# Updated Child", "developer")
-        .await;
+    env.ingest(
+        &server,
+        &slug,
+        "Child Doc Updated",
+        "# Updated Child",
+        "developer",
+    )
+    .await;
 
     let doc = env.repo.find_by_slug(&slug).await.unwrap().unwrap();
     assert_eq!(doc.title, "Child Doc Updated");
@@ -171,7 +183,8 @@ async fn ingest_extracts_and_stores_links() {
     let server = env.server();
 
     let slug = format!("ingest-links-{}", uuid::Uuid::new_v4());
-    let content = "# Doc with links\n\nSee [setup guide](/docs/setup) and [deploy guide](/docs/deploy).";
+    let content =
+        "# Doc with links\n\nSee [setup guide](/docs/setup) and [deploy guide](/docs/deploy).";
 
     env.ingest(&server, &slug, "Doc with Links", content, "developer")
         .await;

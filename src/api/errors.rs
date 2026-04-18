@@ -16,15 +16,24 @@ impl IntoResponse for AppError {
             AppError::Auth(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
             AppError::Database(msg) => {
                 tracing::error!("Database error: {msg}");
-                (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string())
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal server error".to_string(),
+                )
             }
             AppError::Storage(msg) => {
                 tracing::error!("Storage error: {msg}");
-                (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string())
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal server error".to_string(),
+                )
             }
             AppError::Internal(msg) => {
                 tracing::error!("Internal error: {msg}");
-                (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string())
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal server error".to_string(),
+                )
             }
         };
 

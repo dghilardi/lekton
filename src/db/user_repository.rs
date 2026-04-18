@@ -95,24 +95,18 @@ impl UserRepository for MongoUserRepository {
     // ── Users ────────────────────────────────────────────────────────────────
 
     async fn create_user(&self, user: User) -> Result<(), AppError> {
-        self.users
-            .insert_one(&user)
-            .await?;
+        self.users.insert_one(&user).await?;
         Ok(())
     }
 
     async fn find_user_by_id(&self, id: &str) -> Result<Option<User>, AppError> {
         use mongodb::bson::doc;
-        Ok(self.users
-            .find_one(doc! { "id": id })
-            .await?)
+        Ok(self.users.find_one(doc! { "id": id }).await?)
     }
 
     async fn find_user_by_email(&self, email: &str) -> Result<Option<User>, AppError> {
         use mongodb::bson::doc;
-        Ok(self.users
-            .find_one(doc! { "email": email })
-            .await?)
+        Ok(self.users.find_one(doc! { "email": email }).await?)
     }
 
     async fn find_user_by_provider_sub(
@@ -121,7 +115,8 @@ impl UserRepository for MongoUserRepository {
         provider_type: &str,
     ) -> Result<Option<User>, AppError> {
         use mongodb::bson::doc;
-        Ok(self.users
+        Ok(self
+            .users
             .find_one(doc! { "provider_sub": sub, "provider_type": provider_type })
             .await?)
     }
@@ -142,16 +137,10 @@ impl UserRepository for MongoUserRepository {
     async fn list_users(&self) -> Result<Vec<User>, AppError> {
         use futures::TryStreamExt;
 
-        let mut cursor = self
-            .users
-            .find(mongodb::bson::doc! {})
-            .await?;
+        let mut cursor = self.users.find(mongodb::bson::doc! {}).await?;
 
         let mut users = Vec::new();
-        while let Some(u) = cursor
-            .try_next()
-            .await?
-        {
+        while let Some(u) = cursor.try_next().await? {
             users.push(u);
         }
         Ok(users)
@@ -180,16 +169,10 @@ impl UserRepository for MongoUserRepository {
         use futures::TryStreamExt;
         use mongodb::bson::doc;
 
-        let mut cursor = self
-            .permissions
-            .find(doc! { "user_id": user_id })
-            .await?;
+        let mut cursor = self.permissions.find(doc! { "user_id": user_id }).await?;
 
         let mut perms = Vec::new();
-        while let Some(p) = cursor
-            .try_next()
-            .await?
-        {
+        while let Some(p) = cursor.try_next().await? {
             perms.push(p);
         }
         Ok(perms)
@@ -211,9 +194,7 @@ impl UserRepository for MongoUserRepository {
     // ── Refresh tokens ───────────────────────────────────────────────────────
 
     async fn create_refresh_token(&self, token: RefreshToken) -> Result<(), AppError> {
-        self.refresh_tokens
-            .insert_one(&token)
-            .await?;
+        self.refresh_tokens.insert_one(&token).await?;
         Ok(())
     }
 
@@ -223,7 +204,8 @@ impl UserRepository for MongoUserRepository {
     ) -> Result<Option<RefreshToken>, AppError> {
         use mongodb::bson::doc;
 
-        Ok(self.refresh_tokens
+        Ok(self
+            .refresh_tokens
             .find_one(doc! { "token_hash": hash })
             .await?)
     }
@@ -324,23 +306,45 @@ mod tests {
     #[tokio::test]
     async fn test_find_user_by_provider_sub() {
         let repo = MockUserRepository::default();
-        repo.create_user(make_user("u1", "a@test.com")).await.unwrap();
+        repo.create_user(make_user("u1", "a@test.com"))
+            .await
+            .unwrap();
 
-        let found = repo.find_user_by_provider_sub("sub-u1", "oidc").await.unwrap();
+        let found = repo
+            .find_user_by_provider_sub("sub-u1", "oidc")
+            .await
+            .unwrap();
         assert!(found.is_some());
 
-        let not_found = repo.find_user_by_provider_sub("sub-u1", "oauth2").await.unwrap();
+        let not_found = repo
+            .find_user_by_provider_sub("sub-u1", "oauth2")
+            .await
+            .unwrap();
         assert!(not_found.is_none());
     }
 
     #[tokio::test]
     async fn test_touch_last_login() {
         let repo = MockUserRepository::default();
-        repo.create_user(make_user("u1", "a@test.com")).await.unwrap();
-        assert!(repo.find_user_by_id("u1").await.unwrap().unwrap().last_login_at.is_none());
+        repo.create_user(make_user("u1", "a@test.com"))
+            .await
+            .unwrap();
+        assert!(repo
+            .find_user_by_id("u1")
+            .await
+            .unwrap()
+            .unwrap()
+            .last_login_at
+            .is_none());
 
         repo.touch_last_login("u1").await.unwrap();
-        assert!(repo.find_user_by_id("u1").await.unwrap().unwrap().last_login_at.is_some());
+        assert!(repo
+            .find_user_by_id("u1")
+            .await
+            .unwrap()
+            .unwrap()
+            .last_login_at
+            .is_some());
     }
 
     // ── Permission tests ──────────────────────────────────────────────────────
@@ -348,7 +352,9 @@ mod tests {
     #[tokio::test]
     async fn test_upsert_permission_creates_new() {
         let repo = MockUserRepository::default();
-        repo.upsert_permission(make_perm("u1", "public", true, false)).await.unwrap();
+        repo.upsert_permission(make_perm("u1", "public", true, false))
+            .await
+            .unwrap();
 
         let perms = repo.get_permissions("u1").await.unwrap();
         assert_eq!(perms.len(), 1);
@@ -358,8 +364,12 @@ mod tests {
     #[tokio::test]
     async fn test_upsert_permission_replaces_existing() {
         let repo = MockUserRepository::default();
-        repo.upsert_permission(make_perm("u1", "public", true, false)).await.unwrap();
-        repo.upsert_permission(make_perm("u1", "public", true, true)).await.unwrap();
+        repo.upsert_permission(make_perm("u1", "public", true, false))
+            .await
+            .unwrap();
+        repo.upsert_permission(make_perm("u1", "public", true, true))
+            .await
+            .unwrap();
 
         let perms = repo.get_permissions("u1").await.unwrap();
         assert_eq!(perms.len(), 1, "upsert must not duplicate");
@@ -369,8 +379,12 @@ mod tests {
     #[tokio::test]
     async fn test_delete_permission() {
         let repo = MockUserRepository::default();
-        repo.upsert_permission(make_perm("u1", "public", true, false)).await.unwrap();
-        repo.upsert_permission(make_perm("u1", "internal", true, false)).await.unwrap();
+        repo.upsert_permission(make_perm("u1", "public", true, false))
+            .await
+            .unwrap();
+        repo.upsert_permission(make_perm("u1", "internal", true, false))
+            .await
+            .unwrap();
 
         repo.delete_permission("u1", "internal").await.unwrap();
         let perms = repo.get_permissions("u1").await.unwrap();
@@ -383,7 +397,9 @@ mod tests {
     #[tokio::test]
     async fn test_find_refresh_token_by_hash() {
         let repo = MockUserRepository::default();
-        repo.create_refresh_token(make_token("u1", "hash-abc", true)).await.unwrap();
+        repo.create_refresh_token(make_token("u1", "hash-abc", true))
+            .await
+            .unwrap();
 
         let found = repo.find_refresh_token_by_hash("hash-abc").await.unwrap();
         assert!(found.is_some());
@@ -398,22 +414,47 @@ mod tests {
         repo.create_refresh_token(token).await.unwrap();
 
         repo.revoke_refresh_token(&token_id).await.unwrap();
-        let found = repo.find_refresh_token_by_hash("hash-xyz").await.unwrap().unwrap();
+        let found = repo
+            .find_refresh_token_by_hash("hash-xyz")
+            .await
+            .unwrap()
+            .unwrap();
         assert!(!found.is_valid());
     }
 
     #[tokio::test]
     async fn test_revoke_all_user_tokens() {
         let repo = MockUserRepository::default();
-        repo.create_refresh_token(make_token("u1", "hash-1", true)).await.unwrap();
-        repo.create_refresh_token(make_token("u1", "hash-2", true)).await.unwrap();
-        repo.create_refresh_token(make_token("u2", "hash-3", true)).await.unwrap();
+        repo.create_refresh_token(make_token("u1", "hash-1", true))
+            .await
+            .unwrap();
+        repo.create_refresh_token(make_token("u1", "hash-2", true))
+            .await
+            .unwrap();
+        repo.create_refresh_token(make_token("u2", "hash-3", true))
+            .await
+            .unwrap();
 
         repo.revoke_all_user_tokens("u1").await.unwrap();
 
-        assert!(!repo.find_refresh_token_by_hash("hash-1").await.unwrap().unwrap().is_valid());
-        assert!(!repo.find_refresh_token_by_hash("hash-2").await.unwrap().unwrap().is_valid());
+        assert!(!repo
+            .find_refresh_token_by_hash("hash-1")
+            .await
+            .unwrap()
+            .unwrap()
+            .is_valid());
+        assert!(!repo
+            .find_refresh_token_by_hash("hash-2")
+            .await
+            .unwrap()
+            .unwrap()
+            .is_valid());
         // u2's token should be unaffected
-        assert!(repo.find_refresh_token_by_hash("hash-3").await.unwrap().unwrap().is_valid());
+        assert!(repo
+            .find_refresh_token_by_hash("hash-3")
+            .await
+            .unwrap()
+            .unwrap()
+            .is_valid());
     }
 }

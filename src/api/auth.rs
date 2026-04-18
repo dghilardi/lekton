@@ -16,9 +16,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::AppState;
 use crate::auth::extractor::{
-    access_token_cookie, auth_state_cookie, clear_access_token_cookie,
-    clear_auth_state_cookie, clear_refresh_token_cookie, refresh_token_cookie,
-    OptionalAuthUser, AUTH_STATE_COOKIE, REFRESH_TOKEN_COOKIE,
+    access_token_cookie, auth_state_cookie, clear_access_token_cookie, clear_auth_state_cookie,
+    clear_refresh_token_cookie, refresh_token_cookie, OptionalAuthUser, AUTH_STATE_COOKIE,
+    REFRESH_TOKEN_COOKIE,
 };
 use crate::auth::middleware::build_user_from_claims;
 use crate::auth::models::AuthenticatedUser;
@@ -63,7 +63,10 @@ pub async fn upsert_user_after_login(
     name: Option<String>,
     provider_type: &str,
 ) -> Result<AuthenticatedUser, AppError> {
-    if let Some(existing) = user_repo.find_user_by_provider_sub(sub, provider_type).await? {
+    if let Some(existing) = user_repo
+        .find_user_by_provider_sub(sub, provider_type)
+        .await?
+    {
         user_repo.touch_last_login(&existing.id).await?;
         return Ok(AuthenticatedUser {
             user_id: existing.id,
@@ -116,8 +119,8 @@ pub async fn issue_token_pair(
     let access_token = token_service.generate_access_token(user)?;
     let (refresh_raw, refresh_hash) = token_service.generate_refresh_token();
 
-    let expires_at = chrono::Utc::now()
-        + chrono::Duration::days(token_service.refresh_token_ttl_days());
+    let expires_at =
+        chrono::Utc::now() + chrono::Duration::days(token_service.refresh_token_ttl_days());
 
     user_repo
         .create_refresh_token(RefreshToken {
@@ -199,8 +202,12 @@ pub async fn callback_handler(
     .await?;
 
     // Issue tokens
-    let (access_token, refresh_token) =
-        issue_token_pair(app_state.user_repo.as_ref(), &app_state.token_service, &auth_user).await?;
+    let (access_token, refresh_token) = issue_token_pair(
+        app_state.user_repo.as_ref(),
+        &app_state.token_service,
+        &auth_user,
+    )
+    .await?;
 
     let ttl_secs = app_state.token_service.access_token_ttl_secs();
     let ttl_days = app_state.token_service.refresh_token_ttl_days();
@@ -253,9 +260,12 @@ pub async fn refresh_handler(
 
     // Revoke old token and issue new pair
     app_state.user_repo.revoke_refresh_token(&stored.id).await?;
-    let (access_token, new_refresh) =
-        issue_token_pair(app_state.user_repo.as_ref(), &app_state.token_service, &auth_user)
-            .await?;
+    let (access_token, new_refresh) = issue_token_pair(
+        app_state.user_repo.as_ref(),
+        &app_state.token_service,
+        &auth_user,
+    )
+    .await?;
 
     let ttl_secs = app_state.token_service.access_token_ttl_secs();
     let ttl_days = app_state.token_service.refresh_token_ttl_days();
@@ -337,28 +347,26 @@ mod tests {
         let user = upsert_user_after_login(&repo, "sub-1", "a@test.com", None, "oidc")
             .await
             .unwrap();
-        assert!(
-            repo.find_user_by_id(&user.user_id)
-                .await
-                .unwrap()
-                .unwrap()
-                .last_login_at
-                .is_none()
-        );
+        assert!(repo
+            .find_user_by_id(&user.user_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .last_login_at
+            .is_none());
 
         // Second login — should touch last_login_at
         let user2 = upsert_user_after_login(&repo, "sub-1", "a@test.com", None, "oidc")
             .await
             .unwrap();
         assert_eq!(user.user_id, user2.user_id, "same user returned");
-        assert!(
-            repo.find_user_by_id(&user.user_id)
-                .await
-                .unwrap()
-                .unwrap()
-                .last_login_at
-                .is_some()
-        );
+        assert!(repo
+            .find_user_by_id(&user.user_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .last_login_at
+            .is_some());
     }
 
     #[tokio::test]
@@ -406,7 +414,11 @@ mod tests {
             }
         }
 
-        let stored = repo.find_refresh_token_by_hash(&hash).await.unwrap().unwrap();
+        let stored = repo
+            .find_refresh_token_by_hash(&hash)
+            .await
+            .unwrap()
+            .unwrap();
         assert!(!stored.is_valid(), "expired token should be invalid");
     }
 }

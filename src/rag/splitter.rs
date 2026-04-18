@@ -42,7 +42,11 @@ mod tests {
         let paragraph = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ";
         let content = paragraph.repeat(50); // ~2850 chars
         let chunks = split_document(&content);
-        assert!(chunks.len() > 1, "expected multiple chunks, got {}", chunks.len());
+        assert!(
+            chunks.len() > 1,
+            "expected multiple chunks, got {}",
+            chunks.len()
+        );
         for chunk in &chunks {
             assert!(
                 chunk.len() <= CHUNK_SIZE + 100, // small tolerance for word boundaries

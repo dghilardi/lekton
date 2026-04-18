@@ -90,7 +90,12 @@ struct FrontMatter {
     #[serde(alias = "is-hidden", alias = "isHidden")]
     is_hidden: Option<bool>,
     /// Must be `true` for the file to be synced to Lekton.
-    #[serde(rename = "lekton-import", alias = "lektonImport", alias = "lekton_import", default)]
+    #[serde(
+        rename = "lekton-import",
+        alias = "lektonImport",
+        alias = "lekton_import",
+        default
+    )]
     lekton_import: bool,
 }
 
@@ -566,10 +571,7 @@ fn scan_documents(root: &Path, config: &LektonConfig) -> Result<HashMap<String, 
         .filter_map(|e| e.ok())
         .filter(|e| {
             e.file_type().is_file()
-                && e.path()
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    == Some("md")
+                && e.path().extension().and_then(|ext| ext.to_str()) == Some("md")
         })
     {
         let path = entry.path();
@@ -602,12 +604,10 @@ fn scan_documents(root: &Path, config: &LektonConfig) -> Result<HashMap<String, 
         };
 
         let parent_slug = match &config.slug_prefix {
-            Some(prefix) if !prefix.is_empty() => {
-                match parsed_parent {
-                    Some(ref p) => Some(format!("{prefix}/{p}")),
-                    None => Some(prefix.clone()),
-                }
-            }
+            Some(prefix) if !prefix.is_empty() => match parsed_parent {
+                Some(ref p) => Some(format!("{prefix}/{p}")),
+                None => Some(prefix.clone()),
+            },
             _ => parsed_parent,
         };
 
@@ -725,18 +725,21 @@ fn scan_prompts(root: &Path, config: &LektonConfig) -> Result<HashMap<String, Pr
             .clone()
             .unwrap_or_else(|| prompt_slug_from_path(path, &prompt_root));
         let slug = apply_prefix(prompt_prefix, &raw_slug);
-        let name = prompt_file
-            .name
-            .clone()
-            .unwrap_or_else(|| raw_slug.split('/').last().unwrap_or(&raw_slug).replace('-', " "));
-        let description = prompt_file
-            .description
-            .clone()
-            .context(format!("Prompt '{}' is missing 'description'", path.display()))?;
-        let prompt_body = prompt_file
-            .prompt_body
-            .clone()
-            .context(format!("Prompt '{}' is missing 'prompt_body'", path.display()))?;
+        let name = prompt_file.name.clone().unwrap_or_else(|| {
+            raw_slug
+                .split('/')
+                .last()
+                .unwrap_or(&raw_slug)
+                .replace('-', " ")
+        });
+        let description = prompt_file.description.clone().context(format!(
+            "Prompt '{}' is missing 'description'",
+            path.display()
+        ))?;
+        let prompt_body = prompt_file.prompt_body.clone().context(format!(
+            "Prompt '{}' is missing 'prompt_body'",
+            path.display()
+        ))?;
         let access_level = prompt_file
             .access_level
             .clone()
@@ -748,14 +751,23 @@ fn scan_prompts(root: &Path, config: &LektonConfig) -> Result<HashMap<String, Pr
             .or_else(|| config.default_service_owner.clone())
             .unwrap_or_default();
         if owner.trim().is_empty() {
-            bail!("Prompt '{}' is missing 'owner' and no default_service_owner is configured", path.display());
+            bail!(
+                "Prompt '{}' is missing 'owner' and no default_service_owner is configured",
+                path.display()
+            );
         }
-        let status = prompt_file.status.clone().unwrap_or_else(|| "active".to_string());
+        let status = prompt_file
+            .status
+            .clone()
+            .unwrap_or_else(|| "active".to_string());
         let tags = prompt_file.tags.clone().unwrap_or_default();
         let variables = prompt_file.variables.clone().unwrap_or_default();
         let publish_to_mcp = prompt_file.publish_to_mcp.unwrap_or(false);
         let default_primary = prompt_file.default_primary.unwrap_or(false);
-        let context_cost = prompt_file.context_cost.clone().unwrap_or_else(|| "medium".to_string());
+        let context_cost = prompt_file
+            .context_cost
+            .clone()
+            .unwrap_or_else(|| "medium".to_string());
 
         let content_hash = compute_hash(&prompt_body);
         let metadata_hash = compute_prompt_metadata_hash(
@@ -803,7 +815,11 @@ const INITIAL_BACKOFF_MS: u64 = 500;
 /// Sleep with exponential backoff if the response is 429 (Too Many Requests).
 /// Returns `true` if the caller should retry, `false` if retries are exhausted
 /// or the response was not 429.
-async fn backoff_on_429(response: &reqwest::Response, attempt: &mut u32, backoff_ms: &mut u64) -> bool {
+async fn backoff_on_429(
+    response: &reqwest::Response,
+    attempt: &mut u32,
+    backoff_ms: &mut u64,
+) -> bool {
     if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && *attempt < MAX_RETRIES {
         *attempt += 1;
         eprintln!(
@@ -870,7 +886,11 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    println!("Found {} document(s) and {} prompt(s)", docs.len(), prompts.len());
+    println!(
+        "Found {} document(s) and {} prompt(s)",
+        docs.len(),
+        prompts.len()
+    );
 
     // ── Call sync API ─────────────────────────────────────────────────────────
     let client = reqwest::Client::new();
@@ -919,7 +939,11 @@ async fn main() -> Result<()> {
         );
         result
     } else {
-        SyncResponse { to_upload: vec![], to_archive: vec![], unchanged: vec![] }
+        SyncResponse {
+            to_upload: vec![],
+            to_archive: vec![],
+            unchanged: vec![],
+        }
     };
 
     let prompt_sync_result = if !prompts.is_empty() || archive_missing {
@@ -967,7 +991,11 @@ async fn main() -> Result<()> {
         );
         result
     } else {
-        PromptSyncResponse { to_upload: vec![], to_archive: vec![], unchanged: vec![] }
+        PromptSyncResponse {
+            to_upload: vec![],
+            to_archive: vec![],
+            unchanged: vec![],
+        }
     };
 
     // ── Collect attachments for ALL documents ────────────────────────────────
@@ -996,11 +1024,7 @@ async fn main() -> Result<()> {
         if !all_attachments.is_empty() {
             println!("\nWould upload attachments:");
             for (key, att) in &all_attachments {
-                println!(
-                    "  + {} ({:.1} KB)",
-                    key,
-                    att.size_bytes as f64 / 1024.0,
-                );
+                println!("  + {} ({:.1} KB)", key, att.size_bytes as f64 / 1024.0,);
             }
         }
         if !sync_result.to_upload.is_empty() {
@@ -1082,7 +1106,10 @@ async fn main() -> Result<()> {
 
         let unchanged_count = all_attachments.len() - to_upload_set.len();
         if unchanged_count > 0 {
-            println!("{unchanged_count} attachment(s) unchanged, {} to upload", to_upload_set.len());
+            println!(
+                "{unchanged_count} attachment(s) unchanged, {} to upload",
+                to_upload_set.len()
+            );
         }
 
         // Upload each attachment that needs it
@@ -1109,7 +1136,8 @@ async fn main() -> Result<()> {
             }
 
             let upload_url = format!("{base_url}/api/v1/assets/{key}");
-            let file_name = att.disk_path
+            let file_name = att
+                .disk_path
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "file".to_string());
@@ -1190,10 +1218,15 @@ async fn main() -> Result<()> {
 
         match result {
             Ok(r) if r.status().is_success() => {
-                let ingest: IngestResponse = r.json().await.unwrap_or(IngestResponse { changed: true });
+                let ingest: IngestResponse =
+                    r.json().await.unwrap_or(IngestResponse { changed: true });
                 uploaded += 1;
                 if args.verbose {
-                    let note = if ingest.changed { "updated" } else { "metadata only" };
+                    let note = if ingest.changed {
+                        "updated"
+                    } else {
+                        "metadata only"
+                    };
                     println!("  uploaded: {slug} ({note})");
                 } else {
                     println!("  uploaded: {slug}");
@@ -1246,7 +1279,12 @@ async fn main() -> Result<()> {
         let mut attempt = 0u32;
         let mut backoff_ms = INITIAL_BACKOFF_MS;
         let result = loop {
-            match client.post(&prompt_ingest_url).json(&ingest_body).send().await {
+            match client
+                .post(&prompt_ingest_url)
+                .json(&ingest_body)
+                .send()
+                .await
+            {
                 Ok(r) if backoff_on_429(&r, &mut attempt, &mut backoff_ms).await => continue,
                 other => break other,
             }
@@ -1254,10 +1292,17 @@ async fn main() -> Result<()> {
 
         match result {
             Ok(r) if r.status().is_success() => {
-                let ingest: PromptIngestResponse = r.json().await.unwrap_or(PromptIngestResponse { changed: true });
+                let ingest: PromptIngestResponse = r
+                    .json()
+                    .await
+                    .unwrap_or(PromptIngestResponse { changed: true });
                 prompts_uploaded += 1;
                 if args.verbose {
-                    let note = if ingest.changed { "updated" } else { "metadata only" };
+                    let note = if ingest.changed {
+                        "updated"
+                    } else {
+                        "metadata only"
+                    };
                     println!("  uploaded prompt: {slug} ({note})");
                 } else {
                     println!("  uploaded prompt: {slug}");
@@ -1472,7 +1517,10 @@ mod tests {
         let refs = extract_local_file_refs(md, Path::new("/docs/guides"));
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].raw_path, "../shared/logo.svg");
-        assert_eq!(refs[0].disk_path, PathBuf::from("/docs/guides/../shared/logo.svg"));
+        assert_eq!(
+            refs[0].disk_path,
+            PathBuf::from("/docs/guides/../shared/logo.svg")
+        );
     }
 
     #[test]
@@ -1494,7 +1542,11 @@ mod tests {
 ![already](/api/v1/assets/something.png)
 "#;
         let refs = extract_local_file_refs(md, Path::new("/docs"));
-        assert!(refs.is_empty(), "Should skip all external/absolute/anchor refs, got: {:?}", refs);
+        assert!(
+            refs.is_empty(),
+            "Should skip all external/absolute/anchor refs, got: {:?}",
+            refs
+        );
     }
 
     #[test]
@@ -1578,7 +1630,9 @@ mod tests {
         let doc = docs.values().next().unwrap();
         assert_eq!(doc.attachments.len(), 1);
         assert_eq!(doc.attachments[0].asset_key, "attachments/guide/logo.png");
-        assert!(doc.rewritten_content.contains("/api/v1/assets/attachments/guide/logo.png"));
+        assert!(doc
+            .rewritten_content
+            .contains("/api/v1/assets/attachments/guide/logo.png"));
         // Original content should still have the local path
         assert!(doc.content.contains("images/logo.png"));
     }

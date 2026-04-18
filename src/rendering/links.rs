@@ -68,9 +68,7 @@ pub fn is_internal_link(url: &str) -> bool {
 ///
 /// Strips the `/docs/` prefix, removes anchor fragments and trailing slashes.
 pub fn normalize_link(url: &str) -> String {
-    let stripped = url
-        .trim_start_matches('/')
-        .trim_start_matches("docs/");
+    let stripped = url.trim_start_matches('/').trim_start_matches("docs/");
 
     // Remove anchor fragment
     let without_anchor = stripped.split('#').next().unwrap_or("");
@@ -134,7 +132,10 @@ See [getting started](/docs/getting-started) and [architecture](/docs/architectu
 Also check [API reference](/docs/api-reference).
 "#;
         let links = extract_internal_links(md);
-        assert_eq!(links, vec!["getting-started", "architecture", "api-reference"]);
+        assert_eq!(
+            links,
+            vec!["getting-started", "architecture", "api-reference"]
+        );
     }
 
     #[test]

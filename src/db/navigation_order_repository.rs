@@ -54,15 +54,9 @@ impl NavigationOrderRepository for MongoNavigationOrderRepository {
         use mongodb::bson::doc;
         use mongodb::options::FindOptions;
 
-        let options = FindOptions::builder()
-            .sort(doc! { "weight": 1 })
-            .build();
+        let options = FindOptions::builder().sort(doc! { "weight": 1 }).build();
 
-        let mut cursor = self
-            .collection
-            .find(doc! {})
-            .with_options(options)
-            .await?;
+        let mut cursor = self.collection.find(doc! {}).with_options(options).await?;
 
         let mut entries = Vec::new();
         while let Some(entry) = cursor.try_next().await? {
@@ -78,9 +72,7 @@ impl NavigationOrderRepository for MongoNavigationOrderRepository {
         self.collection.delete_many(doc! {}).await?;
 
         if !entries.is_empty() {
-            self.collection
-                .insert_many(&entries)
-                .await?;
+            self.collection.insert_many(&entries).await?;
         }
 
         Ok(())

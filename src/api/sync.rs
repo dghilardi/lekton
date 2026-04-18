@@ -53,12 +53,8 @@ pub async fn process_sync(
     use std::collections::HashMap;
 
     // 1. Validate the service token and determine scopes
-    let scopes = validate_sync_token(
-        service_token_repo,
-        legacy_token,
-        &request.service_token,
-    )
-    .await?;
+    let scopes =
+        validate_sync_token(service_token_repo, legacy_token, &request.service_token).await?;
 
     // 2. Validate all request slugs fall within the token's scopes
     for entry in &request.documents {
@@ -112,14 +108,18 @@ pub async fn process_sync(
     for entry in &request.documents {
         match server_docs.get(&entry.slug) {
             Some((server_content_hash, server_metadata_hash)) => {
-                let content_ok = server_content_hash.as_deref() == Some(entry.content_hash.as_str());
+                let content_ok =
+                    server_content_hash.as_deref() == Some(entry.content_hash.as_str());
                 // Metadata comparison: only enforced when both sides provide a hash.
                 // If the client sends a metadata_hash but the server has None (old
                 // document), we treat it as changed so the metadata_hash gets stored.
-                let metadata_ok = match (entry.metadata_hash.as_deref(), server_metadata_hash.as_deref()) {
+                let metadata_ok = match (
+                    entry.metadata_hash.as_deref(),
+                    server_metadata_hash.as_deref(),
+                ) {
                     (Some(c), Some(s)) => c == s,
                     (Some(_), None) => false, // server has no metadata hash yet → upload to populate it
-                    (None, _) => true,         // old CLI without metadata_hash → assume unchanged
+                    (None, _) => true,        // old CLI without metadata_hash → assume unchanged
                 };
                 if content_ok && metadata_ok {
                     unchanged.push(entry.slug.clone());
@@ -252,7 +252,9 @@ mod tests {
 
     impl MockSearchService {
         fn new() -> Self {
-            Self { deleted: Mutex::new(vec![]) }
+            Self {
+                deleted: Mutex::new(vec![]),
+            }
         }
 
         fn deleted_slugs(&self) -> Vec<String> {
@@ -262,13 +264,27 @@ mod tests {
 
     #[async_trait]
     impl crate::search::client::SearchService for MockSearchService {
-        async fn index_document(&self, _: &crate::search::client::SearchDocument) -> Result<(), AppError> { Ok(()) }
+        async fn index_document(
+            &self,
+            _: &crate::search::client::SearchDocument,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
         async fn delete_document(&self, slug: &str) -> Result<(), AppError> {
             self.deleted.lock().unwrap().push(slug.to_string());
             Ok(())
         }
-        async fn search(&self, _: &str, _: Option<&[String]>, _: bool) -> Result<Vec<crate::search::client::SearchHit>, AppError> { Ok(vec![]) }
-        async fn configure_index(&self) -> Result<(), AppError> { Ok(()) }
+        async fn search(
+            &self,
+            _: &str,
+            _: Option<&[String]>,
+            _: bool,
+        ) -> Result<Vec<crate::search::client::SearchHit>, AppError> {
+            Ok(vec![])
+        }
+        async fn configure_index(&self) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     struct MockRepo {
@@ -298,12 +314,27 @@ mod tests {
             Ok(())
         }
         async fn find_by_slug(&self, slug: &str) -> Result<Option<Document>, AppError> {
-            Ok(self.documents.lock().unwrap().iter().find(|d| d.slug == slug).cloned())
+            Ok(self
+                .documents
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|d| d.slug == slug)
+                .cloned())
         }
-        async fn list_by_access_levels(&self, _: Option<&[String]>, _: bool) -> Result<Vec<Document>, AppError> {
+        async fn list_by_access_levels(
+            &self,
+            _: Option<&[String]>,
+            _: bool,
+        ) -> Result<Vec<Document>, AppError> {
             Ok(self.documents.lock().unwrap().clone())
         }
-        async fn update_backlinks(&self, _: &str, _: &[String], _: &[String]) -> Result<(), AppError> {
+        async fn update_backlinks(
+            &self,
+            _: &str,
+            _: &[String],
+            _: &[String],
+        ) -> Result<(), AppError> {
             Ok(())
         }
         async fn find_by_slug_prefix(&self, prefix: &str) -> Result<Vec<Document>, AppError> {
@@ -334,18 +365,50 @@ mod tests {
 
     #[async_trait]
     impl ServiceTokenRepository for MockServiceTokenRepo {
-        async fn create(&self, _: ServiceToken) -> Result<(), AppError> { Ok(()) }
-        async fn find_by_hash(&self, _: &str) -> Result<Option<ServiceToken>, AppError> { Ok(None) }
-        async fn find_by_name(&self, _: &str) -> Result<Option<ServiceToken>, AppError> { Ok(None) }
-        async fn find_by_id(&self, _: &str) -> Result<Option<ServiceToken>, AppError> { Ok(None) }
-        async fn list_all(&self) -> Result<Vec<ServiceToken>, AppError> { Ok(vec![]) }
-        async fn deactivate(&self, _: &str) -> Result<(), AppError> { Ok(()) }
-        async fn touch_last_used(&self, _: &str) -> Result<(), AppError> { Ok(()) }
-        async fn check_scope_overlap(&self, _: &[String], _: Option<&str>) -> Result<bool, AppError> { Ok(false) }
-        async fn set_active(&self, _: &str, _: bool) -> Result<(), AppError> { Ok(()) }
-        async fn list_by_user_id(&self, _: &str) -> Result<Vec<ServiceToken>, AppError> { Ok(vec![]) }
-        async fn list_pats_paginated(&self, _: u64, _: u64) -> Result<(Vec<ServiceToken>, u64), AppError> { Ok((vec![], 0)) }
-        async fn delete_pat(&self, _: &str, _: &str) -> Result<(), AppError> { Ok(()) }
+        async fn create(&self, _: ServiceToken) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn find_by_hash(&self, _: &str) -> Result<Option<ServiceToken>, AppError> {
+            Ok(None)
+        }
+        async fn find_by_name(&self, _: &str) -> Result<Option<ServiceToken>, AppError> {
+            Ok(None)
+        }
+        async fn find_by_id(&self, _: &str) -> Result<Option<ServiceToken>, AppError> {
+            Ok(None)
+        }
+        async fn list_all(&self) -> Result<Vec<ServiceToken>, AppError> {
+            Ok(vec![])
+        }
+        async fn deactivate(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn touch_last_used(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn check_scope_overlap(
+            &self,
+            _: &[String],
+            _: Option<&str>,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        async fn set_active(&self, _: &str, _: bool) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn list_by_user_id(&self, _: &str) -> Result<Vec<ServiceToken>, AppError> {
+            Ok(vec![])
+        }
+        async fn list_pats_paginated(
+            &self,
+            _: u64,
+            _: u64,
+        ) -> Result<(Vec<ServiceToken>, u64), AppError> {
+            Ok((vec![], 0))
+        }
+        async fn delete_pat(&self, _: &str, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     fn make_doc(slug: &str, hash: &str) -> Document {
@@ -509,20 +572,54 @@ mod tests {
         struct ScopedTokenRepo(ServiceToken);
         #[async_trait]
         impl ServiceTokenRepository for ScopedTokenRepo {
-            async fn create(&self, _: ServiceToken) -> Result<(), AppError> { Ok(()) }
-            async fn find_by_hash(&self, hash: &str) -> Result<Option<ServiceToken>, AppError> {
-                if hash == self.0.token_hash { Ok(Some(self.0.clone())) } else { Ok(None) }
+            async fn create(&self, _: ServiceToken) -> Result<(), AppError> {
+                Ok(())
             }
-            async fn find_by_name(&self, _: &str) -> Result<Option<ServiceToken>, AppError> { Ok(None) }
-            async fn find_by_id(&self, _: &str) -> Result<Option<ServiceToken>, AppError> { Ok(None) }
-            async fn list_all(&self) -> Result<Vec<ServiceToken>, AppError> { Ok(vec![]) }
-            async fn deactivate(&self, _: &str) -> Result<(), AppError> { Ok(()) }
-            async fn touch_last_used(&self, _: &str) -> Result<(), AppError> { Ok(()) }
-            async fn check_scope_overlap(&self, _: &[String], _: Option<&str>) -> Result<bool, AppError> { Ok(false) }
-            async fn set_active(&self, _: &str, _: bool) -> Result<(), AppError> { Ok(()) }
-            async fn list_by_user_id(&self, _: &str) -> Result<Vec<ServiceToken>, AppError> { Ok(vec![]) }
-            async fn list_pats_paginated(&self, _: u64, _: u64) -> Result<(Vec<ServiceToken>, u64), AppError> { Ok((vec![], 0)) }
-            async fn delete_pat(&self, _: &str, _: &str) -> Result<(), AppError> { Ok(()) }
+            async fn find_by_hash(&self, hash: &str) -> Result<Option<ServiceToken>, AppError> {
+                if hash == self.0.token_hash {
+                    Ok(Some(self.0.clone()))
+                } else {
+                    Ok(None)
+                }
+            }
+            async fn find_by_name(&self, _: &str) -> Result<Option<ServiceToken>, AppError> {
+                Ok(None)
+            }
+            async fn find_by_id(&self, _: &str) -> Result<Option<ServiceToken>, AppError> {
+                Ok(None)
+            }
+            async fn list_all(&self) -> Result<Vec<ServiceToken>, AppError> {
+                Ok(vec![])
+            }
+            async fn deactivate(&self, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            async fn touch_last_used(&self, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            async fn check_scope_overlap(
+                &self,
+                _: &[String],
+                _: Option<&str>,
+            ) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            async fn set_active(&self, _: &str, _: bool) -> Result<(), AppError> {
+                Ok(())
+            }
+            async fn list_by_user_id(&self, _: &str) -> Result<Vec<ServiceToken>, AppError> {
+                Ok(vec![])
+            }
+            async fn list_pats_paginated(
+                &self,
+                _: u64,
+                _: u64,
+            ) -> Result<(Vec<ServiceToken>, u64), AppError> {
+                Ok((vec![], 0))
+            }
+            async fn delete_pat(&self, _: &str, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
         }
 
         let repo = MockRepo::new();
@@ -607,7 +704,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_sync_metadata_hash_match_is_unchanged() {
-        let repo = MockRepo::with_docs(vec![make_doc_with_meta("docs/a", "sha256:content", "sha256:meta")]);
+        let repo = MockRepo::with_docs(vec![make_doc_with_meta(
+            "docs/a",
+            "sha256:content",
+            "sha256:meta",
+        )]);
         let token_repo = MockServiceTokenRepo;
         let request = SyncRequest {
             service_token: "legacy".to_string(),
@@ -622,14 +723,21 @@ mod tests {
         let result = process_sync(&repo, &token_repo, None, Some("legacy"), request)
             .await
             .unwrap();
-        assert!(result.to_upload.is_empty(), "should be unchanged when both hashes match");
+        assert!(
+            result.to_upload.is_empty(),
+            "should be unchanged when both hashes match"
+        );
         assert_eq!(result.unchanged, vec!["docs/a"]);
     }
 
     #[tokio::test]
     async fn test_sync_metadata_hash_mismatch_triggers_upload() {
         // content hash matches, but metadata (e.g. access_level) changed
-        let repo = MockRepo::with_docs(vec![make_doc_with_meta("docs/a", "sha256:content", "sha256:old-meta")]);
+        let repo = MockRepo::with_docs(vec![make_doc_with_meta(
+            "docs/a",
+            "sha256:content",
+            "sha256:old-meta",
+        )]);
         let token_repo = MockServiceTokenRepo;
         let request = SyncRequest {
             service_token: "legacy".to_string(),
@@ -644,7 +752,11 @@ mod tests {
         let result = process_sync(&repo, &token_repo, None, Some("legacy"), request)
             .await
             .unwrap();
-        assert_eq!(result.to_upload, vec!["docs/a"], "should upload when metadata hash differs");
+        assert_eq!(
+            result.to_upload,
+            vec!["docs/a"],
+            "should upload when metadata hash differs"
+        );
         assert!(result.unchanged.is_empty());
     }
 
@@ -666,13 +778,21 @@ mod tests {
         let result = process_sync(&repo, &token_repo, None, Some("legacy"), request)
             .await
             .unwrap();
-        assert_eq!(result.to_upload, vec!["docs/a"], "should upload when server has no metadata_hash");
+        assert_eq!(
+            result.to_upload,
+            vec!["docs/a"],
+            "should upload when server has no metadata_hash"
+        );
     }
 
     #[tokio::test]
     async fn test_sync_no_metadata_hash_from_client_is_backwards_compat() {
         // Old CLI without metadata_hash → treat as unchanged if content matches
-        let repo = MockRepo::with_docs(vec![make_doc_with_meta("docs/a", "sha256:content", "sha256:meta")]);
+        let repo = MockRepo::with_docs(vec![make_doc_with_meta(
+            "docs/a",
+            "sha256:content",
+            "sha256:meta",
+        )]);
         let token_repo = MockServiceTokenRepo;
         let request = SyncRequest {
             service_token: "legacy".to_string(),
@@ -687,7 +807,10 @@ mod tests {
         let result = process_sync(&repo, &token_repo, None, Some("legacy"), request)
             .await
             .unwrap();
-        assert!(result.to_upload.is_empty(), "old CLI without metadata_hash should be treated as unchanged");
+        assert!(
+            result.to_upload.is_empty(),
+            "old CLI without metadata_hash should be treated as unchanged"
+        );
         assert_eq!(result.unchanged, vec!["docs/a"]);
     }
 }

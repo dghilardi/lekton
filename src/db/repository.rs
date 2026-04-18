@@ -90,9 +90,7 @@ impl DocumentRepository for MongoDocumentRepository {
     async fn find_by_slug(&self, slug: &str) -> Result<Option<Document>, AppError> {
         use mongodb::bson::doc;
 
-        Ok(self.collection
-            .find_one(doc! { "slug": slug })
-            .await?)
+        Ok(self.collection.find_one(doc! { "slug": slug }).await?)
     }
 
     async fn list_by_access_levels(
@@ -117,10 +115,7 @@ impl DocumentRepository for MongoDocumentRepository {
         ];
 
         if let Some(levels) = allowed_levels {
-            let bson_levels: Vec<Bson> = levels
-                .iter()
-                .map(|l| Bson::String(l.clone()))
-                .collect();
+            let bson_levels: Vec<Bson> = levels.iter().map(|l| Bson::String(l.clone())).collect();
             filter_parts.push(doc! { "access_level": { "$in": bson_levels } });
         }
 
@@ -139,17 +134,10 @@ impl DocumentRepository for MongoDocumentRepository {
             .sort(doc! { "order": 1, "slug": 1 })
             .build();
 
-        let mut cursor = self
-            .collection
-            .find(filter)
-            .with_options(options)
-            .await?;
+        let mut cursor = self.collection.find(filter).with_options(options).await?;
 
         let mut documents = Vec::new();
-        while let Some(document) = cursor
-            .try_next()
-            .await?
-        {
+        while let Some(document) = cursor.try_next().await? {
             documents.push(document);
         }
 
@@ -251,7 +239,9 @@ impl DocumentRepository for MongoDocumentRepository {
 /// Escape special regex characters in a string for use in MongoDB regex queries.
 #[cfg(feature = "ssr")]
 fn regex_escape(s: &str) -> String {
-    let special = ['.', '*', '+', '?', '(', ')', '[', ']', '{', '}', '\\', '^', '$', '|'];
+    let special = [
+        '.', '*', '+', '?', '(', ')', '[', ']', '{', '}', '\\', '^', '$', '|',
+    ];
     let mut escaped = String::with_capacity(s.len());
     for c in s.chars() {
         if special.contains(&c) {

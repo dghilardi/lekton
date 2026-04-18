@@ -89,10 +89,7 @@ pub fn AssetPanel(
 ) -> impl IntoView {
     let (refresh_counter, set_refresh_counter) = signal(0u32);
 
-    let assets_resource = Resource::new(
-        move || refresh_counter.get(),
-        |_| list_all_assets(),
-    );
+    let assets_resource = Resource::new(move || refresh_counter.get(), |_| list_all_assets());
 
     let refresh = move || set_refresh_counter.update(|c| *c += 1);
     // Suppress warning on SSR where refresh is only used in hydrate cfg blocks

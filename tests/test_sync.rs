@@ -36,7 +36,8 @@ async fn sync_identifies_unchanged_docs() {
     let server = env.server();
 
     let slug = format!("sync-unchanged-{}", uuid::Uuid::new_v4());
-    env.ingest(&server, &slug, "Doc", "# Content", "public").await;
+    env.ingest(&server, &slug, "Doc", "# Content", "public")
+        .await;
 
     // Get the stored content hash
     let doc = env.repo.find_by_slug(&slug).await.unwrap().unwrap();
@@ -64,7 +65,8 @@ async fn sync_identifies_changed_docs() {
     let server = env.server();
 
     let slug = format!("sync-changed-{}", uuid::Uuid::new_v4());
-    env.ingest(&server, &slug, "Doc", "# Original", "public").await;
+    env.ingest(&server, &slug, "Doc", "# Original", "public")
+        .await;
 
     let response = server
         .post("/api/v1/sync")
@@ -90,8 +92,10 @@ async fn sync_identifies_docs_to_archive() {
     let slug_keep = format!("sync-keep-{}", uuid::Uuid::new_v4());
     let slug_remove = format!("sync-remove-{}", uuid::Uuid::new_v4());
 
-    env.ingest(&server, &slug_keep, "Keep", "# Keep", "public").await;
-    env.ingest(&server, &slug_remove, "Remove", "# Remove", "public").await;
+    env.ingest(&server, &slug_keep, "Keep", "# Keep", "public")
+        .await;
+    env.ingest(&server, &slug_remove, "Remove", "# Remove", "public")
+        .await;
 
     let doc = env.repo.find_by_slug(&slug_keep).await.unwrap().unwrap();
     let hash = doc.content_hash.unwrap();
@@ -126,8 +130,10 @@ async fn sync_archive_missing_sets_flag() {
     let slug_keep = format!("sync-arch-keep-{}", uuid::Uuid::new_v4());
     let slug_archive = format!("sync-arch-gone-{}", uuid::Uuid::new_v4());
 
-    env.ingest(&server, &slug_keep, "Keep", "# Keep", "public").await;
-    env.ingest(&server, &slug_archive, "Gone", "# Gone", "public").await;
+    env.ingest(&server, &slug_keep, "Keep", "# Keep", "public")
+        .await;
+    env.ingest(&server, &slug_archive, "Gone", "# Gone", "public")
+        .await;
 
     let doc = env.repo.find_by_slug(&slug_keep).await.unwrap().unwrap();
     let hash = doc.content_hash.unwrap();

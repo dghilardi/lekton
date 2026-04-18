@@ -1,8 +1,8 @@
-use leptos::prelude::*;
-use crate::app::{get_navigation, NavItem};
-use crate::schema::component::list_schemas;
 use crate::api::schemas::SchemaListItem;
+use crate::app::{get_navigation, NavItem};
 use crate::pages::chat::ChatContext;
+use crate::schema::component::list_schemas;
+use leptos::prelude::*;
 
 /// Sidebar for Documentation section.
 /// This is just a wrapper around NavigationTree (existing).
@@ -105,7 +105,7 @@ pub fn AdminSidebar() -> impl IntoView {
 #[component]
 pub fn ChatSidebar() -> impl IntoView {
     let context = use_context::<ChatContext>();
-    
+
     view! {
         <ul class="flex flex-col gap-1 mt-6">
             <li class="menu-title text-xs font-semibold tracking-wider text-base-content/60 uppercase mb-1">"AI Chat"</li>

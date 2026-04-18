@@ -12,7 +12,8 @@ async fn ingest_stores_content_hash() {
     let server = env.server();
 
     let slug = format!("hash-test-{}", uuid::Uuid::new_v4());
-    env.ingest(&server, &slug, "Doc", "# Content", "public").await;
+    env.ingest(&server, &slug, "Doc", "# Content", "public")
+        .await;
 
     let doc = env.repo.find_by_slug(&slug).await.unwrap().unwrap();
     assert!(doc.content_hash.is_some());
@@ -27,7 +28,8 @@ async fn ingest_unchanged_content_returns_not_changed() {
     let slug = format!("unchanged-{}", uuid::Uuid::new_v4());
 
     // First ingest
-    env.ingest(&server, &slug, "Doc", "# Same content", "public").await;
+    env.ingest(&server, &slug, "Doc", "# Same content", "public")
+        .await;
 
     // Second ingest with same content and metadata
     let response = server
@@ -55,7 +57,8 @@ async fn ingest_changed_content_returns_changed() {
     let server = env.server();
 
     let slug = format!("changed-{}", uuid::Uuid::new_v4());
-    env.ingest(&server, &slug, "Doc", "# Original", "public").await;
+    env.ingest(&server, &slug, "Doc", "# Original", "public")
+        .await;
 
     let response = server
         .post("/api/v1/ingest")
@@ -86,14 +89,19 @@ async fn ingest_content_change_creates_version() {
     let slug = format!("version-test-{}", uuid::Uuid::new_v4());
 
     // First ingest
-    env.ingest(&server, &slug, "Doc v1", "# Version 1", "public").await;
+    env.ingest(&server, &slug, "Doc v1", "# Version 1", "public")
+        .await;
 
     // Verify no versions yet (first ingest doesn't create a version record)
     let versions = env.document_version_repo.list_by_slug(&slug).await.unwrap();
-    assert!(versions.is_empty(), "No versions should exist after first ingest");
+    assert!(
+        versions.is_empty(),
+        "No versions should exist after first ingest"
+    );
 
     // Second ingest with different content
-    env.ingest(&server, &slug, "Doc v2", "# Version 2", "public").await;
+    env.ingest(&server, &slug, "Doc v2", "# Version 2", "public")
+        .await;
 
     // Now there should be a version record for the old content
     let versions = env.document_version_repo.list_by_slug(&slug).await.unwrap();
@@ -103,7 +111,8 @@ async fn ingest_content_change_creates_version() {
     assert_eq!(versions[0].updated_by, "legacy");
 
     // Third ingest with yet another change
-    env.ingest(&server, &slug, "Doc v3", "# Version 3", "public").await;
+    env.ingest(&server, &slug, "Doc v3", "# Version 3", "public")
+        .await;
 
     let versions = env.document_version_repo.list_by_slug(&slug).await.unwrap();
     assert_eq!(versions.len(), 2, "Two versions after two updates");
@@ -135,10 +144,12 @@ async fn version_old_content_copied_to_s3_history() {
     let slug = format!("history-s3-{}", uuid::Uuid::new_v4());
 
     // First ingest
-    env.ingest(&server, &slug, "Doc", "# Original content", "public").await;
+    env.ingest(&server, &slug, "Doc", "# Original content", "public")
+        .await;
 
     // Second ingest triggers version
-    env.ingest(&server, &slug, "Doc", "# New content", "public").await;
+    env.ingest(&server, &slug, "Doc", "# New content", "public")
+        .await;
 
     // Check the version record has an S3 key in history path
     let versions = env.document_version_repo.list_by_slug(&slug).await.unwrap();
@@ -151,7 +162,10 @@ async fn version_old_content_copied_to_s3_history() {
 
     // Verify old content is actually stored at the history path
     let old_content = env.storage.get_object(&versions[0].s3_key).await.unwrap();
-    assert!(old_content.is_some(), "Old content should exist in S3 history");
+    assert!(
+        old_content.is_some(),
+        "Old content should exist in S3 history"
+    );
     assert_eq!(
         String::from_utf8(old_content.unwrap()).unwrap(),
         "# Original content"
@@ -183,9 +197,12 @@ async fn find_by_slug_prefix_returns_matching_docs() {
     let slug2 = format!("{prefix}/doc2");
     let slug_other = format!("other-{}/doc", uuid::Uuid::new_v4());
 
-    env.ingest(&server, &slug1, "Doc 1", "# One", "public").await;
-    env.ingest(&server, &slug2, "Doc 2", "# Two", "public").await;
-    env.ingest(&server, &slug_other, "Other", "# Other", "public").await;
+    env.ingest(&server, &slug1, "Doc 1", "# One", "public")
+        .await;
+    env.ingest(&server, &slug2, "Doc 2", "# Two", "public")
+        .await;
+    env.ingest(&server, &slug_other, "Other", "# Other", "public")
+        .await;
 
     let results = env.repo.find_by_slug_prefix(&prefix).await.unwrap();
     let slugs: Vec<&str> = results.iter().map(|d| d.slug.as_str()).collect();
@@ -204,8 +221,10 @@ async fn find_by_slug_prefix_excludes_archived() {
     let slug1 = format!("{prefix}/live");
     let slug2 = format!("{prefix}/archived");
 
-    env.ingest(&server, &slug1, "Live", "# Live", "public").await;
-    env.ingest(&server, &slug2, "Archived", "# Archived", "public").await;
+    env.ingest(&server, &slug1, "Live", "# Live", "public")
+        .await;
+    env.ingest(&server, &slug2, "Archived", "# Archived", "public")
+        .await;
 
     env.repo.set_archived(&slug2, true).await.unwrap();
 
@@ -213,7 +232,10 @@ async fn find_by_slug_prefix_excludes_archived() {
     let slugs: Vec<&str> = results.iter().map(|d| d.slug.as_str()).collect();
 
     assert!(slugs.contains(&slug1.as_str()));
-    assert!(!slugs.contains(&slug2.as_str()), "Archived doc should be excluded");
+    assert!(
+        !slugs.contains(&slug2.as_str()),
+        "Archived doc should be excluded"
+    );
 }
 
 #[tokio::test]

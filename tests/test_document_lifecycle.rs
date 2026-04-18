@@ -13,13 +13,23 @@ async fn ingest_then_search_then_retrieve() {
     let content = format!("# {keyword} Guide\n\nDetailed instructions for the {keyword} process.");
 
     // 1. Ingest
-    env.ingest(&server, &slug, &format!("{keyword} Guide"), &content, "developer")
-        .await;
+    env.ingest(
+        &server,
+        &slug,
+        &format!("{keyword} Guide"),
+        &content,
+        "developer",
+    )
+    .await;
 
     env.wait_for_search_indexing().await;
 
     // 2. Search finds it
-    let allowed = ["public".to_string(), "internal".to_string(), "developer".to_string()];
+    let allowed = [
+        "public".to_string(),
+        "internal".to_string(),
+        "developer".to_string(),
+    ];
     let results = env
         .search
         .search(&keyword, Some(&allowed), false)
@@ -213,8 +223,14 @@ async fn access_level_enforcement() {
         .await;
     env.ingest(&server, &dev_slug, "Dev Doc", "# Dev", "developer")
         .await;
-    env.ingest(&server, &arch_slug, "Architect Doc", "# Architect", "architect")
-        .await;
+    env.ingest(
+        &server,
+        &arch_slug,
+        "Architect Doc",
+        "# Architect",
+        "architect",
+    )
+    .await;
 
     // Public access: only sees public docs
     let public_docs = env
@@ -228,7 +244,11 @@ async fn access_level_enforcement() {
     assert!(!public_slugs.contains(&arch_slug.as_str()));
 
     // Developer access: sees public + internal + developer
-    let dev_allowed = ["public".to_string(), "internal".to_string(), "developer".to_string()];
+    let dev_allowed = [
+        "public".to_string(),
+        "internal".to_string(),
+        "developer".to_string(),
+    ];
     let dev_docs = env
         .repo
         .list_by_access_levels(Some(&dev_allowed), false)
@@ -240,11 +260,7 @@ async fn access_level_enforcement() {
     assert!(!dev_slugs.contains(&arch_slug.as_str()));
 
     // Admin access (None = no restriction): sees everything
-    let admin_docs = env
-        .repo
-        .list_by_access_levels(None, false)
-        .await
-        .unwrap();
+    let admin_docs = env.repo.list_by_access_levels(None, false).await.unwrap();
     let admin_slugs: Vec<&str> = admin_docs.iter().map(|d| d.slug.as_str()).collect();
     assert!(admin_slugs.contains(&public_slug.as_str()));
     assert!(admin_slugs.contains(&dev_slug.as_str()));

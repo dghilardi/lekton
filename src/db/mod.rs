@@ -1,13 +1,13 @@
 pub mod access_level_repository;
-pub mod embedding_cache_repository;
 pub mod asset_repository;
 pub mod auth_models;
 pub mod chat_models;
 pub mod chat_repository;
+pub mod document_version_repository;
 pub mod documentation_feedback_models;
 pub mod documentation_feedback_repository;
+pub mod embedding_cache_repository;
 pub mod feedback_repository;
-pub mod document_version_repository;
 pub mod models;
 pub mod navigation_order_repository;
 pub mod prompt_models;

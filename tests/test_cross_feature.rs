@@ -8,7 +8,9 @@ async fn ingest_with_custom_access_level_then_search() {
     let env = common::TestEnv::start().await;
     let server = env.server();
 
-    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
+    let admin = env
+        .create_test_user("admin-1", "admin@test.com", true)
+        .await;
 
     // Create a custom access level
     server
@@ -23,8 +25,14 @@ async fn ingest_with_custom_access_level_then_search() {
         .await;
 
     // Ingest a doc at the "secret" level
-    env.ingest(&server, "secret-doc", "Secret Document", "This is classified content", "secret")
-        .await;
+    env.ingest(
+        &server,
+        "secret-doc",
+        "Secret Document",
+        "This is classified content",
+        "secret",
+    )
+    .await;
 
     env.wait_for_search_indexing().await;
 
@@ -46,7 +54,10 @@ async fn ingest_with_custom_access_level_then_search() {
         .await;
 
     let hits: Vec<serde_json::Value> = response.json();
-    assert!(hits.is_empty(), "public-only search should not find secret doc");
+    assert!(
+        hits.is_empty(),
+        "public-only search should not find secret doc"
+    );
 }
 
 #[tokio::test]
@@ -54,7 +65,9 @@ async fn admin_creates_level_assigns_permission_user_sees_doc() {
     let env = common::TestEnv::start().await;
     let server = env.server();
 
-    let admin = env.create_test_user("admin-1", "admin@test.com", true).await;
+    let admin = env
+        .create_test_user("admin-1", "admin@test.com", true)
+        .await;
     env.create_test_user("user-1", "user@test.com", false).await;
 
     // 1. Create custom access level
@@ -85,8 +98,14 @@ async fn admin_creates_level_assigns_permission_user_sees_doc() {
         .await;
 
     // 3. Ingest a doc at team-alpha level
-    env.ingest(&server, "alpha-doc", "Alpha Doc", "Alpha team content", "team-alpha")
-        .await;
+    env.ingest(
+        &server,
+        "alpha-doc",
+        "Alpha Doc",
+        "Alpha team content",
+        "team-alpha",
+    )
+    .await;
 
     env.wait_for_search_indexing().await;
 
@@ -98,7 +117,10 @@ async fn admin_creates_level_assigns_permission_user_sees_doc() {
         .await;
 
     let hits: Vec<serde_json::Value> = response.json();
-    assert!(!hits.is_empty(), "should find doc with correct access level");
+    assert!(
+        !hits.is_empty(),
+        "should find doc with correct access level"
+    );
 
     // 5. Verify the permission was persisted
     let perms = env.user_repo.get_permissions("user-1").await.unwrap();
@@ -114,10 +136,7 @@ async fn settings_custom_css_roundtrip() {
     let custom_css = ":root { --primary: #ff0000; }";
 
     // Save custom CSS
-    env.settings_repo
-        .set_custom_css(custom_css)
-        .await
-        .unwrap();
+    env.settings_repo.set_custom_css(custom_css).await.unwrap();
 
     // Read it back
     let settings = env.settings_repo.get_settings().await.unwrap();
@@ -125,10 +144,7 @@ async fn settings_custom_css_roundtrip() {
 
     // Update it
     let updated_css = "body { background: blue; }";
-    env.settings_repo
-        .set_custom_css(updated_css)
-        .await
-        .unwrap();
+    env.settings_repo.set_custom_css(updated_css).await.unwrap();
 
     let settings = env.settings_repo.get_settings().await.unwrap();
     assert_eq!(settings.custom_css, updated_css);
@@ -140,25 +156,49 @@ async fn ingest_doc_then_update_content() {
     let server = env.server();
 
     // Ingest initial doc
-    env.ingest(&server, "evolving-doc", "First Title", "Initial content here", "public")
-        .await;
+    env.ingest(
+        &server,
+        "evolving-doc",
+        "First Title",
+        "Initial content here",
+        "public",
+    )
+    .await;
 
     // Verify initial content is in S3
-    let doc = env.repo.find_by_slug("evolving-doc").await.unwrap().unwrap();
-    let content = String::from_utf8(env.storage.get_object(&doc.s3_key).await.unwrap().unwrap()).unwrap();
+    let doc = env
+        .repo
+        .find_by_slug("evolving-doc")
+        .await
+        .unwrap()
+        .unwrap();
+    let content =
+        String::from_utf8(env.storage.get_object(&doc.s3_key).await.unwrap().unwrap()).unwrap();
     assert!(content.contains("Initial content"));
 
     // Update via re-ingest
-    env.ingest(&server, "evolving-doc", "Updated Title", "Updated content now", "public")
-        .await;
+    env.ingest(
+        &server,
+        "evolving-doc",
+        "Updated Title",
+        "Updated content now",
+        "public",
+    )
+    .await;
 
     env.wait_for_search_indexing().await;
 
     // Verify updated content
-    let doc = env.repo.find_by_slug("evolving-doc").await.unwrap().unwrap();
+    let doc = env
+        .repo
+        .find_by_slug("evolving-doc")
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(doc.title, "Updated Title");
 
-    let content = String::from_utf8(env.storage.get_object(&doc.s3_key).await.unwrap().unwrap()).unwrap();
+    let content =
+        String::from_utf8(env.storage.get_object(&doc.s3_key).await.unwrap().unwrap()).unwrap();
     assert!(content.contains("Updated content"));
 
     // Verify search picks up the update

@@ -82,14 +82,12 @@ impl PromptRepository for MongoPromptRepository {
         use mongodb::bson::{doc, Bson};
         use mongodb::options::FindOptions;
 
-        let mut filter_parts: Vec<mongodb::bson::Document> = vec![
-            doc! {
-                "$or": [
-                    { "is_archived": { "$exists": false } },
-                    { "is_archived": false }
-                ]
-            },
-        ];
+        let mut filter_parts: Vec<mongodb::bson::Document> = vec![doc! {
+            "$or": [
+                { "is_archived": { "$exists": false } },
+                { "is_archived": false }
+            ]
+        }];
 
         if let Some(levels) = allowed_levels {
             let bson_levels: Vec<Bson> = levels
@@ -108,11 +106,7 @@ impl PromptRepository for MongoPromptRepository {
             .sort(doc! { "name": 1, "slug": 1 })
             .build();
 
-        let mut cursor = self
-            .collection
-            .find(filter)
-            .with_options(options)
-            .await?;
+        let mut cursor = self.collection.find(filter).with_options(options).await?;
 
         let mut prompts = Vec::new();
         while let Some(prompt) = cursor.try_next().await? {
@@ -234,7 +228,9 @@ impl PromptRepository for MongoPromptRepository {
 
 #[cfg(feature = "ssr")]
 fn regex_escape(s: &str) -> String {
-    let special = ['.', '*', '+', '?', '(', ')', '[', ']', '{', '}', '\\', '^', '$', '|'];
+    let special = [
+        '.', '*', '+', '?', '(', ')', '[', ']', '{', '}', '\\', '^', '$', '|',
+    ];
     let mut escaped = String::with_capacity(s.len());
     for c in s.chars() {
         if special.contains(&c) {

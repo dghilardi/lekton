@@ -18,22 +18,27 @@ pub struct DocPageData {
 fn Breadcrumbs(slug: String) -> impl IntoView {
     let parts: Vec<&str> = slug.split('/').collect();
 
-    let breadcrumb_items: Vec<_> = parts.iter().enumerate().map(|(idx, part)| {
-        let is_last = idx == parts.len() - 1;
-        let path = parts[..=idx].join("/");
-        let label = part.split('-')
-            .map(|word| {
-                let mut c = word.chars();
-                match c.next() {
-                    None => String::new(),
-                    Some(first) => first.to_uppercase().collect::<String>() + c.as_str(),
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
+    let breadcrumb_items: Vec<_> = parts
+        .iter()
+        .enumerate()
+        .map(|(idx, part)| {
+            let is_last = idx == parts.len() - 1;
+            let path = parts[..=idx].join("/");
+            let label = part
+                .split('-')
+                .map(|word| {
+                    let mut c = word.chars();
+                    match c.next() {
+                        None => String::new(),
+                        Some(first) => first.to_uppercase().collect::<String>() + c.as_str(),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
 
-        (path, label, is_last)
-    }).collect();
+            (path, label, is_last)
+        })
+        .collect();
 
     view! {
         <div class="breadcrumbs text-sm mb-4">
@@ -65,7 +70,8 @@ fn TableOfContents(headings: Vec<crate::rendering::markdown::TocHeading>) -> imp
     if headings.is_empty() {
         return view! {
             <div></div>
-        }.into_any();
+        }
+        .into_any();
     }
 
     view! {
@@ -93,7 +99,8 @@ fn TableOfContents(headings: Vec<crate::rendering::markdown::TocHeading>) -> imp
                 }).collect::<Vec<_>>()}
             </ul>
         </nav>
-    }.into_any()
+    }
+    .into_any()
 }
 
 /// Document viewer page — renders markdown content fetched from S3.
@@ -102,10 +109,7 @@ pub fn DocPage() -> impl IntoView {
     let params = leptos_router::hooks::use_params_map();
     let slug = move || params.read().get("slug").unwrap_or_default();
 
-    let doc_resource = Resource::new(
-        move || slug(),
-        |slug| get_doc_html(slug),
-    );
+    let doc_resource = Resource::new(move || slug(), |slug| get_doc_html(slug));
 
     view! {
         <Suspense fallback=move || view! {

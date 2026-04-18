@@ -72,11 +72,15 @@ async fn search_respects_access_level_filtering() {
 
     let results: Vec<serde_json::Value> = response.json();
     assert!(
-        results.iter().any(|r| r["slug"].as_str() == Some(&public_slug)),
+        results
+            .iter()
+            .any(|r| r["slug"].as_str() == Some(&public_slug)),
         "Public doc should appear in public search"
     );
     assert!(
-        !results.iter().any(|r| r["slug"].as_str() == Some(&arch_slug)),
+        !results
+            .iter()
+            .any(|r| r["slug"].as_str() == Some(&arch_slug)),
         "Architect doc should NOT appear in public search"
     );
 
@@ -89,11 +93,15 @@ async fn search_respects_access_level_filtering() {
 
     let results: Vec<serde_json::Value> = response.json();
     assert!(
-        results.iter().any(|r| r["slug"].as_str() == Some(&public_slug)),
+        results
+            .iter()
+            .any(|r| r["slug"].as_str() == Some(&public_slug)),
         "Public doc should appear in full-access search"
     );
     assert!(
-        results.iter().any(|r| r["slug"].as_str() == Some(&arch_slug)),
+        results
+            .iter()
+            .any(|r| r["slug"].as_str() == Some(&arch_slug)),
         "Architect doc should appear in full-access search"
     );
 }
@@ -111,7 +119,10 @@ async fn search_returns_empty_for_no_match() {
 
     response.assert_status_ok();
     let results: Vec<serde_json::Value> = response.json();
-    assert!(results.is_empty(), "No results expected for gibberish query");
+    assert!(
+        results.is_empty(),
+        "No results expected for gibberish query"
+    );
 }
 
 #[tokio::test]
@@ -126,7 +137,9 @@ async fn search_returns_content_preview() {
         &server,
         &slug,
         &format!("Preview {keyword}"),
-        &format!("# Preview {keyword}\n\nThis document has meaningful content for preview extraction."),
+        &format!(
+            "# Preview {keyword}\n\nThis document has meaningful content for preview extraction."
+        ),
         "public",
     )
     .await;
@@ -146,10 +159,7 @@ async fn search_returns_content_preview() {
         .expect("Document should be found");
 
     let preview = hit["content_preview"].as_str().unwrap();
-    assert!(
-        !preview.is_empty(),
-        "Content preview should not be empty"
-    );
+    assert!(!preview.is_empty(), "Content preview should not be empty");
     assert!(
         !preview.contains('#'),
         "Preview should have markdown stripped"

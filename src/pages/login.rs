@@ -9,8 +9,9 @@ use crate::app::IsDemoMode;
 /// the external provider flow.
 #[component]
 pub fn LoginPage() -> impl IntoView {
-    let is_demo_mode =
-        use_context::<IsDemoMode>().expect("LoginPage must be inside App").0;
+    let is_demo_mode = use_context::<IsDemoMode>()
+        .expect("LoginPage must be inside App")
+        .0;
 
     view! {
         {move || {

@@ -89,8 +89,10 @@ impl EmbeddingService for CachedEmbeddingService {
 
         if !missing_indices.is_empty() {
             // 4. Embed only the missing texts.
-            let missing_texts: Vec<String> =
-                missing_indices.iter().map(|&i| normalised[i].clone()).collect();
+            let missing_texts: Vec<String> = missing_indices
+                .iter()
+                .map(|&i| normalised[i].clone())
+                .collect();
             let new_vectors = self.inner.embed(&missing_texts).await?;
 
             // 5. Persist the newly generated embeddings (skip empty vectors —
@@ -192,10 +194,7 @@ mod tests {
                 .collect())
         }
 
-        async fn upsert_many(
-            &self,
-            entries: Vec<EmbeddingCacheEntry>,
-        ) -> Result<(), AppError> {
+        async fn upsert_many(&self, entries: Vec<EmbeddingCacheEntry>) -> Result<(), AppError> {
             let mut store = self.store.lock().unwrap();
             for e in entries {
                 store.insert((e.hash.clone(), e.model.clone()), e);
@@ -204,7 +203,13 @@ mod tests {
         }
     }
 
-    fn make_service(dims: usize) -> (Arc<CountingEmbedding>, Arc<InMemoryCache>, CachedEmbeddingService) {
+    fn make_service(
+        dims: usize,
+    ) -> (
+        Arc<CountingEmbedding>,
+        Arc<InMemoryCache>,
+        CachedEmbeddingService,
+    ) {
         let inner = Arc::new(CountingEmbedding::new(dims));
         let cache = Arc::new(InMemoryCache::new());
         let svc = CachedEmbeddingService::new(

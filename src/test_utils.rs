@@ -70,12 +70,30 @@ impl UserRepository for MockUserRepository {
         Ok(())
     }
 
-    async fn find_user_by_id(&self, id: &str) -> Result<Option<crate::db::auth_models::User>, AppError> {
-        Ok(self.users.lock().unwrap().iter().find(|u| u.id == id).cloned())
+    async fn find_user_by_id(
+        &self,
+        id: &str,
+    ) -> Result<Option<crate::db::auth_models::User>, AppError> {
+        Ok(self
+            .users
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|u| u.id == id)
+            .cloned())
     }
 
-    async fn find_user_by_email(&self, email: &str) -> Result<Option<crate::db::auth_models::User>, AppError> {
-        Ok(self.users.lock().unwrap().iter().find(|u| u.email == email).cloned())
+    async fn find_user_by_email(
+        &self,
+        email: &str,
+    ) -> Result<Option<crate::db::auth_models::User>, AppError> {
+        Ok(self
+            .users
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|u| u.email == email)
+            .cloned())
     }
 
     async fn find_user_by_provider_sub(
@@ -129,9 +147,10 @@ impl UserRepository for MockUserRepository {
         user_id: &str,
         access_level_name: &str,
     ) -> Result<(), AppError> {
-        self.permissions.lock().unwrap().retain(|p| {
-            !(p.user_id == user_id && p.access_level_name == access_level_name)
-        });
+        self.permissions
+            .lock()
+            .unwrap()
+            .retain(|p| !(p.user_id == user_id && p.access_level_name == access_level_name));
         Ok(())
     }
 
@@ -164,7 +183,10 @@ impl UserRepository for MockUserRepository {
     async fn revoke_all_user_tokens(&self, user_id: &str) -> Result<(), AppError> {
         let mut tokens = self.tokens.lock().unwrap();
         let now = Utc::now();
-        for t in tokens.iter_mut().filter(|t| t.user_id == user_id && t.revoked_at.is_none()) {
+        for t in tokens
+            .iter_mut()
+            .filter(|t| t.user_id == user_id && t.revoked_at.is_none())
+        {
             t.revoked_at = Some(now);
         }
         Ok(())

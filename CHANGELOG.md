@@ -6,6 +6,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - RAG chat now uses the configured `rag.chat_url` for non-Vertex OpenAI-compatible providers and no longer requires `rag.chat_api_key` for local endpoints that do not use authentication.
+
+### Changed
+- Clarified the proposed source-references chat enhancement to use a shared source model, deterministic SSE ordering, persisted history replay, and RBAC-safe filtering when historical sources are read back.
 ## [0.13.8] 2026-04-18
 
 ### Changed

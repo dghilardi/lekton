@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Authentication and API bearer tokens now use 43-character alphanumeric secrets generated from a CSPRNG instead of UUID v4 strings.
+
 ## [0.13.6] 2026-04-18
 
 ### Fixed

@@ -76,8 +76,12 @@ pub struct PaginationParams {
     pub per_page: u64,
 }
 
-fn default_page() -> u64 { 1 }
-fn default_per_page() -> u64 { 20 }
+fn default_page() -> u64 {
+    1
+}
+fn default_per_page() -> u64 {
+    20
+}
 
 #[derive(Debug, Deserialize)]
 pub struct TogglePatRequest {
@@ -121,7 +125,7 @@ pub async fn create_user_pat_handler(
         return Err(AppError::BadRequest("PAT name cannot be empty".into()));
     }
 
-    let raw_token = uuid::Uuid::new_v4().to_string();
+    let raw_token = TokenService::generate_opaque_token();
     let token_hash = TokenService::hash_token(&raw_token);
     let id = uuid::Uuid::new_v4().to_string();
     let now = Utc::now();
@@ -214,8 +218,7 @@ pub async fn admin_list_pats_handler(
         .into_iter()
         .collect();
 
-    let mut email_map: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
+    let mut email_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for uid in user_ids {
         if let Ok(Some(u)) = state.user_repo.find_user_by_id(uid).await {
             email_map.insert(u.id, u.email);
@@ -229,7 +232,10 @@ pub async fn admin_list_pats_handler(
             name: t.name.clone(),
             is_active: t.is_active,
             user_id: t.user_id.clone(),
-            user_email: t.user_id.as_ref().and_then(|uid| email_map.get(uid).cloned()),
+            user_email: t
+                .user_id
+                .as_ref()
+                .and_then(|uid| email_map.get(uid).cloned()),
             created_at: t.created_at,
             last_used_at: t.last_used_at,
         })

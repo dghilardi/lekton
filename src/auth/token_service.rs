@@ -5,7 +5,8 @@
 //! - Generating cryptographically random refresh tokens and storing only
 //!   their SHA-256 hash in the database.
 
-use chrono::{Duration, Utc};
+use chrono::Utc;
+use rand::{distributions::Alphanumeric, rngs::OsRng, Rng};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::models::AuthenticatedUser;
@@ -15,6 +16,8 @@ use crate::error::AppError;
 const DEFAULT_ACCESS_TTL_SECS: u64 = 15 * 60; // 15 minutes
 /// Default refresh token lifetime.
 const DEFAULT_REFRESH_TTL_DAYS: i64 = 30;
+/// Alphanumeric token length required to reach at least 256 bits of entropy.
+const OPAQUE_TOKEN_LENGTH: usize = 43;
 
 /// Claims embedded in the JWT access token.
 #[derive(Debug, Serialize, Deserialize)]
@@ -102,13 +105,22 @@ impl TokenService {
 
     /// Generate a fresh refresh token pair: `(raw_token, hash)`.
     ///
-    /// The raw token is a UUID v4 (122 bits of randomness) and is returned
-    /// once to be sent to the client.  Only the SHA-256 hash is stored in the
-    /// database.
+    /// The raw token is a 43-character alphanumeric secret (~256 bits of
+    /// entropy) and is returned once to be sent to the client. Only the
+    /// SHA-256 hash is stored in the database.
     pub fn generate_refresh_token(&self) -> (String, String) {
-        let raw = uuid::Uuid::new_v4().to_string();
+        let raw = Self::generate_opaque_token();
         let hash = Self::hash_token(&raw);
         (raw, hash)
+    }
+
+    /// Generate an opaque bearer token using the OS CSPRNG.
+    pub fn generate_opaque_token() -> String {
+        OsRng
+            .sample_iter(&Alphanumeric)
+            .take(OPAQUE_TOKEN_LENGTH)
+            .map(char::from)
+            .collect()
     }
 
     /// Return the access token lifetime in seconds (used for cookie max-age).
@@ -232,6 +244,14 @@ mod tests {
         let (raw2, hash2) = svc.generate_refresh_token();
         assert_ne!(raw1, raw2);
         assert_ne!(hash1, hash2);
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn test_generate_opaque_token_is_alphanumeric_and_43_chars() {
+        let token = TokenService::generate_opaque_token();
+        assert_eq!(token.len(), 43);
+        assert!(token.chars().all(|c| c.is_ascii_alphanumeric()));
     }
 
     #[cfg(feature = "ssr")]

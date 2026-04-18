@@ -8,13 +8,13 @@ use crate::error::AppError;
 
 use super::client::build_oai_client;
 
-const OPENROUTER_API_BASE: &str = "https://openrouter.ai/api/v1";
 const DEFAULT_VERTEX_LOCATION: &str = "us-central1";
 const GCP_SCOPE_CLOUD_PLATFORM: &str = "https://www.googleapis.com/auth/cloud-platform";
 
 #[derive(Clone)]
 pub enum LlmProvider {
-    OpenRouter {
+    OpenAiCompatible {
+        api_base: String,
         api_key: String,
     },
     VertexAI {
@@ -41,12 +41,13 @@ impl LlmProvider {
                 })
             }
             None => {
-                let api_key = non_empty_config(&config.chat_api_key).ok_or_else(|| {
+                let api_base = non_empty_config(&config.chat_url).ok_or_else(|| {
                     AppError::Internal(
-                        "rag.chat_api_key is required when Vertex AI is not configured".into(),
+                        "rag.chat_url is required when Vertex AI is not configured".into(),
                     )
                 })?;
-                Ok(Self::OpenRouter { api_key })
+                let api_key = config.chat_api_key.trim().to_string();
+                Ok(Self::OpenAiCompatible { api_base, api_key })
             }
         }
     }
@@ -60,8 +61,8 @@ impl LlmProvider {
         extra_headers: &HashMap<String, String>,
     ) -> Result<Client<OpenAIConfig>, AppError> {
         match self {
-            Self::OpenRouter { api_key } => {
-                build_oai_client(OPENROUTER_API_BASE, api_key, extra_headers)
+            Self::OpenAiCompatible { api_base, api_key } => {
+                build_oai_client(api_base, api_key, extra_headers)
             }
             Self::VertexAI {
                 auth_manager,
@@ -85,7 +86,7 @@ impl LlmProvider {
 
     pub fn kind(&self) -> &'static str {
         match self {
-            Self::OpenRouter { .. } => "openrouter",
+            Self::OpenAiCompatible { .. } => "openai_compatible",
             Self::VertexAI { .. } => "vertex_ai",
         }
     }
@@ -98,10 +99,66 @@ fn non_empty_config(value: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::RagConfig;
 
     #[test]
     fn trims_empty_config_values() {
         assert_eq!(non_empty_config("  value  ").as_deref(), Some("value"));
         assert_eq!(non_empty_config("   "), None);
+    }
+
+    fn make_rag_config() -> RagConfig {
+        RagConfig {
+            qdrant_url: "http://localhost:6334".into(),
+            qdrant_collection: "docs".into(),
+            embedding_url: "http://localhost:11434/v1".into(),
+            embedding_model: "nomic-embed-text".into(),
+            embedding_dimensions: 768,
+            embedding_api_key: String::new(),
+            chat_url: "http://localhost:11434/v1".into(),
+            chat_model: "llama3.1".into(),
+            chat_api_key: String::new(),
+            vertex_project_id: String::new(),
+            vertex_location: String::new(),
+            system_prompt_template: "Context: {{ context }}".into(),
+            rewrite_model: String::new(),
+            rewrite_max_tokens: 80,
+            chat_headers: HashMap::new(),
+            embedding_headers: HashMap::new(),
+            embedding_cache_store_text: false,
+            embedding_cache_query: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn initialize_uses_configured_chat_url_for_openai_compatible_provider() {
+        let config = make_rag_config();
+
+        let provider = LlmProvider::initialize(&config)
+            .await
+            .expect("provider should initialize");
+
+        match provider {
+            LlmProvider::OpenAiCompatible { api_base, api_key } => {
+                assert_eq!(api_base, "http://localhost:11434/v1");
+                assert!(api_key.is_empty());
+            }
+            LlmProvider::VertexAI { .. } => panic!("expected OpenAI-compatible provider"),
+        }
+    }
+
+    #[tokio::test]
+    async fn initialize_requires_chat_url_when_vertex_is_not_configured() {
+        let mut config = make_rag_config();
+        config.chat_url = "   ".into();
+
+        let error = match LlmProvider::initialize(&config).await {
+            Ok(_) => panic!("provider should reject missing chat_url"),
+            Err(error) => error,
+        };
+
+        assert!(error
+            .to_string()
+            .contains("rag.chat_url is required when Vertex AI is not configured"));
     }
 }

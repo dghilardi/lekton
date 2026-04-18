@@ -3,6 +3,20 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+/// A document reference used to ground an assistant response.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SourceReference {
+    /// Document slug for building navigation links.
+    pub document_slug: String,
+    /// Human-readable document title.
+    pub document_title: String,
+    /// Cosine similarity score from retrieval.
+    pub score: f32,
+    /// Optional short preview snippet for UI display.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<String>,
+}
+
 /// Feedback rating for an AI response.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -58,6 +72,53 @@ pub struct ChatMessage {
     pub role: String,
     /// Message content (plain text / markdown).
     pub content: String,
+    /// Source references used to generate this response (assistant messages only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sources: Option<Vec<SourceReference>>,
     #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub created_at: DateTime<Utc>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chat_message_sources_roundtrip() {
+        let message = ChatMessage {
+            id: "m1".into(),
+            session_id: "s1".into(),
+            role: "assistant".into(),
+            content: "Answer".into(),
+            sources: Some(vec![SourceReference {
+                document_slug: "docs/getting-started".into(),
+                document_title: "Getting Started".into(),
+                score: 0.91,
+                snippet: Some("Quick start guide".into()),
+            }]),
+            created_at: Utc::now(),
+        };
+
+        let json = serde_json::to_string(&message).unwrap();
+        let decoded: ChatMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.sources.as_ref().unwrap().len(), 1);
+        assert_eq!(
+            decoded.sources.as_ref().unwrap()[0].document_slug,
+            "docs/getting-started"
+        );
+    }
+
+    #[test]
+    fn chat_message_without_sources_defaults_to_none() {
+        let json = r#"{
+            "id":"m1",
+            "session_id":"s1",
+            "role":"assistant",
+            "content":"Answer",
+            "created_at":{"$date":{"$numberLong":"1704067200000"}}
+        }"#;
+
+        let decoded: ChatMessage = serde_json::from_str(json).unwrap();
+        assert!(decoded.sources.is_none());
+    }
 }

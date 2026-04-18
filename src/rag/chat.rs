@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use crate::auth::models::UserContext;
 use crate::config::RagConfig;
-use crate::db::chat_models::{ChatMessage, ChatSession};
+use crate::db::chat_models::{ChatMessage, ChatSession, SourceReference};
 use crate::db::chat_repository::ChatRepository;
 use crate::error::AppError;
 use crate::rag::client::format_llm_error;
@@ -46,6 +46,9 @@ pub enum ChatEvent {
     /// First event — carries the session ID.
     #[serde(rename = "session")]
     Session { session_id: String },
+    /// Retrieved source references for the in-progress assistant reply.
+    #[serde(rename = "sources")]
+    Sources { sources: Vec<SourceReference> },
     /// A content delta token.
     #[serde(rename = "delta")]
     Delta { content: String },
@@ -143,6 +146,7 @@ impl ChatService {
                 session_id: session_id.clone(),
                 role: "user".into(),
                 content: user_message.clone(),
+                sources: None,
                 created_at: Utc::now(),
             })
             .await?;
@@ -192,6 +196,7 @@ impl ChatService {
             .await?;
 
         let search_results_summary = summarize_search_results(&search_results);
+        let source_references = build_source_references(&search_results);
         tracing::debug!(
             session_id = %session_id,
             retrieval_query = %retrieval_query,
@@ -304,10 +309,14 @@ impl ChatService {
         // 11. Build SSE event stream
         let chat_repo = self.chat_repo.clone();
         let sid = session_id.clone();
+        let sources = source_references.clone();
 
         let event_stream = async_stream::stream! {
             // First event: session ID
             yield ChatEvent::Session { session_id: sid.clone() };
+            yield ChatEvent::Sources {
+                sources: sources.clone(),
+            };
 
             let mut full_response = String::new();
 
@@ -350,6 +359,7 @@ impl ChatService {
                     session_id: sid.clone(),
                     role: "assistant".into(),
                     content: full_response,
+                    sources: Some(sources.clone()),
                     created_at: Utc::now(),
                 };
                 if let Err(e) = chat_repo.add_message(msg).await {
@@ -432,6 +442,41 @@ fn summarize_search_results(
         .collect()
 }
 
+fn build_source_references(
+    results: &[crate::rag::vectorstore::VectorSearchResult],
+) -> Vec<SourceReference> {
+    let mut deduped: HashMap<&str, SourceReference> = HashMap::new();
+
+    for result in results {
+        let snippet = preview_text(&result.chunk_text, 180);
+        let candidate = SourceReference {
+            document_slug: result.document_slug.clone(),
+            document_title: result.document_title.clone(),
+            score: result.score,
+            snippet: if snippet.is_empty() {
+                None
+            } else {
+                Some(snippet)
+            },
+        };
+
+        match deduped.get(result.document_slug.as_str()) {
+            Some(existing) if existing.score >= candidate.score => {}
+            _ => {
+                deduped.insert(result.document_slug.as_str(), candidate);
+            }
+        }
+    }
+
+    let mut sources: Vec<SourceReference> = deduped.into_values().collect();
+    sources.sort_by(|a, b| {
+        b.score
+            .total_cmp(&a.score)
+            .then_with(|| a.document_slug.cmp(&b.document_slug))
+    });
+    sources
+}
+
 fn preview_text(text: &str, max_chars: usize) -> String {
     let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let mut chars = normalized.chars();
@@ -456,6 +501,7 @@ fn truncate_title(message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rag::vectorstore::VectorSearchResult;
 
     #[test]
     fn truncate_title_short() {
@@ -473,5 +519,35 @@ mod tests {
     #[test]
     fn truncate_title_multiline() {
         assert_eq!(truncate_title("First line\nSecond line"), "First line");
+    }
+
+    #[test]
+    fn build_source_references_deduplicates_by_slug_and_keeps_best_score() {
+        let sources = build_source_references(&[
+            VectorSearchResult {
+                chunk_text: "First chunk".into(),
+                document_slug: "docs/a".into(),
+                document_title: "Doc A".into(),
+                score: 0.42,
+            },
+            VectorSearchResult {
+                chunk_text: "Better chunk".into(),
+                document_slug: "docs/a".into(),
+                document_title: "Doc A".into(),
+                score: 0.81,
+            },
+            VectorSearchResult {
+                chunk_text: "Other chunk".into(),
+                document_slug: "docs/b".into(),
+                document_title: "Doc B".into(),
+                score: 0.65,
+            },
+        ]);
+
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[0].document_slug, "docs/a");
+        assert_eq!(sources[0].score, 0.81);
+        assert_eq!(sources[0].snippet.as_deref(), Some("Better chunk"));
+        assert_eq!(sources[1].document_slug, "docs/b");
     }
 }

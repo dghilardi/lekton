@@ -159,6 +159,7 @@ mod tests {
             session_id: "sess".into(),
             role: role.into(),
             content: content.into(),
+            sources: None,
             created_at: Utc::now(),
         }
     }

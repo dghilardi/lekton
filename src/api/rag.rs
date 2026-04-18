@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use crate::app::AppState;
 use crate::auth::extractor::RequiredAuthUser;
 use crate::auth::models::UserContext;
-use crate::db::chat_models::FeedbackRating;
+use crate::db::chat_models::{FeedbackRating, SourceReference};
 use crate::db::feedback_repository::FeedbackListParams;
 use crate::error::AppError;
 
@@ -132,6 +132,17 @@ pub struct SessionResponse {
     pub updated_at: String,
 }
 
+#[derive(Serialize)]
+pub struct SessionMessageResponse {
+    pub id: String,
+    pub role: String,
+    pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sources: Option<Vec<SourceReference>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feedback: Option<serde_json::Value>,
+}
+
 /// `POST /api/v1/rag/chat` — stream a RAG chat response (requires auth).
 pub async fn chat_handler(
     RequiredAuthUser(user): RequiredAuthUser,
@@ -190,7 +201,7 @@ pub async fn get_session_messages_handler(
     RequiredAuthUser(user): RequiredAuthUser,
     State(state): State<AppState>,
     Path(session_id): Path<String>,
-) -> Result<Json<Vec<serde_json::Value>>, AppError> {
+) -> Result<Json<Vec<SessionMessageResponse>>, AppError> {
     let chat_repo = state
         .chat_repo
         .as_ref()
@@ -207,6 +218,7 @@ pub async fn get_session_messages_handler(
     }
 
     let messages = chat_repo.get_messages(&session_id, 500).await?;
+    let user_ctx = build_user_context(&state, &user).await?;
 
     // Load all feedback for this session in one query, then build a lookup map.
     let feedback_map: std::collections::HashMap<String, serde_json::Value> =
@@ -231,18 +243,24 @@ pub async fn get_session_messages_handler(
             std::collections::HashMap::new()
         };
 
-    let response: Vec<serde_json::Value> = messages
-        .into_iter()
-        .map(|m| {
-            let feedback = feedback_map.get(&m.id).cloned();
-            serde_json::json!({
-                "id":       m.id,
-                "role":     m.role,
-                "content":  m.content,
-                "feedback": feedback,
-            })
-        })
-        .collect();
+    let mut response = Vec::with_capacity(messages.len());
+    for m in messages {
+        let sources = match m.sources {
+            Some(sources) => {
+                let filtered = filter_source_references(&state, &user_ctx, sources).await?;
+                Some(filtered)
+            }
+            None => None,
+        };
+        let feedback = feedback_map.get(&m.id).cloned();
+        response.push(SessionMessageResponse {
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            sources,
+            feedback,
+        });
+    }
 
     Ok(Json(response))
 }
@@ -485,4 +503,40 @@ async fn build_user_context(
         user: user.clone(),
         permissions,
     })
+}
+
+async fn filter_source_references(
+    state: &AppState,
+    user_ctx: &UserContext,
+    sources: Vec<SourceReference>,
+) -> Result<Vec<SourceReference>, AppError> {
+    use crate::db::repository::DocumentRepository;
+
+    let (allowed_levels, include_draft) = user_ctx.document_visibility();
+    let mut filtered = Vec::with_capacity(sources.len());
+
+    for source in sources {
+        let Some(document) = state
+            .document_repo
+            .find_by_slug(&source.document_slug)
+            .await?
+        else {
+            continue;
+        };
+
+        if document.is_archived {
+            continue;
+        }
+
+        if crate::app::doc_is_accessible(
+            &document.access_level,
+            document.is_draft,
+            allowed_levels.as_deref(),
+            include_draft,
+        ) {
+            filtered.push(source);
+        }
+    }
+
+    Ok(filtered)
 }

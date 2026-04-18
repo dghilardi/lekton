@@ -2,6 +2,7 @@ use leptos::prelude::StoredValue;
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::db::chat_models::SourceReference;
 use crate::rendering::markdown::render_markdown;
 
 /// Feedback state on a single assistant message.
@@ -20,6 +21,7 @@ pub struct UiMessage {
     pub id: Option<String>,
     pub role: String,
     pub content: String,
+    pub sources: Option<Vec<SourceReference>>,
     /// Current feedback given by the user for this message, if any.
     pub feedback: Option<UiFeedback>,
 }
@@ -38,6 +40,7 @@ pub struct ChatContext {
     pub sessions: RwSignal<Vec<SessionSummary>>,
     pub is_loading: RwSignal<bool>,
     pub streaming_content: RwSignal<String>,
+    pub streaming_sources: RwSignal<Vec<SourceReference>>,
     pub error_msg: RwSignal<Option<String>>,
 }
 
@@ -49,6 +52,7 @@ impl ChatContext {
             sessions: RwSignal::new(Vec::new()),
             is_loading: RwSignal::new(false),
             streaming_content: RwSignal::new(String::new()),
+            streaming_sources: RwSignal::new(Vec::new()),
             error_msg: RwSignal::new(None),
         }
     }
@@ -98,6 +102,7 @@ fn ChatContent() -> impl IntoView {
     let sessions = context.sessions;
     let is_loading = context.is_loading;
     let streaming_content = context.streaming_content;
+    let streaming_sources = context.streaming_sources;
     let error_msg = context.error_msg;
 
     let (input, set_input) = signal(String::new());
@@ -118,6 +123,7 @@ fn ChatContent() -> impl IntoView {
         }
         error_msg.set(None);
         streaming_content.set(String::new());
+        streaming_sources.set(Vec::new());
 
         // Add user message to completed messages list
         messages.update(|msgs| {
@@ -125,6 +131,7 @@ fn ChatContent() -> impl IntoView {
                 id: None,
                 role: "user".into(),
                 content: msg.clone(),
+                sources: None,
                 feedback: None,
             });
         });
@@ -136,23 +143,36 @@ fn ChatContent() -> impl IntoView {
             let sid = session_id.get_untracked();
             use leptos::task::spawn_local;
             spawn_local(async move {
-                match fetch_chat_stream(sid, msg, session_id, sessions, streaming_content).await {
+                match fetch_chat_stream(
+                    sid,
+                    msg,
+                    session_id,
+                    sessions,
+                    streaming_content,
+                    streaming_sources,
+                )
+                .await
+                {
                     Ok(message_id) => {
                         // Commit the streamed content as a completed assistant message
                         let content = streaming_content.get_untracked();
+                        let sources = optional_sources(streaming_sources.get_untracked());
                         messages.update(|msgs| {
                             msgs.push(UiMessage {
                                 id: message_id,
                                 role: "assistant".into(),
                                 content: content.clone(),
+                                sources: sources.clone(),
                                 feedback: None,
                             });
                         });
                         streaming_content.set(String::new());
+                        streaming_sources.set(Vec::new());
                         is_loading.set(false);
                     }
                     Err(e) => {
                         error_msg.set(Some(e));
+                        streaming_sources.set(Vec::new());
                         is_loading.set(false);
                     }
                 }
@@ -201,6 +221,7 @@ fn ChatContent() -> impl IntoView {
                             let is_user = msg.role == "user";
                             let msg_id = msg.id.clone();
                             let initial_feedback = msg.feedback.clone();
+                            let msg_sources = msg.sources.clone();
                             view! {
                                 <div class=format!(
                                     "flex w-full group {}",
@@ -238,6 +259,14 @@ fn ChatContent() -> impl IntoView {
                                                     view! { <div inner_html=render_markdown(&msg.content)></div> }.into_any()
                                                 }}
                                             </div>
+
+                                            {if is_user {
+                                                view! { <div></div> }.into_any()
+                                            } else if let Some(sources) = msg_sources.clone().filter(|sources| !sources.is_empty()) {
+                                                view! { <SourceReferencesBlock sources=sources /> }.into_any()
+                                            } else {
+                                                view! { <div></div> }.into_any()
+                                            }}
 
                                             // Feedback bar — only for assistant messages with a known ID
                                             {if !is_user {
@@ -281,6 +310,9 @@ fn ChatContent() -> impl IntoView {
                                             }
                                         }}
                                     </div>
+                                    <Show when=move || !streaming_sources.get().is_empty() fallback=|| ()>
+                                        <SourceReferencesBlock sources=streaming_sources.get() />
+                                    </Show>
                                 </div>
                             </div>
                         </div>
@@ -356,6 +388,51 @@ fn ChatContent() -> impl IntoView {
                 </div>
             </div>
         </div>
+    }
+}
+
+#[component]
+fn SourceReferencesBlock(sources: Vec<SourceReference>) -> impl IntoView {
+    let count = sources.len();
+
+    view! {
+        <details class="rounded-xl border border-base-300/80 bg-base-100/70 overflow-hidden">
+            <summary class="cursor-pointer list-none px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-base-content/60">
+                {format!("Sources ({count})")}
+            </summary>
+            <div class="flex flex-col gap-2 border-t border-base-300/80 px-3 py-3">
+                <For
+                    each=move || { sources.clone().into_iter().enumerate().collect::<Vec<_>>() }
+                    key=|(idx, source)| format!("{idx}-{}", source.document_slug)
+                    children=move |(_, source)| {
+                        let document_slug = source.document_slug.clone();
+                        let document_title = source.document_title.clone();
+                        let score = source.score;
+                        let snippet = source.snippet.clone();
+                        let snippet_for_show = snippet.clone();
+                        view! {
+                            <a
+                                href=format!("/docs/{}", document_slug)
+                                class="block rounded-lg border border-base-300/70 bg-base-100 px-3 py-2 no-underline transition-colors hover:border-primary/40 hover:bg-base-100"
+                            >
+                                <div class="flex items-start justify-between gap-3">
+                                    <div class="min-w-0">
+                                        <div class="text-sm font-medium text-base-content">{document_title}</div>
+                                        <div class="text-xs text-base-content/50 break-all">{source.document_slug}</div>
+                                    </div>
+                                    <div class="shrink-0 text-[11px] font-mono text-base-content/45">
+                                        {format!("{:.2}", score)}
+                                    </div>
+                                </div>
+                                <Show when=move || snippet_for_show.as_ref().map(|s| !s.is_empty()).unwrap_or(false) fallback=|| ()>
+                                    <p class="mt-2 text-xs leading-5 text-base-content/65">{snippet.clone().unwrap_or_default()}</p>
+                                </Show>
+                            </a>
+                        }
+                    }
+                />
+            </div>
+        </details>
     }
 }
 
@@ -613,6 +690,7 @@ pub async fn fetch_session_messages(session_id: &str) -> Result<Vec<UiMessage>, 
         id: Option<String>,
         role: String,
         content: String,
+        sources: Option<Vec<SourceReference>>,
         feedback: Option<UiFeedback>,
     }
     let msgs: Vec<MsgResp> = serde_wasm_bindgen::from_value(json).map_err(|e| format!("{e}"))?;
@@ -622,6 +700,7 @@ pub async fn fetch_session_messages(session_id: &str) -> Result<Vec<UiMessage>, 
             id: m.id,
             role: m.role,
             content: m.content,
+            sources: m.sources,
             feedback: m.feedback,
         })
         .collect())
@@ -706,6 +785,7 @@ pub async fn fetch_chat_stream(
     set_session_id: RwSignal<Option<String>>,
     set_sessions: RwSignal<Vec<SessionSummary>>,
     set_streaming: RwSignal<String>,
+    set_streaming_sources: RwSignal<Vec<SourceReference>>,
 ) -> Result<Option<String>, String> {
     use js_sys::Reflect;
     use wasm_bindgen::prelude::*;
@@ -803,6 +883,14 @@ pub async fn fetch_chat_stream(
                                     set_streaming.update(|s| s.push_str(content));
                                 }
                             }
+                            Some("sources") => {
+                                if let Some(value) = event.get("sources") {
+                                    let parsed: Vec<SourceReference> =
+                                        serde_json::from_value(value.clone())
+                                            .map_err(|e| format!("invalid sources payload: {e}"))?;
+                                    set_streaming_sources.set(parsed);
+                                }
+                            }
                             Some("error") => {
                                 let msg = event
                                     .get("message")
@@ -826,4 +914,13 @@ pub async fn fetch_chat_stream(
     }
 
     Ok(None)
+}
+
+#[cfg(feature = "hydrate")]
+fn optional_sources(sources: Vec<SourceReference>) -> Option<Vec<SourceReference>> {
+    if sources.is_empty() {
+        None
+    } else {
+        Some(sources)
+    }
 }

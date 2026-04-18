@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- RAG chat responses now expose document source references in the SSE stream, persist them with assistant messages, and render them in session history with RBAC filtering reapplied on replay.
+
 ### Fixed
 - RAG chat now uses the configured `rag.chat_url` for non-Vertex OpenAI-compatible providers and no longer requires `rag.chat_api_key` for local endpoints that do not use authentication.
 ## [0.13.8] 2026-04-18

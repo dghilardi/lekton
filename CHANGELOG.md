@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.7] 2026-04-18
+
 ### Changed
 - Authentication and API bearer tokens now use 43-character alphanumeric secrets generated from a CSPRNG instead of UUID v4 strings.
 - Access JWTs now include `iss`, `aud`, and `nbf` claims, with matching issuer/audience validation driven by typed auth configuration.

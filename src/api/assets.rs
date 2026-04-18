@@ -52,6 +52,7 @@ pub struct ListAssetsQuery {
 pub const DEFAULT_MAX_ATTACHMENT_SIZE: u64 = 25 * 1024 * 1024;
 
 /// Core upload logic — separated from HTTP layer for testability.
+#[cfg(feature = "ssr")]
 pub async fn process_upload_asset(
     asset_repo: &dyn AssetRepository,
     storage: &dyn StorageClient,
@@ -59,14 +60,18 @@ pub async fn process_upload_asset(
     content_type: &str,
     data: Vec<u8>,
     uploaded_by: &str,
-    expected_token: &str,
+    service_token_repo: &dyn crate::db::service_token_repository::ServiceTokenRepository,
+    legacy_token: Option<&str>,
     service_token: &str,
     max_size: u64,
 ) -> Result<AssetUploadResponse, AppError> {
-    // Validate token
-    if service_token != expected_token {
-        return Err(AppError::Auth("Invalid service token".into()));
-    }
+    // Validate token (legacy or DB-backed)
+    crate::api::token_validation::validate_service_token(
+        service_token_repo,
+        legacy_token,
+        service_token,
+    )
+    .await?;
 
     // Validate key
     if key.is_empty() {
@@ -166,16 +171,21 @@ pub async fn process_list_assets(
 }
 
 /// Core delete logic.
+#[cfg(feature = "ssr")]
 pub async fn process_delete_asset(
     asset_repo: &dyn AssetRepository,
     storage: &dyn StorageClient,
     key: &str,
-    expected_token: &str,
+    service_token_repo: &dyn crate::db::service_token_repository::ServiceTokenRepository,
+    legacy_token: Option<&str>,
     service_token: &str,
 ) -> Result<(), AppError> {
-    if service_token != expected_token {
-        return Err(AppError::Auth("Invalid service token".into()));
-    }
+    crate::api::token_validation::validate_service_token(
+        service_token_repo,
+        legacy_token,
+        service_token,
+    )
+    .await?;
 
     let asset = asset_repo
         .find_by_key(key)
@@ -209,15 +219,20 @@ pub struct CheckHashesResponse {
 }
 
 /// Core check-hashes logic: returns which keys are missing or have a different hash.
+#[cfg(feature = "ssr")]
 pub async fn process_check_hashes(
     asset_repo: &dyn AssetRepository,
     entries: &[CheckHashEntry],
-    expected_token: &str,
+    service_token_repo: &dyn crate::db::service_token_repository::ServiceTokenRepository,
+    legacy_token: Option<&str>,
     service_token: &str,
 ) -> Result<CheckHashesResponse, AppError> {
-    if service_token != expected_token {
-        return Err(AppError::Auth("Invalid service token".into()));
-    }
+    crate::api::token_validation::validate_service_token(
+        service_token_repo,
+        legacy_token,
+        service_token,
+    )
+    .await?;
 
     let mut to_upload = Vec::new();
     for entry in entries {
@@ -298,7 +313,8 @@ pub async fn check_hashes_handler(
     let response = process_check_hashes(
         state.asset_repo.as_ref(),
         &request.entries,
-        &state.service_token,
+        state.service_token_repo.as_ref(),
+        Some(&state.service_token),
         &request.service_token,
     )
     .await?;
@@ -365,7 +381,8 @@ pub async fn upload_asset_handler(
         &content_type,
         data,
         &service_token, // use token as uploader identity for now
-        &state.service_token,
+        state.service_token_repo.as_ref(),
+        Some(&state.service_token),
         &service_token,
         state.max_attachment_size_bytes,
     )
@@ -420,7 +437,8 @@ pub async fn delete_asset_handler(
         state.asset_repo.as_ref(),
         state.storage_client.as_ref(),
         &key,
-        &state.service_token,
+        state.service_token_repo.as_ref(),
+        Some(&state.service_token),
         &request.service_token,
     )
     .await?;
@@ -488,7 +506,59 @@ mod tests {
     use async_trait::async_trait;
     use std::sync::Mutex;
 
+    use crate::db::service_token_models::ServiceToken;
+    use crate::db::service_token_repository::ServiceTokenRepository;
     use crate::test_utils::MockStorage;
+
+    struct MockServiceTokenRepo;
+
+    #[async_trait]
+    impl ServiceTokenRepository for MockServiceTokenRepo {
+        async fn create(&self, _: ServiceToken) -> Result<(), AppError> {
+            unimplemented!()
+        }
+        async fn find_by_hash(&self, _: &str) -> Result<Option<ServiceToken>, AppError> {
+            Ok(None)
+        }
+        async fn find_by_name(&self, _: &str) -> Result<Option<ServiceToken>, AppError> {
+            Ok(None)
+        }
+        async fn find_by_id(&self, _: &str) -> Result<Option<ServiceToken>, AppError> {
+            Ok(None)
+        }
+        async fn list_all(&self) -> Result<Vec<ServiceToken>, AppError> {
+            Ok(vec![])
+        }
+        async fn deactivate(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn touch_last_used(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn check_scope_overlap(
+            &self,
+            _: &[String],
+            _: Option<&str>,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        async fn set_active(&self, _: &str, _: bool) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn list_by_user_id(&self, _: &str) -> Result<Vec<ServiceToken>, AppError> {
+            Ok(vec![])
+        }
+        async fn list_pats_paginated(
+            &self,
+            _: u64,
+            _: u64,
+        ) -> Result<(Vec<ServiceToken>, u64), AppError> {
+            Ok((vec![], 0))
+        }
+        async fn delete_pat(&self, _: &str, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
 
     struct MockAssetRepo {
         assets: Mutex<Vec<Asset>>,
@@ -560,7 +630,8 @@ mod tests {
             "text/plain",
             data,
             "ci-bot",
-            "valid-token",
+            &MockServiceTokenRepo,
+            Some("valid-token"),
             "valid-token",
             DEFAULT_MAX_ATTACHMENT_SIZE,
         )
@@ -595,7 +666,8 @@ mod tests {
             "text/plain",
             vec![1, 2, 3],
             "ci-bot",
-            "valid-token",
+            &MockServiceTokenRepo,
+            Some("valid-token"),
             "wrong-token",
             DEFAULT_MAX_ATTACHMENT_SIZE,
         )
@@ -620,7 +692,8 @@ mod tests {
             "text/plain",
             vec![1],
             "ci-bot",
-            "valid-token",
+            &MockServiceTokenRepo,
+            Some("valid-token"),
             "valid-token",
             DEFAULT_MAX_ATTACHMENT_SIZE,
         )
@@ -645,7 +718,8 @@ mod tests {
             "text/plain",
             vec![1],
             "ci-bot",
-            "valid-token",
+            &MockServiceTokenRepo,
+            Some("valid-token"),
             "valid-token",
             DEFAULT_MAX_ATTACHMENT_SIZE,
         )
@@ -670,7 +744,8 @@ mod tests {
             "text/plain",
             vec![1],
             "ci-bot",
-            "valid-token",
+            &MockServiceTokenRepo,
+            Some("valid-token"),
             "valid-token",
             DEFAULT_MAX_ATTACHMENT_SIZE,
         )
@@ -696,7 +771,8 @@ mod tests {
             "image/png",
             vec![1, 2, 3],
             "ci-bot",
-            "valid-token",
+            &MockServiceTokenRepo,
+            Some("valid-token"),
             "valid-token",
             DEFAULT_MAX_ATTACHMENT_SIZE,
         )
@@ -717,7 +793,8 @@ mod tests {
             "image/png",
             vec![4, 5, 6, 7],
             "ci-bot",
-            "valid-token",
+            &MockServiceTokenRepo,
+            Some("valid-token"),
             "valid-token",
             DEFAULT_MAX_ATTACHMENT_SIZE,
         )
@@ -743,7 +820,8 @@ mod tests {
             "application/pdf",
             content.clone(),
             "ci-bot",
-            "valid-token",
+            &MockServiceTokenRepo,
+            Some("valid-token"),
             "valid-token",
             DEFAULT_MAX_ATTACHMENT_SIZE,
         )
@@ -786,7 +864,8 @@ mod tests {
                 "text/plain",
                 vec![1],
                 "ci-bot",
-                "valid-token",
+                &MockServiceTokenRepo,
+                Some("valid-token"),
                 "valid-token",
                 DEFAULT_MAX_ATTACHMENT_SIZE,
             )
@@ -815,7 +894,8 @@ mod tests {
                 "text/plain",
                 vec![1],
                 "ci-bot",
-                "valid-token",
+                &MockServiceTokenRepo,
+                Some("valid-token"),
                 "valid-token",
                 DEFAULT_MAX_ATTACHMENT_SIZE,
             )
@@ -841,7 +921,8 @@ mod tests {
             "text/plain",
             vec![1, 2, 3],
             "ci-bot",
-            "valid-token",
+            &MockServiceTokenRepo,
+            Some("valid-token"),
             "valid-token",
             DEFAULT_MAX_ATTACHMENT_SIZE,
         )
@@ -852,7 +933,8 @@ mod tests {
             &repo,
             &storage,
             "temp/file.txt",
-            "valid-token",
+            &MockServiceTokenRepo,
+            Some("valid-token"),
             "valid-token",
         )
         .await;
@@ -880,7 +962,8 @@ mod tests {
             &repo,
             &storage,
             "nonexistent.txt",
-            "valid-token",
+            &MockServiceTokenRepo,
+            Some("valid-token"),
             "valid-token",
         )
         .await;
@@ -904,7 +987,8 @@ mod tests {
             "text/plain",
             vec![1],
             "ci-bot",
-            "valid-token",
+            &MockServiceTokenRepo,
+            Some("valid-token"),
             "valid-token",
             DEFAULT_MAX_ATTACHMENT_SIZE,
         )
@@ -912,7 +996,7 @@ mod tests {
         .unwrap();
 
         let result =
-            process_delete_asset(&repo, &storage, "file.txt", "valid-token", "wrong-token").await;
+            process_delete_asset(&repo, &storage, "file.txt", &MockServiceTokenRepo, Some("valid-token"), "wrong-token").await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -985,7 +1069,8 @@ mod tests {
             "text/plain",
             b"hello".to_vec(),
             "ci-bot",
-            "valid-token",
+            &MockServiceTokenRepo,
+            Some("valid-token"),
             "valid-token",
             DEFAULT_MAX_ATTACHMENT_SIZE,
         )
@@ -1024,7 +1109,7 @@ mod tests {
             },
         ];
 
-        let result = process_check_hashes(&repo, &entries, "valid-token", "valid-token")
+        let result = process_check_hashes(&repo, &entries, &MockServiceTokenRepo, Some("valid-token"), "valid-token")
             .await
             .unwrap();
 
@@ -1035,7 +1120,7 @@ mod tests {
     async fn test_check_hashes_invalid_token() {
         let repo = MockAssetRepo::new();
 
-        let result = process_check_hashes(&repo, &[], "valid-token", "wrong-token").await;
+        let result = process_check_hashes(&repo, &[], &MockServiceTokenRepo, Some("valid-token"), "wrong-token").await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -1056,7 +1141,8 @@ mod tests {
             "text/plain",
             b"version1".to_vec(),
             "ci-bot",
-            "valid-token",
+            &MockServiceTokenRepo,
+            Some("valid-token"),
             "valid-token",
             DEFAULT_MAX_ATTACHMENT_SIZE,
         )
@@ -1070,7 +1156,7 @@ mod tests {
             content_hash: new_hash,
         }];
 
-        let result = process_check_hashes(&repo, &entries, "valid-token", "valid-token")
+        let result = process_check_hashes(&repo, &entries, &MockServiceTokenRepo, Some("valid-token"), "valid-token")
             .await
             .unwrap();
 

@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.14.3] 2026-04-18
+
 ### Fixed
 - MCP endpoint now supports configurable `allowed_hosts` (`[mcp] allowed_hosts`) to work behind reverse proxies with custom hostnames. Fixes `Forbidden: Host header is not allowed` caused by rmcp 1.5's default DNS rebinding protection.
 

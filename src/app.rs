@@ -8,7 +8,9 @@ use crate::db::settings_repository::NavGroup;
 
 use crate::components::Layout;
 use crate::editor::component::EditorPage;
-use crate::pages::{AdminSettingsPage, ChatPage, DocPage, HomePage, LoginPage, NotFound, ProfilePage, PromptsPage};
+use crate::pages::{
+    AdminSettingsPage, ChatPage, DocPage, HomePage, LoginPage, NotFound, ProfilePage, PromptsPage,
+};
 use crate::schema::component::{SchemaListPage, SchemaViewerPage};
 use crate::search::client::SearchHit;
 
@@ -46,16 +48,19 @@ pub struct AppState {
     pub search_service: Option<Arc<dyn crate::search::client::SearchService>>,
     pub service_token: String,
     pub service_token_repo: Arc<dyn crate::db::service_token_repository::ServiceTokenRepository>,
-    pub document_version_repo: Arc<dyn crate::db::document_version_repository::DocumentVersionRepository>,
+    pub document_version_repo:
+        Arc<dyn crate::db::document_version_repository::DocumentVersionRepository>,
     pub prompt_repo: Arc<dyn crate::db::prompt_repository::PromptRepository>,
     pub prompt_version_repo: Arc<dyn crate::db::prompt_version_repository::PromptVersionRepository>,
-    pub user_prompt_preference_repo: Arc<dyn crate::db::user_prompt_preference_repository::UserPromptPreferenceRepository>,
+    pub user_prompt_preference_repo:
+        Arc<dyn crate::db::user_prompt_preference_repository::UserPromptPreferenceRepository>,
     pub demo_mode: bool,
     pub leptos_options: LeptosOptions,
     // ── Auth (phase 5) ────────────────────────────────────────────────────────
     pub user_repo: Arc<dyn crate::db::user_repository::UserRepository>,
     pub access_level_repo: Arc<dyn crate::db::access_level_repository::AccessLevelRepository>,
-    pub navigation_order_repo: Arc<dyn crate::db::navigation_order_repository::NavigationOrderRepository>,
+    pub navigation_order_repo:
+        Arc<dyn crate::db::navigation_order_repository::NavigationOrderRepository>,
     pub token_service: Arc<crate::auth::token_service::TokenService>,
     pub auth_provider: Option<Arc<dyn crate::auth::provider::AuthProvider>>,
     pub rag_service: Option<Arc<dyn crate::rag::service::RagService>>,
@@ -63,8 +68,10 @@ pub struct AppState {
     pub chat_repo: Option<Arc<dyn crate::db::chat_repository::ChatRepository>>,
     pub chat_service: Option<Arc<crate::rag::chat::ChatService>>,
     pub feedback_repo: Option<Arc<dyn crate::db::feedback_repository::FeedbackRepository>>,
-    pub documentation_feedback_repo: Arc<dyn crate::db::documentation_feedback_repository::DocumentationFeedbackRepository>,
-    pub embedding_cache_repo: Option<Arc<dyn crate::db::embedding_cache_repository::EmbeddingCacheRepository>>,
+    pub documentation_feedback_repo:
+        Arc<dyn crate::db::documentation_feedback_repository::DocumentationFeedbackRepository>,
+    pub embedding_cache_repo:
+        Option<Arc<dyn crate::db::embedding_cache_repository::EmbeddingCacheRepository>>,
     /// Whether cookies should be set without the `Secure` flag (HTTP local dev).
     #[from_ref(skip)]
     pub insecure_cookies: bool,
@@ -121,10 +128,10 @@ pub struct NavItem {
 async fn request_document_visibility(
     state: &AppState,
 ) -> Result<(Option<Vec<String>>, bool), ServerFnError> {
-    use axum_extra::extract::CookieJar;
     use crate::auth::extractor::ACCESS_TOKEN_COOKIE;
     use crate::auth::models::UserContext;
     use crate::auth::token_service::TokenService;
+    use axum_extra::extract::CookieJar;
 
     let jar: CookieJar = leptos_axum::extract().await?;
 
@@ -140,13 +147,19 @@ async fn request_document_visibility(
             .get_permissions(&auth_user.user_id)
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
-        return Ok(UserContext { user: auth_user, permissions: perms }.document_visibility());
+        return Ok(UserContext {
+            user: auth_user,
+            permissions: perms,
+        }
+        .document_visibility());
     }
 
     // Fall back to demo session cookie when demo mode is active.
     if state.demo_mode {
         if let Some(cookie) = jar.get("lekton_demo_user") {
-            if let Ok(demo_user) = serde_json::from_str::<crate::auth::models::AuthenticatedUser>(cookie.value()) {
+            if let Ok(demo_user) =
+                serde_json::from_str::<crate::auth::models::AuthenticatedUser>(cookie.value())
+            {
                 // Admins see everything; non-admins are treated as public readers.
                 if demo_user.is_admin {
                     return Ok((None, true));
@@ -163,14 +176,14 @@ async fn request_document_visibility(
 
 /// Server function to search documents.
 #[server(SearchDocs, "/api")]
-pub async fn search_docs(
-    query: String,
-) -> Result<Vec<SearchHit>, ServerFnError> {
+pub async fn search_docs(query: String) -> Result<Vec<SearchHit>, ServerFnError> {
     use crate::search::client::SearchService;
 
     let state = expect_context::<AppState>();
 
-    let search_service = state.search_service.as_ref()
+    let search_service = state
+        .search_service
+        .as_ref()
         .ok_or_else(|| ServerFnError::new("Search not available"))?;
 
     let (allowed_levels, include_draft) = request_document_visibility(&state).await?;
@@ -185,15 +198,17 @@ pub async fn search_docs(
 /// Server function to fetch navigation tree.
 #[server(GetNavigation, "/api")]
 pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
-    use crate::db::repository::DocumentRepository;
     use crate::db::navigation_order_repository::NavigationOrderRepository;
+    use crate::db::repository::DocumentRepository;
     use std::collections::HashMap;
 
     let state = expect_context::<AppState>();
 
     let (allowed_levels, include_draft) = request_document_visibility(&state).await?;
     let (docs, nav_order_entries) = tokio::join!(
-        state.document_repo.list_by_access_levels(allowed_levels.as_deref(), include_draft),
+        state
+            .document_repo
+            .list_by_access_levels(allowed_levels.as_deref(), include_draft),
         state.navigation_order_repo.list_all(),
     );
     let docs = docs.map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -205,24 +220,29 @@ pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
         .map(|e| (e.slug, e.weight))
         .collect();
 
-    let mut all_items: Vec<NavItem> = docs.into_iter().map(|doc| {
-        let parent_slug = doc.parent_slug.or_else(|| {
-            if let Some((parent, _)) = doc.slug.rsplit_once('/') {
-                Some(parent.to_string())
-            } else {
-                None
+    let mut all_items: Vec<NavItem> = docs
+        .into_iter()
+        .map(|doc| {
+            let parent_slug = doc.parent_slug.or_else(|| {
+                if let Some((parent, _)) = doc.slug.rsplit_once('/') {
+                    Some(parent.to_string())
+                } else {
+                    None
+                }
+            });
+            NavItem {
+                slug: doc.slug,
+                title: doc.title,
+                parent_slug,
+                order: doc.order,
+                children: vec![],
             }
-        });
-        NavItem {
-            slug: doc.slug,
-            title: doc.title,
-            parent_slug,
-            order: doc.order,
-            children: vec![],
-        }
-    }).collect();
+        })
+        .collect();
 
-    let mut items_by_slug: HashMap<String, NavItem> = all_items.iter().cloned()
+    let mut items_by_slug: HashMap<String, NavItem> = all_items
+        .iter()
+        .cloned()
         .map(|item| (item.slug.clone(), item))
         .collect();
 
@@ -231,15 +251,18 @@ pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
         while let Some(parent_slug) = current_parent {
             if !items_by_slug.contains_key(&parent_slug) {
                 let title_part = parent_slug.split('/').last().unwrap_or(&parent_slug);
-                let title = title_part.split('-')
+                let title = title_part
+                    .split('-')
                     .map(|w| {
                         let mut c = w.chars();
                         match c.next() {
                             None => String::new(),
-                            Some(f) => f.to_uppercase().collect::<String>() + c.as_str()
+                            Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
                         }
-                    }).collect::<Vec<_>>().join(" ");
-                
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+
                 let next_parent = if let Some((p, _)) = parent_slug.rsplit_once('/') {
                     Some(p.to_string())
                 } else {
@@ -253,7 +276,7 @@ pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
                     order: 0,
                     children: vec![],
                 };
-                
+
                 items_by_slug.insert(parent_slug.clone(), missing_node);
                 current_parent = next_parent;
             } else {
@@ -267,7 +290,8 @@ pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
 
     for (_slug, item) in items_by_slug.into_iter() {
         if let Some(parent) = &item.parent_slug {
-            children_by_parent.entry(parent.clone())
+            children_by_parent
+                .entry(parent.clone())
                 .or_insert_with(Vec::new)
                 .push(item);
         } else {
@@ -307,7 +331,8 @@ pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
                 b.order as i32
             };
 
-            a_sort_key.cmp(&b_sort_key)
+            a_sort_key
+                .cmp(&b_sort_key)
                 .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
         });
         for item in items.iter_mut() {
@@ -329,10 +354,11 @@ pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
 /// shared unauthorized sentinel so the client can attempt a refresh before
 /// treating the session as logged out.
 #[server(GetCurrentUser, "/api")]
-pub async fn get_current_user() -> Result<Option<crate::auth::models::AuthenticatedUser>, ServerFnError> {
-    use axum_extra::extract::CookieJar;
+pub async fn get_current_user(
+) -> Result<Option<crate::auth::models::AuthenticatedUser>, ServerFnError> {
     use crate::auth::extractor::ACCESS_TOKEN_COOKIE;
     use crate::auth::token_service::TokenService;
+    use axum_extra::extract::CookieJar;
 
     let state = expect_context::<AppState>();
     let jar: CookieJar = leptos_axum::extract().await?;
@@ -342,7 +368,9 @@ pub async fn get_current_user() -> Result<Option<crate::auth::models::Authentica
     if let Some(cookie) = jar.get(ACCESS_TOKEN_COOKIE) {
         return match state.token_service.validate_access_token(cookie.value()) {
             Ok(claims) => Ok(Some(TokenService::claims_to_user(&claims))),
-            Err(_) => Err(ServerFnError::new(crate::auth::models::UNAUTHORIZED_SENTINEL)),
+            Err(_) => Err(ServerFnError::new(
+                crate::auth::models::UNAUTHORIZED_SENTINEL,
+            )),
         };
     }
 
@@ -466,7 +494,10 @@ pub async fn logout_user() -> Result<(), ServerFnError> {
 #[server(GetCustomCss, "/api")]
 pub async fn get_custom_css() -> Result<String, ServerFnError> {
     let state = expect_context::<AppState>();
-    let settings = state.settings_repo.get_settings().await
+    let settings = state
+        .settings_repo
+        .get_settings()
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(settings.custom_css)
 }
@@ -475,7 +506,10 @@ pub async fn get_custom_css() -> Result<String, ServerFnError> {
 #[server(SaveCustomCss, "/api")]
 pub async fn save_custom_css(css: String) -> Result<String, ServerFnError> {
     let state = expect_context::<AppState>();
-    state.settings_repo.set_custom_css(&css).await
+    state
+        .settings_repo
+        .set_custom_css(&css)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok("Custom CSS saved successfully".to_string())
 }
@@ -484,7 +518,10 @@ pub async fn save_custom_css(css: String) -> Result<String, ServerFnError> {
 #[server(GetNavbarGroups, "/api")]
 pub async fn get_navbar_groups() -> Result<Vec<NavGroup>, ServerFnError> {
     let state = expect_context::<AppState>();
-    let settings = state.settings_repo.get_settings().await
+    let settings = state
+        .settings_repo
+        .get_settings()
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(settings.navbar_groups)
 }
@@ -500,7 +537,8 @@ pub async fn get_navigation_order() -> Result<Vec<NavigationOrderEntry>, ServerF
     let state = expect_context::<AppState>();
     require_admin_user(&state).await?;
 
-    state.navigation_order_repo
+    state
+        .navigation_order_repo
         .list_all()
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
@@ -510,13 +548,16 @@ pub async fn get_navigation_order() -> Result<Vec<NavigationOrderEntry>, ServerF
 ///
 /// Accepts the full ordered list of entries and replaces everything atomically.
 #[server(SaveNavigationOrder, "/api")]
-pub async fn save_navigation_order(entries: Vec<NavigationOrderEntry>) -> Result<String, ServerFnError> {
+pub async fn save_navigation_order(
+    entries: Vec<NavigationOrderEntry>,
+) -> Result<String, ServerFnError> {
     use crate::db::navigation_order_repository::NavigationOrderRepository;
 
     let state = expect_context::<AppState>();
     require_admin_user(&state).await?;
 
-    state.navigation_order_repo
+    state
+        .navigation_order_repo
         .replace_all(entries)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -548,33 +589,39 @@ pub async fn get_doc_html(
     slug: String,
 ) -> Result<Option<crate::pages::DocPageData>, ServerFnError> {
     use crate::db::repository::DocumentRepository;
-    use crate::storage::client::StorageClient;
     use crate::rendering::markdown::{extract_headings, render_markdown};
+    use crate::storage::client::StorageClient;
 
     let state = expect_context::<AppState>();
 
-    let doc = state.document_repo.find_by_slug(&slug).await
+    let doc = state
+        .document_repo
+        .find_by_slug(&slug)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let Some(doc) = doc else {
         let (allowed_levels, include_draft) = request_document_visibility(&state).await?;
-        let all_docs = state.document_repo
+        let all_docs = state
+            .document_repo
             .list_by_access_levels(allowed_levels.as_deref(), include_draft)
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
-        
-        let mut children: Vec<_> = all_docs.into_iter()
+
+        let mut children: Vec<_> = all_docs
+            .into_iter()
             .filter(|d| d.parent_slug.as_deref() == Some(slug.as_str()))
             .collect();
-            
+
         if children.is_empty() {
             return Ok(None);
         }
-        
+
         children.sort_by_key(|d| d.order);
 
         let title_part = slug.split('/').last().unwrap_or("Section");
-        let title = title_part.split('-')
+        let title = title_part
+            .split('-')
             .map(|word| {
                 let mut c = word.chars();
                 match c.next() {
@@ -607,19 +654,26 @@ pub async fn get_doc_html(
     // permission to read this document.  Returning None instead of an error
     // avoids leaking the existence of restricted documents.
     let (allowed_levels, include_draft) = request_document_visibility(&state).await?;
-    if !doc_is_accessible(&doc.access_level, doc.is_draft, allowed_levels.as_deref(), include_draft) {
+    if !doc_is_accessible(
+        &doc.access_level,
+        doc.is_draft,
+        allowed_levels.as_deref(),
+        include_draft,
+    ) {
         return Ok(None);
     }
 
-    let content_bytes = state.storage_client.get_object(&doc.s3_key).await
+    let content_bytes = state
+        .storage_client
+        .get_object(&doc.s3_key)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let Some(content_bytes) = content_bytes else {
         return Ok(None);
     };
 
-    let raw = String::from_utf8(content_bytes)
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let raw = String::from_utf8(content_bytes).map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let html = render_markdown(&raw);
     let headings = extract_headings(&raw);
@@ -664,10 +718,12 @@ pub struct CreateTokenResult {
 /// Returns a distinct "forbidden" message when the caller is authenticated but
 /// lacks admin privileges (no refresh makes sense in that case).
 #[cfg(feature = "ssr")]
-async fn require_admin_user(state: &AppState) -> Result<crate::auth::models::AuthenticatedUser, ServerFnError> {
-    use axum_extra::extract::CookieJar;
+async fn require_admin_user(
+    state: &AppState,
+) -> Result<crate::auth::models::AuthenticatedUser, ServerFnError> {
     use crate::auth::extractor::ACCESS_TOKEN_COOKIE;
     use crate::auth::token_service::TokenService;
+    use axum_extra::extract::CookieJar;
 
     let jar: CookieJar = leptos_axum::extract().await?;
 
@@ -687,7 +743,9 @@ async fn require_admin_user(state: &AppState) -> Result<crate::auth::models::Aut
     // Demo mode fallback
     if state.demo_mode {
         if let Some(cookie) = jar.get("lekton_demo_user") {
-            if let Ok(user) = serde_json::from_str::<crate::auth::models::AuthenticatedUser>(cookie.value()) {
+            if let Ok(user) =
+                serde_json::from_str::<crate::auth::models::AuthenticatedUser>(cookie.value())
+            {
                 if user.is_admin {
                     return Ok(user);
                 }
@@ -697,7 +755,9 @@ async fn require_admin_user(state: &AppState) -> Result<crate::auth::models::Aut
     }
 
     // Not authenticated — 401, client should attempt refresh.
-    Err(ServerFnError::new(crate::auth::models::UNAUTHORIZED_SENTINEL))
+    Err(ServerFnError::new(
+        crate::auth::models::UNAUTHORIZED_SENTINEL,
+    ))
 }
 
 /// List all service tokens (admin only).
@@ -706,18 +766,26 @@ pub async fn list_service_tokens() -> Result<Vec<ServiceTokenInfo>, ServerFnErro
     let state = expect_context::<AppState>();
     require_admin_user(&state).await?;
 
-    let tokens = state.service_token_repo.list_all().await
+    let tokens = state
+        .service_token_repo
+        .list_all()
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    Ok(tokens.into_iter().map(|t| ServiceTokenInfo {
-        id: t.id,
-        name: t.name,
-        allowed_scopes: t.allowed_scopes,
-        can_write: t.can_write,
-        is_active: t.is_active,
-        created_at: t.created_at.format("%Y-%m-%d %H:%M").to_string(),
-        last_used_at: t.last_used_at.map(|d| d.format("%Y-%m-%d %H:%M").to_string()),
-    }).collect())
+    Ok(tokens
+        .into_iter()
+        .map(|t| ServiceTokenInfo {
+            id: t.id,
+            name: t.name,
+            allowed_scopes: t.allowed_scopes,
+            can_write: t.can_write,
+            is_active: t.is_active,
+            created_at: t.created_at.format("%Y-%m-%d %H:%M").to_string(),
+            last_used_at: t
+                .last_used_at
+                .map(|d| d.format("%Y-%m-%d %H:%M").to_string()),
+        })
+        .collect())
 }
 
 /// Create a new scoped service token (admin only).
@@ -747,15 +815,18 @@ pub async fn create_service_token(
         return Err(ServerFnError::new("At least one scope is required"));
     }
 
-    let has_overlap = state.service_token_repo
+    let has_overlap = state
+        .service_token_repo
         .check_scope_overlap(&allowed_scopes, None)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     if has_overlap {
-        return Err(ServerFnError::new("Scopes overlap with an existing service token"));
+        return Err(ServerFnError::new(
+            "Scopes overlap with an existing service token",
+        ));
     }
 
-    let raw_token = uuid::Uuid::new_v4().to_string();
+    let raw_token = TokenService::generate_opaque_token();
     let token_hash = TokenService::hash_token(&raw_token);
 
     let token = crate::db::service_token_models::ServiceToken {
@@ -772,7 +843,10 @@ pub async fn create_service_token(
         is_active: true,
     };
 
-    state.service_token_repo.create(token).await
+    state
+        .service_token_repo
+        .create(token)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(CreateTokenResult {
@@ -789,7 +863,10 @@ pub async fn deactivate_service_token(id: String) -> Result<(), ServerFnError> {
     let state = expect_context::<AppState>();
     require_admin_user(&state).await?;
 
-    state.service_token_repo.deactivate(&id).await
+    state
+        .service_token_repo
+        .deactivate(&id)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(())
@@ -840,10 +917,12 @@ pub struct PromptLibraryState {
 
 /// Helper: extract the current authenticated user (any role).
 #[cfg(feature = "ssr")]
-async fn require_any_user(state: &AppState) -> Result<crate::auth::models::AuthenticatedUser, ServerFnError> {
-    use axum_extra::extract::CookieJar;
+async fn require_any_user(
+    state: &AppState,
+) -> Result<crate::auth::models::AuthenticatedUser, ServerFnError> {
     use crate::auth::extractor::ACCESS_TOKEN_COOKIE;
     use crate::auth::token_service::TokenService;
+    use axum_extra::extract::CookieJar;
 
     let jar: CookieJar = leptos_axum::extract().await?;
 
@@ -857,13 +936,17 @@ async fn require_any_user(state: &AppState) -> Result<crate::auth::models::Authe
 
     if state.demo_mode {
         if let Some(cookie) = jar.get("lekton_demo_user") {
-            if let Ok(user) = serde_json::from_str::<crate::auth::models::AuthenticatedUser>(cookie.value()) {
+            if let Ok(user) =
+                serde_json::from_str::<crate::auth::models::AuthenticatedUser>(cookie.value())
+            {
                 return Ok(user);
             }
         }
     }
 
-    Err(ServerFnError::new(crate::auth::models::UNAUTHORIZED_SENTINEL))
+    Err(ServerFnError::new(
+        crate::auth::models::UNAUTHORIZED_SENTINEL,
+    ))
 }
 
 #[cfg(feature = "ssr")]
@@ -905,11 +988,13 @@ fn build_prompt_library_state(
 ) -> PromptLibraryState {
     use std::collections::HashMap;
 
-    let pref_by_slug: HashMap<String, crate::db::user_prompt_preference_repository::UserPromptPreference> =
-        preferences
-            .into_iter()
-            .map(|pref| (pref.prompt_slug.clone(), pref))
-            .collect();
+    let pref_by_slug: HashMap<
+        String,
+        crate::db::user_prompt_preference_repository::UserPromptPreference,
+    > = preferences
+        .into_iter()
+        .map(|pref| (pref.prompt_slug.clone(), pref))
+        .collect();
 
     let mut items = Vec::new();
     let mut total_context_weight = 0u32;
@@ -955,9 +1040,7 @@ fn build_prompt_library_state(
             "Selected prompts add heavy context overhead; reduce favorites or hide some primary prompts.".to_string(),
         );
     } else if total_context_weight >= 8 {
-        warnings.push(
-            "Selected prompts may add significant context overhead.".to_string(),
-        );
+        warnings.push("Selected prompts may add significant context overhead.".to_string());
     }
 
     PromptLibraryState {
@@ -1004,13 +1087,14 @@ pub async fn save_prompt_preference(
         .map_err(|e| ServerFnError::new(e.to_string()))?
         .ok_or_else(|| ServerFnError::new("Prompt not found"))?;
 
-    let allowed = user.is_admin || levels.as_ref().is_none_or(|ls| ls.contains(&prompt.access_level));
-    let can_read_draft = if user.is_admin {
-        true
-    } else {
-        include_draft
-    };
-    if !allowed || (prompt.status == crate::db::prompt_models::PromptStatus::Draft && !can_read_draft) {
+    let allowed = user.is_admin
+        || levels
+            .as_ref()
+            .is_none_or(|ls| ls.contains(&prompt.access_level));
+    let can_read_draft = if user.is_admin { true } else { include_draft };
+    if !allowed
+        || (prompt.status == crate::db::prompt_models::PromptStatus::Draft && !can_read_draft)
+    {
         return Err(ServerFnError::new("Prompt not found"));
     }
 
@@ -1050,18 +1134,24 @@ pub async fn list_user_pats() -> Result<Vec<PatInfo>, ServerFnError> {
     let state = expect_context::<AppState>();
     let user = require_any_user(&state).await?;
 
-    let tokens = state.service_token_repo
+    let tokens = state
+        .service_token_repo
         .list_by_user_id(&user.user_id)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    Ok(tokens.into_iter().map(|t| PatInfo {
-        id: t.id,
-        name: t.name,
-        is_active: t.is_active,
-        created_at: t.created_at.format("%Y-%m-%d %H:%M").to_string(),
-        last_used_at: t.last_used_at.map(|d| d.format("%Y-%m-%d %H:%M").to_string()),
-    }).collect())
+    Ok(tokens
+        .into_iter()
+        .map(|t| PatInfo {
+            id: t.id,
+            name: t.name,
+            is_active: t.is_active,
+            created_at: t.created_at.format("%Y-%m-%d %H:%M").to_string(),
+            last_used_at: t
+                .last_used_at
+                .map(|d| d.format("%Y-%m-%d %H:%M").to_string()),
+        })
+        .collect())
 }
 
 /// Create a new PAT for the current user.
@@ -1077,7 +1167,7 @@ pub async fn create_user_pat(name: String) -> Result<CreatePatResult, ServerFnEr
         return Err(ServerFnError::new("PAT name cannot be empty"));
     }
 
-    let raw_token = uuid::Uuid::new_v4().to_string();
+    let raw_token = TokenService::generate_opaque_token();
     let token_hash = TokenService::hash_token(&raw_token);
     let id = uuid::Uuid::new_v4().to_string();
 
@@ -1095,10 +1185,17 @@ pub async fn create_user_pat(name: String) -> Result<CreatePatResult, ServerFnEr
         is_active: true,
     };
 
-    state.service_token_repo.create(token).await
+    state
+        .service_token_repo
+        .create(token)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    Ok(CreatePatResult { id, name, raw_token })
+    Ok(CreatePatResult {
+        id,
+        name,
+        raw_token,
+    })
 }
 
 /// Toggle a PAT active/inactive (caller must own it).
@@ -1107,7 +1204,10 @@ pub async fn toggle_user_pat(id: String, active: bool) -> Result<(), ServerFnErr
     let state = expect_context::<AppState>();
     let user = require_any_user(&state).await?;
 
-    let token = state.service_token_repo.find_by_id(&id).await
+    let token = state
+        .service_token_repo
+        .find_by_id(&id)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?
         .ok_or_else(|| ServerFnError::new("PAT not found"))?;
 
@@ -1115,7 +1215,10 @@ pub async fn toggle_user_pat(id: String, active: bool) -> Result<(), ServerFnErr
         return Err(ServerFnError::new("You do not own this token"));
     }
 
-    state.service_token_repo.set_active(&id, active).await
+    state
+        .service_token_repo
+        .set_active(&id, active)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(())
 }
@@ -1126,7 +1229,10 @@ pub async fn delete_user_pat(id: String) -> Result<(), ServerFnError> {
     let state = expect_context::<AppState>();
     let user = require_any_user(&state).await?;
 
-    state.service_token_repo.delete_pat(&id, &user.user_id).await
+    state
+        .service_token_repo
+        .delete_pat(&id, &user.user_id)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(())
 }
@@ -1147,12 +1253,16 @@ pub struct AdminPatInfo {
 
 /// Paginated list of all PATs (admin only).
 #[server(AdminListPats, "/api")]
-pub async fn admin_list_pats(page: u64, per_page: u64) -> Result<(Vec<AdminPatInfo>, u64), ServerFnError> {
+pub async fn admin_list_pats(
+    page: u64,
+    per_page: u64,
+) -> Result<(Vec<AdminPatInfo>, u64), ServerFnError> {
     let state = expect_context::<AppState>();
     require_admin_user(&state).await?;
 
     let per_page = per_page.clamp(1, 100);
-    let (tokens, total) = state.service_token_repo
+    let (tokens, total) = state
+        .service_token_repo
         .list_pats_paginated(page, per_page)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -1169,18 +1279,26 @@ pub async fn admin_list_pats(page: u64, per_page: u64) -> Result<(Vec<AdminPatIn
         }
     }
 
-    let items = tokens.into_iter().map(|t| {
-        let email = t.user_id.as_ref().and_then(|uid| email_map.get(uid).cloned());
-        AdminPatInfo {
-            id: t.id,
-            name: t.name,
-            is_active: t.is_active,
-            user_id: t.user_id,
-            user_email: email,
-            created_at: t.created_at.format("%Y-%m-%d %H:%M").to_string(),
-            last_used_at: t.last_used_at.map(|d| d.format("%Y-%m-%d %H:%M").to_string()),
-        }
-    }).collect();
+    let items = tokens
+        .into_iter()
+        .map(|t| {
+            let email = t
+                .user_id
+                .as_ref()
+                .and_then(|uid| email_map.get(uid).cloned());
+            AdminPatInfo {
+                id: t.id,
+                name: t.name,
+                is_active: t.is_active,
+                user_id: t.user_id,
+                user_email: email,
+                created_at: t.created_at.format("%Y-%m-%d %H:%M").to_string(),
+                last_used_at: t
+                    .last_used_at
+                    .map(|d| d.format("%Y-%m-%d %H:%M").to_string()),
+            }
+        })
+        .collect();
 
     Ok((items, total))
 }
@@ -1191,7 +1309,10 @@ pub async fn admin_toggle_pat(id: String, active: bool) -> Result<(), ServerFnEr
     let state = expect_context::<AppState>();
     require_admin_user(&state).await?;
 
-    let token = state.service_token_repo.find_by_id(&id).await
+    let token = state
+        .service_token_repo
+        .find_by_id(&id)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?
         .ok_or_else(|| ServerFnError::new("PAT not found"))?;
 
@@ -1199,7 +1320,10 @@ pub async fn admin_toggle_pat(id: String, active: bool) -> Result<(), ServerFnEr
         return Err(ServerFnError::new("This endpoint only manages PATs"));
     }
 
-    state.service_token_repo.set_active(&id, active).await
+    state
+        .service_token_repo
+        .set_active(&id, active)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(())
 }
@@ -1289,14 +1413,18 @@ fn map_documentation_feedback_item(
 
 /// List the current user's feedback (paginated, newest first).
 #[server(ListUserFeedback, "/api")]
-pub async fn list_user_feedback(page: u64, per_page: u64) -> Result<FeedbackListResult, ServerFnError> {
+pub async fn list_user_feedback(
+    page: u64,
+    per_page: u64,
+) -> Result<FeedbackListResult, ServerFnError> {
     use crate::db::chat_models::FeedbackRating;
     use crate::db::feedback_repository::FeedbackListParams;
 
     let state = expect_context::<AppState>();
     let user = require_any_user(&state).await?;
 
-    let fb_repo = state.feedback_repo
+    let fb_repo = state
+        .feedback_repo
         .as_ref()
         .ok_or_else(|| ServerFnError::new("Feedback not available"))?;
 
@@ -1312,19 +1440,23 @@ pub async fn list_user_feedback(page: u64, per_page: u64) -> Result<FeedbackList
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    let items = result.items.into_iter().map(|fb| {
-        let rating = match fb.rating {
-            FeedbackRating::Positive => "positive".to_string(),
-            FeedbackRating::Negative => "negative".to_string(),
-        };
-        FeedbackInfo {
-            message_id: fb.message_id,
-            session_id: fb.session_id,
-            rating,
-            comment: fb.comment,
-            created_at: fb.created_at.format("%Y-%m-%d %H:%M").to_string(),
-        }
-    }).collect();
+    let items = result
+        .items
+        .into_iter()
+        .map(|fb| {
+            let rating = match fb.rating {
+                FeedbackRating::Positive => "positive".to_string(),
+                FeedbackRating::Negative => "negative".to_string(),
+            };
+            FeedbackInfo {
+                message_id: fb.message_id,
+                session_id: fb.session_id,
+                rating,
+                comment: fb.comment,
+                created_at: fb.created_at.format("%Y-%m-%d %H:%M").to_string(),
+            }
+        })
+        .collect();
 
     Ok(FeedbackListResult {
         items,
@@ -1340,11 +1472,14 @@ pub async fn delete_user_feedback(message_id: String) -> Result<(), ServerFnErro
     let state = expect_context::<AppState>();
     let user = require_any_user(&state).await?;
 
-    let fb_repo = state.feedback_repo
+    let fb_repo = state
+        .feedback_repo
         .as_ref()
         .ok_or_else(|| ServerFnError::new("Feedback not available"))?;
 
-    fb_repo.delete_feedback(&message_id, &user.user_id).await
+    fb_repo
+        .delete_feedback(&message_id, &user.user_id)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(())
 }
@@ -1408,7 +1543,10 @@ pub async fn resolve_documentation_feedback(
 
     state
         .documentation_feedback_repo
-        .resolve(&id, resolution_note.filter(|value| !value.trim().is_empty()))
+        .resolve(
+            &id,
+            resolution_note.filter(|value| !value.trim().is_empty()),
+        )
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
 }
@@ -1427,7 +1565,9 @@ pub async fn mark_documentation_feedback_duplicate(
         return Err(ServerFnError::new("Duplicate target id is required"));
     }
     if duplicate_of == id {
-        return Err(ServerFnError::new("A feedback item cannot duplicate itself"));
+        return Err(ServerFnError::new(
+            "A feedback item cannot duplicate itself",
+        ));
     }
 
     state
@@ -1453,24 +1593,25 @@ pub async fn mark_documentation_feedback_duplicate(
 pub fn App() -> impl IntoView {
     provide_meta_context();
 
-    let user_resource = LocalResource::new(|| crate::auth::refresh_client::with_auth_retry(get_current_user));
+    let user_resource =
+        LocalResource::new(|| crate::auth::refresh_client::with_auth_retry(get_current_user));
     let demo_mode_resource = LocalResource::new(get_is_demo_mode);
     let rag_resource = LocalResource::new(get_is_rag_enabled);
 
     let current_user: Signal<Option<crate::auth::models::AuthenticatedUser>> =
-        Signal::derive(move || {
-            user_resource.get().and_then(|res| res.ok()).flatten()
-        });
+        Signal::derive(move || user_resource.get().and_then(|res| res.ok()).flatten());
 
     // Whether the app is in demo mode (defaults to true until loaded to avoid
     // flashing the wrong UI — the demo login page is a safe fallback).
     let is_demo_mode: Signal<bool> = Signal::derive(move || {
-        demo_mode_resource.get().and_then(|res| res.ok()).unwrap_or(true)
+        demo_mode_resource
+            .get()
+            .and_then(|res| res.ok())
+            .unwrap_or(true)
     });
 
-    let is_rag_enabled: Signal<bool> = Signal::derive(move || {
-        rag_resource.get().and_then(|res| res.ok()).unwrap_or(false)
-    });
+    let is_rag_enabled: Signal<bool> =
+        Signal::derive(move || rag_resource.get().and_then(|res| res.ok()).unwrap_or(false));
 
     provide_context(current_user);
     provide_context(IsDemoMode(is_demo_mode));
@@ -1564,7 +1705,6 @@ mod prompt_library_tests {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::doc_is_accessible;
@@ -1590,8 +1730,18 @@ mod tests {
     fn user_cannot_read_restricted_level() {
         let allowed = levels(&["public"]);
         assert!(!doc_is_accessible("internal", false, Some(&allowed), false));
-        assert!(!doc_is_accessible("architect", false, Some(&allowed), false));
-        assert!(!doc_is_accessible("cloud-internal", false, Some(&allowed), false));
+        assert!(!doc_is_accessible(
+            "architect",
+            false,
+            Some(&allowed),
+            false
+        ));
+        assert!(!doc_is_accessible(
+            "cloud-internal",
+            false,
+            Some(&allowed),
+            false
+        ));
     }
 
     #[test]

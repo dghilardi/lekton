@@ -30,6 +30,8 @@ demo_mode = false
 allow_demo_in_production = false
 jwt_access_ttl_secs = 900
 jwt_refresh_ttl_days = 30
+jwt_issuer = "lekton"
+jwt_audience = "lekton"
 provider_type = "oidc"
 scopes = "openid profile email"
 

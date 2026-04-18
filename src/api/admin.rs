@@ -72,7 +72,9 @@ pub async fn create_access_level_handler(
 
     let name = req.name.trim().to_lowercase();
     if name.is_empty() {
-        return Err(AppError::BadRequest("Access level name cannot be empty".into()));
+        return Err(AppError::BadRequest(
+            "Access level name cannot be empty".into(),
+        ));
     }
 
     let level = AccessLevelEntity {
@@ -267,7 +269,9 @@ pub async fn create_service_token_handler(
         return Err(AppError::BadRequest("Token name cannot be empty".into()));
     }
     if req.allowed_scopes.is_empty() {
-        return Err(AppError::BadRequest("At least one scope is required".into()));
+        return Err(AppError::BadRequest(
+            "At least one scope is required".into(),
+        ));
     }
 
     // Check for scope overlap with existing tokens
@@ -282,7 +286,7 @@ pub async fn create_service_token_handler(
     }
 
     // Generate raw token and hash it
-    let raw_token = uuid::Uuid::new_v4().to_string();
+    let raw_token = crate::auth::token_service::TokenService::generate_opaque_token();
     let token_hash = crate::auth::token_service::TokenService::hash_token(&raw_token);
     let id = uuid::Uuid::new_v4().to_string();
 

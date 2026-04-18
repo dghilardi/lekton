@@ -14,16 +14,26 @@ use lekton::auth::token_service::TokenService;
 use lekton::db::access_level_repository::{AccessLevelRepository, MongoAccessLevelRepository};
 use lekton::db::asset_repository::{AssetRepository, MongoAssetRepository};
 use lekton::db::auth_models::User;
-use lekton::db::document_version_repository::{DocumentVersionRepository, MongoDocumentVersionRepository};
-use lekton::db::documentation_feedback_repository::{DocumentationFeedbackRepository, MongoDocumentationFeedbackRepository};
+use lekton::db::document_version_repository::{
+    DocumentVersionRepository, MongoDocumentVersionRepository,
+};
+use lekton::db::documentation_feedback_repository::{
+    DocumentationFeedbackRepository, MongoDocumentationFeedbackRepository,
+};
+use lekton::db::navigation_order_repository::{
+    MongoNavigationOrderRepository, NavigationOrderRepository,
+};
 use lekton::db::prompt_repository::{MongoPromptRepository, PromptRepository};
-use lekton::db::prompt_version_repository::{MongoPromptVersionRepository, PromptVersionRepository};
+use lekton::db::prompt_version_repository::{
+    MongoPromptVersionRepository, PromptVersionRepository,
+};
 use lekton::db::repository::{DocumentRepository, MongoDocumentRepository};
 use lekton::db::schema_repository::{MongoSchemaRepository, SchemaRepository};
 use lekton::db::service_token_repository::{MongoServiceTokenRepository, ServiceTokenRepository};
-use lekton::db::user_prompt_preference_repository::{MongoUserPromptPreferenceRepository, UserPromptPreferenceRepository};
-use lekton::db::navigation_order_repository::{MongoNavigationOrderRepository, NavigationOrderRepository};
 use lekton::db::settings_repository::{MongoSettingsRepository, SettingsRepository};
+use lekton::db::user_prompt_preference_repository::{
+    MongoUserPromptPreferenceRepository, UserPromptPreferenceRepository,
+};
 use lekton::db::user_repository::{MongoUserRepository, UserRepository};
 use lekton::search::client::{MeilisearchService, SearchService};
 use lekton::storage::client::{S3StorageClient, StorageClient};
@@ -78,16 +88,13 @@ impl TestEnv {
             .await
             .expect("Failed to connect to MongoDB");
         let mongo_db = mongo_client.database("lekton_test");
-        let repo: Arc<dyn DocumentRepository> =
-            Arc::new(MongoDocumentRepository::new(&mongo_db));
+        let repo: Arc<dyn DocumentRepository> = Arc::new(MongoDocumentRepository::new(&mongo_db));
         let schema_repo: Arc<dyn SchemaRepository> =
             Arc::new(MongoSchemaRepository::new(&mongo_db));
         let settings_repo: Arc<dyn SettingsRepository> =
             Arc::new(MongoSettingsRepository::new(&mongo_db));
-        let asset_repo: Arc<dyn AssetRepository> =
-            Arc::new(MongoAssetRepository::new(&mongo_db));
-        let user_repo: Arc<dyn UserRepository> =
-            Arc::new(MongoUserRepository::new(&mongo_db));
+        let asset_repo: Arc<dyn AssetRepository> = Arc::new(MongoAssetRepository::new(&mongo_db));
+        let user_repo: Arc<dyn UserRepository> = Arc::new(MongoUserRepository::new(&mongo_db));
         let access_level_repo: Arc<dyn AccessLevelRepository> =
             Arc::new(MongoAccessLevelRepository::new(&mongo_db));
         let service_token_repo: Arc<dyn ServiceTokenRepository> =
@@ -137,11 +144,7 @@ impl TestEnv {
 
         // Create test bucket
         let bucket_name = "lekton-test";
-        let _ = s3_client
-            .create_bucket()
-            .bucket(bucket_name)
-            .send()
-            .await;
+        let _ = s3_client.create_bucket().bucket(bucket_name).send().await;
 
         let storage: Arc<dyn StorageClient> =
             Arc::new(S3StorageClient::new(s3_client, bucket_name.to_string()));
@@ -205,14 +208,8 @@ impl TestEnv {
 
         // --- Build Router (API routes only, no Leptos SSR) ---
         let router = Router::new()
-            .route(
-                "/api/v1/ingest",
-                post(lekton::api::ingest::ingest_handler),
-            )
-            .route(
-                "/api/v1/search",
-                get(lekton::api::search::search_handler),
-            )
+            .route("/api/v1/ingest", post(lekton::api::ingest::ingest_handler))
+            .route("/api/v1/search", get(lekton::api::search::search_handler))
             .route(
                 "/api/v1/upload-image",
                 post(lekton::api::upload::upload_image_handler),
@@ -238,10 +235,7 @@ impl TestEnv {
                 "/api/v1/editor/upload-asset",
                 post(lekton::api::assets::editor_upload_asset_handler),
             )
-            .route(
-                "/api/v1/sync",
-                post(lekton::api::sync::sync_handler),
-            )
+            .route("/api/v1/sync", post(lekton::api::sync::sync_handler))
             .route(
                 "/api/v1/prompts/ingest",
                 post(lekton::api::prompts::prompt_ingest_handler),
@@ -294,27 +288,15 @@ impl TestEnv {
                 axum::routing::delete(lekton::api::admin::deactivate_service_token_handler),
             )
             // Auth OIDC routes (refresh, me, logout — work without auth_provider)
-            .route(
-                "/auth/refresh",
-                post(lekton::api::auth::refresh_handler),
-            )
-            .route(
-                "/auth/logout",
-                post(lekton::api::auth::logout_handler),
-            )
-            .route(
-                "/auth/me",
-                get(lekton::api::auth::me_handler),
-            )
+            .route("/auth/refresh", post(lekton::api::auth::refresh_handler))
+            .route("/auth/logout", post(lekton::api::auth::logout_handler))
+            .route("/auth/me", get(lekton::api::auth::me_handler))
             // Demo auth routes
             .route(
                 "/api/auth/login",
                 post(lekton::auth::demo_auth::login_handler),
             )
-            .route(
-                "/api/auth/me",
-                get(lekton::auth::demo_auth::me_handler),
-            )
+            .route("/api/auth/me", get(lekton::auth::demo_auth::me_handler))
             .route(
                 "/api/auth/logout",
                 post(lekton::auth::demo_auth::logout_handler),
@@ -418,7 +400,7 @@ impl TestEnv {
         scopes: Vec<String>,
         can_write: bool,
     ) -> String {
-        let raw_token = uuid::Uuid::new_v4().to_string();
+        let raw_token = TokenService::generate_opaque_token();
         let token = lekton::db::service_token_models::ServiceToken {
             id: uuid::Uuid::new_v4().to_string(),
             name: name.to_string(),
@@ -516,10 +498,7 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
     };
 
     let router = Router::new()
-        .route(
-            "/api/v1/search",
-            get(lekton::api::search::search_handler),
-        )
+        .route("/api/v1/search", get(lekton::api::search::search_handler))
         .with_state(app_state);
 
     axum_test::TestServer::builder()

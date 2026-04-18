@@ -15,6 +15,8 @@ pub mod schemas;
 #[cfg(feature = "ssr")]
 pub mod search;
 #[cfg(feature = "ssr")]
+pub mod token_validation;
+#[cfg(feature = "ssr")]
 pub mod sync;
 #[cfg(feature = "ssr")]
 pub mod upload;

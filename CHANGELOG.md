@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Rust code formatting is now enforced across the workspace with a dedicated CI check, and the contributor/agent documentation now explicitly requires running `cargo fmt --all` (or `just fmt`) before merge.
+
 ### Fixed
 - OAuth/OIDC sessions now perform a silent refresh on app bootstrap when the access-token cookie has expired but the refresh-token cookie is still valid, so reloading the page restores the logged-in state instead of showing the user as anonymous.
 

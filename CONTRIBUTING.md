@@ -12,7 +12,19 @@ First off, thank you for considering contributing to Lekton!
 1. Fork the repository.
 2. Create a new branch for your feature or fix.
 3. Ensure your code follows the existing style and architecture.
-4. Run tests before submitting a Pull Request.
+4. Run `just fmt` and verify with `just fmt-check` before opening a Pull Request.
+5. Run tests before submitting a Pull Request.
+
+## Formatting
+
+Rust code is formatted with `rustfmt` across the entire workspace.
+
+```bash
+just fmt
+just fmt-check
+```
+
+The CI pipeline runs `cargo fmt --all --check` on pushes and pull requests, so formatting regressions are blocked automatically.
 
 ## Legal: Developer Certificate of Origin (DCO) & Licensing
 

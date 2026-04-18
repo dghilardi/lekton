@@ -51,6 +51,7 @@ src/
 ## 📝 Maintenance
 -   **Changelog:** Update `CHANGELOG.md` for every significant change.
 -   **DCO:** Every commit pushed to GitHub must include a `Signed-off-by:` trailer. Prefer `git commit -s` and `git commit --amend -s` so PRs pass the DCO check.
+-   **Formatting:** Run `cargo fmt --all` before finishing Rust changes. Prefer `just fmt` locally and keep the tree passing `cargo fmt --all --check`, because CI enforces formatting on pushes and pull requests.
 -   **Tests:** Every feature requires unit tests. Integration tests for API endpoints.
 -   **Documentation:** If you change an interface, update the relevant Markdown documentation.
 

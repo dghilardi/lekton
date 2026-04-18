@@ -19,6 +19,14 @@ check:
     cargo check --features ssr
     cargo check --features hydrate
 
+# Format the entire Rust workspace
+fmt:
+    cargo fmt --all
+
+# Verify the entire Rust workspace is formatted
+fmt-check:
+    cargo fmt --all --check
+
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 # Run unit tests (fast, no Docker required)

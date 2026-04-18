@@ -255,6 +255,20 @@ npx playwright test
 
 > **Tip:** Run `just e2e-logs` to inspect the server log if an e2e run fails at startup.
 
+### Formatting
+
+Rust code in this repository is expected to be formatted with `rustfmt` before review or merge.
+
+```bash
+# Apply formatting to the whole workspace
+just fmt
+
+# Verify formatting locally, matching CI
+just fmt-check
+```
+
+GitHub Actions runs `cargo fmt --all --check` on pushes and pull requests, so unformatted Rust code will fail CI.
+
 ## ⚙️ Configuration
 
 Lekton is configured via environment variables:

@@ -91,8 +91,8 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                 <Meta name="description" content="Lekton: A dynamic, high-performance Internal Developer Portal with RBAC and unified schema registry." />
                 <Stylesheet id="leptos" href="/pkg/lekton.css" />
                 <Link rel="stylesheet" href="/custom.css" />
-                <script type_="module" src="/js/tiptap-bundle.min.js"></script>
-                <script type_="module" src="/js/tiptap.js"></script>
+                <script type="module" src="/js/tiptap-bundle.min.js"></script>
+                <script type="module" src="/js/tiptap.js"></script>
             </head>
             <body>
                 <App />

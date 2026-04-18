@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Tiptap browser assets now load as ES modules from the SSR shell, avoiding local editor boot failures before hydration.
+
 ### Added
 - **Automatic token refresh with deduplication**: When an access token expires mid-session, the client now detects the 401 sentinel, calls `POST /auth/refresh` once (regardless of how many concurrent requests failed simultaneously), retries the original call, covers authenticated bootstrap and admin/profile/prompt-library data loads, and redirects to `/login` only if the refresh token is also expired or revoked.
 - **`auth::refresh_client` module**: New client-only module exposing `with_auth_retry(f)` (retry wrapper), `try_refresh()` (deduplicated refresh), and `is_auth_error(err)` (sentinel detection). In SSR builds the same API compiles as a passthrough so page components need no `#[cfg]` guards.

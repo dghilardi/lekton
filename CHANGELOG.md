@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Logged-in session cookie** (`lekton_logged_in`): A non-httpOnly indicator cookie is now set alongside the refresh token on login and refresh, enabling dual-mode endpoints (navigation, search, document pages) to distinguish "anonymous visitor" from "logged-in user with expired access token" and return 401 instead of silently falling back to public-only data.
+
+### Changed
+- Dual-mode server functions (`get_navigation`, `search_docs`, `get_doc_html`) now return the unauthorized sentinel when the logged-in cookie is present but the JWT is missing/expired, triggering the client-side token refresh flow.
+- The refresh endpoint now clears all session cookies (access token, refresh token, logged-in indicator) when the refresh token is expired or revoked, preventing stale session state.
+
 ## [0.14.1] 2026-04-18
 
 ### Fixed

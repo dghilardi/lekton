@@ -8,12 +8,13 @@ use super::search::SearchModal;
 use super::theme::ThemeToggle;
 use super::user_menu::UserMenu;
 use crate::app::{get_navbar_groups, get_navigation};
+use crate::auth::refresh_client::with_auth_retry;
 
 const MAX_DOCS_ITEMS: usize = 5;
 
 #[component]
 pub fn TopNavbarLinks() -> impl IntoView {
-    let nav_resource = Resource::new(|| (), |_| get_navigation());
+    let nav_resource = LocalResource::new(|| with_auth_retry(get_navigation));
     let groups_resource = Resource::new(|| (), |_| get_navbar_groups());
     let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
     let is_rag = use_context::<crate::app::IsRagEnabled>();

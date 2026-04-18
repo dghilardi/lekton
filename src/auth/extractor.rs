@@ -28,6 +28,11 @@ pub const REFRESH_TOKEN_COOKIE: &str = "lekton_refresh_token";
 pub const AUTH_STATE_COOKIE: &str = "lekton_auth_state";
 /// Name of the httpOnly cookie carrying the demo session (demo mode only).
 pub const DEMO_USER_COOKIE: &str = "lekton_demo_user";
+/// Name of the non-httpOnly cookie that signals "this browser has an active
+/// session".  It carries no secrets — just the literal value `"1"`.  Its
+/// lifetime is aligned with the refresh-token cookie so that dual-mode
+/// endpoints can distinguish "never logged in" from "access token expired".
+pub const LOGGED_IN_COOKIE: &str = "lekton_logged_in";
 
 /// Newtype wrapper for the demo-mode flag, used as Axum state.
 ///
@@ -219,6 +224,34 @@ pub fn clear_refresh_token_cookie() -> axum_extra::extract::cookie::Cookie<'stat
 pub fn clear_auth_state_cookie() -> axum_extra::extract::cookie::Cookie<'static> {
     axum_extra::extract::cookie::Cookie::build((AUTH_STATE_COOKIE, ""))
         .path("/auth/callback")
+        .removal()
+        .build()
+}
+
+/// Build the logged-in indicator cookie.
+///
+/// This cookie is **not** httpOnly so client-side JS can read it for UI hints
+/// (e.g. showing a logged-in skeleton before server functions respond).
+/// It carries no secrets — just the value `"1"`.
+///
+/// Its `max_age` matches the refresh-token cookie so the two expire together.
+pub fn logged_in_cookie(
+    refresh_ttl_days: i64,
+    secure: bool,
+) -> axum_extra::extract::cookie::Cookie<'static> {
+    axum_extra::extract::cookie::Cookie::build((LOGGED_IN_COOKIE, "1"))
+        .path("/")
+        .http_only(false)
+        .secure(secure)
+        .same_site(axum_extra::extract::cookie::SameSite::Strict)
+        .max_age(time::Duration::days(refresh_ttl_days))
+        .build()
+}
+
+/// Clear the logged-in indicator cookie.
+pub fn clear_logged_in_cookie() -> axum_extra::extract::cookie::Cookie<'static> {
+    axum_extra::extract::cookie::Cookie::build((LOGGED_IN_COOKIE, ""))
+        .path("/")
         .removal()
         .build()
 }

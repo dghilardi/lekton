@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::app::get_doc_html;
+use crate::auth::refresh_client::with_auth_retry;
 
 /// Data returned for rendering a document page.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,7 +110,10 @@ pub fn DocPage() -> impl IntoView {
     let params = leptos_router::hooks::use_params_map();
     let slug = move || params.read().get("slug").unwrap_or_default();
 
-    let doc_resource = Resource::new(move || slug(), |slug| get_doc_html(slug));
+    let doc_resource = LocalResource::new(move || {
+        let slug = slug();
+        with_auth_retry(move || get_doc_html(slug.clone()))
+    });
 
     view! {
         <Suspense fallback=move || view! {

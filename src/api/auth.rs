@@ -17,8 +17,8 @@ use serde::{Deserialize, Serialize};
 use crate::app::AppState;
 use crate::auth::extractor::{
     access_token_cookie, auth_state_cookie, clear_access_token_cookie, clear_auth_state_cookie,
-    clear_refresh_token_cookie, refresh_token_cookie, OptionalAuthUser, AUTH_STATE_COOKIE,
-    REFRESH_TOKEN_COOKIE,
+    clear_logged_in_cookie, clear_refresh_token_cookie, logged_in_cookie, refresh_token_cookie,
+    OptionalAuthUser, AUTH_STATE_COOKIE, REFRESH_TOKEN_COOKIE,
 };
 use crate::auth::middleware::build_user_from_claims;
 use crate::auth::models::AuthenticatedUser;
@@ -215,7 +215,8 @@ pub async fn callback_handler(
     let secure = !app_state.insecure_cookies;
     let jar = jar
         .add(access_token_cookie(access_token, ttl_secs, secure))
-        .add(refresh_token_cookie(refresh_token, ttl_days, secure));
+        .add(refresh_token_cookie(refresh_token, ttl_days, secure))
+        .add(logged_in_cookie(ttl_days, secure));
 
     Ok((jar, axum::response::Redirect::temporary("/")))
 }
@@ -224,32 +225,76 @@ pub async fn callback_handler(
 ///
 /// Reads the `lekton_refresh_token` cookie, verifies it in the database,
 /// revokes the old token, and issues a fresh pair.
+///
+/// When the refresh token is expired or revoked the handler clears all session
+/// cookies (including `lekton_logged_in`) so the browser stops treating the
+/// user as logged in.
 pub async fn refresh_handler(
     axum::extract::State(app_state): axum::extract::State<AppState>,
     jar: CookieJar,
-) -> Result<(CookieJar, axum::Json<RefreshResponse>), AppError> {
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    match refresh_handler_inner(&app_state, jar).await {
+        Ok(resp) => resp.into_response(),
+        Err((jar, err)) => {
+            let body = serde_json::json!({ "error": err.to_string() });
+            (StatusCode::UNAUTHORIZED, jar, axum::Json(body)).into_response()
+        }
+    }
+}
+
+/// Inner implementation so we can return cookie jars on both success and error paths.
+async fn refresh_handler_inner(
+    app_state: &AppState,
+    jar: CookieJar,
+) -> Result<(CookieJar, axum::Json<RefreshResponse>), (CookieJar, AppError)> {
     let raw_token = jar
         .get(REFRESH_TOKEN_COOKIE)
         .map(|c| c.value().to_string())
-        .ok_or_else(|| AppError::Auth("No refresh token cookie".into()))?;
+        .ok_or_else(|| {
+            (
+                jar.clone(),
+                AppError::Auth("No refresh token cookie".into()),
+            )
+        })?;
 
     let hash = TokenService::hash_token(&raw_token);
 
     let stored = app_state
         .user_repo
         .find_refresh_token_by_hash(&hash)
-        .await?
-        .ok_or_else(|| AppError::Auth("Refresh token not found".into()))?;
+        .await
+        .map_err(|e| (jar.clone(), e))?
+        .ok_or_else(|| {
+            // Token not found in DB — clear all session cookies.
+            let jar = jar
+                .clone()
+                .remove(clear_refresh_token_cookie())
+                .remove(clear_logged_in_cookie())
+                .remove(clear_access_token_cookie());
+            (jar, AppError::Auth("Refresh token not found".into()))
+        })?;
 
     if !stored.is_valid() {
-        return Err(AppError::Auth("Refresh token is expired or revoked".into()));
+        // Session is gone — clean up all session cookies so the browser stops
+        // thinking the user is logged in.
+        let jar = jar
+            .remove(clear_refresh_token_cookie())
+            .remove(clear_logged_in_cookie())
+            .remove(clear_access_token_cookie());
+        return Err((
+            jar,
+            AppError::Auth("Refresh token is expired or revoked".into()),
+        ));
     }
 
     let user_record = app_state
         .user_repo
         .find_user_by_id(&stored.user_id)
-        .await?
-        .ok_or_else(|| AppError::Auth("User not found".into()))?;
+        .await
+        .map_err(|e| (jar.clone(), e))?
+        .ok_or_else(|| (jar.clone(), AppError::Auth("User not found".into())))?;
 
     let auth_user = AuthenticatedUser {
         user_id: user_record.id.clone(),
@@ -259,13 +304,18 @@ pub async fn refresh_handler(
     };
 
     // Revoke old token and issue new pair
-    app_state.user_repo.revoke_refresh_token(&stored.id).await?;
+    app_state
+        .user_repo
+        .revoke_refresh_token(&stored.id)
+        .await
+        .map_err(|e| (jar.clone(), e))?;
     let (access_token, new_refresh) = issue_token_pair(
         app_state.user_repo.as_ref(),
         &app_state.token_service,
         &auth_user,
     )
-    .await?;
+    .await
+    .map_err(|e| (jar.clone(), e))?;
 
     let ttl_secs = app_state.token_service.access_token_ttl_secs();
     let ttl_days = app_state.token_service.refresh_token_ttl_days();
@@ -273,7 +323,8 @@ pub async fn refresh_handler(
     let secure = !app_state.insecure_cookies;
     let jar = jar
         .add(access_token_cookie(access_token, ttl_secs, secure))
-        .add(refresh_token_cookie(new_refresh, ttl_days, secure));
+        .add(refresh_token_cookie(new_refresh, ttl_days, secure))
+        .add(logged_in_cookie(ttl_days, secure));
 
     Ok((jar, axum::Json(RefreshResponse { user: auth_user })))
 }
@@ -293,7 +344,8 @@ pub async fn logout_handler(
 
     let jar = jar
         .remove(clear_access_token_cookie())
-        .remove(clear_refresh_token_cookie());
+        .remove(clear_refresh_token_cookie())
+        .remove(clear_logged_in_cookie());
 
     (StatusCode::OK, jar)
 }

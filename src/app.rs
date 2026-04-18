@@ -124,11 +124,16 @@ pub struct NavItem {
 /// Uses `CookieJar` (state-free extractor) and validates the token directly
 /// via `state.token_service` — `OptionalAuthUser` cannot be used inside Leptos
 /// server functions because `leptos_axum::extract()` uses an empty `()` state.
+///
+/// When the `lekton_logged_in` cookie is present but the JWT is missing or
+/// expired, the function returns the `UNAUTHORIZED_SENTINEL` error so the
+/// client can attempt a token refresh instead of silently falling back to
+/// anonymous access.
 #[cfg(feature = "ssr")]
 async fn request_document_visibility(
     state: &AppState,
 ) -> Result<(Option<Vec<String>>, bool), ServerFnError> {
-    use crate::auth::extractor::ACCESS_TOKEN_COOKIE;
+    use crate::auth::extractor::{ACCESS_TOKEN_COOKIE, LOGGED_IN_COOKIE};
     use crate::auth::models::UserContext;
     use crate::auth::token_service::TokenService;
     use axum_extra::extract::CookieJar;
@@ -168,6 +173,14 @@ async fn request_document_visibility(
                 }
             }
         }
+    }
+
+    // If the logged-in cookie is present the user has an active session but
+    // the access token has expired — signal the client to refresh.
+    if jar.get(LOGGED_IN_COOKIE).is_some() {
+        return Err(ServerFnError::new(
+            crate::auth::models::UNAUTHORIZED_SENTINEL,
+        ));
     }
 
     // Anonymous access: public, non-draft only.
@@ -356,7 +369,7 @@ pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
 #[server(GetCurrentUser, "/api")]
 pub async fn get_current_user(
 ) -> Result<Option<crate::auth::models::AuthenticatedUser>, ServerFnError> {
-    use crate::auth::extractor::ACCESS_TOKEN_COOKIE;
+    use crate::auth::extractor::{ACCESS_TOKEN_COOKIE, LOGGED_IN_COOKIE};
     use crate::auth::token_service::TokenService;
     use axum_extra::extract::CookieJar;
 
@@ -383,6 +396,14 @@ pub async fn get_current_user(
                 return Ok(Some(user));
             }
         }
+    }
+
+    // If the logged-in cookie is present, the user has an active session but
+    // the access token has expired — signal the client to refresh.
+    if jar.get(LOGGED_IN_COOKIE).is_some() {
+        return Err(ServerFnError::new(
+            crate::auth::models::UNAUTHORIZED_SENTINEL,
+        ));
     }
 
     Ok(None)

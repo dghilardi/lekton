@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 
 use crate::app::{get_navigation, NavItem};
+use crate::auth::refresh_client::with_auth_retry;
 
 /// Recursive navigation item component for rendering tree structure.
 #[component]
@@ -53,7 +54,7 @@ pub fn NavigationItem(item: NavItem, #[prop(optional)] level: u32) -> impl IntoV
 /// Navigation tree component that fetches and renders the sidebar navigation.
 #[component]
 pub fn NavigationTree() -> impl IntoView {
-    let nav_resource = LocalResource::new(|| get_navigation());
+    let nav_resource = LocalResource::new(|| with_auth_retry(get_navigation));
 
     let location = leptos_router::hooks::use_location();
 

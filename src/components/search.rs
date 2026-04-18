@@ -1,21 +1,22 @@
 use leptos::prelude::*;
 
 use crate::app::search_docs;
+use crate::auth::refresh_client::with_auth_retry;
 
 /// Global search modal triggered by Ctrl+K (or Cmd+K on Mac).
 #[component]
 pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) -> impl IntoView {
     let (query, set_query) = signal(String::new());
 
-    let search_resource = Resource::new(
-        move || query.get(),
-        |q| async move {
+    let search_resource = LocalResource::new(move || {
+        let q = query.get();
+        async move {
             if q.len() < 2 {
                 return Ok(vec![]);
             }
-            search_docs(q).await
-        },
-    );
+            with_auth_retry(|| search_docs(q.clone())).await
+        }
+    });
 
     let on_keydown = move |ev: leptos::web_sys::KeyboardEvent| {
         if ev.key() == "Escape" {
@@ -145,15 +146,15 @@ pub fn SearchBar() -> impl IntoView {
     let (query, set_query) = signal(String::new());
     let (show_results, set_show_results) = signal(false);
 
-    let search_resource = Resource::new(
-        move || query.get(),
-        |q| async move {
+    let search_resource = LocalResource::new(move || {
+        let q = query.get();
+        async move {
             if q.len() < 2 {
                 return Ok(vec![]);
             }
-            search_docs(q).await
-        },
-    );
+            with_auth_retry(|| search_docs(q.clone())).await
+        }
+    });
 
     view! {
         <div class="dropdown dropdown-end">

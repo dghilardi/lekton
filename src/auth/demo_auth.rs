@@ -97,7 +97,18 @@ pub async fn login_handler(
         .same_site(axum_extra::extract::cookie::SameSite::Strict)
         .build();
 
-    let jar = jar.add(cookie);
+    // Also set the logged-in indicator cookie for consistency with the
+    // production OAuth flow.  Use a session cookie (no max-age) to match
+    // the demo user cookie lifetime.
+    let logged_in =
+        axum_extra::extract::cookie::Cookie::build((crate::auth::extractor::LOGGED_IN_COOKIE, "1"))
+            .path("/")
+            .http_only(false)
+            .secure(!state.insecure_cookies)
+            .same_site(axum_extra::extract::cookie::SameSite::Strict)
+            .build();
+
+    let jar = jar.add(cookie).add(logged_in);
 
     Ok((
         jar,
@@ -123,7 +134,7 @@ pub async fn me_handler(
     Ok(axum::Json(user))
 }
 
-/// `POST /api/auth/logout` — Clears the demo session cookie.
+/// `POST /api/auth/logout` — Clears the demo session cookie and logged-in indicator.
 #[cfg(feature = "ssr")]
 pub async fn logout_handler(jar: axum_extra::extract::CookieJar) -> axum_extra::extract::CookieJar {
     let cookie = axum_extra::extract::cookie::Cookie::build(("lekton_demo_user", ""))
@@ -132,6 +143,7 @@ pub async fn logout_handler(jar: axum_extra::extract::CookieJar) -> axum_extra::
         .build();
 
     jar.remove(cookie)
+        .remove(crate::auth::extractor::clear_logged_in_cookie())
 }
 
 #[cfg(test)]

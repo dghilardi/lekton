@@ -995,8 +995,15 @@ mod tests {
         .await
         .unwrap();
 
-        let result =
-            process_delete_asset(&repo, &storage, "file.txt", &MockServiceTokenRepo, Some("valid-token"), "wrong-token").await;
+        let result = process_delete_asset(
+            &repo,
+            &storage,
+            "file.txt",
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+            "wrong-token",
+        )
+        .await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -1109,9 +1116,15 @@ mod tests {
             },
         ];
 
-        let result = process_check_hashes(&repo, &entries, &MockServiceTokenRepo, Some("valid-token"), "valid-token")
-            .await
-            .unwrap();
+        let result = process_check_hashes(
+            &repo,
+            &entries,
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+            "valid-token",
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.to_upload, vec!["missing.txt".to_string()]);
     }
@@ -1120,7 +1133,14 @@ mod tests {
     async fn test_check_hashes_invalid_token() {
         let repo = MockAssetRepo::new();
 
-        let result = process_check_hashes(&repo, &[], &MockServiceTokenRepo, Some("valid-token"), "wrong-token").await;
+        let result = process_check_hashes(
+            &repo,
+            &[],
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+            "wrong-token",
+        )
+        .await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -1156,9 +1176,15 @@ mod tests {
             content_hash: new_hash,
         }];
 
-        let result = process_check_hashes(&repo, &entries, &MockServiceTokenRepo, Some("valid-token"), "valid-token")
-            .await
-            .unwrap();
+        let result = process_check_hashes(
+            &repo,
+            &entries,
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+            "valid-token",
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.to_upload, vec!["file.txt".to_string()]);
     }

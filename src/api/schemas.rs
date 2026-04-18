@@ -450,7 +450,14 @@ mod tests {
         let storage = MockStorage::new();
         let request = make_schema_request("valid-token", "test-api", "1.0.0");
 
-        let result = process_schema_ingest(&repo, &storage, request, &MockServiceTokenRepo, Some("valid-token")).await;
+        let result = process_schema_ingest(
+            &repo,
+            &storage,
+            request,
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+        )
+        .await;
 
         assert!(result.is_ok());
         let response = result.unwrap();
@@ -471,7 +478,14 @@ mod tests {
         let storage = MockStorage::new();
         let request = make_schema_request("wrong-token", "test-api", "1.0.0");
 
-        let result = process_schema_ingest(&repo, &storage, request, &MockServiceTokenRepo, Some("valid-token")).await;
+        let result = process_schema_ingest(
+            &repo,
+            &storage,
+            request,
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+        )
+        .await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -486,7 +500,14 @@ mod tests {
         let storage = MockStorage::new();
         let request = make_schema_request("valid-token", "", "1.0.0");
 
-        let result = process_schema_ingest(&repo, &storage, request, &MockServiceTokenRepo, Some("valid-token")).await;
+        let result = process_schema_ingest(
+            &repo,
+            &storage,
+            request,
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+        )
+        .await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -502,7 +523,14 @@ mod tests {
         let mut request = make_schema_request("valid-token", "test-api", "1.0.0");
         request.schema_type = "graphql".to_string();
 
-        let result = process_schema_ingest(&repo, &storage, request, &MockServiceTokenRepo, Some("valid-token")).await;
+        let result = process_schema_ingest(
+            &repo,
+            &storage,
+            request,
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+        )
+        .await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -518,7 +546,14 @@ mod tests {
         let mut request = make_schema_request("valid-token", "test-api", "1.0.0");
         request.status = "released".to_string();
 
-        let result = process_schema_ingest(&repo, &storage, request, &MockServiceTokenRepo, Some("valid-token")).await;
+        let result = process_schema_ingest(
+            &repo,
+            &storage,
+            request,
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+        )
+        .await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -534,15 +569,27 @@ mod tests {
 
         // Ingest v1
         let req1 = make_schema_request("valid-token", "test-api", "1.0.0");
-        process_schema_ingest(&repo, &storage, req1, &MockServiceTokenRepo, Some("valid-token"))
-            .await
-            .unwrap();
+        process_schema_ingest(
+            &repo,
+            &storage,
+            req1,
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+        )
+        .await
+        .unwrap();
 
         // Ingest v2
         let req2 = make_schema_request("valid-token", "test-api", "2.0.0");
-        process_schema_ingest(&repo, &storage, req2, &MockServiceTokenRepo, Some("valid-token"))
-            .await
-            .unwrap();
+        process_schema_ingest(
+            &repo,
+            &storage,
+            req2,
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+        )
+        .await
+        .unwrap();
 
         let schema = repo.find_by_name("test-api").await.unwrap().unwrap();
         assert_eq!(schema.versions.len(), 2);
@@ -555,16 +602,28 @@ mod tests {
 
         // Ingest v1
         let req1 = make_schema_request("valid-token", "test-api", "1.0.0");
-        process_schema_ingest(&repo, &storage, req1, &MockServiceTokenRepo, Some("valid-token"))
-            .await
-            .unwrap();
+        process_schema_ingest(
+            &repo,
+            &storage,
+            req1,
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+        )
+        .await
+        .unwrap();
 
         // Re-ingest v1 with different status
         let mut req2 = make_schema_request("valid-token", "test-api", "1.0.0");
         req2.status = "deprecated".to_string();
-        process_schema_ingest(&repo, &storage, req2, &MockServiceTokenRepo, Some("valid-token"))
-            .await
-            .unwrap();
+        process_schema_ingest(
+            &repo,
+            &storage,
+            req2,
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+        )
+        .await
+        .unwrap();
 
         let schema = repo.find_by_name("test-api").await.unwrap().unwrap();
         assert_eq!(schema.versions.len(), 1);
@@ -578,9 +637,15 @@ mod tests {
         let mut request = make_schema_request("valid-token", "test-api", "1.0.0");
         request.content = "openapi: '3.0.0'\ninfo:\n  title: Test".to_string();
 
-        let result = process_schema_ingest(&repo, &storage, request, &MockServiceTokenRepo, Some("valid-token"))
-            .await
-            .unwrap();
+        let result = process_schema_ingest(
+            &repo,
+            &storage,
+            request,
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+        )
+        .await
+        .unwrap();
 
         assert!(result.s3_key.ends_with(".yaml"));
     }
@@ -592,15 +657,27 @@ mod tests {
 
         // Ingest two schemas
         let req1 = make_schema_request("valid-token", "api-a", "1.0.0");
-        process_schema_ingest(&repo, &storage, req1, &MockServiceTokenRepo, Some("valid-token"))
-            .await
-            .unwrap();
+        process_schema_ingest(
+            &repo,
+            &storage,
+            req1,
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+        )
+        .await
+        .unwrap();
 
         let mut req2 = make_schema_request("valid-token", "api-b", "1.0.0");
         req2.schema_type = "asyncapi".to_string();
-        process_schema_ingest(&repo, &storage, req2, &MockServiceTokenRepo, Some("valid-token"))
-            .await
-            .unwrap();
+        process_schema_ingest(
+            &repo,
+            &storage,
+            req2,
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+        )
+        .await
+        .unwrap();
 
         let list = process_list_schemas(&repo).await.unwrap();
         assert_eq!(list.len(), 2);
@@ -612,9 +689,15 @@ mod tests {
         let storage = MockStorage::new();
 
         let req = make_schema_request("valid-token", "test-api", "1.0.0");
-        process_schema_ingest(&repo, &storage, req, &MockServiceTokenRepo, Some("valid-token"))
-            .await
-            .unwrap();
+        process_schema_ingest(
+            &repo,
+            &storage,
+            req,
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+        )
+        .await
+        .unwrap();
 
         let detail = process_get_schema(&repo, "test-api").await.unwrap();
         assert_eq!(detail.name, "test-api");
@@ -639,9 +722,15 @@ mod tests {
         let storage = MockStorage::new();
 
         let req = make_schema_request("valid-token", "test-api", "1.0.0");
-        process_schema_ingest(&repo, &storage, req, &MockServiceTokenRepo, Some("valid-token"))
-            .await
-            .unwrap();
+        process_schema_ingest(
+            &repo,
+            &storage,
+            req,
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+        )
+        .await
+        .unwrap();
 
         let content = process_get_schema_content(&repo, &storage, "test-api", "1.0.0")
             .await
@@ -656,9 +745,15 @@ mod tests {
         let storage = MockStorage::new();
 
         let req = make_schema_request("valid-token", "test-api", "1.0.0");
-        process_schema_ingest(&repo, &storage, req, &MockServiceTokenRepo, Some("valid-token"))
-            .await
-            .unwrap();
+        process_schema_ingest(
+            &repo,
+            &storage,
+            req,
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+        )
+        .await
+        .unwrap();
 
         let result = process_get_schema_content(&repo, &storage, "test-api", "9.9.9").await;
         assert!(result.is_err());

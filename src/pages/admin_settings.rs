@@ -1227,7 +1227,8 @@ fn NavigationOrderEditor() -> impl IntoView {
                         <div class="min-h-[2.5rem]">
                             <Show when=move || message.get().is_some()>
                                 {move || {
-                                    let (success, text) = message.get().unwrap();
+                                    let (success, text) =
+                                        message.get().unwrap_or((false, String::new()));
                                     let alert_class = if success { "alert-success bg-success/10 text-success" } else { "alert-error bg-error/10 text-error" };
                                     view! {
                                         <div class=format!("alert {alert_class} py-2 px-4 shadow-sm border-none flex items-center gap-2 text-sm font-semibold")>
@@ -1414,7 +1415,8 @@ fn CustomCssEditor() -> impl IntoView {
                         <div class="min-h-[2.5rem]">
                             <Show when=move || message.get().is_some()>
                                 {move || {
-                                    let (success, text) = message.get().unwrap();
+                                    let (success, text) =
+                                        message.get().unwrap_or((false, String::new()));
                                     let alert_class = if success { "alert-success bg-success/10 text-success" } else { "alert-error bg-error/10 text-error" };
                                     view! {
                                         <div class=format!("alert {alert_class} py-2 px-4 shadow-sm border-none flex items-center gap-2 text-sm font-semibold")>

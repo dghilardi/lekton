@@ -12,6 +12,13 @@ feature-depth = 1
 [advisories]
 ignore = [
     { id = "RUSTSEC-2024-0436", reason = "paste is a transitive dependency; upstream migration to pastey pending" },
+    # AWS SDK transitive dependencies pinned to rustls 0.21 — no upgrade path available
+    { id = "RUSTSEC-2025-0012", reason = "backoff: transitive via aws-sdk, unmaintained, no alternative" },
+    { id = "RUSTSEC-2024-0384", reason = "instant: transitive via aws-sdk, unmaintained, no alternative" },
+    { id = "RUSTSEC-2023-0071", reason = "rsa: transitive via aws-sdk, Marvin Attack, no upgrade available" },
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile: transitive via aws-sdk rustls 0.21 chain, no upgrade" },
+    { id = "RUSTSEC-2026-0098", reason = "rustls-webpki 0.101: transitive via aws-sdk rustls 0.21, pinned by semver" },
+    { id = "RUSTSEC-2026-0099", reason = "rustls-webpki 0.101: transitive via aws-sdk rustls 0.21, pinned by semver" },
 ]
 
 # License policy

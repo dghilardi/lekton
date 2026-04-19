@@ -500,8 +500,7 @@ pub async fn process_list_schemas(
 
             let latest = visible
                 .iter()
-                .filter(|v| v.status != "deprecated")
-                .next_back()
+                .rfind(|v| v.status != "deprecated")
                 .or_else(|| visible.last())
                 .map(|v| v.version.clone());
 

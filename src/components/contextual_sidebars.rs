@@ -117,7 +117,7 @@ fn SchemaTreeItem(node: SchemaTreeNode, #[prop(optional)] level: u32) -> impl In
                                 </li>
                             }.into_any()
                         } else {
-                            view! { <></> }.into_any()
+                            ().into_any()
                         }}
                         {children.into_iter().map(|child| {
                             view! { <SchemaTreeItem node=child level=level + 1 /> }

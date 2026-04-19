@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- `cargo-deny` configuration for license compliance (AGPL-3.0-compatible allowlist) and RustSec advisory auditing, with weekly CI workflow
+- Clippy CI job enforcing zero warnings on both SSR and hydrate targets (`-D warnings`)
+- `#[forbid(unsafe_code)]` crate-level attribute on both `lekton` and `lekton-sync`
+
+### Fixed
+- Resolved all clippy warnings across SSR and hydrate targets (unused imports, deprecated APIs, non-idiomatic patterns)
+- Replaced `unwrap()` calls in non-test code with safe alternatives (let-else, unwrap_or, if-let)
+
 ## [0.14.3] 2026-04-18
 
 ### Fixed

@@ -173,12 +173,12 @@ pub(super) mod internal {
                 let remove_cb = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || {
                     let _ = el_clone.parent_node().map(|p| p.remove_child(&el_clone));
                 });
-                let _ = window()
-                    .unwrap()
-                    .set_timeout_with_callback_and_timeout_and_arguments_0(
+                if let Some(win) = window() {
+                    let _ = win.set_timeout_with_callback_and_timeout_and_arguments_0(
                         remove_cb.as_ref().unchecked_ref(),
                         350,
                     );
+                }
                 remove_cb.forget();
             }
         });

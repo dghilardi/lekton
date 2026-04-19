@@ -510,8 +510,6 @@ async fn filter_source_references(
     user_ctx: &UserContext,
     sources: Vec<SourceReference>,
 ) -> Result<Vec<SourceReference>, AppError> {
-    use crate::db::repository::DocumentRepository;
-
     let (allowed_levels, include_draft) = user_ctx.document_visibility();
     let mut filtered = Vec::with_capacity(sources.len());
 

@@ -61,7 +61,9 @@ fn PromptLibraryPanel() -> impl IntoView {
                 fallback=|| view! { <div class="skeleton h-64 w-full rounded-2xl" /> }
             >
                 {move || {
-                    let library = state.get().unwrap();
+                    let Some(library) = state.get() else {
+                        return view! { <div /> }.into_any();
+                    };
                     let query = filter.get().to_lowercase();
                     let filtered: Vec<PromptLibraryItem> = library
                         .items

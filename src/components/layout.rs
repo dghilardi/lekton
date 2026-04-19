@@ -3,7 +3,6 @@ use leptos::prelude::*;
 use super::contextual_sidebars::{AdminSidebar, ChatSidebar, DocsSidebar, RegistrySidebar};
 use super::custom_css::RuntimeCustomCss;
 use super::logo::BrandedLogo;
-use super::navigation::NavigationTree;
 use super::search::SearchModal;
 use super::theme::ThemeToggle;
 use super::user_menu::UserMenu;

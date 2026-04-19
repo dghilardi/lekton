@@ -10,8 +10,6 @@ pub fn ThemeToggle() -> impl IntoView {
 
     #[cfg(feature = "hydrate")]
     {
-        use wasm_bindgen::prelude::*;
-
         let saved = js_sys::eval("localStorage.getItem('lekton-theme') || 'system'")
             .ok()
             .and_then(|v| v.as_string())
@@ -30,8 +28,6 @@ pub fn ThemeToggle() -> impl IntoView {
 
         #[cfg(feature = "hydrate")]
         {
-            use wasm_bindgen::prelude::*;
-
             let js_code = format!(
                 r#"(function(){{
                     var theme = '{}';

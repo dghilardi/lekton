@@ -280,8 +280,7 @@ fn FeedbackSection() -> impl IntoView {
                     }.into_any(),
                     Some(result) => {
                         let total = result.total;
-                        let current_page = result.page;
-                        let total_pages = (total + per_page - 1) / per_page;
+                        let total_pages = total.div_ceil(per_page);
                         view! {
                             <div class="flex flex-col gap-2">
                                 <For
@@ -419,6 +418,7 @@ fn PatRow(
     pats: RwSignal<Vec<PatInfo>>,
     load_pats: Action<(), ()>,
 ) -> impl IntoView {
+    let _ = pats; // prop passed by parent but not used in this component's view
     let id = token.id.clone();
     let is_active = token.is_active;
 
@@ -436,6 +436,7 @@ fn PatRow(
     });
 
     let id_del = token.id.clone();
+    #[allow(unused_variables)]
     let delete = Action::new_local(move |_: &()| {
         let id = id_del.clone();
         async move {

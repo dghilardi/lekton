@@ -362,6 +362,7 @@ pub async fn me_handler(
 mod tests {
     use super::*;
     use crate::auth::token_service::TokenService;
+    #[allow(unused_imports)]
     use crate::db::auth_models::User;
     use crate::db::user_repository::UserRepository;
     use crate::test_utils::MockUserRepository as MockRepo;

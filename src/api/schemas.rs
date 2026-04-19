@@ -1,8 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "ssr")]
 use crate::db::models::{Schema, SchemaVersion};
+#[cfg(feature = "ssr")]
 use crate::db::schema_repository::SchemaRepository;
+#[cfg(feature = "ssr")]
 use crate::error::AppError;
+#[cfg(feature = "ssr")]
 use crate::storage::client::StorageClient;
 
 /// Request payload for ingesting a schema version.
@@ -61,7 +65,9 @@ pub struct SchemaVersionInfo {
     pub s3_key: String,
 }
 
+#[cfg(feature = "ssr")]
 const VALID_SCHEMA_TYPES: &[&str] = &["openapi", "asyncapi", "jsonschema"];
+#[cfg(feature = "ssr")]
 const VALID_STATUSES: &[&str] = &["stable", "beta", "deprecated"];
 
 /// Core schema ingestion logic — separated from HTTP layer for testability.
@@ -165,6 +171,7 @@ pub async fn process_schema_ingest(
 }
 
 /// Core logic to list all schemas.
+#[cfg(feature = "ssr")]
 pub async fn process_list_schemas(
     schema_repo: &dyn SchemaRepository,
 ) -> Result<Vec<SchemaListItem>, AppError> {
@@ -176,8 +183,7 @@ pub async fn process_list_schemas(
             let latest = s
                 .versions
                 .iter()
-                .filter(|v| v.status != "deprecated")
-                .last()
+                .rfind(|v| v.status != "deprecated")
                 .or(s.versions.last())
                 .map(|v| v.version.clone());
 
@@ -192,6 +198,7 @@ pub async fn process_list_schemas(
 }
 
 /// Core logic to get a schema's details.
+#[cfg(feature = "ssr")]
 pub async fn process_get_schema(
     schema_repo: &dyn SchemaRepository,
     name: &str,
@@ -217,6 +224,7 @@ pub async fn process_get_schema(
 }
 
 /// Core logic to get a specific schema version's content from S3.
+#[cfg(feature = "ssr")]
 pub async fn process_get_schema_content(
     schema_repo: &dyn SchemaRepository,
     storage: &dyn StorageClient,

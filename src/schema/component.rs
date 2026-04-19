@@ -133,6 +133,7 @@ pub fn SchemaViewerPage() -> impl IntoView {
     let params = leptos_router::hooks::use_params_map();
     let name = move || params.read().get("name").unwrap_or_default();
 
+    #[allow(clippy::redundant_closure)]
     let schema_resource = Resource::new(move || name(), |name| get_schema_detail(name));
 
     let (selected_version, set_selected_version) = signal(String::new());

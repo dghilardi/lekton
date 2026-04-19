@@ -122,7 +122,7 @@ impl EmbeddingService for CachedEmbeddingService {
             }
 
             // 6. Merge new vectors into the local map.
-            for (&i, v) in missing_indices.iter().zip(new_vectors.into_iter()) {
+            for (&i, v) in missing_indices.iter().zip(new_vectors) {
                 cache_map.insert(hashes[i].clone(), v);
             }
         }
@@ -288,7 +288,7 @@ mod tests {
         );
         svc.embed(&["store me".to_string()]).await.unwrap();
 
-        let entries = cache
+        let _entries = cache
             .get_many(&[("*".to_string(), "*".to_string())])
             .await
             .unwrap();

@@ -115,7 +115,7 @@ pub async fn process_prompt_ingest(
         .and_then(|prompt| prompt.content_hash.clone());
 
     let content_changed = old_content_hash.as_deref() != Some(new_content_hash.as_str());
-    let metadata_changed = existing.as_ref().map_or(true, |prompt| {
+    let metadata_changed = existing.as_ref().is_none_or(|prompt| {
         prompt.name != request.name
             || prompt.description != request.description
             || prompt.access_level != normalized_access_level

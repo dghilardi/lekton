@@ -242,6 +242,7 @@ async fn main() {
     // Initialize RAG services (optional — app works without them)
     //
     // The embedding + vectorstore arcs are also kept for the MCP server.
+    #[allow(clippy::type_complexity)]
     let (rag_service, chat_service, embedding_service, vector_store): (
         Option<Arc<dyn lekton::rag::service::RagService>>,
         Option<Arc<lekton::rag::chat::ChatService>>,

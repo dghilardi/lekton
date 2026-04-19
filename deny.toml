@@ -1,0 +1,67 @@
+# cargo-deny configuration
+# https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+all-features = false
+no-default-features = false
+
+[output]
+feature-depth = 1
+
+# Security advisories (RustSec)
+[advisories]
+ignore = [
+    { id = "RUSTSEC-2024-0436", reason = "paste is a transitive dependency; upstream migration to pastey pending" },
+    # AWS SDK transitive dependencies pinned to rustls 0.21 — no upgrade path available
+    { id = "RUSTSEC-2025-0012", reason = "backoff: transitive via aws-sdk, unmaintained, no alternative" },
+    { id = "RUSTSEC-2024-0384", reason = "instant: transitive via aws-sdk, unmaintained, no alternative" },
+    { id = "RUSTSEC-2023-0071", reason = "rsa: transitive via aws-sdk, Marvin Attack, no upgrade available" },
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile: transitive via aws-sdk rustls 0.21 chain, no upgrade" },
+    { id = "RUSTSEC-2026-0098", reason = "rustls-webpki 0.101: transitive via aws-sdk rustls 0.21, pinned by semver" },
+    { id = "RUSTSEC-2026-0099", reason = "rustls-webpki 0.101: transitive via aws-sdk rustls 0.21, pinned by semver" },
+]
+
+# License policy
+# The project is AGPL-3.0-or-later. Only allow licenses compatible with AGPL-3.0.
+[licenses]
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "LGPL-2.1-or-later",
+    "LGPL-3.0-or-later",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.8
+exceptions = [
+    { allow = ["AGPL-3.0-or-later"], name = "lekton" },
+    { allow = ["AGPL-3.0-or-later"], name = "lekton-sync" },
+]
+
+[licenses.private]
+ignore = true
+
+# Crate bans
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+allow-workspace = false
+
+# Source provenance
+[sources]
+unknown-registry = "warn"
+unknown-git = "warn"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

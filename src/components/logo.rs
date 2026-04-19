@@ -48,9 +48,9 @@ pub fn BrandedLogo() -> impl IntoView {
 
     // Diagnostics audit state — tracks rapid-click sequences on the brand mark
     #[cfg(feature = "hydrate")]
-    let audit_counter = store_value(0u32);
+    let audit_counter = StoredValue::new(0u32);
     #[cfg(feature = "hydrate")]
-    let audit_ts = store_value(0f64);
+    let audit_ts = StoredValue::new(0f64);
 
     #[cfg(feature = "hydrate")]
     let on_logo_click = move |_ev: leptos::ev::MouseEvent| {

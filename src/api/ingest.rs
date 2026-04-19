@@ -1,4 +1,6 @@
+#[cfg(feature = "ssr")]
 use crate::db::models::{IngestRequest, IngestResponse};
+#[cfg(feature = "ssr")]
 use crate::error::AppError;
 
 #[cfg(feature = "ssr")]
@@ -129,7 +131,7 @@ pub async fn process_ingest(
     };
 
     // Check if metadata changed (compared to existing doc)
-    let metadata_changed = old_doc.as_ref().map_or(true, |d| {
+    let metadata_changed = old_doc.as_ref().is_none_or(|d| {
         d.title != request.title
             || d.access_level != access_level
             || d.is_draft != request.is_draft

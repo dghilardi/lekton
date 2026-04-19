@@ -13,18 +13,13 @@ pub enum PromptStatus {
 }
 
 /// Estimated context overhead for published prompts.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ContextCost {
     Low,
+    #[default]
     Medium,
     High,
-}
-
-impl Default for ContextCost {
-    fn default() -> Self {
-        Self::Medium
-    }
 }
 
 impl ContextCost {

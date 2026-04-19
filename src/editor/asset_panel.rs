@@ -14,8 +14,6 @@ pub struct AssetInfo {
 /// Server function: list all assets.
 #[server(ListAllAssets, "/api")]
 pub async fn list_all_assets() -> Result<Vec<AssetInfo>, ServerFnError> {
-    use crate::db::asset_repository::AssetRepository;
-
     let state = expect_context::<crate::app::AppState>();
     let assets = state
         .asset_repo
@@ -38,9 +36,6 @@ pub async fn list_all_assets() -> Result<Vec<AssetInfo>, ServerFnError> {
 /// Server function: delete an asset by key.
 #[server(DeleteAssetByKey, "/api")]
 pub async fn delete_asset_by_key(key: String) -> Result<(), ServerFnError> {
-    use crate::db::asset_repository::AssetRepository;
-    use crate::storage::client::StorageClient;
-
     let state = expect_context::<crate::app::AppState>();
 
     let asset = state
@@ -122,7 +117,7 @@ pub fn AssetPanel(
                         on:click=move |_| {
                             #[cfg(feature = "hydrate")]
                             {
-                                let refresh = refresh.clone();
+                                let refresh = refresh;
                                 leptos::task::spawn_local(async move {
                                     let result = wasm_bindgen_futures::JsFuture::from(
                                         super::component::upload_asset_js()
@@ -177,7 +172,6 @@ pub fn AssetPanel(
                                                             <td class="text-xs">{size}</td>
                                                             <td class="flex gap-1">
                                                                 {if is_image {
-                                                                    let set_msg = set_msg.clone();
                                                                     Some(view! {
                                                                         <button
                                                                             class="btn btn-xs btn-ghost"

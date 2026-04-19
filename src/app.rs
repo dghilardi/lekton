@@ -190,8 +190,6 @@ async fn request_document_visibility(
 /// Server function to search documents.
 #[server(SearchDocs, "/api")]
 pub async fn search_docs(query: String) -> Result<Vec<SearchHit>, ServerFnError> {
-    use crate::search::client::SearchService;
-
     let state = expect_context::<AppState>();
 
     let search_service = state
@@ -211,8 +209,6 @@ pub async fn search_docs(query: String) -> Result<Vec<SearchHit>, ServerFnError>
 /// Server function to fetch navigation tree.
 #[server(GetNavigation, "/api")]
 pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
-    use crate::db::navigation_order_repository::NavigationOrderRepository;
-    use crate::db::repository::DocumentRepository;
     use std::collections::HashMap;
 
     let state = expect_context::<AppState>();
@@ -233,7 +229,7 @@ pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
         .map(|e| (e.slug, e.weight))
         .collect();
 
-    let mut all_items: Vec<NavItem> = docs
+    let all_items: Vec<NavItem> = docs
         .into_iter()
         .map(|doc| {
             let parent_slug = doc.parent_slug.or_else(|| {
@@ -263,7 +259,7 @@ pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
         let mut current_parent = item.parent_slug.clone();
         while let Some(parent_slug) = current_parent {
             if !items_by_slug.contains_key(&parent_slug) {
-                let title_part = parent_slug.split('/').last().unwrap_or(&parent_slug);
+                let title_part = parent_slug.split('/').next_back().unwrap_or(&parent_slug);
                 let title = title_part
                     .split('-')
                     .map(|w| {
@@ -305,7 +301,7 @@ pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
         if let Some(parent) = &item.parent_slug {
             children_by_parent
                 .entry(parent.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(item);
         } else {
             roots.push(item);
@@ -553,8 +549,6 @@ pub use crate::db::navigation_order_repository::NavigationOrderEntry;
 /// Server function to get all navigation order entries (admin only).
 #[server(GetNavigationOrder, "/api")]
 pub async fn get_navigation_order() -> Result<Vec<NavigationOrderEntry>, ServerFnError> {
-    use crate::db::navigation_order_repository::NavigationOrderRepository;
-
     let state = expect_context::<AppState>();
     require_admin_user(&state).await?;
 
@@ -572,8 +566,6 @@ pub async fn get_navigation_order() -> Result<Vec<NavigationOrderEntry>, ServerF
 pub async fn save_navigation_order(
     entries: Vec<NavigationOrderEntry>,
 ) -> Result<String, ServerFnError> {
-    use crate::db::navigation_order_repository::NavigationOrderRepository;
-
     let state = expect_context::<AppState>();
     require_admin_user(&state).await?;
 
@@ -609,9 +601,7 @@ pub fn doc_is_accessible(
 pub async fn get_doc_html(
     slug: String,
 ) -> Result<Option<crate::pages::DocPageData>, ServerFnError> {
-    use crate::db::repository::DocumentRepository;
     use crate::rendering::markdown::{extract_headings, render_markdown};
-    use crate::storage::client::StorageClient;
 
     let state = expect_context::<AppState>();
 
@@ -640,7 +630,7 @@ pub async fn get_doc_html(
 
         children.sort_by_key(|d| d.order);
 
-        let title_part = slug.split('/').last().unwrap_or("Section");
+        let title_part = slug.split('/').next_back().unwrap_or("Section");
         let title = title_part
             .split('-')
             .map(|word| {

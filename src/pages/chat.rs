@@ -58,8 +58,15 @@ impl ChatContext {
     }
 }
 
+impl Default for ChatContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[component]
 pub fn ChatPage() -> impl IntoView {
+    #[allow(unused_variables)]
     let context = use_context::<ChatContext>().expect("ChatContext not found");
 
     // Load sessions on mount
@@ -98,7 +105,9 @@ pub fn ChatPage() -> impl IntoView {
 fn ChatContent() -> impl IntoView {
     let context = use_context::<ChatContext>().expect("ChatContext not found");
     let messages = context.messages;
+    #[allow(unused_variables)]
     let session_id = context.session_id;
+    #[allow(unused_variables)]
     let sessions = context.sessions;
     let is_loading = context.is_loading;
     let streaming_content = context.streaming_content;
@@ -199,11 +208,11 @@ fn ChatContent() -> impl IntoView {
                                 </div>
                                 <div class="grid grid-cols-1 gap-2">
                                     <button class="btn btn-outline btn-sm font-normal normal-case border-base-300 hover:bg-base-200 hover:border-base-300 text-base-content/70"
-                                        on:click={let set_input = set_input.clone(); move |_| { set_input.set("What is Lekton?".to_string()); send_message(); }}>
+                                        on:click={move |_| { set_input.set("What is Lekton?".to_string()); send_message(); }}>
                                         "What is Lekton?"
                                     </button>
                                     <button class="btn btn-outline btn-sm font-normal normal-case border-base-300 hover:bg-base-200 hover:border-base-300 text-base-content/70"
-                                        on:click={let set_input = set_input.clone(); move |_| { set_input.set("How do I configure OIDC?".to_string()); send_message(); }}>
+                                        on:click={move |_| { set_input.set("How do I configure OIDC?".to_string()); send_message(); }}>
                                         "How do I configure OIDC?"
                                     </button>
                                 </div>
@@ -451,6 +460,7 @@ fn MessageFeedbackBar(
     let comment_input = RwSignal::new(String::new());
 
     // StoredValue<String> is Copy so it can be used in multiple Fn closures.
+    #[allow(unused_variables)]
     let mid = StoredValue::new(message_id);
 
     // Helper: sync feedback change back to the parent messages list.
@@ -708,7 +718,6 @@ pub async fn fetch_session_messages(session_id: &str) -> Result<Vec<UiMessage>, 
 
 #[cfg(feature = "hydrate")]
 pub async fn fetch_delete_session(session_id: &str) -> Result<(), String> {
-    use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;
 
     let window = leptos::web_sys::window().ok_or("no window")?;
@@ -732,7 +741,7 @@ async fn fetch_submit_feedback(
     rating: &str,
     comment: Option<&str>,
 ) -> Result<(), String> {
-    use wasm_bindgen::prelude::*;
+    use wasm_bindgen::JsValue;
     use wasm_bindgen_futures::JsFuture;
     use web_sys::{Headers, Request, RequestInit};
 
@@ -759,7 +768,6 @@ async fn fetch_submit_feedback(
 
 #[cfg(feature = "hydrate")]
 async fn fetch_delete_feedback(message_id: &str) -> Result<(), String> {
-    use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;
 
     let window = web_sys::window().ok_or("no window")?;

@@ -156,6 +156,7 @@ pub struct LektonMcpServer {
     storage_client: Arc<dyn StorageClient>,
     embedding_service: Arc<dyn EmbeddingService>,
     vector_store: Arc<dyn VectorStore>,
+    #[allow(dead_code)]
     tool_router: ToolRouter<LektonMcpServer>,
 }
 
@@ -410,12 +411,12 @@ impl LektonMcpServer {
         let user_ctx = user_context(&ctx)?;
         let (levels, include_draft) = user_ctx.document_visibility();
 
-        let limit = params.limit.min(20).max(1);
+        let limit = params.limit.clamp(1, 20);
 
         // Embed the query
         let vectors = self
             .embedding_service
-            .embed(&[params.query.clone()])
+            .embed(std::slice::from_ref(&params.query))
             .await
             .map_err(app_err)?;
 
@@ -1200,7 +1201,7 @@ mod tests {
 
     #[test]
     fn estimate_context_cost_returns_warning_over_threshold() {
-        let prompts = vec![
+        let prompts = [
             prompt("prompts/a", true, true, ContextCost::High),
             prompt("prompts/b", true, true, ContextCost::High),
             prompt("prompts/c", true, true, ContextCost::Medium),

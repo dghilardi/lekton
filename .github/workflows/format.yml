@@ -1,4 +1,4 @@
-name: Formatting
+name: Code Quality
 
 on:
   push:
@@ -25,3 +25,21 @@ jobs:
 
       - name: Check Rust formatting
         run: cargo fmt --all --check
+
+  clippy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy (SSR)
+        run: cargo clippy --features ssr --lib -- -D warnings
+
+      - name: Clippy (hydrate)
+        run: cargo clippy --features hydrate --lib -- -D warnings

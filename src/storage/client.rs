@@ -38,7 +38,7 @@ impl S3StorageClient {
             return Err(AppError::Storage("storage.bucket is not configured".into()));
         }
 
-        let has_custom_endpoint = storage.endpoint.as_ref().map_or(false, |e| !e.is_empty());
+        let has_custom_endpoint = storage.endpoint.as_ref().is_some_and(|e| !e.is_empty());
 
         let mut config_loader = aws_config::defaults(aws_config::BehaviorVersion::latest());
 

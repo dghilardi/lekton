@@ -8,6 +8,7 @@
 //! Both share the same environment variables; the `AUTH_PROVIDER_TYPE` env var
 //! selects which implementation to build.
 
+#[cfg(feature = "ssr")]
 use crate::error::AppError;
 
 /// Unified provider configuration read from environment variables.

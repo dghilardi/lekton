@@ -1,4 +1,6 @@
+#[allow(unused_imports)]
 use crate::api::schemas::SchemaListItem;
+#[allow(unused_imports)]
 use crate::app::{get_navigation, NavItem};
 use crate::pages::chat::ChatContext;
 use crate::schema::component::list_schemas;
@@ -123,6 +125,7 @@ pub fn ChatSidebar() -> impl IntoView {
                     };
 
                     let delete_session = move |sid: String| {
+                        let _ = &sid; // suppress unused_variables warning in non-hydrate builds
                         #[cfg(feature = "hydrate")]
                         {
                             use crate::pages::chat::fetch_delete_session;
@@ -173,6 +176,7 @@ pub fn ChatSidebar() -> impl IntoView {
                                             on:click={
                                                 let sid = sid_click.clone();
                                                 move |_| {
+                                                    #[allow(unused_variables)]
                                                     let sid_clone = sid.clone();
                                                     session_id.set(Some(sid.clone()));
                                                     messages.set(Vec::new());

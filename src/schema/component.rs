@@ -6,7 +6,8 @@ use crate::api::schemas::{SchemaDetail, SchemaListItem, SchemaVersionInfo};
 #[server(ListSchemas, "/api")]
 pub async fn list_schemas() -> Result<Vec<SchemaListItem>, ServerFnError> {
     let state = expect_context::<crate::app::AppState>();
-    crate::api::schemas::process_list_schemas(state.schema_repo.as_ref())
+    let (allowed_levels, _) = crate::app::request_document_visibility(&state).await?;
+    crate::api::schemas::process_list_schemas(state.schema_repo.as_ref(), allowed_levels.as_deref())
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
 }
@@ -15,20 +16,27 @@ pub async fn list_schemas() -> Result<Vec<SchemaListItem>, ServerFnError> {
 #[server(GetSchemaDetail, "/api")]
 pub async fn get_schema_detail(name: String) -> Result<SchemaDetail, ServerFnError> {
     let state = expect_context::<crate::app::AppState>();
-    crate::api::schemas::process_get_schema(state.schema_repo.as_ref(), &name)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))
+    let (allowed_levels, _) = crate::app::request_document_visibility(&state).await?;
+    crate::api::schemas::process_get_schema(
+        state.schema_repo.as_ref(),
+        &name,
+        allowed_levels.as_deref(),
+    )
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))
 }
 
 /// Server function to get raw schema content for a specific version.
 #[server(GetSchemaContent, "/api")]
 pub async fn get_schema_content(name: String, version: String) -> Result<String, ServerFnError> {
     let state = expect_context::<crate::app::AppState>();
+    let (allowed_levels, _) = crate::app::request_document_visibility(&state).await?;
     crate::api::schemas::process_get_schema_content(
         state.schema_repo.as_ref(),
         state.storage_client.as_ref(),
         &name,
         &version,
+        allowed_levels.as_deref(),
     )
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))
@@ -138,6 +146,12 @@ pub fn SchemaViewerPage() -> impl IntoView {
 
     let (selected_version, set_selected_version) = signal(String::new());
 
+    // Reset version selection whenever the route points to a different schema.
+    Effect::new(move |_| {
+        let _ = name();
+        set_selected_version.set(String::new());
+    });
+
     // When schema loads, select the latest stable version by default
     let content_resource = Resource::new(
         move || (name(), selected_version.get()),
@@ -162,8 +176,12 @@ pub fn SchemaViewerPage() -> impl IntoView {
                         let schema_type = detail.schema_type.clone();
                         let versions = detail.versions.clone();
 
-                        // Auto-select latest stable version on first load
-                        if selected_version.get().is_empty() && !versions.is_empty() {
+                        // Auto-select latest stable version on first load or when the
+                        // previously selected version doesn't exist on the new schema.
+                        let selected = selected_version.get();
+                        let selection_missing =
+                            !selected.is_empty() && !versions.iter().any(|v| v.version == selected);
+                        if (selected.is_empty() || selection_missing) && !versions.is_empty() {
                             let default_ver = versions
                                 .iter()
                                 .rev()

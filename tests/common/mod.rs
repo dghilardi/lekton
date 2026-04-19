@@ -224,12 +224,12 @@ impl TestEnv {
                     .post(lekton::api::schemas::ingest_schema_handler),
             )
             .route(
-                "/api/v1/schemas/{name}",
-                get(lekton::api::schemas::get_schema_handler),
+                "/api/v1/schemas/sync",
+                post(lekton::api::schemas::schema_sync_handler),
             )
             .route(
-                "/api/v1/schemas/{name}/{version}",
-                get(lekton::api::schemas::get_schema_version_handler),
+                "/api/v1/schemas/{*rest}",
+                get(lekton::api::schemas::get_schema_route_handler),
             )
             .route(
                 "/api/v1/editor/upload-asset",

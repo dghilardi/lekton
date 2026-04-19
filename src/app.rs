@@ -130,7 +130,7 @@ pub struct NavItem {
 /// client can attempt a token refresh instead of silently falling back to
 /// anonymous access.
 #[cfg(feature = "ssr")]
-async fn request_document_visibility(
+pub(crate) async fn request_document_visibility(
     state: &AppState,
 ) -> Result<(Option<Vec<String>>, bool), ServerFnError> {
     use crate::auth::extractor::{ACCESS_TOKEN_COOKIE, LOGGED_IN_COOKIE};
@@ -1640,7 +1640,7 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/docs/*slug") view=DocPage />
                     <Route path=path!("/edit/*slug") view=EditorPage />
                     <Route path=path!("/schemas") view=SchemaListPage />
-                    <Route path=path!("/schemas/:name") view=SchemaViewerPage />
+                    <Route path=path!("/schemas/*name") view=SchemaViewerPage />
                     <Route path=path!("/chat") view=ChatPage />
                     <Route path=path!("/prompts") view=PromptsPage />
                     <Route path=path!("/profile") view=ProfilePage />

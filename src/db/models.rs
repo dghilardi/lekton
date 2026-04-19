@@ -67,6 +67,12 @@ pub struct Schema {
     pub name: String,
     /// Schema type: `openapi`, `asyncapi`, or `jsonschema`.
     pub schema_type: String,
+    /// The team/service that owns this schema family.
+    #[serde(default)]
+    pub service_owner: String,
+    /// Tags used for filtering or grouping in the UI.
+    #[serde(default)]
+    pub tags: Vec<String>,
     /// Versioned entries.
     pub versions: Vec<SchemaVersion>,
 }
@@ -80,6 +86,22 @@ pub struct SchemaVersion {
     pub s3_key: String,
     /// Status: `stable`, `beta`, `deprecated`.
     pub status: String,
+    /// Access level required to read this schema version.
+    #[serde(default = "default_public_access_level")]
+    pub access_level: String,
+    /// SHA-256 content hash of the raw schema artifact.
+    #[serde(default)]
+    pub content_hash: Option<String>,
+    /// SHA-256 hash of version metadata (status/access level).
+    #[serde(default)]
+    pub metadata_hash: Option<String>,
+    /// Whether this version has been archived by sync.
+    #[serde(default)]
+    pub is_archived: bool,
+}
+
+fn default_public_access_level() -> String {
+    "public".to_string()
 }
 
 /// Represents a binary asset stored in MongoDB with content in S3.
@@ -225,6 +247,30 @@ mod tests {
     }
 
     #[test]
+    fn test_schema_defaults_are_backward_compatible() {
+        let json = r###"{
+            "name": "payment-service-api",
+            "schema_type": "openapi",
+            "versions": [
+                {
+                    "version": "1.0.0",
+                    "s3_key": "schemas/payment-service-api/1.0.0.json",
+                    "status": "stable"
+                }
+            ]
+        }"###;
+
+        let schema: Schema = serde_json::from_str(json).unwrap();
+        assert_eq!(schema.service_owner, "");
+        assert!(schema.tags.is_empty());
+        assert_eq!(schema.versions.len(), 1);
+        assert_eq!(schema.versions[0].access_level, "public");
+        assert_eq!(schema.versions[0].content_hash, None);
+        assert_eq!(schema.versions[0].metadata_hash, None);
+        assert!(!schema.versions[0].is_archived);
+    }
+
+    #[test]
     fn test_draft_document() {
         let doc = Document {
             slug: "engineering/wip".to_string(),
@@ -338,16 +384,26 @@ mod tests {
         let schema = Schema {
             name: "payment-api".to_string(),
             schema_type: "openapi".to_string(),
+            service_owner: "payments".to_string(),
+            tags: vec!["payments".to_string(), "api".to_string()],
             versions: vec![
                 SchemaVersion {
                     version: "1.0.0".to_string(),
                     s3_key: "schemas/payment/1.0.0.json".to_string(),
                     status: "deprecated".to_string(),
+                    access_level: "public".to_string(),
+                    content_hash: Some("sha256:v1".to_string()),
+                    metadata_hash: Some("sha256:m1".to_string()),
+                    is_archived: false,
                 },
                 SchemaVersion {
                     version: "2.0.0".to_string(),
                     s3_key: "schemas/payment/2.0.0.json".to_string(),
                     status: "stable".to_string(),
+                    access_level: "internal".to_string(),
+                    content_hash: Some("sha256:v2".to_string()),
+                    metadata_hash: Some("sha256:m2".to_string()),
+                    is_archived: false,
                 },
             ],
         };

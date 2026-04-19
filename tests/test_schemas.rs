@@ -21,6 +21,7 @@ async fn ingest_schema(
     schema_type: &str,
     version: &str,
     status: &str,
+    access_level: &str,
     content: &str,
 ) -> axum_test::TestResponse {
     server
@@ -31,6 +32,9 @@ async fn ingest_schema(
             "schema_type": schema_type,
             "version": version,
             "status": status,
+            "access_level": access_level,
+            "service_owner": "platform",
+            "tags": ["api"],
             "content": content,
         }))
         .await
@@ -49,6 +53,7 @@ async fn schema_ingest_creates_new_schema() {
         "openapi",
         "1.0.0",
         "stable",
+        "public",
         &openapi_spec(),
     )
     .await;
@@ -92,12 +97,22 @@ async fn schema_ingest_adds_version_to_existing() {
         "openapi",
         "1.0.0",
         "stable",
+        "public",
         &openapi_spec(),
     )
     .await;
 
     // Ingest v2
-    ingest_schema(&server, &name, "openapi", "2.0.0", "beta", &openapi_spec()).await;
+    ingest_schema(
+        &server,
+        &name,
+        "openapi",
+        "2.0.0",
+        "beta",
+        "public",
+        &openapi_spec(),
+    )
+    .await;
 
     let schema = env.schema_repo.find_by_name(&name).await.unwrap().unwrap();
     assert_eq!(schema.versions.len(), 2);
@@ -120,6 +135,7 @@ async fn schema_ingest_updates_existing_version() {
         "openapi",
         "1.0.0",
         "stable",
+        "public",
         &openapi_spec(),
     )
     .await;
@@ -131,6 +147,7 @@ async fn schema_ingest_updates_existing_version() {
         "openapi",
         "1.0.0",
         "deprecated",
+        "public",
         &openapi_spec(),
     )
     .await;
@@ -153,6 +170,9 @@ async fn schema_ingest_rejects_invalid_token() {
             "schema_type": "openapi",
             "version": "1.0.0",
             "status": "stable",
+            "access_level": "public",
+            "service_owner": "platform",
+            "tags": ["api"],
             "content": openapi_spec(),
         }))
         .await;
@@ -173,6 +193,9 @@ async fn schema_ingest_rejects_invalid_type() {
             "schema_type": "graphql",
             "version": "1.0.0",
             "status": "stable",
+            "access_level": "public",
+            "service_owner": "platform",
+            "tags": ["api"],
             "content": "type Query { hello: String }",
         }))
         .await;
@@ -194,6 +217,7 @@ async fn schema_list_returns_all_schemas() {
         "openapi",
         "1.0.0",
         "stable",
+        "public",
         &openapi_spec(),
     )
     .await;
@@ -203,6 +227,7 @@ async fn schema_list_returns_all_schemas() {
         "asyncapi",
         "1.0.0",
         "stable",
+        "public",
         &asyncapi_spec(),
     )
     .await;
@@ -231,6 +256,7 @@ async fn schema_get_returns_detail_with_versions() {
         "openapi",
         "1.0.0",
         "deprecated",
+        "public",
         &openapi_spec(),
     )
     .await;
@@ -240,6 +266,7 @@ async fn schema_get_returns_detail_with_versions() {
         "openapi",
         "2.0.0",
         "stable",
+        "public",
         &openapi_spec(),
     )
     .await;
@@ -273,7 +300,10 @@ async fn schema_get_version_content() {
     let name = format!("api-{}", uuid::Uuid::new_v4());
     let spec = openapi_spec();
 
-    ingest_schema(&server, &name, "openapi", "1.0.0", "stable", &spec).await;
+    ingest_schema(
+        &server, &name, "openapi", "1.0.0", "stable", "public", &spec,
+    )
+    .await;
 
     let response = server.get(&format!("/api/v1/schemas/{}/1.0.0", name)).await;
 
@@ -295,6 +325,7 @@ async fn schema_get_version_not_found() {
         "openapi",
         "1.0.0",
         "stable",
+        "public",
         &openapi_spec(),
     )
     .await;
@@ -313,7 +344,10 @@ async fn schema_yaml_content_stored_with_yaml_extension() {
     let name = format!("api-{}", uuid::Uuid::new_v4());
     let yaml_spec = "openapi: '3.0.0'\ninfo:\n  title: Test\n  version: '1.0.0'\npaths: {}";
 
-    ingest_schema(&server, &name, "openapi", "1.0.0", "stable", yaml_spec).await;
+    ingest_schema(
+        &server, &name, "openapi", "1.0.0", "stable", "public", yaml_spec,
+    )
+    .await;
 
     let schema = env.schema_repo.find_by_name(&name).await.unwrap().unwrap();
     assert!(
@@ -337,12 +371,22 @@ async fn schema_full_lifecycle() {
         "openapi",
         "1.0.0",
         "stable",
+        "public",
         &openapi_spec(),
     )
     .await;
 
     // 2. Ingest v2 beta
-    ingest_schema(&server, &name, "openapi", "2.0.0", "beta", &openapi_spec()).await;
+    ingest_schema(
+        &server,
+        &name,
+        "openapi",
+        "2.0.0",
+        "beta",
+        "public",
+        &openapi_spec(),
+    )
+    .await;
 
     // 3. List should show schema
     let list: Vec<SchemaListItem> = server.get("/api/v1/schemas").await.json();
@@ -372,6 +416,7 @@ async fn schema_full_lifecycle() {
         "openapi",
         "1.0.0",
         "deprecated",
+        "public",
         &openapi_spec(),
     )
     .await;
@@ -382,4 +427,119 @@ async fn schema_full_lifecycle() {
         .json();
     assert_eq!(detail.versions[0].status, "deprecated");
     assert_eq!(detail.versions[1].status, "beta");
+}
+
+#[tokio::test]
+async fn schema_list_hides_versions_above_public_access() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+
+    let public_name = format!("public-api-{}", uuid::Uuid::new_v4());
+    let internal_name = format!("internal-api-{}", uuid::Uuid::new_v4());
+
+    ingest_schema(
+        &server,
+        &public_name,
+        "openapi",
+        "1.0.0",
+        "stable",
+        "public",
+        &openapi_spec(),
+    )
+    .await;
+    ingest_schema(
+        &server,
+        &internal_name,
+        "openapi",
+        "1.0.0",
+        "stable",
+        "internal",
+        &openapi_spec(),
+    )
+    .await;
+
+    let list: Vec<SchemaListItem> = server.get("/api/v1/schemas").await.json();
+    assert!(list.iter().any(|s| s.name == public_name));
+    assert!(!list.iter().any(|s| s.name == internal_name));
+}
+
+#[tokio::test]
+async fn schema_sync_archives_missing_version() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+
+    let name = format!("sync-api-{}", uuid::Uuid::new_v4());
+    ingest_schema(
+        &server,
+        &name,
+        "openapi",
+        "1.0.0",
+        "stable",
+        "public",
+        &openapi_spec(),
+    )
+    .await;
+    ingest_schema(
+        &server,
+        &name,
+        "openapi",
+        "2.0.0",
+        "stable",
+        "public",
+        &openapi_spec(),
+    )
+    .await;
+
+    let response = server
+        .post("/api/v1/schemas/sync")
+        .json(&serde_json::json!({
+            "service_token": "test-token",
+            "schemas": [{
+                "name": name,
+                "version": "2.0.0",
+                "content_hash": format!("sha256:{}", lekton::auth::token_service::TokenService::hash_token(&openapi_spec())),
+                "metadata_hash": format!("sha256:{}", lekton::auth::token_service::TokenService::hash_token("status=stable\naccess_level=public"))
+            }],
+            "archive_missing": true
+        }))
+        .await;
+
+    response.assert_status_ok();
+    let schema = env.schema_repo.find_by_name(&name).await.unwrap().unwrap();
+    let archived = schema
+        .versions
+        .iter()
+        .find(|v| v.version == "1.0.0")
+        .unwrap();
+    assert!(archived.is_archived);
+}
+
+#[tokio::test]
+async fn schema_raw_api_supports_names_with_slashes() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+
+    let name = format!("swagger-docs/nested-api-{}", uuid::Uuid::new_v4());
+    ingest_schema(
+        &server,
+        &name,
+        "openapi",
+        "1.0.0",
+        "stable",
+        "public",
+        &openapi_spec(),
+    )
+    .await;
+
+    let detail: SchemaDetail = server
+        .get(&format!("/api/v1/schemas/{}", name))
+        .await
+        .json();
+    assert_eq!(detail.name, name);
+
+    let content = server
+        .get(&format!("/api/v1/schemas/{}/1.0.0", name))
+        .await
+        .text();
+    assert!(content.contains("openapi"));
 }

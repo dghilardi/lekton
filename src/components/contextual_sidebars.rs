@@ -5,6 +5,144 @@ use crate::app::{get_navigation, NavItem};
 use crate::pages::chat::ChatContext;
 use crate::schema::component::list_schemas;
 use leptos::prelude::*;
+use std::collections::BTreeMap;
+
+#[derive(Clone, Debug)]
+struct SchemaTreeNode {
+    name: String,
+    full_name: String,
+    is_schema: bool,
+    children: Vec<SchemaTreeNode>,
+}
+
+fn build_schema_tree(schemas: Vec<SchemaListItem>) -> Vec<SchemaTreeNode> {
+    #[derive(Default)]
+    struct BuilderNode {
+        is_schema: bool,
+        children: BTreeMap<String, BuilderNode>,
+    }
+
+    fn insert(node: &mut BuilderNode, parts: &[&str]) {
+        if parts.is_empty() {
+            node.is_schema = true;
+            return;
+        }
+        let child = node.children.entry(parts[0].to_string()).or_default();
+        insert(child, &parts[1..]);
+    }
+
+    fn finalize(name: String, full_name: String, node: BuilderNode) -> SchemaTreeNode {
+        let mut children = node
+            .children
+            .into_iter()
+            .map(|(child_name, child)| {
+                let child_full_name = if full_name.is_empty() {
+                    child_name.clone()
+                } else {
+                    format!("{full_name}/{child_name}")
+                };
+                finalize(child_name, child_full_name, child)
+            })
+            .collect::<Vec<_>>();
+
+        children.sort_by(|a, b| a.name.cmp(&b.name));
+
+        SchemaTreeNode {
+            name,
+            full_name,
+            is_schema: node.is_schema,
+            children,
+        }
+    }
+
+    let mut root = BuilderNode::default();
+    for schema in schemas {
+        let parts = schema
+            .name
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .collect::<Vec<_>>();
+        insert(&mut root, &parts);
+    }
+
+    root.children
+        .into_iter()
+        .map(|(name, node)| finalize(name.clone(), name, node))
+        .collect()
+}
+
+#[component]
+fn SchemaTreeItem(node: SchemaTreeNode, #[prop(optional)] level: u32) -> impl IntoView {
+    let has_children = !node.children.is_empty();
+    let full_name = node.full_name.clone();
+    let title = node.name.clone();
+    let children = node.children.clone();
+    let is_schema = node.is_schema;
+    let location = leptos_router::hooks::use_location();
+
+    let is_active = {
+        let full_name = full_name.clone();
+        move || location.pathname.get() == format!("/schemas/{full_name}")
+    };
+    let is_in_active_branch = {
+        let full_name = full_name.clone();
+        move || {
+            let current = location.pathname.get();
+            current == format!("/schemas/{full_name}")
+                || current.starts_with(&format!("/schemas/{full_name}/"))
+        }
+    };
+
+    if has_children {
+        let href = format!("/schemas/{}", full_name);
+        view! {
+            <li>
+                <details open=is_in_active_branch()>
+                    <summary class="hover:bg-base-200/50 transition-colors font-medium text-base-content/80 text-sm hover:text-base-content">
+                        <span class="truncate">{title.clone()}</span>
+                    </summary>
+                    <ul class="before:w-[1px] before:bg-base-300 ml-2 border-l border-base-200/50 mt-1">
+                        {if is_schema {
+                            view! {
+                                <li>
+                                    <a
+                                        href=href
+                                        class=move || format!(
+                                            "hover:bg-base-200/50 hover:text-primary transition-colors text-base-content/70 data-[active]:bg-primary/10 data-[active]:text-primary data-[active]:font-medium text-sm py-1.5 {}",
+                                            if is_active() { "text-primary font-medium bg-primary/10" } else { "" }
+                                        )
+                                    >
+                                        {"Overview"}
+                                    </a>
+                                </li>
+                            }.into_any()
+                        } else {
+                            ().into_any()
+                        }}
+                        {children.into_iter().map(|child| {
+                            view! { <SchemaTreeItem node=child level=level + 1 /> }
+                        }).collect::<Vec<_>>()}
+                    </ul>
+                </details>
+            </li>
+        }.into_any()
+    } else {
+        let href = format!("/schemas/{}", full_name);
+        view! {
+            <li>
+                <a
+                    href=href
+                    class=move || format!(
+                        "hover:bg-base-200/50 hover:text-primary transition-colors text-base-content/70 data-[active]:bg-primary/10 data-[active]:text-primary data-[active]:font-medium text-sm py-1.5 {}",
+                        if is_active() { "text-primary font-medium bg-primary/10" } else { "" }
+                    )
+                >
+                    {title}
+                </a>
+            </li>
+        }.into_any()
+    }
+}
 
 /// Sidebar for Documentation section.
 /// This is just a wrapper around NavigationTree (existing).
@@ -34,17 +172,10 @@ pub fn RegistrySidebar() -> impl IntoView {
                         if schemas.is_empty() {
                             view! { <li class="px-3 py-2 text-xs italic opacity-50">"No schemas found"</li> }.into_any()
                         } else {
+                            let tree = build_schema_tree(schemas);
                             view! {
-                                {schemas.into_iter().map(|schema| {
-                                    let href = format!("/schemas/{}", schema.name);
-                                    view! {
-                                        <li>
-                                            <a href=href class="gap-3 group data-[active]:bg-primary/10 data-[active]:text-primary data-[active]:font-medium transition-colors">
-                                                <svg class="w-4 h-4 opacity-70 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 7h10"/><path d="M7 12h10"/><path d="M7 17h10"/></svg>
-                                                <span class="truncate">{schema.name}</span>
-                                            </a>
-                                        </li>
-                                    }
+                                {tree.into_iter().map(|node| {
+                                    view! { <SchemaTreeItem node=node level=0 /> }
                                 }).collect::<Vec<_>>()}
                             }.into_any()
                         }

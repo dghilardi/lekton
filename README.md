@@ -414,7 +414,7 @@ For more details, see [DaisyUI Themes Documentation](https://daisyui.com/docs/th
 |--------|----------|------|-------------|
 | `POST` | `/api/v1/ingest` | Service token | Create/update a document |
 | `POST` | `/api/v1/schemas` | Service token | Create/update a schema |
-| `POST` | `/api/v1/schemas/{name}/versions` | Service token | Add a schema version |
+| `POST` | `/api/v1/schemas/sync` | Service token | Compute schema delta / archive missing versions |
 | `POST` | `/api/v1/upload/{*key}` | Service token | Upload an asset |
 
 ### Search

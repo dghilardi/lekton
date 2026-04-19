@@ -6,7 +6,7 @@
 //!   their SHA-256 hash in the database.
 
 use chrono::Utc;
-use rand::{distributions::Alphanumeric, rngs::OsRng, Rng};
+use rand::{distr::Alphanumeric, Rng};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::models::AuthenticatedUser;
@@ -155,8 +155,8 @@ impl TokenService {
 
     /// Generate an opaque bearer token using the OS CSPRNG.
     pub fn generate_opaque_token() -> String {
-        OsRng
-            .sample_iter(&Alphanumeric)
+        rand::rng()
+            .sample_iter(Alphanumeric)
             .take(OPAQUE_TOKEN_LENGTH)
             .map(char::from)
             .collect()

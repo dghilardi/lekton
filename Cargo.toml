@@ -43,7 +43,7 @@ aws-sdk-s3 = { version = "1", optional = true }
 aws-config = { version = "1", optional = true }
 
 # Markdown rendering
-pulldown-cmark = { version = "0.12" }
+pulldown-cmark = { version = "0.13" }
 
 # Search
 meilisearch-sdk = { version = "0.32", optional = true }
@@ -51,10 +51,10 @@ jsonwebtoken = { version = "10", optional = true }
 
 # RAG (Retrieval-Augmented Generation)
 qdrant-client = { version = "1", optional = true }
-async-openai = { version = "0.34", features = ["embedding", "chat-completion"], optional = true }
+async-openai = { version = "0.35", features = ["embedding", "chat-completion"], optional = true }
 gcp_auth = { version = "0.12.6", optional = true }
 rustls = { version = "0.23", features = ["aws-lc-rs"], optional = true }
-text-splitter = { version = "0.29", features = ["markdown"], optional = true }
+text-splitter = { version = "0.30", features = ["markdown"], optional = true }
 tera = { version = "1", optional = true }
 
 # MCP (Model Context Protocol)
@@ -81,13 +81,13 @@ async-stream = { version = "0.3", optional = true }
 
 # Encoding
 base64 = "0.22"
-rand = "0.8"
+rand = "0.9"
 
 # Unique ID generation
 uuid = { version = "1", features = ["v4"] }
 
 # Hashing (for content hash computation and refresh token storage)
-sha2 = "0.10"
+sha2 = "0.11"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
@@ -112,8 +112,8 @@ web-sys = { version = "0.3", features = [
 ], optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
 serde-wasm-bindgen = { version = "0.6", optional = true }
-gloo-timers = { version = "0.3", features = ["futures"], optional = true }
-gloo-net = { version = "0.6", features = ["http"], optional = true }
+gloo-timers = { version = "0.4", features = ["futures"], optional = true }
+gloo-net = { version = "0.7", features = ["http"], optional = true }
 
 # HTTP client (for OIDC discovery)
 reqwest = { version = "0.12", features = ["json"], optional = true }
@@ -135,10 +135,10 @@ leptos-tiptap-build = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
-mockall = "0.13"
+mockall = "0.14"
 testcontainers = "0.27"
 testcontainers-modules = { version = "0.15", features = ["mongo", "minio", "meilisearch"] }
-axum-test = "18"
+axum-test = "20"
 cookie = "0.18"
 
 [features]

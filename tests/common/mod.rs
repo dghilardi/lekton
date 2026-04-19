@@ -333,7 +333,6 @@ impl TestEnv {
             .save_cookies()
             .expect_success_by_default()
             .build(self.router.clone())
-            .expect("Failed to build TestServer")
     }
 
     /// Build a `TestServer` that does NOT expect success by default (for error tests).
@@ -341,7 +340,6 @@ impl TestEnv {
         axum_test::TestServer::builder()
             .save_cookies()
             .build(self.router.clone())
-            .expect("Failed to build TestServer")
     }
 
     /// Create a test user in the database and return the AuthenticatedUser identity.
@@ -501,7 +499,5 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
         .route("/api/v1/search", get(lekton::api::search::search_handler))
         .with_state(app_state);
 
-    axum_test::TestServer::builder()
-        .build(router)
-        .expect("Failed to build TestServer")
+    axum_test::TestServer::builder().build(router)
 }

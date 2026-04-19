@@ -122,16 +122,20 @@ The system supports two methods of ingestion:
   "_id": "ObjectId(...)",
   "name": "payment-service-api",
   "type": "openapi",
+  "service_owner": "payments",
+  "tags": ["payments", "api"],
   "versions": [
     {
       "version": "1.0.0",
       "s3_key": "schemas/payment/1.0.0.json",
-      "status": "deprecated"
+      "status": "deprecated",
+      "access_level": "public"
     },
     {
       "version": "2.0.0",
       "s3_key": "schemas/payment/2.0.0.json",
-      "status": "stable"
+      "status": "stable",
+      "access_level": "internal"
     }
   ]
 }

@@ -17,9 +17,20 @@ pub trait SchemaRepository: Send + Sync {
     /// List all schemas.
     async fn list_all(&self) -> Result<Vec<Schema>, AppError>;
 
+    /// List non-archived schemas whose name matches the provided exact or prefix scope.
+    async fn find_by_name_prefix(&self, prefix: &str) -> Result<Vec<Schema>, AppError>;
+
     /// Add a new version to an existing schema.
     /// Returns an error if the schema doesn't exist or the version already exists.
     async fn add_version(&self, schema_name: &str, version: SchemaVersion) -> Result<(), AppError>;
+
+    /// Set the archived flag on a specific schema version.
+    async fn set_version_archived(
+        &self,
+        schema_name: &str,
+        version: &str,
+        archived: bool,
+    ) -> Result<(), AppError>;
 
     /// Delete a schema by name.
     async fn delete(&self, name: &str) -> Result<(), AppError>;
@@ -81,6 +92,30 @@ impl SchemaRepository for MongoSchemaRepository {
         Ok(schemas)
     }
 
+    async fn find_by_name_prefix(&self, prefix: &str) -> Result<Vec<Schema>, AppError> {
+        use futures::TryStreamExt;
+        use mongodb::bson::doc;
+
+        let filter = if prefix.is_empty() {
+            doc! {}
+        } else {
+            doc! {
+                "$or": [
+                    { "name": prefix },
+                    { "name": { "$regex": format!("^{}/", regex_escape(prefix)) } }
+                ]
+            }
+        };
+
+        let mut cursor = self.collection.find(filter).await?;
+        let mut schemas = Vec::new();
+        while let Some(schema) = cursor.try_next().await? {
+            schemas.push(schema);
+        }
+
+        Ok(schemas)
+    }
+
     async fn add_version(&self, schema_name: &str, version: SchemaVersion) -> Result<(), AppError> {
         use mongodb::bson::{doc, to_bson};
 
@@ -117,6 +152,32 @@ impl SchemaRepository for MongoSchemaRepository {
         Ok(())
     }
 
+    async fn set_version_archived(
+        &self,
+        schema_name: &str,
+        version: &str,
+        archived: bool,
+    ) -> Result<(), AppError> {
+        let mut schema = self
+            .find_by_name(schema_name)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("Schema '{}' not found", schema_name)))?;
+
+        let schema_version = schema
+            .versions
+            .iter_mut()
+            .find(|v| v.version == version)
+            .ok_or_else(|| {
+                AppError::NotFound(format!(
+                    "Version '{}' not found for schema '{}'",
+                    version, schema_name
+                ))
+            })?;
+
+        schema_version.is_archived = archived;
+        self.create_or_update(schema).await
+    }
+
     async fn delete(&self, name: &str) -> Result<(), AppError> {
         use mongodb::bson::doc;
 
@@ -128,4 +189,19 @@ impl SchemaRepository for MongoSchemaRepository {
 
         Ok(())
     }
+}
+
+#[cfg(feature = "ssr")]
+fn regex_escape(s: &str) -> String {
+    let special = [
+        '.', '*', '+', '?', '(', ')', '[', ']', '{', '}', '\\', '^', '$', '|',
+    ];
+    let mut escaped = String::with_capacity(s.len());
+    for c in s.chars() {
+        if special.contains(&c) {
+            escaped.push('\\');
+        }
+        escaped.push(c);
+    }
+    escaped
 }

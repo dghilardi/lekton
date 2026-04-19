@@ -1,8 +1,8 @@
 # lekton-sync
 
-CLI tool to sync markdown documents and prompt definitions to a [Lekton](https://github.com/dghilardi/lekton) instance.
+CLI tool to sync markdown documents, prompt definitions, and schema artifacts to a [Lekton](https://github.com/dghilardi/lekton) instance.
 
-It scans a directory for `.md` files and prompt YAML files, calls the Lekton sync APIs to compute the delta, and uploads only the content that has changed.
+It scans a directory for `.md` files, prompt YAML files, and schema manifests, calls the Lekton sync APIs to compute the delta, and uploads only the content that has changed.
 
 ## Installation
 
@@ -58,7 +58,7 @@ lekton-sync [OPTIONS] [ROOT]
 
 | Argument | Default | Description |
 |---|---|---|
-| `ROOT` | `.` | Root directory to scan for markdown files and prompt definitions |
+| `ROOT` | `.` | Root directory to scan for markdown files, prompt definitions, and schema manifests |
 | `--archive-missing` | — | Archive documents present in Lekton but not found locally |
 | `--dry-run` | — | Show what would be done without making any changes |
 | `--config <PATH>` | `<ROOT>/.lekton.yml` | Path to config file |
@@ -159,6 +159,45 @@ archive_missing: false
 | `prompts_dir` | Directory containing prompt YAML files, relative to `ROOT` |
 | `prompt_slug_prefix` | Prefix prepended to every prompt slug |
 | `archive_missing` | Archive documents not found locally (overridden by `--archive-missing`) |
+| `schemas_dir` | Directory containing schema manifests, relative to `ROOT` |
+| `schema_name_prefix` | Prefix prepended to every schema name |
+| `archive_missing_schemas` | Archive schema versions not found locally (overridden by `--archive-missing`) |
+
+## Schema format
+
+Schema versions are discovered from `lekton.schema.yml` manifests under `schemas/` by default.
+
+```yaml
+name: payment-api
+schema_type: openapi
+service_owner: payments
+default_access_level: internal
+tags: [payments, api]
+versions:
+  - file: openapi-v1.yaml
+    version: 1.0.0
+    status: deprecated
+    access_level: public
+  - file: openapi-v2.yaml
+    version: 2.0.0
+    status: stable
+```
+
+Supported manifest fields:
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | No | Schema name. Defaults to the manifest directory relative to `schemas_dir`. |
+| `schema_type` | Yes | One of `openapi`, `asyncapi`, `jsonschema`. |
+| `service_owner` | Yes* | Owning team/service. Falls back to `default_service_owner`. |
+| `default_access_level` | No | Default applied to versions without `access_level`. |
+| `tags` | No | Schema-level tags stored in Lekton metadata. |
+| `versions[].file` | Yes | Relative path to the spec file from the manifest directory. |
+| `versions[].version` | Yes | Semantic or release version string shown in the registry. |
+| `versions[].status` | No | Version lifecycle: `stable`, `beta`, `deprecated`. Defaults to `stable`. |
+| `versions[].access_level` | No | Per-version access level. Falls back to `default_access_level`, then project defaults, then `public`. |
+
+The CLI computes separate content and metadata hashes for each schema version, calls `POST /api/v1/schemas/sync`, and uploads only new or changed versions.
 
 ## Example
 

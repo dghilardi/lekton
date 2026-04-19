@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- `lekton-sync` now supports schema manifests (`lekton.schema.yml`) for OpenAPI, AsyncAPI, and JSON Schema artifacts, with delta sync via `POST /api/v1/schemas/sync`.
 - `cargo-deny` configuration for license compliance (AGPL-3.0-compatible allowlist) and RustSec advisory auditing, with weekly CI workflow
 - Clippy CI job enforcing zero warnings on both SSR and hydrate targets (`-D warnings`)
 - `#[forbid(unsafe_code)]` crate-level attribute on both `lekton` and `lekton-sync`
@@ -13,6 +14,7 @@ All notable changes to this project will be documented in this file.
 - Update safe dependencies: async-openai 0.35, pulldown-cmark 0.13, rand 0.9, sha2 0.11, text-splitter 0.30, gloo-timers 0.4, gloo-net 0.7, mockall 0.14, axum-test 20
 
 ### Fixed
+- Schema registry metadata now includes per-version `access_level`, RBAC filtering on list/detail/content reads, and archive-missing support for removed schema versions.
 - Resolved all clippy warnings across SSR and hydrate targets (unused imports, deprecated APIs, non-idiomatic patterns)
 - Replaced `unwrap()` calls in non-test code with safe alternatives (let-else, unwrap_or, if-let)
 

@@ -453,6 +453,10 @@ async fn main() {
             "/api/v1/schemas/{name}/{version}",
             axum::routing::get(api::schemas::get_schema_version_handler),
         )
+        .route(
+            "/api/v1/schemas/sync",
+            axum::routing::post(api::schemas::schema_sync_handler),
+        )
         .route("/api/v1/sync", axum::routing::post(api::sync::sync_handler))
         .route(
             "/api/v1/prompts/ingest",

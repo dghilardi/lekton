@@ -6,7 +6,8 @@ use crate::api::schemas::{SchemaDetail, SchemaListItem, SchemaVersionInfo};
 #[server(ListSchemas, "/api")]
 pub async fn list_schemas() -> Result<Vec<SchemaListItem>, ServerFnError> {
     let state = expect_context::<crate::app::AppState>();
-    crate::api::schemas::process_list_schemas(state.schema_repo.as_ref())
+    let (allowed_levels, _) = crate::app::request_document_visibility(&state).await?;
+    crate::api::schemas::process_list_schemas(state.schema_repo.as_ref(), allowed_levels.as_deref())
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
 }
@@ -15,20 +16,27 @@ pub async fn list_schemas() -> Result<Vec<SchemaListItem>, ServerFnError> {
 #[server(GetSchemaDetail, "/api")]
 pub async fn get_schema_detail(name: String) -> Result<SchemaDetail, ServerFnError> {
     let state = expect_context::<crate::app::AppState>();
-    crate::api::schemas::process_get_schema(state.schema_repo.as_ref(), &name)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))
+    let (allowed_levels, _) = crate::app::request_document_visibility(&state).await?;
+    crate::api::schemas::process_get_schema(
+        state.schema_repo.as_ref(),
+        &name,
+        allowed_levels.as_deref(),
+    )
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))
 }
 
 /// Server function to get raw schema content for a specific version.
 #[server(GetSchemaContent, "/api")]
 pub async fn get_schema_content(name: String, version: String) -> Result<String, ServerFnError> {
     let state = expect_context::<crate::app::AppState>();
+    let (allowed_levels, _) = crate::app::request_document_visibility(&state).await?;
     crate::api::schemas::process_get_schema_content(
         state.schema_repo.as_ref(),
         state.storage_client.as_ref(),
         &name,
         &version,
+        allowed_levels.as_deref(),
     )
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))

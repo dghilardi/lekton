@@ -73,6 +73,15 @@ struct LektonConfig {
     /// Slug prefix prepended to prompt slugs (default: "prompts")
     #[serde(default)]
     prompt_slug_prefix: Option<String>,
+    /// Directory containing schema manifests, relative to the root path.
+    #[serde(default)]
+    schemas_dir: Option<String>,
+    /// Prefix prepended to schema names discovered from manifests.
+    #[serde(default)]
+    schema_name_prefix: Option<String>,
+    /// Archive schema versions not found locally.
+    #[serde(default)]
+    archive_missing_schemas: Option<bool>,
 }
 
 /// YAML front matter parsed from the top of each `.md` file.
@@ -126,6 +135,30 @@ struct PromptFile {
     lekton_import: Option<bool>,
 }
 
+#[derive(Deserialize, Default)]
+struct SchemaManifestFile {
+    name: Option<String>,
+    schema_type: String,
+    #[serde(default)]
+    service_owner: Option<String>,
+    #[serde(default)]
+    default_access_level: Option<String>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+    #[serde(default)]
+    versions: Vec<SchemaVersionFile>,
+}
+
+#[derive(Deserialize, Default)]
+struct SchemaVersionFile {
+    file: String,
+    version: String,
+    #[serde(default = "default_status")]
+    status: String,
+    #[serde(default)]
+    access_level: Option<String>,
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 struct PromptVariable {
     name: String,
@@ -136,6 +169,10 @@ struct PromptVariable {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_status() -> String {
+    "stable".to_string()
 }
 
 // ── API types ─────────────────────────────────────────────────────────────────
@@ -183,6 +220,28 @@ struct PromptSyncResponse {
 }
 
 #[derive(Serialize)]
+struct SchemaSyncRequest {
+    service_token: String,
+    schemas: Vec<SchemaSyncEntry>,
+    archive_missing: bool,
+}
+
+#[derive(Serialize)]
+struct SchemaSyncEntry {
+    name: String,
+    version: String,
+    content_hash: String,
+    metadata_hash: String,
+}
+
+#[derive(Deserialize)]
+struct SchemaSyncResponse {
+    to_upload: Vec<String>,
+    to_archive: Vec<String>,
+    unchanged: Vec<String>,
+}
+
+#[derive(Serialize)]
 struct IngestRequest {
     service_token: String,
     slug: String,
@@ -220,6 +279,24 @@ struct PromptIngestRequest {
 
 #[derive(Deserialize)]
 struct PromptIngestResponse {
+    changed: bool,
+}
+
+#[derive(Serialize)]
+struct SchemaIngestRequest {
+    service_token: String,
+    name: String,
+    schema_type: String,
+    version: String,
+    status: String,
+    access_level: String,
+    service_owner: String,
+    tags: Vec<String>,
+    content: String,
+}
+
+#[derive(Deserialize)]
+struct SchemaIngestResponse {
     changed: bool,
 }
 
@@ -309,6 +386,21 @@ struct PromptInfo {
     context_cost: String,
 }
 
+#[derive(Debug)]
+struct SchemaInfo {
+    key: String,
+    name: String,
+    schema_type: String,
+    version: String,
+    status: String,
+    access_level: String,
+    service_owner: String,
+    tags: Vec<String>,
+    content: String,
+    content_hash: String,
+    metadata_hash: String,
+}
+
 /// Compute the same `sha256:<base64url>` hash format the server uses.
 fn compute_hash(content: &str) -> String {
     let hash = Sha256::digest(content.as_bytes());
@@ -366,6 +458,14 @@ fn compute_prompt_metadata_hash(
         access_level.to_lowercase(),
         sorted_tags.join(","),
         sorted_vars.join("|"),
+    );
+    compute_hash(&canonical)
+}
+
+fn compute_schema_metadata_hash(status: &str, access_level: &str) -> String {
+    let canonical = format!(
+        "status={status}\naccess_level={}",
+        access_level.to_lowercase()
     );
     compute_hash(&canonical)
 }
@@ -809,6 +909,121 @@ fn scan_prompts(root: &Path, config: &LektonConfig) -> Result<HashMap<String, Pr
     Ok(prompts)
 }
 
+fn schema_name_from_dir(dir: &Path, root: &Path) -> String {
+    dir.strip_prefix(root)
+        .unwrap_or(dir)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn scan_schemas(root: &Path, config: &LektonConfig) -> Result<HashMap<String, SchemaInfo>> {
+    let schemas_dir = config
+        .schemas_dir
+        .as_deref()
+        .filter(|p| !p.is_empty())
+        .unwrap_or("schemas");
+    let schema_root = root.join(schemas_dir);
+
+    if !schema_root.exists() {
+        return Ok(HashMap::new());
+    }
+
+    let mut schemas = HashMap::new();
+
+    for entry in WalkDir::new(&schema_root)
+        .follow_links(true)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_type().is_file()
+                && matches!(
+                    e.file_name().to_str(),
+                    Some("lekton.schema.yml") | Some("lekton.schema.yaml")
+                )
+        })
+    {
+        let manifest_path = entry.path();
+        let manifest_dir = manifest_path.parent().unwrap_or(&schema_root);
+        let source = std::fs::read_to_string(manifest_path)
+            .with_context(|| format!("Failed to read {}", manifest_path.display()))?;
+        let manifest: SchemaManifestFile = serde_yaml::from_str(&source)
+            .with_context(|| format!("Failed to parse {}", manifest_path.display()))?;
+
+        if manifest.schema_type.trim().is_empty() {
+            bail!(
+                "Schema manifest '{}' is missing 'schema_type'",
+                manifest_path.display()
+            );
+        }
+
+        let raw_name = manifest
+            .name
+            .clone()
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| schema_name_from_dir(manifest_dir, &schema_root));
+        let name = apply_prefix(config.schema_name_prefix.as_deref(), &raw_name);
+        let service_owner = manifest
+            .service_owner
+            .clone()
+            .or_else(|| config.default_service_owner.clone())
+            .unwrap_or_default();
+        if service_owner.trim().is_empty() {
+            bail!(
+                "Schema manifest '{}' is missing 'service_owner' and no default_service_owner is configured",
+                manifest_path.display()
+            );
+        }
+        let tags = manifest.tags.clone().unwrap_or_default();
+
+        for version in manifest.versions {
+            if version.file.trim().is_empty() {
+                bail!(
+                    "Schema manifest '{}' has a version entry without 'file'",
+                    manifest_path.display()
+                );
+            }
+            if version.version.trim().is_empty() {
+                bail!(
+                    "Schema manifest '{}' has a version entry without 'version'",
+                    manifest_path.display()
+                );
+            }
+
+            let spec_path = manifest_dir.join(&version.file);
+            let content = std::fs::read_to_string(&spec_path)
+                .with_context(|| format!("Failed to read {}", spec_path.display()))?;
+            let access_level = version
+                .access_level
+                .clone()
+                .or_else(|| manifest.default_access_level.clone())
+                .or_else(|| config.default_access_level.clone())
+                .unwrap_or_else(|| "public".to_string());
+            let content_hash = compute_hash(&content);
+            let metadata_hash = compute_schema_metadata_hash(&version.status, &access_level);
+            let key = format!("{}@{}", name, version.version);
+
+            schemas.insert(
+                key.clone(),
+                SchemaInfo {
+                    key,
+                    name: name.clone(),
+                    schema_type: manifest.schema_type.clone(),
+                    version: version.version,
+                    status: version.status,
+                    access_level,
+                    service_owner: service_owner.clone(),
+                    tags: tags.clone(),
+                    content,
+                    content_hash,
+                    metadata_hash,
+                },
+            );
+        }
+    }
+
+    Ok(schemas)
+}
+
 // ── HTTP helpers ──────────────────────────────────────────────────────────
 
 const MAX_RETRIES: u32 = 5;
@@ -869,6 +1084,8 @@ async fn main() -> Result<()> {
 
     // ── Determine options ─────────────────────────────────────────────────────
     let archive_missing = args.archive_missing || config.archive_missing.unwrap_or(false);
+    let archive_missing_schemas =
+        args.archive_missing || config.archive_missing_schemas.unwrap_or(false);
 
     // ── Scan documents ────────────────────────────────────────────────────────
     let root = args
@@ -882,16 +1099,18 @@ async fn main() -> Result<()> {
 
     let docs = scan_documents(&root, &config)?;
     let prompts = scan_prompts(&root, &config)?;
+    let schemas = scan_schemas(&root, &config)?;
 
-    if docs.is_empty() && prompts.is_empty() {
-        println!("No documents or prompts found.");
+    if docs.is_empty() && prompts.is_empty() && schemas.is_empty() {
+        println!("No documents, prompts, or schemas found.");
         return Ok(());
     }
 
     println!(
-        "Found {} document(s) and {} prompt(s)",
+        "Found {} document(s), {} prompt(s), and {} schema version(s)",
         docs.len(),
-        prompts.len()
+        prompts.len(),
+        schemas.len()
     );
 
     // ── Call sync API ─────────────────────────────────────────────────────────
@@ -1000,6 +1219,59 @@ async fn main() -> Result<()> {
         }
     };
 
+    let schema_sync_result = if !schemas.is_empty() || archive_missing_schemas {
+        let sync_url = format!("{base_url}/api/v1/schemas/sync");
+        if args.verbose {
+            eprintln!("POST {sync_url}");
+        }
+
+        let sync_entries: Vec<SchemaSyncEntry> = schemas
+            .values()
+            .map(|schema| SchemaSyncEntry {
+                name: schema.name.clone(),
+                version: schema.version.clone(),
+                content_hash: schema.content_hash.clone(),
+                metadata_hash: schema.metadata_hash.clone(),
+            })
+            .collect();
+
+        let sync_resp = client
+            .post(&sync_url)
+            .json(&SchemaSyncRequest {
+                service_token: token.clone(),
+                schemas: sync_entries,
+                archive_missing: archive_missing_schemas,
+            })
+            .send()
+            .await
+            .context("Failed to call schema sync API")?;
+
+        if !sync_resp.status().is_success() {
+            let status = sync_resp.status();
+            let body = sync_resp.text().await.unwrap_or_default();
+            bail!("Schema sync API returned {status}: {body}");
+        }
+
+        let result: SchemaSyncResponse = sync_resp
+            .json()
+            .await
+            .context("Failed to parse schema sync response")?;
+
+        println!(
+            "Schema sync result: {} to upload, {} unchanged, {} to archive",
+            result.to_upload.len(),
+            result.unchanged.len(),
+            result.to_archive.len(),
+        );
+        result
+    } else {
+        SchemaSyncResponse {
+            to_upload: vec![],
+            to_archive: vec![],
+            unchanged: vec![],
+        }
+    };
+
     // ── Collect attachments for ALL documents ────────────────────────────────
     // We check hashes for every attachment regardless of whether the document
     // body changed, so that replacing a PDF/image with new content is detected
@@ -1041,6 +1313,12 @@ async fn main() -> Result<()> {
                 println!("  + {slug}");
             }
         }
+        if !schema_sync_result.to_upload.is_empty() {
+            println!("\nWould upload schema versions:");
+            for key in &schema_sync_result.to_upload {
+                println!("  + {key}");
+            }
+        }
         if !sync_result.to_archive.is_empty() {
             println!("\nWould archive:");
             for slug in &sync_result.to_archive {
@@ -1053,10 +1331,22 @@ async fn main() -> Result<()> {
                 println!("  - {slug}");
             }
         }
+        if !schema_sync_result.to_archive.is_empty() {
+            println!("\nWould archive schema versions:");
+            for key in &schema_sync_result.to_archive {
+                println!("  - {key}");
+            }
+        }
         if !sync_result.unchanged.is_empty() && args.verbose {
             println!("\nUnchanged:");
             for slug in &sync_result.unchanged {
                 println!("  = {slug}");
+            }
+        }
+        if !schema_sync_result.unchanged.is_empty() && args.verbose {
+            println!("\nUnchanged schema versions:");
+            for key in &schema_sync_result.unchanged {
+                println!("  = {key}");
             }
         }
         println!("\nDry run — no changes made.");
@@ -1323,6 +1613,80 @@ async fn main() -> Result<()> {
         }
     }
 
+    // ── Upload changed schema versions ──────────────────────────────────────
+    let schema_ingest_url = format!("{base_url}/api/v1/schemas");
+    let mut schemas_uploaded = 0usize;
+    let mut schema_errors = 0usize;
+
+    for key in &schema_sync_result.to_upload {
+        let Some(schema) = schemas.get(key) else {
+            eprintln!(
+                "Warning: server requested upload of unknown schema version '{key}', skipping"
+            );
+            continue;
+        };
+
+        if args.verbose {
+            eprintln!("Uploading schema: {key}");
+        }
+
+        let ingest_body = SchemaIngestRequest {
+            service_token: token.clone(),
+            name: schema.name.clone(),
+            schema_type: schema.schema_type.clone(),
+            version: schema.version.clone(),
+            status: schema.status.clone(),
+            access_level: schema.access_level.clone(),
+            service_owner: schema.service_owner.clone(),
+            tags: schema.tags.clone(),
+            content: schema.content.clone(),
+        };
+
+        let mut attempt = 0u32;
+        let mut backoff_ms = INITIAL_BACKOFF_MS;
+        let result = loop {
+            match client
+                .post(&schema_ingest_url)
+                .json(&ingest_body)
+                .send()
+                .await
+            {
+                Ok(r) if backoff_on_429(&r, &mut attempt, &mut backoff_ms).await => continue,
+                other => break other,
+            }
+        };
+
+        match result {
+            Ok(r) if r.status().is_success() => {
+                let ingest: SchemaIngestResponse = r
+                    .json()
+                    .await
+                    .unwrap_or(SchemaIngestResponse { changed: true });
+                schemas_uploaded += 1;
+                if args.verbose {
+                    let note = if ingest.changed {
+                        "updated"
+                    } else {
+                        "metadata only"
+                    };
+                    println!("  uploaded schema: {key} ({note})");
+                } else {
+                    println!("  uploaded schema: {key}");
+                }
+            }
+            Ok(r) => {
+                let status = r.status();
+                let body = r.text().await.unwrap_or_default();
+                eprintln!("  error: schema {key}: HTTP {status} — {body}");
+                schema_errors += 1;
+            }
+            Err(e) => {
+                eprintln!("  error: schema {key}: {e}");
+                schema_errors += 1;
+            }
+        }
+    }
+
     // ── Summary ───────────────────────────────────────────────────────────────
     if attachments_uploaded > 0 || attachment_errors > 0 {
         println!(
@@ -1340,8 +1704,13 @@ async fn main() -> Result<()> {
         prompt_sync_result.unchanged.len(),
         prompt_sync_result.to_archive.len(),
     );
+    println!(
+        "Schemas: {schemas_uploaded} uploaded, {} unchanged, {} archived",
+        schema_sync_result.unchanged.len(),
+        schema_sync_result.to_archive.len(),
+    );
 
-    let total_errors = errors + attachment_errors + prompt_errors;
+    let total_errors = errors + attachment_errors + prompt_errors + schema_errors;
     if total_errors > 0 {
         bail!("{total_errors} upload(s) failed");
     }
@@ -1758,5 +2127,84 @@ prompt_body: |
         assert!(err
             .to_string()
             .contains("missing 'owner' and no default_service_owner is configured"));
+    }
+
+    #[test]
+    fn scan_schemas_reads_manifest_versions() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let schema_dir = dir.path().join("schemas").join("payments");
+        std::fs::create_dir_all(&schema_dir).unwrap();
+
+        std::fs::File::create(schema_dir.join("openapi-v1.yaml"))
+            .unwrap()
+            .write_all(b"openapi: 3.0.0\ninfo:\n  title: Payments\n  version: 1.0.0\npaths: {}\n")
+            .unwrap();
+        std::fs::File::create(schema_dir.join("lekton.schema.yml"))
+            .unwrap()
+            .write_all(
+                br#"name: payment-api
+schema_type: openapi
+service_owner: payments
+default_access_level: internal
+tags: [payments, api]
+versions:
+  - file: openapi-v1.yaml
+    version: 1.0.0
+    status: stable
+"#,
+            )
+            .unwrap();
+
+        let schemas = scan_schemas(dir.path(), &LektonConfig::default()).unwrap();
+        assert_eq!(schemas.len(), 1);
+        let schema = schemas.values().next().unwrap();
+        assert_eq!(schema.key, "payment-api@1.0.0");
+        assert_eq!(schema.name, "payment-api");
+        assert_eq!(schema.access_level, "internal");
+        assert_eq!(schema.service_owner, "payments");
+        assert_eq!(schema.tags, vec!["payments".to_string(), "api".to_string()]);
+        assert!(schema.content_hash.starts_with("sha256:"));
+        assert!(schema.metadata_hash.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn scan_schemas_applies_prefix_and_default_owner() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let schema_dir = dir.path().join("contracts").join("orders");
+        std::fs::create_dir_all(&schema_dir).unwrap();
+
+        std::fs::File::create(schema_dir.join("asyncapi-v1.yaml"))
+            .unwrap()
+            .write_all(b"asyncapi: 2.6.0\ninfo:\n  title: Orders\n  version: 1.0.0\nchannels: {}\n")
+            .unwrap();
+        std::fs::File::create(schema_dir.join("lekton.schema.yml"))
+            .unwrap()
+            .write_all(
+                br#"schema_type: asyncapi
+versions:
+  - file: asyncapi-v1.yaml
+    version: 1.0.0
+    status: beta
+    access_level: developer
+"#,
+            )
+            .unwrap();
+
+        let config = LektonConfig {
+            schemas_dir: Some("contracts".to_string()),
+            schema_name_prefix: Some("platform".to_string()),
+            default_service_owner: Some("platform-team".to_string()),
+            ..LektonConfig::default()
+        };
+
+        let schemas = scan_schemas(dir.path(), &config).unwrap();
+        let schema = schemas.values().next().unwrap();
+        assert_eq!(schema.name, "platform/orders");
+        assert_eq!(schema.schema_type, "asyncapi");
+        assert_eq!(schema.service_owner, "platform-team");
+        assert_eq!(schema.access_level, "developer");
+        assert_eq!(schema.status, "beta");
     }
 }

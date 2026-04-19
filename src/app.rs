@@ -130,7 +130,7 @@ pub struct NavItem {
 /// client can attempt a token refresh instead of silently falling back to
 /// anonymous access.
 #[cfg(feature = "ssr")]
-async fn request_document_visibility(
+pub(crate) async fn request_document_visibility(
     state: &AppState,
 ) -> Result<(Option<Vec<String>>, bool), ServerFnError> {
     use crate::auth::extractor::{ACCESS_TOKEN_COOKIE, LOGGED_IN_COOKIE};

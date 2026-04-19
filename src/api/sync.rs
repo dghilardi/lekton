@@ -58,7 +58,7 @@ pub async fn process_sync(
 
     // 2. Validate all request slugs fall within the token's scopes
     for entry in &request.documents {
-        if !slug_matches_scopes(&entry.slug, &scopes) {
+        if !scope_matches_any(&entry.slug, &scopes) {
             return Err(AppError::Forbidden(format!(
                 "Token does not have access to slug '{}'",
                 entry.slug
@@ -168,7 +168,7 @@ pub async fn process_sync(
 /// Validate the token for sync and return its scopes.
 /// Legacy token gets a wildcard scope ("*").
 #[cfg(feature = "ssr")]
-async fn validate_sync_token(
+pub(crate) async fn validate_sync_token(
     service_token_repo: &dyn crate::db::service_token_repository::ServiceTokenRepository,
     legacy_token: Option<&str>,
     raw_token: &str,
@@ -202,7 +202,7 @@ async fn validate_sync_token(
 /// Check if a slug matches any of the given scopes.
 /// The wildcard scope "*" matches everything.
 #[cfg(feature = "ssr")]
-fn slug_matches_scopes(slug: &str, scopes: &[String]) -> bool {
+pub(crate) fn scope_matches_any(slug: &str, scopes: &[String]) -> bool {
     scopes.iter().any(|scope| {
         if scope == "*" {
             return true;

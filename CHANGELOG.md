@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.15.0] 2026-04-19
+
 ### Added
 - `lekton-sync` now supports schema manifests (`lekton.schema.yml`) for OpenAPI, AsyncAPI, and JSON Schema artifacts, with delta sync via `POST /api/v1/schemas/sync`.
 - `cargo-deny` configuration for license compliance (AGPL-3.0-compatible allowlist) and RustSec advisory auditing, with weekly CI workflow

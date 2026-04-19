@@ -446,16 +446,12 @@ async fn main() {
                 .post(api::schemas::ingest_schema_handler),
         )
         .route(
-            "/api/v1/schemas/{name}",
-            axum::routing::get(api::schemas::get_schema_handler),
-        )
-        .route(
-            "/api/v1/schemas/{name}/{version}",
-            axum::routing::get(api::schemas::get_schema_version_handler),
-        )
-        .route(
             "/api/v1/schemas/sync",
             axum::routing::post(api::schemas::schema_sync_handler),
+        )
+        .route(
+            "/api/v1/schemas/{*rest}",
+            axum::routing::get(api::schemas::get_schema_route_handler),
         )
         .route("/api/v1/sync", axum::routing::post(api::sync::sync_handler))
         .route(

@@ -692,6 +692,43 @@ pub async fn get_schema_version_handler(
     .await
 }
 
+/// Catch-all raw schema handler supporting schema names that contain `/`.
+///
+/// Resolution order:
+/// 1. Treat the full path as the schema name and return schema detail.
+/// 2. If not found, split on the last `/` and treat the suffix as `version`.
+#[cfg(feature = "ssr")]
+pub async fn get_schema_route_handler(
+    axum::extract::State(state): axum::extract::State<crate::app::AppState>,
+    crate::auth::extractor::OptionalAuthUser(user): crate::auth::extractor::OptionalAuthUser,
+    axum::extract::Path(rest): axum::extract::Path<String>,
+) -> Result<axum::response::Response, AppError> {
+    use axum::response::IntoResponse;
+
+    let allowed_levels = schema_visibility_from_request(&state, user.as_ref()).await?;
+
+    match process_get_schema(state.schema_repo.as_ref(), &rest, allowed_levels.as_deref()).await {
+        Ok(detail) => return Ok(axum::Json(detail).into_response()),
+        Err(AppError::NotFound(_)) => {}
+        Err(err) => return Err(err),
+    }
+
+    let Some((name, version)) = rest.rsplit_once('/') else {
+        return Err(AppError::NotFound(format!("Schema '{}' not found", rest)));
+    };
+
+    let content = process_get_schema_content(
+        state.schema_repo.as_ref(),
+        state.storage_client.as_ref(),
+        name,
+        version,
+        allowed_levels.as_deref(),
+    )
+    .await?;
+
+    Ok(content.into_response())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

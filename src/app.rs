@@ -1640,7 +1640,7 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/docs/*slug") view=DocPage />
                     <Route path=path!("/edit/*slug") view=EditorPage />
                     <Route path=path!("/schemas") view=SchemaListPage />
-                    <Route path=path!("/schemas/:name") view=SchemaViewerPage />
+                    <Route path=path!("/schemas/*name") view=SchemaViewerPage />
                     <Route path=path!("/chat") view=ChatPage />
                     <Route path=path!("/prompts") view=PromptsPage />
                     <Route path=path!("/profile") view=ProfilePage />

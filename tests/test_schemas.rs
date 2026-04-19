@@ -513,3 +513,33 @@ async fn schema_sync_archives_missing_version() {
         .unwrap();
     assert!(archived.is_archived);
 }
+
+#[tokio::test]
+async fn schema_raw_api_supports_names_with_slashes() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+
+    let name = format!("swagger-docs/nested-api-{}", uuid::Uuid::new_v4());
+    ingest_schema(
+        &server,
+        &name,
+        "openapi",
+        "1.0.0",
+        "stable",
+        "public",
+        &openapi_spec(),
+    )
+    .await;
+
+    let detail: SchemaDetail = server
+        .get(&format!("/api/v1/schemas/{}", name))
+        .await
+        .json();
+    assert_eq!(detail.name, name);
+
+    let content = server
+        .get(&format!("/api/v1/schemas/{}/1.0.0", name))
+        .await
+        .text();
+    assert!(content.contains("openapi"));
+}

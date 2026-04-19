@@ -27,6 +27,12 @@ impl MockStorage {
     }
 }
 
+impl Default for MockStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl crate::storage::client::StorageClient for MockStorage {
     async fn put_object(&self, key: &str, content: Vec<u8>) -> Result<(), AppError> {

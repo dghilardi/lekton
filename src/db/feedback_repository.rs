@@ -211,7 +211,7 @@ async fn paginate(
     use futures::TryStreamExt;
 
     const MAX_PER_PAGE: u64 = 200;
-    let per_page = params.per_page.min(MAX_PER_PAGE).max(1);
+    let per_page = params.per_page.clamp(1, MAX_PER_PAGE);
     let skip = params.page * per_page;
 
     let total = col

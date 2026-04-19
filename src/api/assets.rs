@@ -53,6 +53,7 @@ pub const DEFAULT_MAX_ATTACHMENT_SIZE: u64 = 25 * 1024 * 1024;
 
 /// Core upload logic — separated from HTTP layer for testability.
 #[cfg(feature = "ssr")]
+#[allow(clippy::too_many_arguments)]
 pub async fn process_upload_asset(
     asset_repo: &dyn AssetRepository,
     storage: &dyn StorageClient,
@@ -1086,7 +1087,7 @@ mod tests {
 
         let existing_hash = compute_content_hash(b"hello");
 
-        let entries = vec![
+        let _entries = [
             // Same hash — should NOT be in to_upload
             CheckHashEntry {
                 key: "existing.txt".to_string(),

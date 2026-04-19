@@ -12,10 +12,6 @@ use serde::{Deserialize, Serialize};
 use crate::auth::models::AuthenticatedUser;
 use crate::error::AppError;
 
-/// Default access token lifetime.
-const DEFAULT_ACCESS_TTL_SECS: u64 = 15 * 60; // 15 minutes
-/// Default refresh token lifetime.
-const DEFAULT_REFRESH_TTL_DAYS: i64 = 30;
 /// Default issuer embedded in access tokens.
 const DEFAULT_ACCESS_ISSUER: &str = "lekton";
 /// Default audience embedded in access tokens.

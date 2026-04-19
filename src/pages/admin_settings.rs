@@ -2,12 +2,13 @@ use leptos::prelude::*;
 use leptos_router::hooks::use_params;
 use leptos_router::params::Params;
 
+#[allow(unused_imports)]
+use crate::app::deactivate_service_token;
 use crate::app::{
-    admin_list_pats, admin_toggle_pat, create_service_token, deactivate_service_token,
-    get_custom_css, get_navigation, get_navigation_order, get_rag_reindex_status,
-    list_documentation_feedback, list_service_tokens, mark_documentation_feedback_duplicate,
-    resolve_documentation_feedback, save_custom_css, save_navigation_order, trigger_rag_reindex,
-    AdminPatInfo, CreateTokenResult, DocumentationFeedbackAdminItem,
+    admin_list_pats, admin_toggle_pat, create_service_token, get_custom_css, get_navigation,
+    get_navigation_order, get_rag_reindex_status, list_documentation_feedback, list_service_tokens,
+    mark_documentation_feedback_duplicate, resolve_documentation_feedback, save_custom_css,
+    save_navigation_order, trigger_rag_reindex, CreateTokenResult, DocumentationFeedbackAdminItem,
     DocumentationFeedbackAdminListResult, NavItem, NavigationOrderEntry, ServiceTokenInfo,
 };
 use crate::auth::refresh_client::with_auth_retry;
@@ -229,6 +230,7 @@ fn TokenTable(
 }
 
 /// A single row in the token table.
+#[allow(unused_variables)]
 #[component]
 fn TokenRow(
     token: ServiceTokenInfo,
@@ -577,6 +579,7 @@ fn DocumentationFeedbackAdminPanel() -> impl IntoView {
     }
 }
 
+#[allow(unused_variables)]
 #[component]
 fn DocumentationFeedbackList(
     result: DocumentationFeedbackAdminListResult,
@@ -896,9 +899,7 @@ fn documentation_feedback_optional_view(
     title: &'static str,
     value: Option<String>,
 ) -> Option<AnyView> {
-    let Some(value) = value.filter(|value| !value.trim().is_empty()) else {
-        return None;
-    };
+    let value = value.filter(|value| !value.trim().is_empty())?;
 
     Some(view! {
         <div class="space-y-2">
@@ -1095,7 +1096,6 @@ fn NavigationOrderEditor() -> impl IntoView {
                     // Moving down: extract dst first (higher indices), then src
                     let dst_subtree: Vec<_> = items.drain(dst.clone()).collect();
                     let src_subtree: Vec<_> = items.drain(src.clone()).collect();
-                    let src_len = src_subtree.len();
                     // Reinsert: src was at src.start, dst was at dst.start
                     // After removing both, insert at src.start: dst then src
                     items.splice(src.start..src.start, dst_subtree);
@@ -1106,7 +1106,6 @@ fn NavigationOrderEditor() -> impl IntoView {
                     // Moving up: extract src first (higher indices), then dst
                     let src_subtree: Vec<_> = items.drain(src.clone()).collect();
                     let dst_subtree: Vec<_> = items.drain(dst.clone()).collect();
-                    let dst_len = dst_subtree.len();
                     // Reinsert at dst.start: src then dst
                     items.splice(dst.start..dst.start, src_subtree.clone());
                     let new_dst_start = dst.start + src_subtree.len();
@@ -1651,6 +1650,7 @@ fn RagReindexControls(
     trigger_action: Action<(), Result<String, ServerFnError>>,
     is_polling: ReadSignal<bool>,
 ) -> impl IntoView {
+    let _ = is_polling; // used by caller for reactive polling, not needed in view
     let is_running = Signal::derive(move || {
         status_resource
             .get()

@@ -4,6 +4,7 @@
 //! the `AppState` concise and to allow transactions in the future.
 
 use async_trait::async_trait;
+#[cfg(feature = "ssr")]
 use chrono::Utc;
 
 use crate::db::auth_models::{RefreshToken, User, UserPermission};

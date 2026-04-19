@@ -1,6 +1,7 @@
 //! Repository for `AccessLevelEntity` — the configurable content categories.
 
 use async_trait::async_trait;
+#[cfg(feature = "ssr")]
 use chrono::Utc;
 
 use crate::db::auth_models::AccessLevelEntity;
@@ -79,8 +80,6 @@ impl MongoAccessLevelRepository {
 #[async_trait]
 impl AccessLevelRepository for MongoAccessLevelRepository {
     async fn create(&self, level: AccessLevelEntity) -> Result<(), AppError> {
-        use mongodb::bson::doc;
-
         // Enforce uniqueness on name (MongoDB will also enforce via index if set).
         if self.exists(&level.name).await? {
             return Err(AppError::BadRequest(format!(

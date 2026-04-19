@@ -27,8 +27,8 @@ struct TenantTokenClaims {
 /// * `api_key`       — The Meilisearch API key (used as the HMAC secret).
 /// * `api_key_uid`   — The UID of the API key (embedded in claims).
 /// * `allowed_levels` — The access level names the token holder may read
-///                     (e.g. `["public", "internal"]`).
-///                     Pass `None` to generate an unrestricted admin token.
+///   (e.g. `["public", "internal"]`).
+///   Pass `None` to generate an unrestricted admin token.
 /// * `include_draft` — Whether draft documents should be visible.
 /// * `expires_at`    — Optional expiration time for the token.
 pub fn generate_tenant_token(

@@ -128,7 +128,7 @@ pub fn extract_headings(raw: &str) -> Vec<TocHeading> {
                     };
 
                     // Only include h2 and h3 for TOC (h1 is typically the page title)
-                    if level_num >= 2 && level_num <= 3 {
+                    if (2..=3).contains(&level_num) {
                         let id = slugify(&text);
                         headings.push(TocHeading {
                             text,
@@ -162,10 +162,8 @@ fn slugify(text: &str) -> String {
         .map(|c| {
             if c.is_alphanumeric() {
                 c
-            } else if c.is_whitespace() || c == '-' || c == '.' {
-                '-'
             } else {
-                '-' // Convert all other special chars to dash
+                '-' // Convert all non-alphanumeric chars to dash
             }
         })
         .collect::<String>()

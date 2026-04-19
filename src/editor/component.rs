@@ -19,9 +19,7 @@ extern "C" {
 /// Server function to fetch document content for editing.
 #[server(GetDocContent, "/api")]
 pub async fn get_doc_content(slug: String) -> Result<Option<(String, String)>, ServerFnError> {
-    use crate::db::repository::DocumentRepository;
     use crate::rendering::markdown::render_markdown;
-    use crate::storage::client::StorageClient;
 
     let state = expect_context::<crate::app::AppState>();
 
@@ -60,7 +58,6 @@ pub async fn save_doc_content(
     title: String,
     html_content: String,
 ) -> Result<String, ServerFnError> {
-    use crate::db::repository::DocumentRepository;
     use chrono::Utc;
 
     let state = expect_context::<crate::app::AppState>();
@@ -169,6 +166,7 @@ pub fn EditorPage() -> impl IntoView {
     let params = leptos_router::hooks::use_params_map();
     let slug = move || params.read().get("slug").unwrap_or_default();
 
+    #[allow(clippy::redundant_closure)]
     let doc_resource = Resource::new(move || slug(), |slug| get_doc_content(slug));
 
     let (msg, set_msg) = signal(TiptapInstanceMsg::Noop);

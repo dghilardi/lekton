@@ -168,7 +168,10 @@ impl ChatService {
         );
 
         // 5. Embed the (possibly rewritten) retrieval query
-        let query_vectors = self.embedding.embed(&[retrieval_query.clone()]).await?;
+        let query_vectors = self
+            .embedding
+            .embed(std::slice::from_ref(&retrieval_query))
+            .await?;
         let query_vector = query_vectors
             .into_iter()
             .next()

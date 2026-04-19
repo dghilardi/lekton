@@ -21,7 +21,7 @@ fn normalize(text: &str) -> String {
 /// SHA-256 hex digest of the given string.
 fn sha256_hex(text: &str) -> String {
     let hash = Sha256::digest(text.as_bytes());
-    format!("{:x}", hash)
+    hash.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 // ── CachedEmbeddingService ────────────────────────────────────────────────────

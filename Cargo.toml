@@ -87,7 +87,7 @@ rand = "0.9"
 uuid = { version = "1", features = ["v4"] }
 
 # Hashing (for content hash computation and refresh token storage)
-sha2 = "0.10"
+sha2 = "0.11"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }

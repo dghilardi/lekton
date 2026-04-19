@@ -43,7 +43,7 @@ aws-sdk-s3 = { version = "1", optional = true }
 aws-config = { version = "1", optional = true }
 
 # Markdown rendering
-pulldown-cmark = { version = "0.12" }
+pulldown-cmark = { version = "0.13" }
 
 # Search
 meilisearch-sdk = { version = "0.32", optional = true }

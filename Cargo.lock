@@ -3593,7 +3593,7 @@ dependencies = [
  "mockall",
  "mongodb",
  "openidconnect",
- "pulldown-cmark 0.12.2",
+ "pulldown-cmark",
  "qdrant-client",
  "rand 0.8.6",
  "reqwest 0.12.28",
@@ -5140,25 +5140,14 @@ dependencies = [
 
 [[package]]
 name = "pulldown-cmark"
-version = "0.12.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f86ba2052aebccc42cbbb3ed234b8b13ce76f75c3551a303cb2bcffcff12bb14"
-dependencies = [
- "bitflags",
- "getopts",
- "memchr",
- "pulldown-cmark-escape",
- "unicase",
-]
-
-[[package]]
-name = "pulldown-cmark"
 version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c3a14896dfa883796f1cb410461aef38810ea05f2b2c33c5aded3649095fdad"
 dependencies = [
  "bitflags",
+ "getopts",
  "memchr",
+ "pulldown-cmark-escape",
  "unicase",
 ]
 
@@ -6891,7 +6880,7 @@ dependencies = [
  "icu_segmenter",
  "itertools 0.14.0",
  "memchr",
- "pulldown-cmark 0.13.3",
+ "pulldown-cmark",
  "strum",
  "thiserror 2.0.18",
 ]

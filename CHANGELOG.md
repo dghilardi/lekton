@@ -9,6 +9,9 @@ All notable changes to this project will be documented in this file.
 - Clippy CI job enforcing zero warnings on both SSR and hydrate targets (`-D warnings`)
 - `#[forbid(unsafe_code)]` crate-level attribute on both `lekton` and `lekton-sync`
 
+### Changed
+- Update safe dependencies: async-openai 0.35, pulldown-cmark 0.13, rand 0.9, sha2 0.11, text-splitter 0.30, gloo-timers 0.4, gloo-net 0.7, mockall 0.14, axum-test 20
+
 ### Fixed
 - Resolved all clippy warnings across SSR and hydrate targets (unused imports, deprecated APIs, non-idiomatic patterns)
 - Replaced `unwrap()` calls in non-test code with safe alternatives (let-else, unwrap_or, if-let)

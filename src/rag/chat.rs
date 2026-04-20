@@ -58,6 +58,32 @@ pub struct ChatService {
     query_rewriter: Option<QueryRewriter>,
 }
 
+/// Result of a pure retrieval pass (no LLM generation, no chat persistence).
+///
+/// Returned by [`ChatService::retrieve_only`] and used both by
+/// [`ChatService::stream_response`] (which forwards `post_rerank` to the LLM)
+/// and by offline tooling such as the `rag-eval` binary, which needs both the
+/// pre-rerank and post-rerank candidate sets to compute retrieval metrics.
+#[derive(Debug, Clone)]
+pub struct RetrievalOutput {
+    /// The query string actually used for retrieval (after query rewriting).
+    pub retrieval_query: String,
+    /// Plan produced by the query analyzer (or [`QueryPlan::simple`] when
+    /// the analyzer is disabled or fails).
+    pub query_plan: QueryPlan,
+    /// The exact set of query strings that was embedded — equal to
+    /// `[retrieval_query]` for simple plans, or the (optionally HyDE-expanded)
+    /// sub-queries for decomposed plans.
+    pub queries_embedded: Vec<String>,
+    /// Top-K candidates after vector search, dedup, and (optional) hybrid RRF
+    /// — but **before** the cross-encoder reranker. Already truncated to
+    /// `MAX_CONTEXT_CHUNKS`.
+    pub pre_rerank: Vec<VectorSearchResult>,
+    /// Final top-K used to build the LLM prompt. Equal to `pre_rerank` when
+    /// the reranker is disabled or fails.
+    pub post_rerank: Vec<VectorSearchResult>,
+}
+
 /// A token event yielded by the streaming chat response.
 #[derive(Debug, serde::Serialize)]
 #[serde(tag = "type")]
@@ -222,195 +248,14 @@ impl ChatService {
             })
             .await?;
 
-        // 4. Rewrite the query into a standalone question when history is non-empty.
-        //    This improves vector-search relevance for follow-up / elliptic questions.
-        //    Falls back to the original message when rewriting is disabled or history is empty.
-        let retrieval_query = match &self.query_rewriter {
-            Some(rewriter) => rewriter.rewrite(&user_message, &history).await?,
-            None => user_message.clone(),
-        };
+        // 4-7. Pure retrieval (analyzer + HyDE + decomposition + vector search +
+        //      hybrid RRF + reranker). Side-effect-free w.r.t. chat persistence.
+        let retrieval = self
+            .retrieve_only(user_ctx, &user_message, &history, &session_id)
+            .await?;
 
-        tracing::debug!(
-            session_id = %session_id,
-            original_query = %user_message,
-            retrieval_query = %retrieval_query,
-            history_messages = history.len(),
-            "RAG: retrieval query ready"
-        );
-
-        // 4.5 Analyze query complexity when the analyzer is configured.
-        //     Falls back to simple on any error so the pipeline is never blocked.
-        let query_plan: QueryPlan = if let Some(ref analyzer) = self.analyzer {
-            match analyzer.classify(&retrieval_query).await {
-                Ok(plan) => {
-                    tracing::debug!(
-                        session_id = %session_id,
-                        complexity = ?plan.complexity,
-                        sub_queries = plan.sub_queries.len(),
-                        "RAG: query plan"
-                    );
-                    plan
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        session_id = %session_id,
-                        error = %e,
-                        "query analyzer failed — using simple retrieval"
-                    );
-                    QueryPlan::simple()
-                }
-            }
-        } else {
-            QueryPlan::simple()
-        };
-
-        // The set of strings to embed: original query for simple plans, sub-queries
-        // for multi-entity / multi-hop decomposition.
-        let queries_to_embed: Vec<String> = match query_plan.complexity {
-            Complexity::Simple => vec![retrieval_query.clone()],
-            _ => query_plan.sub_queries.clone(),
-        };
-
-        // 4.6 HyDE: replace each query string with a synthetically generated
-        //     hypothetical answer document before embedding. The Meilisearch text
-        //     search (if enabled) still uses the original retrieval_query so that
-        //     keyword recall is not degraded by the generative expansion.
-        let queries_to_embed = if let Some(ref hyde) = self.hyde {
-            tracing::debug!(
-                session_id = %session_id,
-                queries = queries_to_embed.len(),
-                "RAG: generating HyDE hypothetical documents"
-            );
-            hyde.expand_queries(queries_to_embed).await
-        } else {
-            queries_to_embed
-        };
-
-        // 5. Embed all queries in a single batched call.
-        let (allowed_levels, include_draft) = user_ctx.document_visibility();
-        let all_vectors = self.embedding.embed(&queries_to_embed).await?;
-        if all_vectors.is_empty() {
-            return Err(AppError::Internal("embedding returned no vectors".into()));
-        }
-
-        let vector_limit = if self.search_service.is_some() || self.reranker.is_some() {
-            MAX_CONTEXT_CHUNKS * CANDIDATE_MULTIPLIER
-        } else {
-            MAX_CONTEXT_CHUNKS
-        };
-        tracing::debug!(
-            session_id = %session_id,
-            retrieval_query = %retrieval_query,
-            sub_queries = queries_to_embed.len(),
-            vector_limit,
-            hybrid = self.search_service.is_some(),
-            reranker = self.reranker.is_some(),
-            allowed_levels = ?allowed_levels,
-            include_draft,
-            "RAG: searching vector store"
-        );
-
-        // 6. Run one vector search per query in parallel, plus an optional single
-        //    Meilisearch query (for the hybrid RRF signal) at the same time.
-        let vector_searches: Vec<_> = all_vectors
-            .into_iter()
-            .map(|vector| {
-                self.vectorstore.search(
-                    vector,
-                    vector_limit,
-                    allowed_levels.as_deref(),
-                    include_draft,
-                )
-            })
-            .collect();
-
-        let (vector_results_nested, text_slugs) = if let Some(ref svc) = self.search_service {
-            let text_future =
-                svc.search(&retrieval_query, allowed_levels.as_deref(), include_draft);
-            let (vector_list, text_result) =
-                tokio::join!(futures::future::join_all(vector_searches), text_future);
-            let slugs: Vec<String> = text_result
-                .unwrap_or_else(|e| {
-                    tracing::warn!(
-                        session_id = %session_id,
-                        error = %e,
-                        "hybrid search: Meilisearch query failed, falling back to vector-only"
-                    );
-                    vec![]
-                })
-                .into_iter()
-                .map(|h| h.slug)
-                .collect();
-            (vector_list, slugs)
-        } else {
-            (futures::future::join_all(vector_searches).await, vec![])
-        };
-
-        // Flatten results from all sub-query searches, propagating errors.
-        let mut merged_chunks: Vec<VectorSearchResult> = Vec::new();
-        for result in vector_results_nested {
-            merged_chunks.extend(result?);
-        }
-
-        // Deduplicate when multiple sub-queries were used (same chunk can appear
-        // in results for several sub-queries).
-        if queries_to_embed.len() > 1 {
-            merged_chunks = dedup_chunks(merged_chunks);
-        }
-
-        // Apply RRF if hybrid is enabled; otherwise keep retrieval order.
-        let search_results: Vec<VectorSearchResult> = if !text_slugs.is_empty() {
-            tracing::debug!(
-                session_id = %session_id,
-                text_hits = text_slugs.len(),
-                "RAG: applying hybrid RRF"
-            );
-            let fused = crate::rag::rrf::fuse(merged_chunks, &text_slugs);
-            fused.into_iter().take(MAX_CONTEXT_CHUNKS).collect()
-        } else {
-            merged_chunks.into_iter().take(MAX_CONTEXT_CHUNKS).collect()
-        };
-
-        // 7. Cross-encoder reranking (optional): re-score retrieved chunks jointly
-        //    against the query and keep only the top MAX_CONTEXT_CHUNKS.
-        let search_results = if let Some(ref reranker) = self.reranker {
-            tracing::debug!(
-                session_id = %session_id,
-                candidates = search_results.len(),
-                "RAG: reranking chunks"
-            );
-            // Keep a truncated fallback in case the reranker call fails.
-            let fallback: Vec<_> = search_results
-                .iter()
-                .take(MAX_CONTEXT_CHUNKS)
-                .cloned()
-                .collect();
-            match reranker
-                .rerank(&retrieval_query, search_results, MAX_CONTEXT_CHUNKS)
-                .await
-            {
-                Ok(reranked) => reranked,
-                Err(e) => {
-                    tracing::warn!(
-                        session_id = %session_id,
-                        error = %e,
-                        "reranker failed, falling back to retrieval order"
-                    );
-                    fallback
-                }
-            }
-        } else {
-            search_results
-        };
-
-        let search_results_summary = summarize_search_results(&search_results);
+        let search_results = retrieval.post_rerank;
         let source_references = build_source_references(&search_results);
-        tracing::debug!(
-            session_id = %session_id,
-            retrieval_query = %retrieval_query,
-            results = ?search_results_summary,
-            "RAG: retrieval complete"
-        );
 
         // 7. Build context string from search results
         let context = search_results
@@ -585,6 +430,218 @@ impl ChatService {
         };
 
         Ok(Box::pin(event_stream))
+    }
+
+    /// Run the retrieval pipeline (analyzer + HyDE + decomposition + vector
+    /// search + hybrid RRF + reranker) without invoking the LLM and without
+    /// touching chat persistence.
+    ///
+    /// `history` is consulted only by the optional query rewriter; pass an
+    /// empty slice for headless / single-turn evaluation. `session_id` is used
+    /// only as a tracing field so that retrieval logs can be correlated with a
+    /// caller-defined identifier (a chat session id, an eval run id, etc.).
+    pub async fn retrieve_only(
+        &self,
+        user_ctx: &UserContext,
+        user_message: &str,
+        history: &[ChatMessage],
+        session_id: &str,
+    ) -> Result<RetrievalOutput, AppError> {
+        // Rewrite the query into a standalone question when history is non-empty.
+        // Falls back to the original message when rewriting is disabled or history is empty.
+        let retrieval_query = match &self.query_rewriter {
+            Some(rewriter) => rewriter.rewrite(user_message, history).await?,
+            None => user_message.to_string(),
+        };
+
+        tracing::debug!(
+            session_id = %session_id,
+            original_query = %user_message,
+            retrieval_query = %retrieval_query,
+            history_messages = history.len(),
+            "RAG: retrieval query ready"
+        );
+
+        // Analyze query complexity when the analyzer is configured. Falls back
+        // to simple on any error so the pipeline is never blocked.
+        let query_plan: QueryPlan = if let Some(ref analyzer) = self.analyzer {
+            match analyzer.classify(&retrieval_query).await {
+                Ok(plan) => {
+                    tracing::debug!(
+                        session_id = %session_id,
+                        complexity = ?plan.complexity,
+                        sub_queries = plan.sub_queries.len(),
+                        "RAG: query plan"
+                    );
+                    plan
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        error = %e,
+                        "query analyzer failed — using simple retrieval"
+                    );
+                    QueryPlan::simple()
+                }
+            }
+        } else {
+            QueryPlan::simple()
+        };
+
+        // The set of strings to embed: original query for simple plans,
+        // sub-queries for multi-entity / multi-hop decomposition.
+        let queries_to_embed: Vec<String> = match query_plan.complexity {
+            Complexity::Simple => vec![retrieval_query.clone()],
+            _ => query_plan.sub_queries.clone(),
+        };
+
+        // HyDE: replace each query string with a synthetically generated
+        // hypothetical answer document before embedding. The Meilisearch text
+        // search (if enabled) still uses the original retrieval_query so that
+        // keyword recall is not degraded by the generative expansion.
+        let queries_to_embed = if let Some(ref hyde) = self.hyde {
+            tracing::debug!(
+                session_id = %session_id,
+                queries = queries_to_embed.len(),
+                "RAG: generating HyDE hypothetical documents"
+            );
+            hyde.expand_queries(queries_to_embed).await
+        } else {
+            queries_to_embed
+        };
+
+        // Embed all queries in a single batched call.
+        let (allowed_levels, include_draft) = user_ctx.document_visibility();
+        let all_vectors = self.embedding.embed(&queries_to_embed).await?;
+        if all_vectors.is_empty() {
+            return Err(AppError::Internal("embedding returned no vectors".into()));
+        }
+
+        let vector_limit = if self.search_service.is_some() || self.reranker.is_some() {
+            MAX_CONTEXT_CHUNKS * CANDIDATE_MULTIPLIER
+        } else {
+            MAX_CONTEXT_CHUNKS
+        };
+        tracing::debug!(
+            session_id = %session_id,
+            retrieval_query = %retrieval_query,
+            sub_queries = queries_to_embed.len(),
+            vector_limit,
+            hybrid = self.search_service.is_some(),
+            reranker = self.reranker.is_some(),
+            allowed_levels = ?allowed_levels,
+            include_draft,
+            "RAG: searching vector store"
+        );
+
+        // Run one vector search per query in parallel, plus an optional single
+        // Meilisearch query (for the hybrid RRF signal) at the same time.
+        let vector_searches: Vec<_> = all_vectors
+            .into_iter()
+            .map(|vector| {
+                self.vectorstore.search(
+                    vector,
+                    vector_limit,
+                    allowed_levels.as_deref(),
+                    include_draft,
+                )
+            })
+            .collect();
+
+        let (vector_results_nested, text_slugs) = if let Some(ref svc) = self.search_service {
+            let text_future =
+                svc.search(&retrieval_query, allowed_levels.as_deref(), include_draft);
+            let (vector_list, text_result) =
+                tokio::join!(futures::future::join_all(vector_searches), text_future);
+            let slugs: Vec<String> = text_result
+                .unwrap_or_else(|e| {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        error = %e,
+                        "hybrid search: Meilisearch query failed, falling back to vector-only"
+                    );
+                    vec![]
+                })
+                .into_iter()
+                .map(|h| h.slug)
+                .collect();
+            (vector_list, slugs)
+        } else {
+            (futures::future::join_all(vector_searches).await, vec![])
+        };
+
+        // Flatten results from all sub-query searches, propagating errors.
+        let mut merged_chunks: Vec<VectorSearchResult> = Vec::new();
+        for result in vector_results_nested {
+            merged_chunks.extend(result?);
+        }
+
+        // Deduplicate when multiple sub-queries were used (same chunk can appear
+        // in results for several sub-queries).
+        if queries_to_embed.len() > 1 {
+            merged_chunks = dedup_chunks(merged_chunks);
+        }
+
+        // Apply RRF if hybrid is enabled; otherwise keep retrieval order.
+        let pre_rerank: Vec<VectorSearchResult> = if !text_slugs.is_empty() {
+            tracing::debug!(
+                session_id = %session_id,
+                text_hits = text_slugs.len(),
+                "RAG: applying hybrid RRF"
+            );
+            let fused = crate::rag::rrf::fuse(merged_chunks, &text_slugs);
+            fused.into_iter().take(MAX_CONTEXT_CHUNKS).collect()
+        } else {
+            merged_chunks.into_iter().take(MAX_CONTEXT_CHUNKS).collect()
+        };
+
+        // Cross-encoder reranking (optional): re-score retrieved chunks jointly
+        // against the query and keep only the top MAX_CONTEXT_CHUNKS.
+        let post_rerank = if let Some(ref reranker) = self.reranker {
+            tracing::debug!(
+                session_id = %session_id,
+                candidates = pre_rerank.len(),
+                "RAG: reranking chunks"
+            );
+            // Keep a truncated fallback in case the reranker call fails.
+            let fallback: Vec<_> = pre_rerank
+                .iter()
+                .take(MAX_CONTEXT_CHUNKS)
+                .cloned()
+                .collect();
+            match reranker
+                .rerank(&retrieval_query, pre_rerank.clone(), MAX_CONTEXT_CHUNKS)
+                .await
+            {
+                Ok(reranked) => reranked,
+                Err(e) => {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        error = %e,
+                        "reranker failed, falling back to retrieval order"
+                    );
+                    fallback
+                }
+            }
+        } else {
+            pre_rerank.clone()
+        };
+
+        let post_rerank_summary = summarize_search_results(&post_rerank);
+        tracing::debug!(
+            session_id = %session_id,
+            retrieval_query = %retrieval_query,
+            results = ?post_rerank_summary,
+            "RAG: retrieval complete"
+        );
+
+        Ok(RetrievalOutput {
+            retrieval_query,
+            query_plan,
+            queries_embedded: queries_to_embed,
+            pre_rerank,
+            post_rerank,
+        })
     }
 }
 

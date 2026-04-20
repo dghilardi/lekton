@@ -109,7 +109,10 @@ mod tests {
             embedding_headers: std::collections::HashMap::new(),
             embedding_cache_store_text: false,
             embedding_cache_query: false,
-                hybrid_search_enabled: false,
+            hybrid_search_enabled: false,
+            reranker_url: String::new(),
+            reranker_model: String::new(),
+            reranker_api_key: String::new(),
         }
     }
 

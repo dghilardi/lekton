@@ -214,6 +214,13 @@ pub struct RagConfig {
     /// Default: `false`.
     #[serde(default)]
     pub hybrid_search_enabled: bool,
+    /// Cross-encoder reranker endpoint (Jina/Infinity/Cohere-compatible `/rerank` API).
+    /// Empty string disables reranking. Default: `""`.
+    pub reranker_url: String,
+    /// Model name passed to the reranker endpoint. Optional for self-hosted servers.
+    pub reranker_model: String,
+    /// API key for the reranker endpoint. Optional.
+    pub reranker_api_key: String,
 }
 
 impl RagConfig {

@@ -19,6 +19,7 @@ use crate::rag::client::format_llm_error;
 use crate::rag::embedding::EmbeddingService;
 use crate::rag::provider::LlmProvider;
 use crate::rag::query_rewriter::QueryRewriter;
+use crate::rag::reranker::Reranker;
 use crate::rag::vectorstore::VectorStore;
 use crate::search::client::SearchService;
 
@@ -26,9 +27,9 @@ use crate::search::client::SearchService;
 const MAX_CONTEXT_CHUNKS: usize = 5;
 /// Maximum number of conversation history messages to include in the prompt.
 const MAX_HISTORY_MESSAGES: usize = 20;
-/// How many extra Qdrant candidates to fetch when hybrid search is enabled
-/// (gives RRF room to reorder before truncating to MAX_CONTEXT_CHUNKS).
-const HYBRID_CANDIDATE_MULTIPLIER: usize = 3;
+/// How many extra Qdrant candidates to fetch when hybrid search or reranking
+/// is enabled (gives RRF/reranker room to reorder before truncating).
+const CANDIDATE_MULTIPLIER: usize = 3;
 
 /// Orchestrates RAG chat: retrieval, prompt building, and LLM streaming.
 pub struct ChatService {
@@ -37,6 +38,9 @@ pub struct ChatService {
     /// Optional Meilisearch service used for hybrid search (RRF). `None` when
     /// hybrid search is disabled or Meilisearch is not configured.
     search_service: Option<Arc<dyn SearchService>>,
+    /// Optional cross-encoder reranker applied after retrieval. `None` when
+    /// `reranker_url` is empty.
+    reranker: Option<Arc<dyn Reranker>>,
     chat_repo: Arc<dyn ChatRepository>,
     llm_provider: Arc<LlmProvider>,
     chat_model: String,
@@ -76,6 +80,7 @@ impl ChatService {
         embedding: Arc<dyn EmbeddingService>,
         vectorstore: Arc<dyn VectorStore>,
         search_service: Option<Arc<dyn SearchService>>,
+        reranker: Option<Arc<dyn Reranker>>,
     ) -> Result<Self, AppError> {
         if config.chat_model.is_empty() {
             return Err(AppError::Internal(
@@ -102,10 +107,15 @@ impl ChatService {
             None
         };
 
+        if reranker.is_some() {
+            tracing::info!("RAG cross-encoder reranker enabled");
+        }
+
         Ok(Self {
             embedding,
             vectorstore,
             search_service: hybrid_search_service,
+            reranker,
             chat_repo,
             llm_provider: llm_provider.clone(),
             chat_model: config.chat_model.clone(),
@@ -204,8 +214,8 @@ impl ChatService {
         //    When hybrid search is enabled, fetch more candidates so RRF has
         //    room to reorder before truncating.
         let (allowed_levels, include_draft) = user_ctx.document_visibility();
-        let vector_limit = if self.search_service.is_some() {
-            MAX_CONTEXT_CHUNKS * HYBRID_CANDIDATE_MULTIPLIER
+        let vector_limit = if self.search_service.is_some() || self.reranker.is_some() {
+            MAX_CONTEXT_CHUNKS * CANDIDATE_MULTIPLIER
         } else {
             MAX_CONTEXT_CHUNKS
         };
@@ -230,8 +240,7 @@ impl ChatService {
         let search_results = if let Some(ref svc) = self.search_service {
             let text_future =
                 svc.search(&retrieval_query, allowed_levels.as_deref(), include_draft);
-            let (vector_results, text_results) =
-                tokio::join!(vector_future, text_future);
+            let (vector_results, text_results) = tokio::join!(vector_future, text_future);
             let vector_results = vector_results?;
             let text_slugs: Vec<String> = text_results
                 .unwrap_or_else(|e| {
@@ -254,6 +263,38 @@ impl ChatService {
             fused.into_iter().take(MAX_CONTEXT_CHUNKS).collect()
         } else {
             vector_future.await?
+        };
+
+        // 7. Cross-encoder reranking (optional): re-score retrieved chunks jointly
+        //    against the query and keep only the top MAX_CONTEXT_CHUNKS.
+        let search_results = if let Some(ref reranker) = self.reranker {
+            tracing::debug!(
+                session_id = %session_id,
+                candidates = search_results.len(),
+                "RAG: reranking chunks"
+            );
+            // Keep a truncated fallback in case the reranker call fails.
+            let fallback: Vec<_> = search_results
+                .iter()
+                .take(MAX_CONTEXT_CHUNKS)
+                .cloned()
+                .collect();
+            match reranker
+                .rerank(&retrieval_query, search_results, MAX_CONTEXT_CHUNKS)
+                .await
+            {
+                Ok(reranked) => reranked,
+                Err(e) => {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        error = %e,
+                        "reranker failed, falling back to retrieval order"
+                    );
+                    fallback
+                }
+            }
+        } else {
+            search_results
         };
 
         let search_results_summary = summarize_search_results(&search_results);

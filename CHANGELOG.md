@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Cross-encoder reranker in RAG chat: retrieved chunks are re-scored by a cross-encoder model (Jina/Infinity/Cohere-compatible API) before being passed to the LLM. Enable with `rag.reranker_url`. Falls back to retrieval order on error.
 - Hybrid search in RAG chat: Meilisearch BM25 results are fused with Qdrant vector results using Reciprocal Rank Fusion (RRF). Enable with `rag.hybrid_search_enabled = true` (requires Meilisearch configured).
 - `lekton-sync` now supports schema manifests (`lekton.schema.yml`) for OpenAPI, AsyncAPI, and JSON Schema artifacts, with delta sync via `POST /api/v1/schemas/sync`.
 - `cargo-deny` configuration for license compliance (AGPL-3.0-compatible allowlist) and RustSec advisory auditing, with weekly CI workflow

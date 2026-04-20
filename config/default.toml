@@ -71,6 +71,11 @@ embedding_cache_query = false
 # Combine vector search (Qdrant) with full-text search (Meilisearch) using RRF.
 # Requires search.url to be configured. Disabled by default.
 hybrid_search_enabled = false
+# Cross-encoder reranker endpoint (Jina/Infinity/Cohere-compatible /rerank API).
+# Leave empty to disable reranking.
+reranker_url = ""
+reranker_model = ""
+reranker_api_key = ""
 
 # Extra HTTP headers for chat/rewrite requests. Keys are normalised: _ → - at request time.
 # Via env: LKN__RAG__CHAT_HEADERS__X_PRODUCER=LEKTON  →  x-producer: LEKTON

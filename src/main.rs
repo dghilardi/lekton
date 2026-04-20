@@ -311,12 +311,20 @@ async fn main() {
 
                     let chat_svc = match (&chat_repo, &llm_provider) {
                         (Some(chat_repo), Some(llm_provider)) => {
+                            let reranker: Option<Arc<dyn lekton::rag::reranker::Reranker>> =
+                                lekton::rag::reranker::CrossEncoderReranker::from_rag_config(
+                                    &config.rag,
+                                )
+                                .map(|r| Arc::new(r) as Arc<dyn lekton::rag::reranker::Reranker>);
+
                             match lekton::rag::chat::ChatService::from_rag_config(
                                 &config.rag,
                                 llm_provider.clone(),
                                 chat_repo.clone(),
                                 query_embedding,
                                 vectorstore.clone(),
+                                search_service.clone(),
+                                reranker,
                             ) {
                                 Ok(svc) => {
                                     tracing::info!("RAG chat service initialized");

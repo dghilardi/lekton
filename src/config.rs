@@ -208,6 +208,38 @@ pub struct RagConfig {
     /// Default: `false` (only chunk embeddings are cached).
     #[serde(default)]
     pub embedding_cache_query: bool,
+    /// When `true`, the RAG chat pipeline combines Qdrant vector search with
+    /// Meilisearch full-text search and merges results using Reciprocal Rank
+    /// Fusion (RRF). Requires Meilisearch to be configured.
+    /// Default: `false`.
+    #[serde(default)]
+    pub hybrid_search_enabled: bool,
+    /// Model used to classify query complexity and emit sub-queries for parallel retrieval.
+    /// Uses `analyzer_url` when set, otherwise falls back to `chat_url`.
+    /// Empty string disables query decomposition (default).
+    pub analyzer_model: String,
+    /// Maximum tokens for the analyzer LLM call.
+    pub analyzer_max_tokens: u32,
+    /// Optional dedicated OpenAI-compatible endpoint for the query analyzer.
+    /// Falls back to `chat_url` when empty.
+    pub analyzer_url: String,
+    /// Model used for HyDE (Hypothetical Document Embeddings): generates a synthetic
+    /// answer document whose embedding is used in place of the raw query embedding.
+    /// Uses `hyde_url` when set, otherwise falls back to `chat_url`.
+    /// Empty string disables HyDE (default).
+    pub hyde_model: String,
+    /// Maximum tokens for the HyDE generation LLM call.
+    pub hyde_max_tokens: u32,
+    /// Optional dedicated OpenAI-compatible endpoint for HyDE generation.
+    /// Falls back to `chat_url` when empty.
+    pub hyde_url: String,
+    /// Cross-encoder reranker endpoint (Jina/Infinity/Cohere-compatible `/rerank` API).
+    /// Empty string disables reranking. Default: `""`.
+    pub reranker_url: String,
+    /// Model name passed to the reranker endpoint. Optional for self-hosted servers.
+    pub reranker_model: String,
+    /// API key for the reranker endpoint. Optional.
+    pub reranker_api_key: String,
 }
 
 impl RagConfig {

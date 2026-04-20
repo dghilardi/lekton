@@ -88,6 +88,28 @@ Then just run:
 cargo leptos watch
 ```
 
+#### Optional RAG Enhancements
+
+The development setup can also enable the new RAG retrieval features introduced in this branch. They are all optional and disabled by default.
+
+**Available options**
+- Hybrid search: fuse Qdrant vector results with Meilisearch BM25 via RRF by setting `LKN__RAG__HYBRID_SEARCH_ENABLED=true`
+- Cross-encoder reranker: start `infinity` and set `LKN__RAG__RERANKER_URL=http://localhost:7997/rerank`
+- Query decomposition: pull a lightweight local model and set `LKN__RAG__ANALYZER_MODEL=phi3:mini`
+- HyDE: pull a lightweight local model and set `LKN__RAG__HYDE_MODEL=phi3:mini`
+- Query rewriting for follow-up questions: set `LKN__RAG__REWRITE_MODEL=phi3:mini`
+
+**Supporting services**
+```bash
+# Optional cross-encoder reranker service (~600 MB model download on first start)
+docker-compose up -d infinity
+
+# Optional local model for analyzer / HyDE / rewrite
+ollama pull phi3:mini
+```
+
+The setup script and `.env.example` already include commented examples for these variables, so the shortest path is to uncomment only the blocks you want to try.
+
 #### Manual Setup
 
 If you prefer to set up manually:

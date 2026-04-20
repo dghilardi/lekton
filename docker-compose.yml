@@ -122,6 +122,37 @@ services:
       retries: 10
 
   # ===========================================================================
+  # Infinity — Cross-encoder reranker (optional, for RAG reranking)
+  #
+  # Downloads BAAI/bge-reranker-v2-m3 (~600 MB) on first start.
+  # CPU-only is slow but functional for development.
+  # Start separately: docker-compose up -d infinity
+  # Configure: LKN__RAG__RERANKER_URL=http://localhost:7997/rerank
+  # ===========================================================================
+  infinity:
+    image: michaelf34/infinity:0.0.75
+    command:
+      - v2
+      - --model-name-or-path
+      - BAAI/bge-reranker-v2-m3
+      - --served-model-name
+      - BAAI/bge-reranker-v2-m3
+      - --port
+      - "7997"
+      - --engine
+      - torch
+    ports:
+      - "7997:7997"
+    volumes:
+      - infinity_models:/app/.cache
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:7997/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 120s
+
+  # ===========================================================================
   # Demo Loader — one-shot: ingest demo documents into Lekton
   # ===========================================================================
   demo-loader:
@@ -140,3 +171,4 @@ volumes:
   garage_meta:
   meilisearch_data:
   qdrant_data:
+  infinity_models:

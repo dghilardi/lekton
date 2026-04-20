@@ -25,6 +25,15 @@ pub enum LlmProvider {
 }
 
 impl LlmProvider {
+    /// Build an OpenAI-compatible provider directly from a URL and API key.
+    /// Useful when a pipeline step needs a different endpoint than the main chat URL.
+    pub fn new_openai_compatible(url: String, api_key: String) -> Self {
+        Self::OpenAiCompatible {
+            api_base: url,
+            api_key,
+        }
+    }
+
     pub async fn initialize(config: &RagConfig) -> Result<Self, AppError> {
         match non_empty_config(&config.vertex_project_id) {
             Some(project_id) => {
@@ -127,6 +136,16 @@ mod tests {
             embedding_headers: HashMap::new(),
             embedding_cache_store_text: false,
             embedding_cache_query: false,
+            hybrid_search_enabled: false,
+            reranker_url: String::new(),
+            analyzer_model: String::new(),
+            analyzer_max_tokens: 256,
+            hyde_model: String::new(),
+            hyde_max_tokens: 256,
+            analyzer_url: String::new(),
+            hyde_url: String::new(),
+            reranker_model: String::new(),
+            reranker_api_key: String::new(),
         }
     }
 

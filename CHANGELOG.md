@@ -5,12 +5,19 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- HyDE (Hypothetical Document Embeddings) in RAG chat: an LLM generates a synthetic answer document whose embedding is used in place of the raw query embedding, improving recall when query phrasing differs from documentation style. Enable with `rag.hyde_model`. Falls back to original query on error.
+- `rag.analyzer_url` and `rag.hyde_url` allow routing analyzer/HyDE steps to a dedicated endpoint (e.g. local Ollama) independently from the main `chat_url`.
+- Optional `infinity` service in `docker-compose.yml` serving `BAAI/bge-reranker-v2-m3` on port 7997, for the cross-encoder reranker in dev.
+- Query decomposition in RAG chat: an LLM classifier detects multi-entity and multi-hop queries, splits them into atomic sub-queries, and runs parallel vector searches. Enable with `rag.analyzer_model`. Falls back to simple retrieval on error.
+- Cross-encoder reranker in RAG chat: retrieved chunks are re-scored by a cross-encoder model (Jina/Infinity/Cohere-compatible API) before being passed to the LLM. Enable with `rag.reranker_url`. Falls back to retrieval order on error.
+- Hybrid search in RAG chat: Meilisearch BM25 results are fused with Qdrant vector results using Reciprocal Rank Fusion (RRF). Enable with `rag.hybrid_search_enabled = true` (requires Meilisearch configured).
 - `lekton-sync` now supports schema manifests (`lekton.schema.yml`) for OpenAPI, AsyncAPI, and JSON Schema artifacts, with delta sync via `POST /api/v1/schemas/sync`.
 - `cargo-deny` configuration for license compliance (AGPL-3.0-compatible allowlist) and RustSec advisory auditing, with weekly CI workflow
 - Clippy CI job enforcing zero warnings on both SSR and hydrate targets (`-D warnings`)
 - `#[forbid(unsafe_code)]` crate-level attribute on both `lekton` and `lekton-sync`
 
 ### Changed
+- README now documents the optional local setup for hybrid search, reranking, query decomposition, HyDE, and query rewriting in development.
 - Update safe dependencies: async-openai 0.35, pulldown-cmark 0.13, rand 0.9, sha2 0.11, text-splitter 0.30, gloo-timers 0.4, gloo-net 0.7, mockall 0.14, axum-test 20
 
 ### Fixed

@@ -68,6 +68,30 @@ rewrite_max_tokens = 80
 embedding_cache_store_text = false
 # Cache embeddings generated for chat queries (in addition to chunk embeddings).
 embedding_cache_query = false
+# Query analyzer: classifies query complexity and emits sub-queries for parallel retrieval.
+# Leave empty to disable (all queries treated as simple).
+analyzer_model = ""
+analyzer_max_tokens = 256
+# Optional dedicated endpoint for the analyzer (e.g. local Ollama while chat uses cloud).
+# Falls back to chat_url when empty.
+analyzer_url = ""
+
+# HyDE: generates a hypothetical answer document and uses its embedding instead of the
+# raw query embedding. Improves recall when query phrasing differs from document style.
+# Leave empty to disable.
+hyde_model = ""
+hyde_max_tokens = 256
+# Optional dedicated endpoint for HyDE generation. Falls back to chat_url when empty.
+hyde_url = ""
+
+# Combine vector search (Qdrant) with full-text search (Meilisearch) using RRF.
+# Requires search.url to be configured. Disabled by default.
+hybrid_search_enabled = false
+# Cross-encoder reranker endpoint (Jina/Infinity/Cohere-compatible /rerank API).
+# Leave empty to disable reranking.
+reranker_url = ""
+reranker_model = ""
+reranker_api_key = ""
 
 # Extra HTTP headers for chat/rewrite requests. Keys are normalised: _ → - at request time.
 # Via env: LKN__RAG__CHAT_HEADERS__X_PRODUCER=LEKTON  →  x-producer: LEKTON

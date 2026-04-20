@@ -270,6 +270,16 @@ mod tests {
             embedding_headers: std::collections::HashMap::new(),
             embedding_cache_store_text: false,
             embedding_cache_query: false,
+            hybrid_search_enabled: false,
+            reranker_url: String::new(),
+            analyzer_model: String::new(),
+            analyzer_max_tokens: 256,
+            hyde_model: String::new(),
+            hyde_max_tokens: 256,
+            analyzer_url: String::new(),
+            hyde_url: String::new(),
+            reranker_model: String::new(),
+            reranker_api_key: String::new(),
         };
         assert!(QdrantVectorStore::from_rag_config(&config).is_err());
     }
@@ -295,6 +305,16 @@ mod tests {
             embedding_headers: std::collections::HashMap::new(),
             embedding_cache_store_text: false,
             embedding_cache_query: false,
+            hybrid_search_enabled: false,
+            reranker_url: String::new(),
+            analyzer_model: String::new(),
+            analyzer_max_tokens: 256,
+            hyde_model: String::new(),
+            hyde_max_tokens: 256,
+            analyzer_url: String::new(),
+            hyde_url: String::new(),
+            reranker_model: String::new(),
+            reranker_api_key: String::new(),
         };
         assert!(QdrantVectorStore::from_rag_config(&config).is_ok());
     }
@@ -326,6 +346,16 @@ mod tests {
             embedding_headers: std::collections::HashMap::new(),
             embedding_cache_store_text: false,
             embedding_cache_query: false,
+            hybrid_search_enabled: false,
+            reranker_url: String::new(),
+            analyzer_model: String::new(),
+            analyzer_max_tokens: 256,
+            hyde_model: String::new(),
+            hyde_max_tokens: 256,
+            analyzer_url: String::new(),
+            hyde_url: String::new(),
+            reranker_model: String::new(),
+            reranker_api_key: String::new(),
         };
         let store = QdrantVectorStore::from_rag_config(&config).unwrap();
 

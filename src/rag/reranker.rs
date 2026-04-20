@@ -173,6 +173,8 @@ mod tests {
             reranker_url: url.to_string(),
             analyzer_model: String::new(),
             analyzer_max_tokens: 256,
+            hyde_model: String::new(),
+            hyde_max_tokens: 256,
             reranker_model: String::new(),
             reranker_api_key: String::new(),
         }

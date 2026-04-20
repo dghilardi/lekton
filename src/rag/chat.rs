@@ -18,6 +18,7 @@ use crate::error::AppError;
 use crate::rag::analyzer::{Complexity, QueryAnalyzer, QueryPlan};
 use crate::rag::client::format_llm_error;
 use crate::rag::embedding::EmbeddingService;
+use crate::rag::hyde::HydeService;
 use crate::rag::provider::LlmProvider;
 use crate::rag::query_rewriter::QueryRewriter;
 use crate::rag::reranker::Reranker;
@@ -45,6 +46,9 @@ pub struct ChatService {
     /// Optional query analyzer for complexity classification and decomposition.
     /// `None` when `analyzer_model` is empty.
     analyzer: Option<QueryAnalyzer>,
+    /// Optional HyDE service. When present, each query string is replaced by a
+    /// synthetically generated hypothetical document before embedding.
+    hyde: Option<HydeService>,
     chat_repo: Arc<dyn ChatRepository>,
     llm_provider: Arc<LlmProvider>,
     chat_model: String,
@@ -120,12 +124,18 @@ impl ChatService {
             tracing::info!(model = %config.analyzer_model, "RAG query analyzer enabled");
         }
 
+        let hyde = HydeService::from_rag_config(config, llm_provider.clone());
+        if hyde.is_some() {
+            tracing::info!(model = %config.hyde_model, "RAG HyDE enabled");
+        }
+
         Ok(Self {
             embedding,
             vectorstore,
             search_service: hybrid_search_service,
             reranker,
             analyzer,
+            hyde,
             chat_repo,
             llm_provider: llm_provider.clone(),
             chat_model: config.chat_model.clone(),
@@ -241,6 +251,21 @@ impl ChatService {
         let queries_to_embed: Vec<String> = match query_plan.complexity {
             Complexity::Simple => vec![retrieval_query.clone()],
             _ => query_plan.sub_queries.clone(),
+        };
+
+        // 4.6 HyDE: replace each query string with a synthetically generated
+        //     hypothetical answer document before embedding. The Meilisearch text
+        //     search (if enabled) still uses the original retrieval_query so that
+        //     keyword recall is not degraded by the generative expansion.
+        let queries_to_embed = if let Some(ref hyde) = self.hyde {
+            tracing::debug!(
+                session_id = %session_id,
+                queries = queries_to_embed.len(),
+                "RAG: generating HyDE hypothetical documents"
+            );
+            hyde.expand_queries(queries_to_embed).await
+        } else {
+            queries_to_embed
         };
 
         // 5. Embed all queries in a single batched call.

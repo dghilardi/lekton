@@ -220,6 +220,13 @@ pub struct RagConfig {
     pub analyzer_model: String,
     /// Maximum tokens for the analyzer LLM call.
     pub analyzer_max_tokens: u32,
+    /// Model used for HyDE (Hypothetical Document Embeddings): generates a synthetic
+    /// answer document whose embedding is used in place of the raw query embedding.
+    /// Uses the same `chat_url` / `chat_api_key` endpoint as chat.
+    /// Empty string disables HyDE (default).
+    pub hyde_model: String,
+    /// Maximum tokens for the HyDE generation LLM call.
+    pub hyde_max_tokens: u32,
     /// Cross-encoder reranker endpoint (Jina/Infinity/Cohere-compatible `/rerank` API).
     /// Empty string disables reranking. Default: `""`.
     pub reranker_url: String,

@@ -289,7 +289,12 @@ pub fn split_document(
         let safe = merge_broken_blocks(raw, &protected);
         for (rel_offset, text) in safe {
             let abs_byte_offset = section.byte_offset + rel_offset;
-            let char_offset = content[..abs_byte_offset].chars().count();
+            // Compute char_offset from two known-safe slices instead of
+            // content[..abs_byte_offset]: merged sections add a '\n' separator
+            // that is not in content, so abs_byte_offset may not land on a
+            // char boundary in content (panic for multi-byte chars like '┌').
+            let char_offset = content[..section.byte_offset].chars().count()
+                + section.text[..rel_offset].chars().count();
             chunks.push(SplitChunk {
                 text,
                 section_path: section.heading_path.clone(),
@@ -487,6 +492,29 @@ mod tests {
                 .starts_with('|'),
             "second range should be the table"
         );
+    }
+
+    #[test]
+    fn multibyte_chars_in_merged_sections_do_not_panic() {
+        // Regression: architecture.md in the demo corpus has box-drawing chars
+        // (┌, │, └) inside a code block. A tiny intro before the diagram gets
+        // merged by merge_small_sections, adding a '\n' separator that shifts
+        // MarkdownSplitter offsets away from content's char boundaries.
+        // Slicing content[..abs_byte_offset] used to panic on those boundaries.
+        let content = "# Overview\n\nIntro.\n\n## Diagram\n\n```\n┌──────┐\n│ test │\n└──────┘\n```\n\nMore content ".to_string()
+            + &"with box ┌─┐└─┘ chars ".repeat(30);
+        let chunks = split_document(&content, TOKENS, OVERLAP);
+        assert!(!chunks.is_empty());
+        // Verify all chunks have valid char_offset (no panic, no overflow)
+        let total_chars = content.chars().count();
+        for chunk in &chunks {
+            assert!(
+                chunk.char_offset <= total_chars,
+                "char_offset {} exceeds total chars {}",
+                chunk.char_offset,
+                total_chars
+            );
+        }
     }
 
     #[test]

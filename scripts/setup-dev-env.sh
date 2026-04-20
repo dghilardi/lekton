@@ -145,6 +145,31 @@ LKN__RAG__CHAT_URL=http://localhost:11434/v1
 LKN__RAG__CHAT_MODEL=qwen3.5:0.8b
 LKN__RAG__CHAT_API_KEY=ollama
 
+# RAG Enhancements (all optional — uncomment to enable)
+#
+# Hybrid search: combines Qdrant vector search with Meilisearch via RRF.
+# Requires LKN__SEARCH__URL to be configured (already set above).
+#LKN__RAG__HYBRID_SEARCH_ENABLED=true
+#
+# Cross-encoder reranker: re-scores retrieved chunks for better precision.
+# Requires Infinity server: docker-compose up -d infinity  (downloads ~600 MB on first run)
+#LKN__RAG__RERANKER_URL=http://localhost:7997/rerank
+#LKN__RAG__RERANKER_MODEL=BAAI/bge-reranker-v2-m3
+#
+# Query decomposition: classifies query complexity and runs parallel sub-queries.
+# Uses a lightweight local model — pull it first: ollama pull phi3:mini
+# To use a dedicated local endpoint different from the main chat_url:
+#LKN__RAG__ANALYZER_MODEL=phi3:mini
+#LKN__RAG__ANALYZER_URL=http://localhost:11434/v1
+#
+# HyDE: generates a hypothetical answer document to improve embedding recall.
+# Same model as the analyzer is fine for development.
+#LKN__RAG__HYDE_MODEL=phi3:mini
+#LKN__RAG__HYDE_URL=http://localhost:11434/v1
+#
+# Query rewriting: rewrites follow-up questions into standalone queries.
+#LKN__RAG__REWRITE_MODEL=phi3:mini
+
 # Enable demo auth mode (bypasses OIDC)
 LKN__AUTH__DEMO_MODE=true
 
@@ -170,4 +195,10 @@ echo "  3. Open http://127.0.0.1:3000 in your browser"
 echo ""
 echo "To stop dependencies later:"
 echo "  docker-compose down"
+echo ""
+echo "Optional RAG enhancements (uncomment the matching block in .env):"
+echo "  • Hybrid search (RRF):    set LKN__RAG__HYBRID_SEARCH_ENABLED=true"
+echo "  • Cross-encoder reranker: docker-compose up -d infinity   (≈600 MB model on first run)"
+echo "  • Query decomposition:    ollama pull phi3:mini  +  set LKN__RAG__ANALYZER_MODEL"
+echo "  • HyDE:                   ollama pull phi3:mini  +  set LKN__RAG__HYDE_MODEL"
 echo ""

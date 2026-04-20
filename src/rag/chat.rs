@@ -15,12 +15,13 @@ use crate::config::RagConfig;
 use crate::db::chat_models::{ChatMessage, ChatSession, SourceReference};
 use crate::db::chat_repository::ChatRepository;
 use crate::error::AppError;
+use crate::rag::analyzer::{Complexity, QueryAnalyzer, QueryPlan};
 use crate::rag::client::format_llm_error;
 use crate::rag::embedding::EmbeddingService;
 use crate::rag::provider::LlmProvider;
 use crate::rag::query_rewriter::QueryRewriter;
 use crate::rag::reranker::Reranker;
-use crate::rag::vectorstore::VectorStore;
+use crate::rag::vectorstore::{VectorSearchResult, VectorStore};
 use crate::search::client::SearchService;
 
 /// Maximum number of context chunks returned to the LLM.
@@ -41,6 +42,9 @@ pub struct ChatService {
     /// Optional cross-encoder reranker applied after retrieval. `None` when
     /// `reranker_url` is empty.
     reranker: Option<Arc<dyn Reranker>>,
+    /// Optional query analyzer for complexity classification and decomposition.
+    /// `None` when `analyzer_model` is empty.
+    analyzer: Option<QueryAnalyzer>,
     chat_repo: Arc<dyn ChatRepository>,
     llm_provider: Arc<LlmProvider>,
     chat_model: String,
@@ -111,11 +115,17 @@ impl ChatService {
             tracing::info!("RAG cross-encoder reranker enabled");
         }
 
+        let analyzer = QueryAnalyzer::from_rag_config(config, llm_provider.clone());
+        if analyzer.is_some() {
+            tracing::info!(model = %config.analyzer_model, "RAG query analyzer enabled");
+        }
+
         Ok(Self {
             embedding,
             vectorstore,
             search_service: hybrid_search_service,
             reranker,
+            analyzer,
             chat_repo,
             llm_provider: llm_provider.clone(),
             chat_model: config.chat_model.clone(),
@@ -200,20 +210,46 @@ impl ChatService {
             "RAG: retrieval query ready"
         );
 
-        // 5. Embed the (possibly rewritten) retrieval query
-        let query_vectors = self
-            .embedding
-            .embed(std::slice::from_ref(&retrieval_query))
-            .await?;
-        let query_vector = query_vectors
-            .into_iter()
-            .next()
-            .ok_or_else(|| AppError::Internal("embedding returned no vectors".into()))?;
+        // 4.5 Analyze query complexity when the analyzer is configured.
+        //     Falls back to simple on any error so the pipeline is never blocked.
+        let query_plan: QueryPlan = if let Some(ref analyzer) = self.analyzer {
+            match analyzer.classify(&retrieval_query).await {
+                Ok(plan) => {
+                    tracing::debug!(
+                        session_id = %session_id,
+                        complexity = ?plan.complexity,
+                        sub_queries = plan.sub_queries.len(),
+                        "RAG: query plan"
+                    );
+                    plan
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        error = %e,
+                        "query analyzer failed — using simple retrieval"
+                    );
+                    QueryPlan::simple()
+                }
+            }
+        } else {
+            QueryPlan::simple()
+        };
 
-        // 6. Search vector store with user's access filters.
-        //    When hybrid search is enabled, fetch more candidates so RRF has
-        //    room to reorder before truncating.
+        // The set of strings to embed: original query for simple plans, sub-queries
+        // for multi-entity / multi-hop decomposition.
+        let queries_to_embed: Vec<String> = match query_plan.complexity {
+            Complexity::Simple => vec![retrieval_query.clone()],
+            _ => query_plan.sub_queries.clone(),
+        };
+
+        // 5. Embed all queries in a single batched call.
         let (allowed_levels, include_draft) = user_ctx.document_visibility();
+        let all_vectors = self.embedding.embed(&queries_to_embed).await?;
+        if all_vectors.is_empty() {
+            return Err(AppError::Internal("embedding returned no vectors".into()));
+        }
+
         let vector_limit = if self.search_service.is_some() || self.reranker.is_some() {
             MAX_CONTEXT_CHUNKS * CANDIDATE_MULTIPLIER
         } else {
@@ -222,27 +258,35 @@ impl ChatService {
         tracing::debug!(
             session_id = %session_id,
             retrieval_query = %retrieval_query,
-            vector_dimensions = query_vector.len(),
+            sub_queries = queries_to_embed.len(),
             vector_limit,
             hybrid = self.search_service.is_some(),
+            reranker = self.reranker.is_some(),
             allowed_levels = ?allowed_levels,
             include_draft,
             "RAG: searching vector store"
         );
-        let vector_future = self.vectorstore.search(
-            query_vector,
-            vector_limit,
-            allowed_levels.as_deref(),
-            include_draft,
-        );
 
-        // Run Meilisearch query in parallel with vector search when hybrid mode is on.
-        let search_results = if let Some(ref svc) = self.search_service {
+        // 6. Run one vector search per query in parallel, plus an optional single
+        //    Meilisearch query (for the hybrid RRF signal) at the same time.
+        let vector_searches: Vec<_> = all_vectors
+            .into_iter()
+            .map(|vector| {
+                self.vectorstore.search(
+                    vector,
+                    vector_limit,
+                    allowed_levels.as_deref(),
+                    include_draft,
+                )
+            })
+            .collect();
+
+        let (vector_results_nested, text_slugs) = if let Some(ref svc) = self.search_service {
             let text_future =
                 svc.search(&retrieval_query, allowed_levels.as_deref(), include_draft);
-            let (vector_results, text_results) = tokio::join!(vector_future, text_future);
-            let vector_results = vector_results?;
-            let text_slugs: Vec<String> = text_results
+            let (vector_list, text_result) =
+                tokio::join!(futures::future::join_all(vector_searches), text_future);
+            let slugs: Vec<String> = text_result
                 .unwrap_or_else(|e| {
                     tracing::warn!(
                         session_id = %session_id,
@@ -254,15 +298,34 @@ impl ChatService {
                 .into_iter()
                 .map(|h| h.slug)
                 .collect();
+            (vector_list, slugs)
+        } else {
+            (futures::future::join_all(vector_searches).await, vec![])
+        };
+
+        // Flatten results from all sub-query searches, propagating errors.
+        let mut merged_chunks: Vec<VectorSearchResult> = Vec::new();
+        for result in vector_results_nested {
+            merged_chunks.extend(result?);
+        }
+
+        // Deduplicate when multiple sub-queries were used (same chunk can appear
+        // in results for several sub-queries).
+        if queries_to_embed.len() > 1 {
+            merged_chunks = dedup_chunks(merged_chunks);
+        }
+
+        // Apply RRF if hybrid is enabled; otherwise keep retrieval order.
+        let search_results: Vec<VectorSearchResult> = if !text_slugs.is_empty() {
             tracing::debug!(
                 session_id = %session_id,
                 text_hits = text_slugs.len(),
-                "RAG: hybrid search text results"
+                "RAG: applying hybrid RRF"
             );
-            let fused = crate::rag::rrf::fuse(vector_results, &text_slugs);
+            let fused = crate::rag::rrf::fuse(merged_chunks, &text_slugs);
             fused.into_iter().take(MAX_CONTEXT_CHUNKS).collect()
         } else {
-            vector_future.await?
+            merged_chunks.into_iter().take(MAX_CONTEXT_CHUNKS).collect()
         };
 
         // 7. Cross-encoder reranking (optional): re-score retrieved chunks jointly
@@ -480,6 +543,27 @@ impl ChatService {
 
         Ok(Box::pin(event_stream))
     }
+}
+
+/// Deduplicate chunks from multiple sub-query searches, keeping the highest
+/// score for each unique chunk text.
+fn dedup_chunks(chunks: Vec<VectorSearchResult>) -> Vec<VectorSearchResult> {
+    let mut best: HashMap<String, VectorSearchResult> = HashMap::new();
+    for chunk in chunks {
+        match best.entry(chunk.chunk_text.clone()) {
+            std::collections::hash_map::Entry::Occupied(mut e) => {
+                if chunk.score > e.get().score {
+                    *e.get_mut() = chunk;
+                }
+            }
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(chunk);
+            }
+        }
+    }
+    let mut result: Vec<VectorSearchResult> = best.into_values().collect();
+    result.sort_by(|a, b| b.score.total_cmp(&a.score));
+    result
 }
 
 fn summarize_messages(messages: &[ChatCompletionRequestMessage]) -> Vec<String> {

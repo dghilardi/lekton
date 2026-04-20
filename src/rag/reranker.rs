@@ -171,6 +171,8 @@ mod tests {
             embedding_cache_query: false,
             hybrid_search_enabled: false,
             reranker_url: url.to_string(),
+            analyzer_model: String::new(),
+            analyzer_max_tokens: 256,
             reranker_model: String::new(),
             reranker_api_key: String::new(),
         }

@@ -68,6 +68,11 @@ rewrite_max_tokens = 80
 embedding_cache_store_text = false
 # Cache embeddings generated for chat queries (in addition to chunk embeddings).
 embedding_cache_query = false
+# Query analyzer: classifies query complexity and emits sub-queries for parallel retrieval.
+# Uses the same chat_url/chat_api_key. Leave empty to disable (all queries treated as simple).
+analyzer_model = ""
+analyzer_max_tokens = 256
+
 # Combine vector search (Qdrant) with full-text search (Meilisearch) using RRF.
 # Requires search.url to be configured. Disabled by default.
 hybrid_search_enabled = false

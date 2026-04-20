@@ -214,6 +214,12 @@ pub struct RagConfig {
     /// Default: `false`.
     #[serde(default)]
     pub hybrid_search_enabled: bool,
+    /// Model used to classify query complexity and emit sub-queries for parallel retrieval.
+    /// Uses the same `chat_url` / `chat_api_key` endpoint as chat.
+    /// Empty string disables query decomposition (default).
+    pub analyzer_model: String,
+    /// Maximum tokens for the analyzer LLM call.
+    pub analyzer_max_tokens: u32,
     /// Cross-encoder reranker endpoint (Jina/Infinity/Cohere-compatible `/rerank` API).
     /// Empty string disables reranking. Default: `""`.
     pub reranker_url: String,

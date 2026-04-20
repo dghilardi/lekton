@@ -173,6 +173,72 @@ fn merge_small_sections(sections: Vec<RawSection>, min_chars: usize) -> Vec<RawS
     result
 }
 
+// ── Code-fence / table atomicity ─────────────────────────────────────────────
+
+/// Return byte ranges within `text` that must not be split: fenced code blocks
+/// and Markdown tables (consecutive `|`-prefixed lines).
+fn protected_ranges(text: &str) -> Vec<(usize, usize)> {
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    let mut in_fence = false;
+    let mut fence_start = 0usize;
+    let mut table_start: Option<usize> = None;
+    let mut offset = 0usize;
+
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim();
+        if in_fence {
+            if trimmed.starts_with("```") {
+                ranges.push((fence_start, offset + line.len()));
+                in_fence = false;
+            }
+        } else {
+            if !trimmed.starts_with('|') {
+                if let Some(ts) = table_start.take() {
+                    ranges.push((ts, offset));
+                }
+            }
+            if trimmed.starts_with("```") {
+                fence_start = offset;
+                in_fence = true;
+            } else if trimmed.starts_with('|') && table_start.is_none() {
+                table_start = Some(offset);
+            }
+        }
+        offset += line.len();
+    }
+
+    if let Some(ts) = table_start {
+        ranges.push((ts, offset));
+    }
+
+    ranges
+}
+
+/// Merge consecutive chunks whose split boundary falls inside a protected range.
+///
+/// A chunk whose start offset is strictly inside a range `(s, e)` — meaning
+/// the previous chunk contains the opening of the block — is concatenated onto
+/// the previous chunk instead of being emitted separately. This produces an
+/// oversize but semantically intact chunk when a code fence or table exceeds
+/// `CHUNK_SIZE`.
+fn merge_broken_blocks(
+    raw: Vec<(usize, String)>,
+    protected: &[(usize, usize)],
+) -> Vec<(usize, String)> {
+    let mut result: Vec<(usize, String)> = Vec::new();
+    for (offset, text) in raw {
+        let inside = protected.iter().any(|&(s, e)| s < offset && offset < e);
+        if inside {
+            if let Some((_, last_text)) = result.last_mut() {
+                last_text.push_str(&text);
+                continue;
+            }
+        }
+        result.push((offset, text));
+    }
+    result
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /// Split a Markdown document into semantically meaningful chunks.
@@ -216,14 +282,18 @@ pub fn split_document(content: &str) -> Vec<SplitChunk> {
                 });
             }
         } else {
-            for (rel_offset, text) in splitter.chunk_indices(&section.text) {
-                if text.trim().is_empty() {
-                    continue;
-                }
+            let protected = protected_ranges(&section.text);
+            let raw: Vec<(usize, String)> = splitter
+                .chunk_indices(&section.text)
+                .filter(|(_, t)| !t.trim().is_empty())
+                .map(|(off, t)| (off, t.to_string()))
+                .collect();
+            let safe = merge_broken_blocks(raw, &protected);
+            for (rel_offset, text) in safe {
                 let abs_byte_offset = section.byte_offset + rel_offset;
                 let char_offset = content[..abs_byte_offset].chars().count();
                 chunks.push(SplitChunk {
-                    text: text.to_string(),
+                    text,
                     section_path: section.heading_path.clone(),
                     section_anchor: section_anchor.clone(),
                     byte_offset: abs_byte_offset,
@@ -358,6 +428,73 @@ mod tests {
                 "heading inside code block should not split sections"
             );
         }
+    }
+
+    #[test]
+    fn large_code_fence_is_not_split() {
+        // Code fence body > CHUNK_SIZE should be emitted as a single oversize chunk.
+        let fence_body = "    let x = 1;\n".repeat(250); // ~3750 chars
+        let content = format!(
+            "# Section\n\nIntro.\n\n```rust\n{}```\n\nOutro.\n",
+            fence_body
+        );
+        let chunks = split_document(&content);
+        // No chunk text should contain a lone opening fence without its closing
+        for chunk in &chunks {
+            let open_count = chunk.text.matches("```rust").count();
+            let close_count = chunk.text.split('\n').filter(|l| l.trim() == "```").count();
+            assert_eq!(
+                open_count, close_count,
+                "fence opened and closed count must match within each chunk"
+            );
+        }
+    }
+
+    #[test]
+    fn large_table_is_not_split() {
+        // Table with many rows > CHUNK_SIZE should be emitted as a single oversize chunk.
+        let header = "| Column A | Column B | Column C |\n| --- | --- | --- |\n";
+        let rows: String = (0..60)
+            .map(|i| format!("| val-{i} | data-{i} | info-{i} |\n"))
+            .collect();
+        let table = format!("{}{}", header, rows);
+        let content = format!("# Section\n\nIntro.\n\n{}\nOutro.\n", table);
+        let chunks = split_document(&content);
+        // Find the chunk(s) containing table rows and ensure the table is intact
+        let table_chunks: Vec<_> = chunks
+            .iter()
+            .filter(|c| c.text.contains("| Column A |"))
+            .collect();
+        assert_eq!(
+            table_chunks.len(),
+            1,
+            "table header should appear in exactly one chunk"
+        );
+        assert!(
+            table_chunks[0].text.contains("| val-59 |"),
+            "last table row must be in the same chunk as the header"
+        );
+    }
+
+    #[test]
+    fn protected_ranges_detects_fence_and_table() {
+        let text = "Before\n```\ncode\n```\nMiddle\n| A | B |\n| - | - |\n| 1 | 2 |\nAfter\n";
+        let ranges = protected_ranges(text);
+        assert_eq!(ranges.len(), 2);
+        // Fence starts at "```\n" offset (7) and ends after closing "```\n" (20)
+        let fence_range = ranges[0];
+        assert!(
+            text[fence_range.0..fence_range.1].starts_with("```"),
+            "first range should be the fence"
+        );
+        // Table range
+        let table_range = ranges[1];
+        assert!(
+            text[table_range.0..table_range.1]
+                .trim_start()
+                .starts_with('|'),
+            "second range should be the table"
+        );
     }
 
     #[test]

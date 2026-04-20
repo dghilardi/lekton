@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- `rag-eval` binary: offline retrieval evaluation harness that reads a JSONL eval set, runs the production retrieval pipeline against an already-indexed Qdrant collection, and reports Recall@k, MRR and nDCG@k for both the pre-rerank and post-rerank candidate sets. Run with `cargo run --bin rag-eval --features ssr --no-default-features -- --queries eval/queries.jsonl`. A starter eval set against the demo corpus is included at `eval/queries.jsonl`.
+- Per-sub-query, pre-rerank and post-rerank chunk-id logging in the RAG retrieval pipeline (filterable by `session_id`) for triaging individual chat retrievals.
 - HyDE (Hypothetical Document Embeddings) in RAG chat: an LLM generates a synthetic answer document whose embedding is used in place of the raw query embedding, improving recall when query phrasing differs from documentation style. Enable with `rag.hyde_model`. Falls back to original query on error.
 - `rag.analyzer_url` and `rag.hyde_url` allow routing analyzer/HyDE steps to a dedicated endpoint (e.g. local Ollama) independently from the main `chat_url`.
 - Optional `infinity` service in `docker-compose.yml` serving `BAAI/bge-reranker-v2-m3` on port 7997, for the cross-encoder reranker in dev.

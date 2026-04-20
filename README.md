@@ -110,6 +110,21 @@ ollama pull phi3:mini
 
 The setup script and `.env.example` already include commented examples for these variables, so the shortest path is to uncomment only the blocks you want to try.
 
+#### Evaluating Retrieval Quality
+
+Once the corpus is indexed, the `rag-eval` binary measures how well the retrieval pipeline answers a known set of queries. It calls the same retrieval path used by the chat (`ChatService::retrieve_only`) and reports Recall@k, MRR and nDCG@k for both pre-rerank and post-rerank candidates, so the impact of the cross-encoder reranker is directly visible.
+
+```bash
+cargo run --bin rag-eval --features ssr --no-default-features -- \
+    --queries eval/queries.jsonl --top-k 10
+# Optional JSON dump for diffing across runs:
+#   --json-output reports/run-$(date +%s).json
+```
+
+The included `eval/queries.jsonl` is a starter set of twelve queries against the demo corpus; replace it with 30-50 queries representative of your production documentation before drawing conclusions. Each record is a single JSON line: `{"id":"Q01","query":"...","expected_doc_slugs":["slug-a"]}`.
+
+Set `RUST_LOG=lekton::rag=debug` to additionally see per-sub-query and pre-rerank chunk ids in the trace, filterable by `session_id` for triaging individual queries.
+
 #### Manual Setup
 
 If you prefer to set up manually:

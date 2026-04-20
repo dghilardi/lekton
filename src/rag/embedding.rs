@@ -115,6 +115,8 @@ mod tests {
             analyzer_max_tokens: 256,
             hyde_model: String::new(),
             hyde_max_tokens: 256,
+            analyzer_url: String::new(),
+            hyde_url: String::new(),
             reranker_model: String::new(),
             reranker_api_key: String::new(),
         }

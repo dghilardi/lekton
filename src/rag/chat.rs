@@ -119,12 +119,30 @@ impl ChatService {
             tracing::info!("RAG cross-encoder reranker enabled");
         }
 
-        let analyzer = QueryAnalyzer::from_rag_config(config, llm_provider.clone());
+        let analyzer_provider = if !config.analyzer_url.is_empty() {
+            tracing::info!(url = %config.analyzer_url, "RAG query analyzer using dedicated endpoint");
+            Arc::new(LlmProvider::new_openai_compatible(
+                config.analyzer_url.clone(),
+                String::new(),
+            ))
+        } else {
+            llm_provider.clone()
+        };
+        let analyzer = QueryAnalyzer::from_rag_config(config, analyzer_provider);
         if analyzer.is_some() {
             tracing::info!(model = %config.analyzer_model, "RAG query analyzer enabled");
         }
 
-        let hyde = HydeService::from_rag_config(config, llm_provider.clone());
+        let hyde_provider = if !config.hyde_url.is_empty() {
+            tracing::info!(url = %config.hyde_url, "RAG HyDE using dedicated endpoint");
+            Arc::new(LlmProvider::new_openai_compatible(
+                config.hyde_url.clone(),
+                String::new(),
+            ))
+        } else {
+            llm_provider.clone()
+        };
+        let hyde = HydeService::from_rag_config(config, hyde_provider);
         if hyde.is_some() {
             tracing::info!(model = %config.hyde_model, "RAG HyDE enabled");
         }

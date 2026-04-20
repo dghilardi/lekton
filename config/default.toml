@@ -69,15 +69,20 @@ embedding_cache_store_text = false
 # Cache embeddings generated for chat queries (in addition to chunk embeddings).
 embedding_cache_query = false
 # Query analyzer: classifies query complexity and emits sub-queries for parallel retrieval.
-# Uses the same chat_url/chat_api_key. Leave empty to disable (all queries treated as simple).
+# Leave empty to disable (all queries treated as simple).
 analyzer_model = ""
 analyzer_max_tokens = 256
+# Optional dedicated endpoint for the analyzer (e.g. local Ollama while chat uses cloud).
+# Falls back to chat_url when empty.
+analyzer_url = ""
 
 # HyDE: generates a hypothetical answer document and uses its embedding instead of the
 # raw query embedding. Improves recall when query phrasing differs from document style.
-# Uses the same chat_url/chat_api_key. Leave empty to disable.
+# Leave empty to disable.
 hyde_model = ""
 hyde_max_tokens = 256
+# Optional dedicated endpoint for HyDE generation. Falls back to chat_url when empty.
+hyde_url = ""
 
 # Combine vector search (Qdrant) with full-text search (Meilisearch) using RRF.
 # Requires search.url to be configured. Disabled by default.

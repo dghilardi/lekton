@@ -8,9 +8,19 @@ version = "0.14.3"
 authors = ["Davide Ghilardi"]
 edition = "2021"
 license = "AGPL-3.0-or-later"
+default-run = "lekton"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "lekton"
+path = "src/main.rs"
+
+[[bin]]
+name = "rag-eval"
+path = "src/bin/rag_eval.rs"
+required-features = ["ssr"]
 
  [dependencies]
 # Leptos ecosystem

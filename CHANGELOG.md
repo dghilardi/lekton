@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - `#[forbid(unsafe_code)]` crate-level attribute on both `lekton` and `lekton-sync`
 
 ### Changed
+- README now documents the optional local setup for hybrid search, reranking, query decomposition, HyDE, and query rewriting in development.
 - Update safe dependencies: async-openai 0.35, pulldown-cmark 0.13, rand 0.9, sha2 0.11, text-splitter 0.30, gloo-timers 0.4, gloo-net 0.7, mockall 0.14, axum-test 20
 
 ### Fixed

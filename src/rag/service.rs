@@ -87,9 +87,22 @@ impl RagService for DefaultRagService {
             return Ok(());
         }
 
-        // 3. Embed all chunks (embed only the display text strings)
-        let texts: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
-        let vectors = self.embedding.embed(&texts).await?;
+        // 3. Build enriched embedding texts: "Title > Section\n\nChunk text"
+        // The embedding vector is computed on the enriched text for better recall of
+        // context-ambiguous chunks. The display text (chunk.text) stays clean for prompt
+        // injection and UI rendering; only embedding_text is sent to the embedder.
+        let embedding_texts: Vec<String> = chunks
+            .iter()
+            .map(|c| {
+                let mut prefix = title.to_string();
+                if !c.section_path.is_empty() {
+                    prefix.push_str(" > ");
+                    prefix.push_str(&c.section_path.join(" > "));
+                }
+                format!("{}\n\n{}", prefix, c.text)
+            })
+            .collect();
+        let vectors = self.embedding.embed(&embedding_texts).await?;
 
         // 4. Build Qdrant points, skipping any chunk whose embedding is empty.
         // Some embedding backends (e.g. Ollama) return [] for whitespace-only

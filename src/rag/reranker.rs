@@ -179,6 +179,8 @@ mod tests {
             hyde_url: String::new(),
             reranker_model: String::new(),
             reranker_api_key: String::new(),
+            chunk_size_tokens: 256,
+            chunk_overlap_tokens: 64,
         }
     }
 

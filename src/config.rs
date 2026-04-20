@@ -200,6 +200,11 @@ pub struct RagConfig {
     /// Same key-normalisation rules apply as for `chat_headers`.
     #[serde(default)]
     pub embedding_headers: HashMap<String, String>,
+    /// Target chunk size in tokens (cl100k_base). Default: 256 ≈ 1024 characters.
+    pub chunk_size_tokens: u32,
+    /// Overlap between consecutive chunks in tokens. Must be less than `chunk_size_tokens`.
+    /// Default: 64.
+    pub chunk_overlap_tokens: u32,
     /// When `true`, the original chunk text is stored alongside its embedding in the cache.
     /// Useful for debugging but increases storage. Default: `false`.
     #[serde(default)]

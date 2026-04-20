@@ -314,6 +314,8 @@ mod tests {
             hyde_url: String::new(),
             reranker_model: String::new(),
             reranker_api_key: String::new(),
+            chunk_size_tokens: 256,
+            chunk_overlap_tokens: 64,
         };
         assert!(QdrantVectorStore::from_rag_config(&config).is_err());
     }
@@ -349,6 +351,8 @@ mod tests {
             hyde_url: String::new(),
             reranker_model: String::new(),
             reranker_api_key: String::new(),
+            chunk_size_tokens: 256,
+            chunk_overlap_tokens: 64,
         };
         assert!(QdrantVectorStore::from_rag_config(&config).is_ok());
     }
@@ -390,6 +394,8 @@ mod tests {
             hyde_url: String::new(),
             reranker_model: String::new(),
             reranker_api_key: String::new(),
+            chunk_size_tokens: 256,
+            chunk_overlap_tokens: 64,
         };
         let store = QdrantVectorStore::from_rag_config(&config).unwrap();
 

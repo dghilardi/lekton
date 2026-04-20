@@ -1,9 +1,9 @@
-use text_splitter::MarkdownSplitter;
+use text_splitter::{ChunkConfig, MarkdownSplitter};
+use tiktoken_rs::cl100k_base;
 
-/// Target chunk size in characters for document splitting.
-const CHUNK_SIZE: usize = 512;
 /// Minimum section size in characters; sections smaller than this are merged forward
 /// into the next section to avoid producing tiny retrieval units.
+/// 128 chars ≈ 32 cl100k_base tokens, a conservative floor that prevents empty chunks.
 const MIN_SECTION_CHARS: usize = 128;
 
 /// A chunk produced by splitting a Markdown document.
@@ -246,11 +246,16 @@ fn merge_broken_blocks(
 /// Two-pass approach:
 /// 1. Split by H1/H2 headings into sections; merge sections smaller than
 ///    `MIN_SECTION_CHARS` forward into the next section.
-/// 2. Apply `MarkdownSplitter` to each section that still exceeds `CHUNK_SIZE`.
+/// 2. Apply a token-aware `MarkdownSplitter` (cl100k_base) with overlap to each section.
 ///
-/// Each chunk carries `section_path` and `section_anchor` derived from the
-/// heading hierarchy, enabling section-level metadata in retrieval results.
-pub fn split_document(content: &str) -> Vec<SplitChunk> {
+/// `chunk_size_tokens` and `chunk_overlap_tokens` come from `RagConfig` and are forwarded
+/// from `DefaultRagService`. Each chunk carries `section_path` and `section_anchor`
+/// derived from the heading hierarchy, enabling section-level metadata in retrieval.
+pub fn split_document(
+    content: &str,
+    chunk_size_tokens: usize,
+    chunk_overlap_tokens: usize,
+) -> Vec<SplitChunk> {
     if content.is_empty() {
         return Vec::new();
     }
@@ -258,7 +263,13 @@ pub fn split_document(content: &str) -> Vec<SplitChunk> {
     let sections = split_into_sections(content);
     let sections = merge_small_sections(sections, MIN_SECTION_CHARS);
 
-    let splitter = MarkdownSplitter::new(CHUNK_SIZE);
+    let tokenizer = cl100k_base().expect("cl100k_base tokenizer should always load");
+    let splitter = MarkdownSplitter::new(
+        ChunkConfig::new(chunk_size_tokens)
+            .with_sizer(tokenizer)
+            .with_overlap(chunk_overlap_tokens)
+            .expect("chunk_overlap_tokens must be less than chunk_size_tokens"),
+    );
     let mut chunks: Vec<SplitChunk> = Vec::new();
 
     for section in sections {
@@ -269,38 +280,24 @@ pub fn split_document(content: &str) -> Vec<SplitChunk> {
             .collect::<Vec<_>>()
             .join("-");
 
-        if section.text.len() <= CHUNK_SIZE {
-            if !section.text.trim().is_empty() {
-                let char_offset = content[..section.byte_offset].chars().count();
-                chunks.push(SplitChunk {
-                    text: section.text,
-                    section_path: section.heading_path,
-                    section_anchor,
-                    byte_offset: section.byte_offset,
-                    char_offset,
-                    chunk_index: chunks.len() as u32,
-                });
-            }
-        } else {
-            let protected = protected_ranges(&section.text);
-            let raw: Vec<(usize, String)> = splitter
-                .chunk_indices(&section.text)
-                .filter(|(_, t)| !t.trim().is_empty())
-                .map(|(off, t)| (off, t.to_string()))
-                .collect();
-            let safe = merge_broken_blocks(raw, &protected);
-            for (rel_offset, text) in safe {
-                let abs_byte_offset = section.byte_offset + rel_offset;
-                let char_offset = content[..abs_byte_offset].chars().count();
-                chunks.push(SplitChunk {
-                    text,
-                    section_path: section.heading_path.clone(),
-                    section_anchor: section_anchor.clone(),
-                    byte_offset: abs_byte_offset,
-                    char_offset,
-                    chunk_index: chunks.len() as u32,
-                });
-            }
+        let protected = protected_ranges(&section.text);
+        let raw: Vec<(usize, String)> = splitter
+            .chunk_indices(&section.text)
+            .filter(|(_, t)| !t.trim().is_empty())
+            .map(|(off, t)| (off, t.to_string()))
+            .collect();
+        let safe = merge_broken_blocks(raw, &protected);
+        for (rel_offset, text) in safe {
+            let abs_byte_offset = section.byte_offset + rel_offset;
+            let char_offset = content[..abs_byte_offset].chars().count();
+            chunks.push(SplitChunk {
+                text,
+                section_path: section.heading_path.clone(),
+                section_anchor: section_anchor.clone(),
+                byte_offset: abs_byte_offset,
+                char_offset,
+                chunk_index: chunks.len() as u32,
+            });
         }
     }
 
@@ -311,14 +308,17 @@ pub fn split_document(content: &str) -> Vec<SplitChunk> {
 mod tests {
     use super::*;
 
+    const TOKENS: usize = 256;
+    const OVERLAP: usize = 64;
+
     #[test]
     fn empty_content_returns_no_chunks() {
-        assert!(split_document("").is_empty());
+        assert!(split_document("", TOKENS, OVERLAP).is_empty());
     }
 
     #[test]
     fn short_content_returns_single_chunk() {
-        let chunks = split_document("Hello world");
+        let chunks = split_document("Hello world", TOKENS, OVERLAP);
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].text, "Hello world");
         assert_eq!(chunks[0].byte_offset, 0);
@@ -329,27 +329,20 @@ mod tests {
     #[test]
     fn long_content_is_split_into_multiple_chunks() {
         let paragraph = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ";
-        let content = paragraph.repeat(50); // ~2850 chars
-        let chunks = split_document(&content);
+        let content = paragraph.repeat(50); // ~2850 chars ≈ 712 tokens
+        let chunks = split_document(&content, TOKENS, OVERLAP);
         assert!(
             chunks.len() > 1,
             "expected multiple chunks, got {}",
             chunks.len()
         );
-        for chunk in &chunks {
-            assert!(
-                chunk.text.len() <= CHUNK_SIZE + 100,
-                "chunk too large: {} chars",
-                chunk.text.len()
-            );
-        }
     }
 
     #[test]
     fn chunk_indices_are_sequential() {
         let paragraph = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ";
         let content = paragraph.repeat(50);
-        let chunks = split_document(&content);
+        let chunks = split_document(&content, TOKENS, OVERLAP);
         for (i, chunk) in chunks.iter().enumerate() {
             assert_eq!(chunk.chunk_index, i as u32);
         }
@@ -362,14 +355,14 @@ mod tests {
             "First section content. ".repeat(20),
             "Second section content. ".repeat(20),
         );
-        let chunks = split_document(&content);
+        let chunks = split_document(&content, TOKENS, OVERLAP);
         assert!(chunks.len() >= 2);
     }
 
     #[test]
     fn section_path_set_for_h1() {
         let content = format!("# Architecture\n\n{}", "Content. ".repeat(20));
-        let chunks = split_document(&content);
+        let chunks = split_document(&content, TOKENS, OVERLAP);
         assert!(!chunks.is_empty());
         for chunk in &chunks {
             assert_eq!(chunk.section_path, vec!["Architecture"]);
@@ -385,7 +378,7 @@ mod tests {
             "Intro. ".repeat(15),
             body
         );
-        let chunks = split_document(&content);
+        let chunks = split_document(&content, TOKENS, OVERLAP);
         let storage_chunks: Vec<_> = chunks
             .iter()
             .filter(|c| c.section_path.len() == 2)
@@ -407,7 +400,7 @@ mod tests {
     #[test]
     fn small_sections_are_merged() {
         let content = "# A\n\nShort.\n\n# B\n\nAlso short.\n";
-        let chunks = split_document(content);
+        let chunks = split_document(content, TOKENS, OVERLAP);
         assert_eq!(chunks.len(), 1, "expected merged into a single chunk");
         assert!(chunks[0].text.contains("Short."));
         assert!(chunks[0].text.contains("Also short."));
@@ -420,7 +413,7 @@ mod tests {
             "# Real Heading\n\n```\n# Not a heading\n## Also not\n```\n\n{}",
             body
         );
-        let chunks = split_document(&content);
+        let chunks = split_document(&content, TOKENS, OVERLAP);
         for chunk in &chunks {
             assert_eq!(
                 chunk.section_path,
@@ -432,14 +425,13 @@ mod tests {
 
     #[test]
     fn large_code_fence_is_not_split() {
-        // Code fence body > CHUNK_SIZE should be emitted as a single oversize chunk.
-        let fence_body = "    let x = 1;\n".repeat(250); // ~3750 chars
+        // Code fence body >> chunk_size_tokens should be one oversize chunk.
+        let fence_body = "    let x = 1;\n".repeat(250); // ~3750 chars ≈ 937 tokens
         let content = format!(
             "# Section\n\nIntro.\n\n```rust\n{}```\n\nOutro.\n",
             fence_body
         );
-        let chunks = split_document(&content);
-        // No chunk text should contain a lone opening fence without its closing
+        let chunks = split_document(&content, TOKENS, OVERLAP);
         for chunk in &chunks {
             let open_count = chunk.text.matches("```rust").count();
             let close_count = chunk.text.split('\n').filter(|l| l.trim() == "```").count();
@@ -452,14 +444,14 @@ mod tests {
 
     #[test]
     fn large_table_is_not_split() {
-        // Table with many rows > CHUNK_SIZE should be emitted as a single oversize chunk.
+        // Table with many rows >> chunk_size_tokens should be one oversize chunk.
         let header = "| Column A | Column B | Column C |\n| --- | --- | --- |\n";
         let rows: String = (0..60)
             .map(|i| format!("| val-{i} | data-{i} | info-{i} |\n"))
             .collect();
         let table = format!("{}{}", header, rows);
         let content = format!("# Section\n\nIntro.\n\n{}\nOutro.\n", table);
-        let chunks = split_document(&content);
+        let chunks = split_document(&content, TOKENS, OVERLAP);
         // Find the chunk(s) containing table rows and ensure the table is intact
         let table_chunks: Vec<_> = chunks
             .iter()

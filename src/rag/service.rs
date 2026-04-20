@@ -34,24 +34,35 @@ pub trait RagService: Send + Sync {
 pub struct DefaultRagService {
     embedding: Arc<dyn EmbeddingService>,
     vectorstore: Arc<dyn VectorStore>,
+    chunk_size_tokens: usize,
+    chunk_overlap_tokens: usize,
 }
 
 impl DefaultRagService {
-    /// Create from pre-built service components.
-    pub fn new(embedding: Arc<dyn EmbeddingService>, vectorstore: Arc<dyn VectorStore>) -> Self {
+    /// Create from pre-built service components with explicit chunk sizing.
+    pub fn new(
+        embedding: Arc<dyn EmbeddingService>,
+        vectorstore: Arc<dyn VectorStore>,
+        chunk_size_tokens: usize,
+        chunk_overlap_tokens: usize,
+    ) -> Self {
         Self {
             embedding,
             vectorstore,
+            chunk_size_tokens,
+            chunk_overlap_tokens,
         }
     }
 
-    /// Build from application config.  Returns `Err` when required URLs are missing.
+    /// Build from application config. Returns `Err` when required URLs are missing.
     pub fn from_rag_config(config: &RagConfig) -> Result<Self, AppError> {
         let embedding = OpenAICompatibleEmbedding::from_rag_config(config)?;
         let vectorstore = QdrantVectorStore::from_rag_config(config)?;
         Ok(Self {
             embedding: Arc::new(embedding),
             vectorstore: Arc::new(vectorstore),
+            chunk_size_tokens: config.chunk_size_tokens as usize,
+            chunk_overlap_tokens: config.chunk_overlap_tokens as usize,
         })
     }
 }
@@ -70,13 +81,13 @@ impl RagService for DefaultRagService {
         // 1. Remove previous chunks for this document
         self.vectorstore.delete_by_slug(slug).await?;
 
-        // 2. Split content into chunks
-        let chunks = split_document(content);
+        // 2. Split content into token-aware chunks
+        let chunks = split_document(content, self.chunk_size_tokens, self.chunk_overlap_tokens);
         if chunks.is_empty() {
             return Ok(());
         }
 
-        // 3. Embed all chunks (embed only the text strings)
+        // 3. Embed all chunks (embed only the display text strings)
         let texts: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
         let vectors = self.embedding.embed(&texts).await?;
 
@@ -164,6 +175,8 @@ mod tests {
             hyde_url: String::new(),
             reranker_model: String::new(),
             reranker_api_key: String::new(),
+            chunk_size_tokens: 256,
+            chunk_overlap_tokens: 64,
         };
         assert!(DefaultRagService::from_rag_config(&config).is_err());
     }

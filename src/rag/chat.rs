@@ -571,9 +571,20 @@ impl ChatService {
         };
 
         // Flatten results from all sub-query searches, propagating errors.
+        // Log per-sub-query hits so retrieval failures can be triaged by which
+        // sub-query did or didn't bring back the expected chunk.
         let mut merged_chunks: Vec<VectorSearchResult> = Vec::new();
-        for result in vector_results_nested {
-            merged_chunks.extend(result?);
+        for (sub_query, result) in queries_to_embed.iter().zip(vector_results_nested) {
+            let chunks = result?;
+            tracing::debug!(
+                session_id = %session_id,
+                sub_query = %preview_text(sub_query, 200),
+                hits = chunks.len(),
+                chunk_ids = ?chunks.iter().map(|c| c.point_id.as_str()).collect::<Vec<_>>(),
+                scores = ?chunks.iter().map(|c| c.score).collect::<Vec<_>>(),
+                "RAG: sub-query hits"
+            );
+            merged_chunks.extend(chunks);
         }
 
         // Deduplicate when multiple sub-queries were used (same chunk can appear
@@ -594,6 +605,13 @@ impl ChatService {
         } else {
             merged_chunks.into_iter().take(MAX_CONTEXT_CHUNKS).collect()
         };
+
+        tracing::debug!(
+            session_id = %session_id,
+            pre_rerank_ids = ?pre_rerank.iter().map(|c| c.point_id.as_str()).collect::<Vec<_>>(),
+            pre_rerank_scores = ?pre_rerank.iter().map(|c| c.score).collect::<Vec<_>>(),
+            "RAG: pre-rerank candidates"
+        );
 
         // Cross-encoder reranking (optional): re-score retrieved chunks jointly
         // against the query and keep only the top MAX_CONTEXT_CHUNKS.
@@ -718,7 +736,8 @@ fn summarize_search_results(
         .iter()
         .map(|result| {
             format!(
-                "score={:.4} slug={} title={} chunk={}",
+                "id={} score={:.4} slug={} title={} chunk={}",
+                result.point_id,
                 result.score,
                 result.document_slug,
                 result.document_title,

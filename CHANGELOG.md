@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Hybrid search in RAG chat: Meilisearch BM25 results are fused with Qdrant vector results using Reciprocal Rank Fusion (RRF). Enable with `rag.hybrid_search_enabled = true` (requires Meilisearch configured).
 - `lekton-sync` now supports schema manifests (`lekton.schema.yml`) for OpenAPI, AsyncAPI, and JSON Schema artifacts, with delta sync via `POST /api/v1/schemas/sync`.
 - `cargo-deny` configuration for license compliance (AGPL-3.0-compatible allowlist) and RustSec advisory auditing, with weekly CI workflow
 - Clippy CI job enforcing zero warnings on both SSR and hydrate targets (`-D warnings`)

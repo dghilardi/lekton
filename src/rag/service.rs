@@ -152,6 +152,7 @@ mod tests {
             embedding_headers: std::collections::HashMap::new(),
             embedding_cache_store_text: false,
             embedding_cache_query: false,
+                hybrid_search_enabled: false,
         };
         assert!(DefaultRagService::from_rag_config(&config).is_err());
     }

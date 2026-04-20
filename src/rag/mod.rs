@@ -16,6 +16,8 @@ pub mod service;
 pub mod splitter;
 #[cfg(feature = "ssr")]
 pub mod vectorstore;
+#[cfg(feature = "ssr")]
+pub mod rrf;
 
 #[cfg(feature = "ssr")]
 pub mod client;

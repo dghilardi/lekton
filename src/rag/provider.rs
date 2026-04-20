@@ -127,6 +127,7 @@ mod tests {
             embedding_headers: HashMap::new(),
             embedding_cache_store_text: false,
             embedding_cache_query: false,
+                hybrid_search_enabled: false,
         }
     }
 

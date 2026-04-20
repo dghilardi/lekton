@@ -208,6 +208,12 @@ pub struct RagConfig {
     /// Default: `false` (only chunk embeddings are cached).
     #[serde(default)]
     pub embedding_cache_query: bool,
+    /// When `true`, the RAG chat pipeline combines Qdrant vector search with
+    /// Meilisearch full-text search and merges results using Reciprocal Rank
+    /// Fusion (RRF). Requires Meilisearch to be configured.
+    /// Default: `false`.
+    #[serde(default)]
+    pub hybrid_search_enabled: bool,
 }
 
 impl RagConfig {

@@ -20,16 +20,23 @@ use crate::rag::embedding::EmbeddingService;
 use crate::rag::provider::LlmProvider;
 use crate::rag::query_rewriter::QueryRewriter;
 use crate::rag::vectorstore::VectorStore;
+use crate::search::client::SearchService;
 
+/// Maximum number of context chunks returned to the LLM.
+const MAX_CONTEXT_CHUNKS: usize = 5;
 /// Maximum number of conversation history messages to include in the prompt.
 const MAX_HISTORY_MESSAGES: usize = 20;
-/// Maximum number of context chunks to retrieve from the vector store.
-const MAX_CONTEXT_CHUNKS: usize = 5;
+/// How many extra Qdrant candidates to fetch when hybrid search is enabled
+/// (gives RRF room to reorder before truncating to MAX_CONTEXT_CHUNKS).
+const HYBRID_CANDIDATE_MULTIPLIER: usize = 3;
 
 /// Orchestrates RAG chat: retrieval, prompt building, and LLM streaming.
 pub struct ChatService {
     embedding: Arc<dyn EmbeddingService>,
     vectorstore: Arc<dyn VectorStore>,
+    /// Optional Meilisearch service used for hybrid search (RRF). `None` when
+    /// hybrid search is disabled or Meilisearch is not configured.
+    search_service: Option<Arc<dyn SearchService>>,
     chat_repo: Arc<dyn ChatRepository>,
     llm_provider: Arc<LlmProvider>,
     chat_model: String,
@@ -68,6 +75,7 @@ impl ChatService {
         chat_repo: Arc<dyn ChatRepository>,
         embedding: Arc<dyn EmbeddingService>,
         vectorstore: Arc<dyn VectorStore>,
+        search_service: Option<Arc<dyn SearchService>>,
     ) -> Result<Self, AppError> {
         if config.chat_model.is_empty() {
             return Err(AppError::Internal(
@@ -80,9 +88,24 @@ impl ChatService {
         tera.add_raw_template(template_name, &config.system_prompt_template)
             .map_err(|e| AppError::Internal(format!("invalid system_prompt_template: {e}")))?;
 
+        let hybrid_search_service = if config.hybrid_search_enabled {
+            if search_service.is_some() {
+                tracing::info!("RAG hybrid search (RRF) enabled");
+            } else {
+                tracing::warn!(
+                    "hybrid_search_enabled = true but Meilisearch is not configured — \
+                     falling back to vector-only retrieval"
+                );
+            }
+            search_service
+        } else {
+            None
+        };
+
         Ok(Self {
             embedding,
             vectorstore,
+            search_service: hybrid_search_service,
             chat_repo,
             llm_provider: llm_provider.clone(),
             chat_model: config.chat_model.clone(),
@@ -177,26 +200,61 @@ impl ChatService {
             .next()
             .ok_or_else(|| AppError::Internal("embedding returned no vectors".into()))?;
 
-        // 6. Search vector store with user's access filters
+        // 6. Search vector store with user's access filters.
+        //    When hybrid search is enabled, fetch more candidates so RRF has
+        //    room to reorder before truncating.
         let (allowed_levels, include_draft) = user_ctx.document_visibility();
+        let vector_limit = if self.search_service.is_some() {
+            MAX_CONTEXT_CHUNKS * HYBRID_CANDIDATE_MULTIPLIER
+        } else {
+            MAX_CONTEXT_CHUNKS
+        };
         tracing::debug!(
             session_id = %session_id,
             retrieval_query = %retrieval_query,
             vector_dimensions = query_vector.len(),
-            limit = MAX_CONTEXT_CHUNKS,
+            vector_limit,
+            hybrid = self.search_service.is_some(),
             allowed_levels = ?allowed_levels,
             include_draft,
             "RAG: searching vector store"
         );
-        let search_results = self
-            .vectorstore
-            .search(
-                query_vector,
-                MAX_CONTEXT_CHUNKS,
-                allowed_levels.as_deref(),
-                include_draft,
-            )
-            .await?;
+        let vector_future = self.vectorstore.search(
+            query_vector,
+            vector_limit,
+            allowed_levels.as_deref(),
+            include_draft,
+        );
+
+        // Run Meilisearch query in parallel with vector search when hybrid mode is on.
+        let search_results = if let Some(ref svc) = self.search_service {
+            let text_future =
+                svc.search(&retrieval_query, allowed_levels.as_deref(), include_draft);
+            let (vector_results, text_results) =
+                tokio::join!(vector_future, text_future);
+            let vector_results = vector_results?;
+            let text_slugs: Vec<String> = text_results
+                .unwrap_or_else(|e| {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        error = %e,
+                        "hybrid search: Meilisearch query failed, falling back to vector-only"
+                    );
+                    vec![]
+                })
+                .into_iter()
+                .map(|h| h.slug)
+                .collect();
+            tracing::debug!(
+                session_id = %session_id,
+                text_hits = text_slugs.len(),
+                "RAG: hybrid search text results"
+            );
+            let fused = crate::rag::rrf::fuse(vector_results, &text_slugs);
+            fused.into_iter().take(MAX_CONTEXT_CHUNKS).collect()
+        } else {
+            vector_future.await?
+        };
 
         let search_results_summary = summarize_search_results(&search_results);
         let source_references = build_source_references(&search_results);
@@ -204,7 +262,7 @@ impl ChatService {
             session_id = %session_id,
             retrieval_query = %retrieval_query,
             results = ?search_results_summary,
-            "RAG: vector store returned results"
+            "RAG: retrieval complete"
         );
 
         // 7. Build context string from search results

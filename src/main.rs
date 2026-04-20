@@ -317,6 +317,7 @@ async fn main() {
                                 chat_repo.clone(),
                                 query_embedding,
                                 vectorstore.clone(),
+                                search_service.clone(),
                             ) {
                                 Ok(svc) => {
                                     tracing::info!("RAG chat service initialized");

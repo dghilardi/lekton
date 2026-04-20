@@ -33,6 +33,11 @@ pub struct VectorPoint {
 /// A single search hit returned from the vector store.
 #[derive(Debug, Clone)]
 pub struct VectorSearchResult {
+    /// Stable identifier of the underlying vector point. Used by offline
+    /// evaluation tooling to match retrieved chunks against an expected set;
+    /// not consumed by the chat-time pipeline. Empty when the backend did not
+    /// return an id.
+    pub point_id: String,
     pub chunk_text: String,
     pub document_slug: String,
     pub document_title: String,
@@ -213,6 +218,14 @@ impl VectorStore for QdrantVectorStore {
             .result
             .into_iter()
             .map(|scored| {
+                let point_id = scored
+                    .id
+                    .and_then(|id| id.point_id_options)
+                    .map(|opt| match opt {
+                        qdrant_client::qdrant::point_id::PointIdOptions::Uuid(s) => s,
+                        qdrant_client::qdrant::point_id::PointIdOptions::Num(n) => n.to_string(),
+                    })
+                    .unwrap_or_default();
                 let chunk_text = scored
                     .payload
                     .get("chunk_text")
@@ -233,6 +246,7 @@ impl VectorStore for QdrantVectorStore {
                     .unwrap_or_default();
 
                 VectorSearchResult {
+                    point_id,
                     chunk_text,
                     document_slug,
                     document_title,

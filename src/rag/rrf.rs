@@ -46,6 +46,7 @@ mod tests {
 
     fn make_result(slug: &str, score: f32) -> VectorSearchResult {
         VectorSearchResult {
+            point_id: format!("id-{slug}"),
             chunk_text: format!("chunk for {slug}"),
             document_slug: slug.to_string(),
             document_title: slug.to_string(),

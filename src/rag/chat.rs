@@ -811,18 +811,21 @@ mod tests {
     fn build_source_references_deduplicates_by_slug_and_keeps_best_score() {
         let sources = build_source_references(&[
             VectorSearchResult {
+                point_id: "p1".into(),
                 chunk_text: "First chunk".into(),
                 document_slug: "docs/a".into(),
                 document_title: "Doc A".into(),
                 score: 0.42,
             },
             VectorSearchResult {
+                point_id: "p2".into(),
                 chunk_text: "Better chunk".into(),
                 document_slug: "docs/a".into(),
                 document_title: "Doc A".into(),
                 score: 0.81,
             },
             VectorSearchResult {
+                point_id: "p3".into(),
                 chunk_text: "Other chunk".into(),
                 document_slug: "docs/b".into(),
                 document_title: "Doc B".into(),

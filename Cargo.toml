@@ -209,6 +209,8 @@ panic = "abort"
 [package.metadata.leptos]
 # The name used by wasm-bindgen/cargo-leptos for the JS/WASM bundle
 output-name = "lekton"
+# Explicit bin target needed when the crate has multiple [[bin]] entries
+bin-target = "lekton"
 
 # The site root folder is where cargo-leptos generates all output
 site-root = "target/site"

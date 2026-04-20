@@ -20,6 +20,10 @@ pub struct ChunkPayload {
     pub is_draft: bool,
     pub tags: Vec<String>,
     pub chunk_index: u32,
+    /// Heading hierarchy above this chunk (e.g. `["Architecture", "Storage Layer"]`).
+    pub section_path: Vec<String>,
+    /// URL-safe anchor for the deepest heading (e.g. `"storage-layer"`).
+    pub section_anchor: String,
 }
 
 /// A vector point ready for upsert into Qdrant.
@@ -135,7 +139,7 @@ impl VectorStore for QdrantVectorStore {
                 payload.insert("access_level", p.payload.access_level);
                 payload.insert("is_draft", p.payload.is_draft);
                 payload.insert("chunk_index", p.payload.chunk_index as i64);
-                // Store tags as a list of strings
+                payload.insert("section_anchor", p.payload.section_anchor);
                 let tag_values: Vec<qdrant_client::qdrant::Value> =
                     p.payload.tags.into_iter().map(|t| t.into()).collect();
                 payload.insert(
@@ -143,6 +147,22 @@ impl VectorStore for QdrantVectorStore {
                     qdrant_client::qdrant::Value {
                         kind: Some(qdrant_client::qdrant::value::Kind::ListValue(
                             qdrant_client::qdrant::ListValue { values: tag_values },
+                        )),
+                    },
+                );
+                let section_values: Vec<qdrant_client::qdrant::Value> = p
+                    .payload
+                    .section_path
+                    .into_iter()
+                    .map(|s| s.into())
+                    .collect();
+                payload.insert(
+                    "section_path",
+                    qdrant_client::qdrant::Value {
+                        kind: Some(qdrant_client::qdrant::value::Kind::ListValue(
+                            qdrant_client::qdrant::ListValue {
+                                values: section_values,
+                            },
                         )),
                     },
                 );

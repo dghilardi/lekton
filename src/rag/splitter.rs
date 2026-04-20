@@ -3,20 +3,67 @@ use text_splitter::MarkdownSplitter;
 /// Target chunk size in characters for document splitting.
 const CHUNK_SIZE: usize = 512;
 
+/// A chunk produced by splitting a Markdown document.
+#[derive(Debug, Clone)]
+pub struct SplitChunk {
+    /// The raw text of this chunk (used as display text for injection into prompts).
+    pub text: String,
+    /// Heading hierarchy above this chunk (e.g. `["Architecture", "Storage Layer"]`).
+    /// Populated by the two-pass heading-aware splitter; empty when not yet computed.
+    pub section_path: Vec<String>,
+    /// URL-safe anchor derived from the deepest heading (e.g. `"storage-layer"`).
+    pub section_anchor: String,
+    /// Byte offset of this chunk's start in the original document.
+    pub byte_offset: usize,
+    /// Character offset of this chunk's start in the original document.
+    pub char_offset: usize,
+    /// Zero-based index of this chunk within the document.
+    pub chunk_index: u32,
+}
+
+/// Convert a heading string into a URL-safe anchor slug.
+/// `"Storage Layer"` → `"storage-layer"`
+pub fn anchor_from_heading(heading: &str) -> String {
+    let raw: String = heading
+        .chars()
+        .filter_map(|c| {
+            if c.is_alphanumeric() {
+                Some(c.to_lowercase().next().unwrap())
+            } else if c == ' ' || c == '-' {
+                Some('-')
+            } else {
+                None
+            }
+        })
+        .collect();
+    raw.trim_matches('-').to_string()
+}
+
 /// Split a Markdown document into semantically meaningful chunks.
 ///
-/// Uses `text-splitter`'s `MarkdownSplitter` which respects Markdown
-/// structure (headings, paragraphs, code blocks) when choosing split
-/// boundaries.  Each chunk will be at most [`CHUNK_SIZE`] characters.
-pub fn split_document(content: &str) -> Vec<String> {
+/// Returns a `Vec<SplitChunk>` with byte/char offsets. The `section_path` and
+/// `section_anchor` fields are empty at this stage; they are populated by the
+/// two-pass heading-aware splitter (see the `split_document_headed` function).
+pub fn split_document(content: &str) -> Vec<SplitChunk> {
     if content.is_empty() {
         return Vec::new();
     }
     let splitter = MarkdownSplitter::new(CHUNK_SIZE);
     splitter
-        .chunks(content)
-        .map(String::from)
-        .filter(|c| !c.trim().is_empty())
+        .chunk_indices(content)
+        .filter(|(_, text)| !text.trim().is_empty())
+        .enumerate()
+        .map(|(idx, (byte_offset, text))| {
+            let char_offset = content[..byte_offset].chars().count();
+            SplitChunk {
+                text: text.to_string(),
+                section_path: Vec::new(),
+                section_anchor: String::new(),
+                byte_offset,
+                char_offset,
+                chunk_index: idx as u32,
+            }
+        })
         .collect()
 }
 
@@ -33,12 +80,14 @@ mod tests {
     fn short_content_returns_single_chunk() {
         let chunks = split_document("Hello world");
         assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0], "Hello world");
+        assert_eq!(chunks[0].text, "Hello world");
+        assert_eq!(chunks[0].byte_offset, 0);
+        assert_eq!(chunks[0].char_offset, 0);
+        assert_eq!(chunks[0].chunk_index, 0);
     }
 
     #[test]
     fn long_content_is_split_into_multiple_chunks() {
-        // Generate content well above CHUNK_SIZE
         let paragraph = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ";
         let content = paragraph.repeat(50); // ~2850 chars
         let chunks = split_document(&content);
@@ -49,10 +98,30 @@ mod tests {
         );
         for chunk in &chunks {
             assert!(
-                chunk.len() <= CHUNK_SIZE + 100, // small tolerance for word boundaries
+                chunk.text.len() <= CHUNK_SIZE + 100,
                 "chunk too large: {} chars",
-                chunk.len()
+                chunk.text.len()
             );
+        }
+    }
+
+    #[test]
+    fn chunk_indices_are_sequential() {
+        let paragraph = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ";
+        let content = paragraph.repeat(50);
+        let chunks = split_document(&content);
+        for (i, chunk) in chunks.iter().enumerate() {
+            assert_eq!(chunk.chunk_index, i as u32);
+        }
+    }
+
+    #[test]
+    fn byte_offsets_point_to_chunk_start() {
+        let paragraph = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ";
+        let content = paragraph.repeat(50);
+        let chunks = split_document(&content);
+        for chunk in &chunks {
+            assert!(content[chunk.byte_offset..].starts_with(chunk.text.trim_start()));
         }
     }
 
@@ -65,5 +134,18 @@ mod tests {
         );
         let chunks = split_document(&content);
         assert!(chunks.len() >= 2);
+    }
+
+    #[test]
+    fn anchor_from_heading_basic() {
+        assert_eq!(anchor_from_heading("Storage Layer"), "storage-layer");
+        assert_eq!(anchor_from_heading("Hello World"), "hello-world");
+        assert_eq!(anchor_from_heading("  Trim  "), "trim");
+    }
+
+    #[test]
+    fn anchor_from_heading_strips_special_chars() {
+        assert_eq!(anchor_from_heading("API (v2)"), "api-v2");
+        assert_eq!(anchor_from_heading("C++ Guide"), "c-guide");
     }
 }

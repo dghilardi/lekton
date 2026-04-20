@@ -76,8 +76,9 @@ impl RagService for DefaultRagService {
             return Ok(());
         }
 
-        // 3. Embed all chunks
-        let vectors = self.embedding.embed(&chunks).await?;
+        // 3. Embed all chunks (embed only the text strings)
+        let texts: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
+        let vectors = self.embedding.embed(&texts).await?;
 
         // 4. Build Qdrant points, skipping any chunk whose embedding is empty.
         // Some embedding backends (e.g. Ollama) return [] for whitespace-only
@@ -87,12 +88,11 @@ impl RagService for DefaultRagService {
         let points: Vec<VectorPoint> = chunks
             .into_iter()
             .zip(vectors)
-            .enumerate()
-            .filter_map(|(idx, (text, vector))| {
+            .filter_map(|(chunk, vector)| {
                 if vector.is_empty() {
                     tracing::warn!(
                         slug,
-                        idx,
+                        idx = chunk.chunk_index,
                         "RAG: embedding returned empty vector for chunk, skipping"
                     );
                     return None;
@@ -101,13 +101,15 @@ impl RagService for DefaultRagService {
                     id: Uuid::new_v4().to_string(),
                     vector,
                     payload: ChunkPayload {
-                        chunk_text: text,
+                        chunk_text: chunk.text,
+                        section_path: chunk.section_path,
+                        section_anchor: chunk.section_anchor,
                         document_slug: slug.to_string(),
                         document_title: title.to_string(),
                         access_level: access_level.to_string(),
                         is_draft,
                         tags: tags.to_vec(),
-                        chunk_index: idx as u32,
+                        chunk_index: chunk.chunk_index,
                     },
                 })
             })

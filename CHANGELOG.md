@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.16.0] 2026-04-21
+
 ### Added
 - Optional parent-section expansion for RAG chat context (`rag.expand_to_parent`): after reranking on small chunks, the final prompt can now expand each top hit to its full section by fetching and merging sibling chunks in order.
 - RAG chat source references now cite sections, not just whole documents: retrieval results propagate `section_path`/`section_anchor`, source references are deduplicated per `slug#anchor`, and the chat UI links directly to section anchors when available.

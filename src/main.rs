@@ -307,6 +307,8 @@ async fn main() {
                     let rag_svc = Arc::new(lekton::rag::service::DefaultRagService::new(
                         cached_embedding.clone(),
                         vectorstore.clone(),
+                        config.rag.chunk_size_tokens as usize,
+                        config.rag.chunk_overlap_tokens as usize,
                     ));
 
                     let chat_svc = match (&chat_repo, &llm_provider) {

@@ -37,6 +37,7 @@ const CANDIDATE_MULTIPLIER: usize = 3;
 pub struct ChatService {
     embedding: Arc<dyn EmbeddingService>,
     vectorstore: Arc<dyn VectorStore>,
+    expand_to_parent: bool,
     /// Optional Meilisearch service used for hybrid search (RRF). `None` when
     /// hybrid search is disabled or Meilisearch is not configured.
     search_service: Option<Arc<dyn SearchService>>,
@@ -56,6 +57,32 @@ pub struct ChatService {
     tera: tera::Tera,
     system_template_name: String,
     query_rewriter: Option<QueryRewriter>,
+}
+
+/// Result of a pure retrieval pass (no LLM generation, no chat persistence).
+///
+/// Returned by [`ChatService::retrieve_only`] and used both by
+/// [`ChatService::stream_response`] (which forwards `post_rerank` to the LLM)
+/// and by offline tooling such as the `rag-eval` binary, which needs both the
+/// pre-rerank and post-rerank candidate sets to compute retrieval metrics.
+#[derive(Debug, Clone)]
+pub struct RetrievalOutput {
+    /// The query string actually used for retrieval (after query rewriting).
+    pub retrieval_query: String,
+    /// Plan produced by the query analyzer (or [`QueryPlan::simple`] when
+    /// the analyzer is disabled or fails).
+    pub query_plan: QueryPlan,
+    /// The exact set of query strings that was embedded — equal to
+    /// `[retrieval_query]` for simple plans, or the (optionally HyDE-expanded)
+    /// sub-queries for decomposed plans.
+    pub queries_embedded: Vec<String>,
+    /// Top-K candidates after vector search, dedup, and (optional) hybrid RRF
+    /// — but **before** the cross-encoder reranker. Already truncated to
+    /// `MAX_CONTEXT_CHUNKS`.
+    pub pre_rerank: Vec<VectorSearchResult>,
+    /// Final top-K used to build the LLM prompt. Equal to `pre_rerank` when
+    /// the reranker is disabled or fails.
+    pub post_rerank: Vec<VectorSearchResult>,
 }
 
 /// A token event yielded by the streaming chat response.
@@ -150,6 +177,7 @@ impl ChatService {
         Ok(Self {
             embedding,
             vectorstore,
+            expand_to_parent: config.expand_to_parent,
             search_service: hybrid_search_service,
             reranker,
             analyzer,
@@ -222,195 +250,16 @@ impl ChatService {
             })
             .await?;
 
-        // 4. Rewrite the query into a standalone question when history is non-empty.
-        //    This improves vector-search relevance for follow-up / elliptic questions.
-        //    Falls back to the original message when rewriting is disabled or history is empty.
-        let retrieval_query = match &self.query_rewriter {
-            Some(rewriter) => rewriter.rewrite(&user_message, &history).await?,
-            None => user_message.clone(),
-        };
+        // 4-7. Pure retrieval (analyzer + HyDE + decomposition + vector search +
+        //      hybrid RRF + reranker). Side-effect-free w.r.t. chat persistence.
+        let retrieval = self
+            .retrieve_only(user_ctx, &user_message, &history, &session_id)
+            .await?;
 
-        tracing::debug!(
-            session_id = %session_id,
-            original_query = %user_message,
-            retrieval_query = %retrieval_query,
-            history_messages = history.len(),
-            "RAG: retrieval query ready"
-        );
-
-        // 4.5 Analyze query complexity when the analyzer is configured.
-        //     Falls back to simple on any error so the pipeline is never blocked.
-        let query_plan: QueryPlan = if let Some(ref analyzer) = self.analyzer {
-            match analyzer.classify(&retrieval_query).await {
-                Ok(plan) => {
-                    tracing::debug!(
-                        session_id = %session_id,
-                        complexity = ?plan.complexity,
-                        sub_queries = plan.sub_queries.len(),
-                        "RAG: query plan"
-                    );
-                    plan
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        session_id = %session_id,
-                        error = %e,
-                        "query analyzer failed — using simple retrieval"
-                    );
-                    QueryPlan::simple()
-                }
-            }
-        } else {
-            QueryPlan::simple()
-        };
-
-        // The set of strings to embed: original query for simple plans, sub-queries
-        // for multi-entity / multi-hop decomposition.
-        let queries_to_embed: Vec<String> = match query_plan.complexity {
-            Complexity::Simple => vec![retrieval_query.clone()],
-            _ => query_plan.sub_queries.clone(),
-        };
-
-        // 4.6 HyDE: replace each query string with a synthetically generated
-        //     hypothetical answer document before embedding. The Meilisearch text
-        //     search (if enabled) still uses the original retrieval_query so that
-        //     keyword recall is not degraded by the generative expansion.
-        let queries_to_embed = if let Some(ref hyde) = self.hyde {
-            tracing::debug!(
-                session_id = %session_id,
-                queries = queries_to_embed.len(),
-                "RAG: generating HyDE hypothetical documents"
-            );
-            hyde.expand_queries(queries_to_embed).await
-        } else {
-            queries_to_embed
-        };
-
-        // 5. Embed all queries in a single batched call.
-        let (allowed_levels, include_draft) = user_ctx.document_visibility();
-        let all_vectors = self.embedding.embed(&queries_to_embed).await?;
-        if all_vectors.is_empty() {
-            return Err(AppError::Internal("embedding returned no vectors".into()));
-        }
-
-        let vector_limit = if self.search_service.is_some() || self.reranker.is_some() {
-            MAX_CONTEXT_CHUNKS * CANDIDATE_MULTIPLIER
-        } else {
-            MAX_CONTEXT_CHUNKS
-        };
-        tracing::debug!(
-            session_id = %session_id,
-            retrieval_query = %retrieval_query,
-            sub_queries = queries_to_embed.len(),
-            vector_limit,
-            hybrid = self.search_service.is_some(),
-            reranker = self.reranker.is_some(),
-            allowed_levels = ?allowed_levels,
-            include_draft,
-            "RAG: searching vector store"
-        );
-
-        // 6. Run one vector search per query in parallel, plus an optional single
-        //    Meilisearch query (for the hybrid RRF signal) at the same time.
-        let vector_searches: Vec<_> = all_vectors
-            .into_iter()
-            .map(|vector| {
-                self.vectorstore.search(
-                    vector,
-                    vector_limit,
-                    allowed_levels.as_deref(),
-                    include_draft,
-                )
-            })
-            .collect();
-
-        let (vector_results_nested, text_slugs) = if let Some(ref svc) = self.search_service {
-            let text_future =
-                svc.search(&retrieval_query, allowed_levels.as_deref(), include_draft);
-            let (vector_list, text_result) =
-                tokio::join!(futures::future::join_all(vector_searches), text_future);
-            let slugs: Vec<String> = text_result
-                .unwrap_or_else(|e| {
-                    tracing::warn!(
-                        session_id = %session_id,
-                        error = %e,
-                        "hybrid search: Meilisearch query failed, falling back to vector-only"
-                    );
-                    vec![]
-                })
-                .into_iter()
-                .map(|h| h.slug)
-                .collect();
-            (vector_list, slugs)
-        } else {
-            (futures::future::join_all(vector_searches).await, vec![])
-        };
-
-        // Flatten results from all sub-query searches, propagating errors.
-        let mut merged_chunks: Vec<VectorSearchResult> = Vec::new();
-        for result in vector_results_nested {
-            merged_chunks.extend(result?);
-        }
-
-        // Deduplicate when multiple sub-queries were used (same chunk can appear
-        // in results for several sub-queries).
-        if queries_to_embed.len() > 1 {
-            merged_chunks = dedup_chunks(merged_chunks);
-        }
-
-        // Apply RRF if hybrid is enabled; otherwise keep retrieval order.
-        let search_results: Vec<VectorSearchResult> = if !text_slugs.is_empty() {
-            tracing::debug!(
-                session_id = %session_id,
-                text_hits = text_slugs.len(),
-                "RAG: applying hybrid RRF"
-            );
-            let fused = crate::rag::rrf::fuse(merged_chunks, &text_slugs);
-            fused.into_iter().take(MAX_CONTEXT_CHUNKS).collect()
-        } else {
-            merged_chunks.into_iter().take(MAX_CONTEXT_CHUNKS).collect()
-        };
-
-        // 7. Cross-encoder reranking (optional): re-score retrieved chunks jointly
-        //    against the query and keep only the top MAX_CONTEXT_CHUNKS.
-        let search_results = if let Some(ref reranker) = self.reranker {
-            tracing::debug!(
-                session_id = %session_id,
-                candidates = search_results.len(),
-                "RAG: reranking chunks"
-            );
-            // Keep a truncated fallback in case the reranker call fails.
-            let fallback: Vec<_> = search_results
-                .iter()
-                .take(MAX_CONTEXT_CHUNKS)
-                .cloned()
-                .collect();
-            match reranker
-                .rerank(&retrieval_query, search_results, MAX_CONTEXT_CHUNKS)
-                .await
-            {
-                Ok(reranked) => reranked,
-                Err(e) => {
-                    tracing::warn!(
-                        session_id = %session_id,
-                        error = %e,
-                        "reranker failed, falling back to retrieval order"
-                    );
-                    fallback
-                }
-            }
-        } else {
-            search_results
-        };
-
-        let search_results_summary = summarize_search_results(&search_results);
+        let search_results = self
+            .expand_results_to_parent(user_ctx, retrieval.post_rerank, &session_id)
+            .await?;
         let source_references = build_source_references(&search_results);
-        tracing::debug!(
-            session_id = %session_id,
-            retrieval_query = %retrieval_query,
-            results = ?search_results_summary,
-            "RAG: retrieval complete"
-        );
 
         // 7. Build context string from search results
         let context = search_results
@@ -586,6 +435,274 @@ impl ChatService {
 
         Ok(Box::pin(event_stream))
     }
+
+    async fn expand_results_to_parent(
+        &self,
+        user_ctx: &UserContext,
+        results: Vec<VectorSearchResult>,
+        session_id: &str,
+    ) -> Result<Vec<VectorSearchResult>, AppError> {
+        if !self.expand_to_parent || results.is_empty() {
+            return Ok(results);
+        }
+
+        let (allowed_levels, include_draft) = user_ctx.document_visibility();
+        let parents = unique_parents_in_order(&results);
+        tracing::debug!(
+            session_id = %session_id,
+            parents = parents.len(),
+            "RAG: expanding reranked chunks to parent sections"
+        );
+
+        let section_fetches = parents.iter().map(|(slug, anchor)| {
+            self.vectorstore.get_section_chunks(
+                slug,
+                anchor,
+                allowed_levels.as_deref(),
+                include_draft,
+            )
+        });
+        let fetched = futures::future::join_all(section_fetches).await;
+        let merged = merge_parent_sections(results, parents, fetched)?;
+
+        tracing::debug!(
+            session_id = %session_id,
+            expanded = ?summarize_search_results(&merged),
+            "RAG: parent expansion complete"
+        );
+
+        Ok(merged)
+    }
+
+    /// Run the retrieval pipeline (analyzer + HyDE + decomposition + vector
+    /// search + hybrid RRF + reranker) without invoking the LLM and without
+    /// touching chat persistence.
+    ///
+    /// `history` is consulted only by the optional query rewriter; pass an
+    /// empty slice for headless / single-turn evaluation. `session_id` is used
+    /// only as a tracing field so that retrieval logs can be correlated with a
+    /// caller-defined identifier (a chat session id, an eval run id, etc.).
+    pub async fn retrieve_only(
+        &self,
+        user_ctx: &UserContext,
+        user_message: &str,
+        history: &[ChatMessage],
+        session_id: &str,
+    ) -> Result<RetrievalOutput, AppError> {
+        // Rewrite the query into a standalone question when history is non-empty.
+        // Falls back to the original message when rewriting is disabled or history is empty.
+        let retrieval_query = match &self.query_rewriter {
+            Some(rewriter) => rewriter.rewrite(user_message, history).await?,
+            None => user_message.to_string(),
+        };
+
+        tracing::debug!(
+            session_id = %session_id,
+            original_query = %user_message,
+            retrieval_query = %retrieval_query,
+            history_messages = history.len(),
+            "RAG: retrieval query ready"
+        );
+
+        // Analyze query complexity when the analyzer is configured. Falls back
+        // to simple on any error so the pipeline is never blocked.
+        let query_plan: QueryPlan = if let Some(ref analyzer) = self.analyzer {
+            match analyzer.classify(&retrieval_query).await {
+                Ok(plan) => {
+                    tracing::debug!(
+                        session_id = %session_id,
+                        complexity = ?plan.complexity,
+                        sub_queries = plan.sub_queries.len(),
+                        "RAG: query plan"
+                    );
+                    plan
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        error = %e,
+                        "query analyzer failed — using simple retrieval"
+                    );
+                    QueryPlan::simple()
+                }
+            }
+        } else {
+            QueryPlan::simple()
+        };
+
+        // The set of strings to embed: original query for simple plans,
+        // sub-queries for multi-entity / multi-hop decomposition.
+        let queries_to_embed: Vec<String> = match query_plan.complexity {
+            Complexity::Simple => vec![retrieval_query.clone()],
+            _ => query_plan.sub_queries.clone(),
+        };
+
+        // HyDE: replace each query string with a synthetically generated
+        // hypothetical answer document before embedding. The Meilisearch text
+        // search (if enabled) still uses the original retrieval_query so that
+        // keyword recall is not degraded by the generative expansion.
+        let queries_to_embed = if let Some(ref hyde) = self.hyde {
+            tracing::debug!(
+                session_id = %session_id,
+                queries = queries_to_embed.len(),
+                "RAG: generating HyDE hypothetical documents"
+            );
+            hyde.expand_queries(queries_to_embed).await
+        } else {
+            queries_to_embed
+        };
+
+        // Embed all queries in a single batched call.
+        let (allowed_levels, include_draft) = user_ctx.document_visibility();
+        let all_vectors = self.embedding.embed(&queries_to_embed).await?;
+        if all_vectors.is_empty() {
+            return Err(AppError::Internal("embedding returned no vectors".into()));
+        }
+
+        let vector_limit = if self.search_service.is_some() || self.reranker.is_some() {
+            MAX_CONTEXT_CHUNKS * CANDIDATE_MULTIPLIER
+        } else {
+            MAX_CONTEXT_CHUNKS
+        };
+        tracing::debug!(
+            session_id = %session_id,
+            retrieval_query = %retrieval_query,
+            sub_queries = queries_to_embed.len(),
+            vector_limit,
+            hybrid = self.search_service.is_some(),
+            reranker = self.reranker.is_some(),
+            allowed_levels = ?allowed_levels,
+            include_draft,
+            "RAG: searching vector store"
+        );
+
+        // Run one vector search per query in parallel, plus an optional single
+        // Meilisearch query (for the hybrid RRF signal) at the same time.
+        let vector_searches: Vec<_> = all_vectors
+            .into_iter()
+            .map(|vector| {
+                self.vectorstore.search(
+                    vector,
+                    vector_limit,
+                    allowed_levels.as_deref(),
+                    include_draft,
+                )
+            })
+            .collect();
+
+        let (vector_results_nested, text_slugs) = if let Some(ref svc) = self.search_service {
+            let text_future =
+                svc.search(&retrieval_query, allowed_levels.as_deref(), include_draft);
+            let (vector_list, text_result) =
+                tokio::join!(futures::future::join_all(vector_searches), text_future);
+            let slugs: Vec<String> = text_result
+                .unwrap_or_else(|e| {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        error = %e,
+                        "hybrid search: Meilisearch query failed, falling back to vector-only"
+                    );
+                    vec![]
+                })
+                .into_iter()
+                .map(|h| h.slug)
+                .collect();
+            (vector_list, slugs)
+        } else {
+            (futures::future::join_all(vector_searches).await, vec![])
+        };
+
+        // Flatten results from all sub-query searches, propagating errors.
+        // Log per-sub-query hits so retrieval failures can be triaged by which
+        // sub-query did or didn't bring back the expected chunk.
+        let mut merged_chunks: Vec<VectorSearchResult> = Vec::new();
+        for (sub_query, result) in queries_to_embed.iter().zip(vector_results_nested) {
+            let chunks = result?;
+            tracing::debug!(
+                session_id = %session_id,
+                sub_query = %preview_text(sub_query, 200),
+                hits = chunks.len(),
+                chunk_ids = ?chunks.iter().map(|c| c.point_id.as_str()).collect::<Vec<_>>(),
+                scores = ?chunks.iter().map(|c| c.score).collect::<Vec<_>>(),
+                "RAG: sub-query hits"
+            );
+            merged_chunks.extend(chunks);
+        }
+
+        // Deduplicate when multiple sub-queries were used (same chunk can appear
+        // in results for several sub-queries).
+        if queries_to_embed.len() > 1 {
+            merged_chunks = dedup_chunks(merged_chunks);
+        }
+
+        // Apply RRF if hybrid is enabled; otherwise keep retrieval order.
+        let pre_rerank: Vec<VectorSearchResult> = if !text_slugs.is_empty() {
+            tracing::debug!(
+                session_id = %session_id,
+                text_hits = text_slugs.len(),
+                "RAG: applying hybrid RRF"
+            );
+            let fused = crate::rag::rrf::fuse(merged_chunks, &text_slugs);
+            fused.into_iter().take(MAX_CONTEXT_CHUNKS).collect()
+        } else {
+            merged_chunks.into_iter().take(MAX_CONTEXT_CHUNKS).collect()
+        };
+
+        tracing::debug!(
+            session_id = %session_id,
+            pre_rerank_ids = ?pre_rerank.iter().map(|c| c.point_id.as_str()).collect::<Vec<_>>(),
+            pre_rerank_scores = ?pre_rerank.iter().map(|c| c.score).collect::<Vec<_>>(),
+            "RAG: pre-rerank candidates"
+        );
+
+        // Cross-encoder reranking (optional): re-score retrieved chunks jointly
+        // against the query and keep only the top MAX_CONTEXT_CHUNKS.
+        let post_rerank = if let Some(ref reranker) = self.reranker {
+            tracing::debug!(
+                session_id = %session_id,
+                candidates = pre_rerank.len(),
+                "RAG: reranking chunks"
+            );
+            // Keep a truncated fallback in case the reranker call fails.
+            let fallback: Vec<_> = pre_rerank
+                .iter()
+                .take(MAX_CONTEXT_CHUNKS)
+                .cloned()
+                .collect();
+            match reranker
+                .rerank(&retrieval_query, pre_rerank.clone(), MAX_CONTEXT_CHUNKS)
+                .await
+            {
+                Ok(reranked) => reranked,
+                Err(e) => {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        error = %e,
+                        "reranker failed, falling back to retrieval order"
+                    );
+                    fallback
+                }
+            }
+        } else {
+            pre_rerank.clone()
+        };
+
+        let post_rerank_summary = summarize_search_results(&post_rerank);
+        tracing::debug!(
+            session_id = %session_id,
+            retrieval_query = %retrieval_query,
+            results = ?post_rerank_summary,
+            "RAG: retrieval complete"
+        );
+
+        Ok(RetrievalOutput {
+            retrieval_query,
+            query_plan,
+            queries_embedded: queries_to_embed,
+            pre_rerank,
+            post_rerank,
+        })
+    }
 }
 
 /// Deduplicate chunks from multiple sub-query searches, keeping the highest
@@ -607,6 +724,104 @@ fn dedup_chunks(chunks: Vec<VectorSearchResult>) -> Vec<VectorSearchResult> {
     let mut result: Vec<VectorSearchResult> = best.into_values().collect();
     result.sort_by(|a, b| b.score.total_cmp(&a.score));
     result
+}
+
+fn unique_parents_in_order(results: &[VectorSearchResult]) -> Vec<(String, String)> {
+    let mut seen: HashMap<(String, String), ()> = HashMap::new();
+    let mut parents = Vec::new();
+
+    for result in results {
+        let key = (result.document_slug.clone(), result.section_anchor.clone());
+        if seen.insert(key.clone(), ()).is_none() {
+            parents.push(key);
+        }
+    }
+
+    parents
+}
+
+fn merge_parent_sections(
+    reranked_results: Vec<VectorSearchResult>,
+    parents: Vec<(String, String)>,
+    fetched_sections: Vec<Result<Vec<VectorSearchResult>, AppError>>,
+) -> Result<Vec<VectorSearchResult>, AppError> {
+    let mut parent_scores: HashMap<(String, String), VectorSearchResult> = HashMap::new();
+    for result in reranked_results {
+        let key = (result.document_slug.clone(), result.section_anchor.clone());
+        match parent_scores.get(&key) {
+            Some(existing) if existing.score >= result.score => {}
+            _ => {
+                parent_scores.insert(key, result);
+            }
+        }
+    }
+
+    let mut expanded = Vec::new();
+    for ((document_slug, section_anchor), fetched) in parents.into_iter().zip(fetched_sections) {
+        let siblings = fetched?;
+        let Some(best_parent_hit) =
+            parent_scores.get(&(document_slug.clone(), section_anchor.clone()))
+        else {
+            continue;
+        };
+
+        if siblings.is_empty() {
+            expanded.push(best_parent_hit.clone());
+            continue;
+        }
+
+        let merged_text = merge_chunk_texts(
+            &siblings
+                .iter()
+                .map(|chunk| chunk.chunk_text.as_str())
+                .collect::<Vec<_>>(),
+        );
+
+        let mut parent_result = best_parent_hit.clone();
+        parent_result.chunk_text = merged_text;
+        parent_result.chunk_index = siblings.first().map(|chunk| chunk.chunk_index).unwrap_or(0);
+        if let Some(first) = siblings.first() {
+            parent_result.section_path = first.section_path.clone();
+            parent_result.document_title = first.document_title.clone();
+        }
+
+        expanded.push(parent_result);
+    }
+
+    Ok(expanded)
+}
+
+fn merge_chunk_texts(chunks: &[&str]) -> String {
+    let mut merged = String::new();
+
+    for chunk in chunks {
+        if chunk.is_empty() {
+            continue;
+        }
+
+        if merged.is_empty() {
+            merged.push_str(chunk);
+            continue;
+        }
+
+        if merged.contains(chunk) {
+            continue;
+        }
+
+        let mut overlap_start = 0usize;
+        for (idx, _) in chunk.char_indices() {
+            if merged.ends_with(&chunk[..idx]) {
+                overlap_start = idx;
+            }
+        }
+
+        if overlap_start == 0 && !merged.ends_with('\n') {
+            merged.push_str("\n\n");
+        }
+        merged.push_str(&chunk[overlap_start..]);
+    }
+
+    merged
 }
 
 fn summarize_messages(messages: &[ChatCompletionRequestMessage]) -> Vec<String> {
@@ -661,9 +876,11 @@ fn summarize_search_results(
         .iter()
         .map(|result| {
             format!(
-                "score={:.4} slug={} title={} chunk={}",
+                "id={} score={:.4} slug={} anchor={} title={} chunk={}",
+                result.point_id,
                 result.score,
                 result.document_slug,
+                result.section_anchor,
                 result.document_title,
                 preview_text(&result.chunk_text, 240)
             )
@@ -674,13 +891,21 @@ fn summarize_search_results(
 fn build_source_references(
     results: &[crate::rag::vectorstore::VectorSearchResult],
 ) -> Vec<SourceReference> {
-    let mut deduped: HashMap<&str, SourceReference> = HashMap::new();
+    let mut deduped: HashMap<(String, String), SourceReference> = HashMap::new();
 
     for result in results {
         let snippet = preview_text(&result.chunk_text, 180);
+        let section_title = result.section_path.last().cloned();
+        let section_anchor = if result.section_anchor.is_empty() {
+            None
+        } else {
+            Some(result.section_anchor.clone())
+        };
         let candidate = SourceReference {
             document_slug: result.document_slug.clone(),
             document_title: result.document_title.clone(),
+            section_title,
+            section_anchor: section_anchor.clone(),
             score: result.score,
             snippet: if snippet.is_empty() {
                 None
@@ -688,11 +913,15 @@ fn build_source_references(
                 Some(snippet)
             },
         };
+        let dedupe_key = (
+            result.document_slug.clone(),
+            section_anchor.clone().unwrap_or_default(),
+        );
 
-        match deduped.get(result.document_slug.as_str()) {
+        match deduped.get(&dedupe_key) {
             Some(existing) if existing.score >= candidate.score => {}
             _ => {
-                deduped.insert(result.document_slug.as_str(), candidate);
+                deduped.insert(dedupe_key, candidate);
             }
         }
     }
@@ -702,6 +931,7 @@ fn build_source_references(
         b.score
             .total_cmp(&a.score)
             .then_with(|| a.document_slug.cmp(&b.document_slug))
+            .then_with(|| a.section_anchor.cmp(&b.section_anchor))
     });
     sources
 }
@@ -754,29 +984,160 @@ mod tests {
     fn build_source_references_deduplicates_by_slug_and_keeps_best_score() {
         let sources = build_source_references(&[
             VectorSearchResult {
+                point_id: "p1".into(),
                 chunk_text: "First chunk".into(),
                 document_slug: "docs/a".into(),
                 document_title: "Doc A".into(),
+                chunk_index: 0,
+                section_path: vec!["Intro".into()],
+                section_anchor: "intro".into(),
                 score: 0.42,
             },
             VectorSearchResult {
+                point_id: "p2".into(),
                 chunk_text: "Better chunk".into(),
                 document_slug: "docs/a".into(),
                 document_title: "Doc A".into(),
+                chunk_index: 1,
+                section_path: vec!["Intro".into()],
+                section_anchor: "intro".into(),
                 score: 0.81,
             },
             VectorSearchResult {
+                point_id: "p3".into(),
                 chunk_text: "Other chunk".into(),
                 document_slug: "docs/b".into(),
                 document_title: "Doc B".into(),
+                chunk_index: 0,
+                section_path: vec!["Usage".into()],
+                section_anchor: "usage".into(),
                 score: 0.65,
             },
         ]);
 
         assert_eq!(sources.len(), 2);
         assert_eq!(sources[0].document_slug, "docs/a");
+        assert_eq!(sources[0].section_title.as_deref(), Some("Intro"));
+        assert_eq!(sources[0].section_anchor.as_deref(), Some("intro"));
         assert_eq!(sources[0].score, 0.81);
         assert_eq!(sources[0].snippet.as_deref(), Some("Better chunk"));
         assert_eq!(sources[1].document_slug, "docs/b");
+    }
+
+    #[test]
+    fn build_source_references_keeps_distinct_sections_from_same_document() {
+        let sources = build_source_references(&[
+            VectorSearchResult {
+                point_id: "p1".into(),
+                chunk_text: "Storage chunk".into(),
+                document_slug: "docs/a".into(),
+                document_title: "Doc A".into(),
+                chunk_index: 0,
+                section_path: vec!["Architecture".into(), "Storage".into()],
+                section_anchor: "architecture-storage".into(),
+                score: 0.77,
+            },
+            VectorSearchResult {
+                point_id: "p2".into(),
+                chunk_text: "Deployment chunk".into(),
+                document_slug: "docs/a".into(),
+                document_title: "Doc A".into(),
+                chunk_index: 1,
+                section_path: vec!["Architecture".into(), "Deployment".into()],
+                section_anchor: "architecture-deployment".into(),
+                score: 0.71,
+            },
+        ]);
+
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[0].section_title.as_deref(), Some("Storage"));
+        assert_eq!(
+            sources[1].section_anchor.as_deref(),
+            Some("architecture-deployment")
+        );
+    }
+
+    #[test]
+    fn merge_chunk_texts_trims_overlapping_prefix() {
+        let merged = merge_chunk_texts(&[
+            "## Storage\n\nFirst half of the section.",
+            "section.\n\nSecond half of the section.",
+        ]);
+
+        assert_eq!(
+            merged,
+            "## Storage\n\nFirst half of the section.\n\nSecond half of the section."
+        );
+    }
+
+    #[test]
+    fn merge_parent_sections_replaces_top_hits_with_full_parent_text() {
+        let reranked = vec![
+            VectorSearchResult {
+                point_id: "p1".into(),
+                chunk_text: "chunk-a".into(),
+                document_slug: "docs/a".into(),
+                document_title: "Doc A".into(),
+                chunk_index: 0,
+                section_path: vec!["Architecture".into(), "Storage".into()],
+                section_anchor: "architecture-storage".into(),
+                score: 0.91,
+            },
+            VectorSearchResult {
+                point_id: "p2".into(),
+                chunk_text: "chunk-b".into(),
+                document_slug: "docs/b".into(),
+                document_title: "Doc B".into(),
+                chunk_index: 0,
+                section_path: vec!["Usage".into()],
+                section_anchor: "usage".into(),
+                score: 0.77,
+            },
+        ];
+        let parents = unique_parents_in_order(&reranked);
+        let fetched = vec![
+            Ok(vec![
+                VectorSearchResult {
+                    point_id: "f1".into(),
+                    chunk_text: "## Storage\n\nPart one.".into(),
+                    document_slug: "docs/a".into(),
+                    document_title: "Doc A".into(),
+                    chunk_index: 0,
+                    section_path: vec!["Architecture".into(), "Storage".into()],
+                    section_anchor: "architecture-storage".into(),
+                    score: 0.0,
+                },
+                VectorSearchResult {
+                    point_id: "f2".into(),
+                    chunk_text: "Part one.\n\nPart two.".into(),
+                    document_slug: "docs/a".into(),
+                    document_title: "Doc A".into(),
+                    chunk_index: 1,
+                    section_path: vec!["Architecture".into(), "Storage".into()],
+                    section_anchor: "architecture-storage".into(),
+                    score: 0.0,
+                },
+            ]),
+            Ok(vec![VectorSearchResult {
+                point_id: "f3".into(),
+                chunk_text: "## Usage\n\nOnly chunk.".into(),
+                document_slug: "docs/b".into(),
+                document_title: "Doc B".into(),
+                chunk_index: 0,
+                section_path: vec!["Usage".into()],
+                section_anchor: "usage".into(),
+                score: 0.0,
+            }]),
+        ];
+
+        let expanded = merge_parent_sections(reranked, parents, fetched).unwrap();
+
+        assert_eq!(expanded.len(), 2);
+        assert_eq!(expanded[0].score, 0.91);
+        assert_eq!(
+            expanded[0].chunk_text,
+            "## Storage\n\nPart one.\n\nPart two."
+        );
+        assert_eq!(expanded[1].chunk_text, "## Usage\n\nOnly chunk.");
     }
 }

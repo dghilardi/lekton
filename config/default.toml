@@ -64,6 +64,14 @@ If the context does not contain enough information to answer, say so honestly.""
 rewrite_model = ""
 rewrite_max_tokens = 80
 
+# Token-aware chunking (cl100k_base tokenizer).
+# chunk_size_tokens: target chunk size in tokens (default: 256 ≈ 1024 chars).
+# chunk_overlap_tokens: overlap between consecutive chunks (default: 64 tokens).
+chunk_size_tokens = 256
+chunk_overlap_tokens = 64
+# Expand top reranked chunks to their full parent section before prompt injection.
+expand_to_parent = false
+
 # Store original chunk text alongside its embedding in the cache (for debugging).
 embedding_cache_store_text = false
 # Cache embeddings generated for chat queries (in addition to chunk embeddings).

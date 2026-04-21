@@ -10,6 +10,12 @@ pub struct SourceReference {
     pub document_slug: String,
     /// Human-readable document title.
     pub document_title: String,
+    /// Deepest heading title for section-level citations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section_title: Option<String>,
+    /// URL-safe section anchor to append to `document_slug`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section_anchor: Option<String>,
     /// Cosine similarity score from retrieval.
     pub score: f32,
     /// Optional short preview snippet for UI display.
@@ -93,6 +99,8 @@ mod tests {
             sources: Some(vec![SourceReference {
                 document_slug: "docs/getting-started".into(),
                 document_title: "Getting Started".into(),
+                section_title: Some("Installation".into()),
+                section_anchor: Some("installation".into()),
                 score: 0.91,
                 snippet: Some("Quick start guide".into()),
             }]),
@@ -105,6 +113,12 @@ mod tests {
         assert_eq!(
             decoded.sources.as_ref().unwrap()[0].document_slug,
             "docs/getting-started"
+        );
+        assert_eq!(
+            decoded.sources.as_ref().unwrap()[0]
+                .section_anchor
+                .as_deref(),
+            Some("installation")
         );
     }
 

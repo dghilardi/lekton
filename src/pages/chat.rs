@@ -412,21 +412,38 @@ fn SourceReferencesBlock(sources: Vec<SourceReference>) -> impl IntoView {
             <div class="flex flex-col gap-2 border-t border-base-300/80 px-3 py-3">
                 <For
                     each=move || { sources.clone().into_iter().enumerate().collect::<Vec<_>>() }
-                    key=|(idx, source)| format!("{idx}-{}", source.document_slug)
+                    key=|(idx, source)| format!(
+                        "{idx}-{}-{}",
+                        source.document_slug,
+                        source.section_anchor.clone().unwrap_or_default()
+                    )
                     children=move |(_, source)| {
                         let document_slug = source.document_slug.clone();
                         let document_title = source.document_title.clone();
+                        let section_title = source.section_title.clone();
+                        let section_anchor = source.section_anchor.clone();
                         let score = source.score;
                         let snippet = source.snippet.clone();
                         let snippet_for_show = snippet.clone();
+                        let display_title = section_title.clone().unwrap_or_else(|| document_title.clone());
+                        let show_document_title = section_title.is_some();
+                        let href = match section_anchor.as_deref() {
+                            Some(anchor) if !anchor.is_empty() => {
+                                format!("/docs/{}#{}", document_slug, anchor)
+                            }
+                            _ => format!("/docs/{}", document_slug),
+                        };
                         view! {
                             <a
-                                href=format!("/docs/{}", document_slug)
+                                href=href
                                 class="block rounded-lg border border-base-300/70 bg-base-100 px-3 py-2 no-underline transition-colors hover:border-primary/40 hover:bg-base-100"
                             >
                                 <div class="flex items-start justify-between gap-3">
                                     <div class="min-w-0">
-                                        <div class="text-sm font-medium text-base-content">{document_title}</div>
+                                        <div class="text-sm font-medium text-base-content">{display_title}</div>
+                                        <Show when=move || show_document_title fallback=|| ()>
+                                            <div class="text-xs text-base-content/60">{document_title.clone()}</div>
+                                        </Show>
                                         <div class="text-xs text-base-content/50 break-all">{source.document_slug}</div>
                                     </div>
                                     <div class="shrink-0 text-[11px] font-mono text-base-content/45">

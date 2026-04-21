@@ -34,24 +34,35 @@ pub trait RagService: Send + Sync {
 pub struct DefaultRagService {
     embedding: Arc<dyn EmbeddingService>,
     vectorstore: Arc<dyn VectorStore>,
+    chunk_size_tokens: usize,
+    chunk_overlap_tokens: usize,
 }
 
 impl DefaultRagService {
-    /// Create from pre-built service components.
-    pub fn new(embedding: Arc<dyn EmbeddingService>, vectorstore: Arc<dyn VectorStore>) -> Self {
+    /// Create from pre-built service components with explicit chunk sizing.
+    pub fn new(
+        embedding: Arc<dyn EmbeddingService>,
+        vectorstore: Arc<dyn VectorStore>,
+        chunk_size_tokens: usize,
+        chunk_overlap_tokens: usize,
+    ) -> Self {
         Self {
             embedding,
             vectorstore,
+            chunk_size_tokens,
+            chunk_overlap_tokens,
         }
     }
 
-    /// Build from application config.  Returns `Err` when required URLs are missing.
+    /// Build from application config. Returns `Err` when required URLs are missing.
     pub fn from_rag_config(config: &RagConfig) -> Result<Self, AppError> {
         let embedding = OpenAICompatibleEmbedding::from_rag_config(config)?;
         let vectorstore = QdrantVectorStore::from_rag_config(config)?;
         Ok(Self {
             embedding: Arc::new(embedding),
             vectorstore: Arc::new(vectorstore),
+            chunk_size_tokens: config.chunk_size_tokens as usize,
+            chunk_overlap_tokens: config.chunk_overlap_tokens as usize,
         })
     }
 }
@@ -70,14 +81,28 @@ impl RagService for DefaultRagService {
         // 1. Remove previous chunks for this document
         self.vectorstore.delete_by_slug(slug).await?;
 
-        // 2. Split content into chunks
-        let chunks = split_document(content);
+        // 2. Split content into token-aware chunks
+        let chunks = split_document(content, self.chunk_size_tokens, self.chunk_overlap_tokens);
         if chunks.is_empty() {
             return Ok(());
         }
 
-        // 3. Embed all chunks
-        let vectors = self.embedding.embed(&chunks).await?;
+        // 3. Build enriched embedding texts: "Title > Section\n\nChunk text"
+        // The embedding vector is computed on the enriched text for better recall of
+        // context-ambiguous chunks. The display text (chunk.text) stays clean for prompt
+        // injection and UI rendering; only embedding_text is sent to the embedder.
+        let embedding_texts: Vec<String> = chunks
+            .iter()
+            .map(|c| {
+                let mut prefix = title.to_string();
+                if !c.section_path.is_empty() {
+                    prefix.push_str(" > ");
+                    prefix.push_str(&c.section_path.join(" > "));
+                }
+                format!("{}\n\n{}", prefix, c.text)
+            })
+            .collect();
+        let vectors = self.embedding.embed(&embedding_texts).await?;
 
         // 4. Build Qdrant points, skipping any chunk whose embedding is empty.
         // Some embedding backends (e.g. Ollama) return [] for whitespace-only
@@ -87,12 +112,11 @@ impl RagService for DefaultRagService {
         let points: Vec<VectorPoint> = chunks
             .into_iter()
             .zip(vectors)
-            .enumerate()
-            .filter_map(|(idx, (text, vector))| {
+            .filter_map(|(chunk, vector)| {
                 if vector.is_empty() {
                     tracing::warn!(
                         slug,
-                        idx,
+                        idx = chunk.chunk_index,
                         "RAG: embedding returned empty vector for chunk, skipping"
                     );
                     return None;
@@ -101,13 +125,15 @@ impl RagService for DefaultRagService {
                     id: Uuid::new_v4().to_string(),
                     vector,
                     payload: ChunkPayload {
-                        chunk_text: text,
+                        chunk_text: chunk.text,
+                        section_path: chunk.section_path,
+                        section_anchor: chunk.section_anchor,
                         document_slug: slug.to_string(),
                         document_title: title.to_string(),
                         access_level: access_level.to_string(),
                         is_draft,
                         tags: tags.to_vec(),
-                        chunk_index: idx as u32,
+                        chunk_index: chunk.chunk_index,
                     },
                 })
             })
@@ -162,6 +188,9 @@ mod tests {
             hyde_url: String::new(),
             reranker_model: String::new(),
             reranker_api_key: String::new(),
+            chunk_size_tokens: 256,
+            chunk_overlap_tokens: 64,
+            expand_to_parent: false,
         };
         assert!(DefaultRagService::from_rag_config(&config).is_err());
     }

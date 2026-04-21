@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use qdrant_client::qdrant::{
     Condition, CreateCollectionBuilder, DeletePointsBuilder, Distance, Filter, PointStruct,
-    SearchPointsBuilder, UpsertPointsBuilder, VectorParamsBuilder,
+    ScrollPointsBuilder, SearchPointsBuilder, UpsertPointsBuilder, VectorParamsBuilder,
 };
 use qdrant_client::{Payload, Qdrant};
 
@@ -20,6 +20,10 @@ pub struct ChunkPayload {
     pub is_draft: bool,
     pub tags: Vec<String>,
     pub chunk_index: u32,
+    /// Heading hierarchy above this chunk (e.g. `["Architecture", "Storage Layer"]`).
+    pub section_path: Vec<String>,
+    /// URL-safe anchor for the deepest heading (e.g. `"storage-layer"`).
+    pub section_anchor: String,
 }
 
 /// A vector point ready for upsert into Qdrant.
@@ -33,9 +37,17 @@ pub struct VectorPoint {
 /// A single search hit returned from the vector store.
 #[derive(Debug, Clone)]
 pub struct VectorSearchResult {
+    /// Stable identifier of the underlying vector point. Used by offline
+    /// evaluation tooling to match retrieved chunks against an expected set;
+    /// not consumed by the chat-time pipeline. Empty when the backend did not
+    /// return an id.
+    pub point_id: String,
     pub chunk_text: String,
     pub document_slug: String,
     pub document_title: String,
+    pub chunk_index: u32,
+    pub section_path: Vec<String>,
+    pub section_anchor: String,
     pub score: f32,
 }
 
@@ -63,6 +75,15 @@ pub trait VectorStore: Send + Sync {
         access_levels: Option<&[String]>,
         include_draft: bool,
     ) -> Result<Vec<VectorSearchResult>, AppError>;
+
+    /// Return all chunks that belong to the given document section.
+    async fn get_section_chunks(
+        &self,
+        document_slug: &str,
+        section_anchor: &str,
+        access_levels: Option<&[String]>,
+        include_draft: bool,
+    ) -> Result<Vec<VectorSearchResult>, AppError>;
 }
 
 // ── Qdrant implementation ────────────────────────────────────────────────────
@@ -84,6 +105,31 @@ impl QdrantVectorStore {
             client,
             collection: config.qdrant_collection.clone(),
         })
+    }
+
+    fn visibility_conditions(
+        access_levels: Option<&[String]>,
+        include_draft: bool,
+    ) -> Result<Vec<Condition>, AppError> {
+        let mut conditions: Vec<Condition> = Vec::new();
+
+        if let Some(levels) = access_levels {
+            if levels.is_empty() {
+                return Err(AppError::Internal(
+                    "section lookup requested with empty access levels".into(),
+                ));
+            }
+            conditions.push(Condition::matches(
+                "access_level",
+                levels.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            ));
+        }
+
+        if !include_draft {
+            conditions.push(Condition::matches("is_draft", false));
+        }
+
+        Ok(conditions)
     }
 }
 
@@ -130,7 +176,7 @@ impl VectorStore for QdrantVectorStore {
                 payload.insert("access_level", p.payload.access_level);
                 payload.insert("is_draft", p.payload.is_draft);
                 payload.insert("chunk_index", p.payload.chunk_index as i64);
-                // Store tags as a list of strings
+                payload.insert("section_anchor", p.payload.section_anchor);
                 let tag_values: Vec<qdrant_client::qdrant::Value> =
                     p.payload.tags.into_iter().map(|t| t.into()).collect();
                 payload.insert(
@@ -138,6 +184,22 @@ impl VectorStore for QdrantVectorStore {
                     qdrant_client::qdrant::Value {
                         kind: Some(qdrant_client::qdrant::value::Kind::ListValue(
                             qdrant_client::qdrant::ListValue { values: tag_values },
+                        )),
+                    },
+                );
+                let section_values: Vec<qdrant_client::qdrant::Value> = p
+                    .payload
+                    .section_path
+                    .into_iter()
+                    .map(|s| s.into())
+                    .collect();
+                payload.insert(
+                    "section_path",
+                    qdrant_client::qdrant::Value {
+                        kind: Some(qdrant_client::qdrant::value::Kind::ListValue(
+                            qdrant_client::qdrant::ListValue {
+                                values: section_values,
+                            },
                         )),
                     },
                 );
@@ -177,24 +239,10 @@ impl VectorStore for QdrantVectorStore {
         access_levels: Option<&[String]>,
         include_draft: bool,
     ) -> Result<Vec<VectorSearchResult>, AppError> {
-        let mut conditions: Vec<Condition> = Vec::new();
-
-        // Filter by access levels (skip for admins where access_levels is None)
-        if let Some(levels) = access_levels {
-            if levels.is_empty() {
-                // No access → return empty results immediately
-                return Ok(Vec::new());
-            }
-            conditions.push(Condition::matches(
-                "access_level",
-                levels.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
-            ));
-        }
-
-        // Exclude drafts unless explicitly included
-        if !include_draft {
-            conditions.push(Condition::matches("is_draft", false));
-        }
+        let conditions = match Self::visibility_conditions(access_levels, include_draft) {
+            Ok(conditions) => conditions,
+            Err(_) => return Ok(Vec::new()),
+        };
 
         let mut builder =
             SearchPointsBuilder::new(&self.collection, vector, limit as u64).with_payload(true);
@@ -213,6 +261,14 @@ impl VectorStore for QdrantVectorStore {
             .result
             .into_iter()
             .map(|scored| {
+                let point_id = scored
+                    .id
+                    .and_then(|id| id.point_id_options)
+                    .map(|opt| match opt {
+                        qdrant_client::qdrant::point_id::PointIdOptions::Uuid(s) => s,
+                        qdrant_client::qdrant::point_id::PointIdOptions::Num(n) => n.to_string(),
+                    })
+                    .unwrap_or_default();
                 let chunk_text = scored
                     .payload
                     .get("chunk_text")
@@ -231,16 +287,134 @@ impl VectorStore for QdrantVectorStore {
                     .and_then(|v| v.as_str())
                     .cloned()
                     .unwrap_or_default();
+                let chunk_index = scored
+                    .payload
+                    .get("chunk_index")
+                    .and_then(|v| v.as_integer())
+                    .map(|n| n as u32)
+                    .unwrap_or_default();
+                let section_anchor = scored
+                    .payload
+                    .get("section_anchor")
+                    .and_then(|v| v.as_str())
+                    .cloned()
+                    .unwrap_or_default();
+                let section_path = scored
+                    .payload
+                    .get("section_path")
+                    .and_then(|v| v.as_list())
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(|v| v.as_str().cloned())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
 
                 VectorSearchResult {
+                    point_id,
                     chunk_text,
                     document_slug,
                     document_title,
+                    chunk_index,
+                    section_path,
+                    section_anchor,
                     score: scored.score,
                 }
             })
             .collect();
 
+        Ok(results)
+    }
+
+    async fn get_section_chunks(
+        &self,
+        document_slug: &str,
+        section_anchor: &str,
+        access_levels: Option<&[String]>,
+        include_draft: bool,
+    ) -> Result<Vec<VectorSearchResult>, AppError> {
+        let mut conditions = match Self::visibility_conditions(access_levels, include_draft) {
+            Ok(conditions) => conditions,
+            Err(_) => return Ok(Vec::new()),
+        };
+        conditions.push(Condition::matches(
+            "document_slug",
+            document_slug.to_string(),
+        ));
+        conditions.push(Condition::matches(
+            "section_anchor",
+            section_anchor.to_string(),
+        ));
+
+        let response = self
+            .client
+            .scroll(
+                ScrollPointsBuilder::new(&self.collection)
+                    .filter(Filter::must(conditions))
+                    .limit(256)
+                    .with_payload(true)
+                    .with_vectors(false),
+            )
+            .await
+            .map_err(|e| AppError::Internal(format!("qdrant scroll section chunks: {e}")))?;
+
+        let mut results: Vec<VectorSearchResult> = response
+            .result
+            .into_iter()
+            .map(|point| {
+                let point_id = point
+                    .id
+                    .and_then(|id| id.point_id_options)
+                    .map(|opt| match opt {
+                        qdrant_client::qdrant::point_id::PointIdOptions::Uuid(s) => s,
+                        qdrant_client::qdrant::point_id::PointIdOptions::Num(n) => n.to_string(),
+                    })
+                    .unwrap_or_default();
+                let chunk_text = point
+                    .payload
+                    .get("chunk_text")
+                    .and_then(|v| v.as_str())
+                    .cloned()
+                    .unwrap_or_default();
+                let document_title = point
+                    .payload
+                    .get("document_title")
+                    .and_then(|v| v.as_str())
+                    .cloned()
+                    .unwrap_or_default();
+                let chunk_index = point
+                    .payload
+                    .get("chunk_index")
+                    .and_then(|v| v.as_integer())
+                    .map(|n| n as u32)
+                    .unwrap_or_default();
+                let section_path = point
+                    .payload
+                    .get("section_path")
+                    .and_then(|v| v.as_list())
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(|v| v.as_str().cloned())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+
+                VectorSearchResult {
+                    point_id,
+                    chunk_text,
+                    document_slug: document_slug.to_string(),
+                    document_title,
+                    chunk_index,
+                    section_path,
+                    section_anchor: section_anchor.to_string(),
+                    score: 0.0,
+                }
+            })
+            .collect();
+
+        results.sort_by_key(|chunk| chunk.chunk_index);
         Ok(results)
     }
 }
@@ -280,6 +454,9 @@ mod tests {
             hyde_url: String::new(),
             reranker_model: String::new(),
             reranker_api_key: String::new(),
+            chunk_size_tokens: 256,
+            chunk_overlap_tokens: 64,
+            expand_to_parent: false,
         };
         assert!(QdrantVectorStore::from_rag_config(&config).is_err());
     }
@@ -315,6 +492,9 @@ mod tests {
             hyde_url: String::new(),
             reranker_model: String::new(),
             reranker_api_key: String::new(),
+            chunk_size_tokens: 256,
+            chunk_overlap_tokens: 64,
+            expand_to_parent: false,
         };
         assert!(QdrantVectorStore::from_rag_config(&config).is_ok());
     }
@@ -356,6 +536,9 @@ mod tests {
             hyde_url: String::new(),
             reranker_model: String::new(),
             reranker_api_key: String::new(),
+            chunk_size_tokens: 256,
+            chunk_overlap_tokens: 64,
+            expand_to_parent: false,
         };
         let store = QdrantVectorStore::from_rag_config(&config).unwrap();
 

@@ -1,0 +1,35 @@
+# Starter eval set for the Lekton RAG retrieval pipeline.
+#
+# This file is consumed by `cargo run --bin rag-eval`. Lines starting with
+# `#` and blank lines are ignored; every other line is one JSON record:
+#
+#   {"id":"Q01","query":"...","expected_doc_slugs":["slug-a","slug-b"]}
+#
+# Slugs below match the demo corpus loaded by `demo/load_demo.sh`. Extend
+# this file with queries representative of your real corpus before drawing
+# conclusions from the metrics — 30-50 well-chosen queries is a reasonable
+# minimum for a meaningful Recall@k / MRR / nDCG signal.
+#
+# Field reference:
+#   id                  Optional. Defaults to "Q001", "Q002", ... when omitted.
+#   query               Required. The user-facing question to retrieve for.
+#   expected_doc_slugs  At least one expected document slug. Slug-level matching
+#                       is preferred because chunk ids change across reindexes.
+#   expected_chunk_ids  Optional. Match specific Qdrant point ids — only useful
+#                       when chunking has not changed since the eval was authored.
+
+# ── Single-document, single-intent queries ───────────────────────────────────
+{"id": "Q01", "query": "How do I push my docs into Lekton from CI?", "expected_doc_slugs": ["getting-started"]}
+{"id": "Q02", "query": "Show me the GitHub Actions integration for documentation ingestion", "expected_doc_slugs": ["getting-started"]}
+{"id": "Q03", "query": "What endpoint do I call to ingest a document?", "expected_doc_slugs": ["api-reference"]}
+{"id": "Q04", "query": "What are the rate limits on the ingest API?", "expected_doc_slugs": ["api-reference"]}
+{"id": "Q05", "query": "How do access levels and RBAC work in Lekton?", "expected_doc_slugs": ["security-rbac"]}
+{"id": "Q06", "query": "How do I enable OIDC for production authentication?", "expected_doc_slugs": ["security-rbac"]}
+{"id": "Q07", "query": "Walk me through deploying Lekton on Kubernetes", "expected_doc_slugs": ["deployment-guide"]}
+{"id": "Q08", "query": "Which environment variables do I need to set when running Lekton?", "expected_doc_slugs": ["deployment-guide"]}
+{"id": "Q09", "query": "Where are documents and assets stored in the architecture?", "expected_doc_slugs": ["architecture"]}
+{"id": "Q10", "query": "What is the technology stack used by Lekton?", "expected_doc_slugs": ["architecture"]}
+
+# ── Multi-document / multi-intent queries (exercise the analyzer) ────────────
+{"id": "Q11", "query": "How does service token authentication work and where is it configured?", "expected_doc_slugs": ["api-reference", "security-rbac"]}
+{"id": "Q12", "query": "Compare demo-mode authentication with OIDC for production", "expected_doc_slugs": ["security-rbac", "api-reference"]}

@@ -8,9 +8,19 @@ version = "0.14.3"
 authors = ["Davide Ghilardi"]
 edition = "2021"
 license = "AGPL-3.0-or-later"
+default-run = "lekton"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "lekton"
+path = "src/main.rs"
+
+[[bin]]
+name = "rag-eval"
+path = "src/bin/rag_eval.rs"
+required-features = ["ssr"]
 
  [dependencies]
 # Leptos ecosystem
@@ -54,7 +64,8 @@ qdrant-client = { version = "1", optional = true }
 async-openai = { version = "0.35", features = ["embedding", "chat-completion"], optional = true }
 gcp_auth = { version = "0.12.6", optional = true }
 rustls = { version = "0.23", features = ["aws-lc-rs"], optional = true }
-text-splitter = { version = "0.30", features = ["markdown"], optional = true }
+text-splitter = { version = "0.30", features = ["markdown", "tiktoken-rs"], optional = true }
+tiktoken-rs = { version = "0.11", optional = true }
 tera = { version = "1", optional = true }
 
 # MCP (Model Context Protocol)
@@ -178,6 +189,7 @@ ssr = [
     "dep:gcp_auth",
     "dep:rustls",
     "dep:text-splitter",
+    "dep:tiktoken-rs",
     "dep:tera",
     "dep:rmcp",
     "dep:schemars",
@@ -197,6 +209,8 @@ panic = "abort"
 [package.metadata.leptos]
 # The name used by wasm-bindgen/cargo-leptos for the JS/WASM bundle
 output-name = "lekton"
+# Explicit bin target needed when the crate has multiple [[bin]] entries
+bin-target = "lekton"
 
 # The site root folder is where cargo-leptos generates all output
 site-root = "target/site"

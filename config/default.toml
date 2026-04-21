@@ -69,6 +69,8 @@ rewrite_max_tokens = 80
 # chunk_overlap_tokens: overlap between consecutive chunks (default: 64 tokens).
 chunk_size_tokens = 256
 chunk_overlap_tokens = 64
+# Expand top reranked chunks to their full parent section before prompt injection.
+expand_to_parent = false
 
 # Store original chunk text alongside its embedding in the cache (for debugging).
 embedding_cache_store_text = false

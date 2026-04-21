@@ -37,6 +37,7 @@ const CANDIDATE_MULTIPLIER: usize = 3;
 pub struct ChatService {
     embedding: Arc<dyn EmbeddingService>,
     vectorstore: Arc<dyn VectorStore>,
+    expand_to_parent: bool,
     /// Optional Meilisearch service used for hybrid search (RRF). `None` when
     /// hybrid search is disabled or Meilisearch is not configured.
     search_service: Option<Arc<dyn SearchService>>,
@@ -176,6 +177,7 @@ impl ChatService {
         Ok(Self {
             embedding,
             vectorstore,
+            expand_to_parent: config.expand_to_parent,
             search_service: hybrid_search_service,
             reranker,
             analyzer,
@@ -254,7 +256,9 @@ impl ChatService {
             .retrieve_only(user_ctx, &user_message, &history, &session_id)
             .await?;
 
-        let search_results = retrieval.post_rerank;
+        let search_results = self
+            .expand_results_to_parent(user_ctx, retrieval.post_rerank, &session_id)
+            .await?;
         let source_references = build_source_references(&search_results);
 
         // 7. Build context string from search results
@@ -430,6 +434,44 @@ impl ChatService {
         };
 
         Ok(Box::pin(event_stream))
+    }
+
+    async fn expand_results_to_parent(
+        &self,
+        user_ctx: &UserContext,
+        results: Vec<VectorSearchResult>,
+        session_id: &str,
+    ) -> Result<Vec<VectorSearchResult>, AppError> {
+        if !self.expand_to_parent || results.is_empty() {
+            return Ok(results);
+        }
+
+        let (allowed_levels, include_draft) = user_ctx.document_visibility();
+        let parents = unique_parents_in_order(&results);
+        tracing::debug!(
+            session_id = %session_id,
+            parents = parents.len(),
+            "RAG: expanding reranked chunks to parent sections"
+        );
+
+        let section_fetches = parents.iter().map(|(slug, anchor)| {
+            self.vectorstore.get_section_chunks(
+                slug,
+                anchor,
+                allowed_levels.as_deref(),
+                include_draft,
+            )
+        });
+        let fetched = futures::future::join_all(section_fetches).await;
+        let merged = merge_parent_sections(results, parents, fetched)?;
+
+        tracing::debug!(
+            session_id = %session_id,
+            expanded = ?summarize_search_results(&merged),
+            "RAG: parent expansion complete"
+        );
+
+        Ok(merged)
     }
 
     /// Run the retrieval pipeline (analyzer + HyDE + decomposition + vector
@@ -684,6 +726,104 @@ fn dedup_chunks(chunks: Vec<VectorSearchResult>) -> Vec<VectorSearchResult> {
     result
 }
 
+fn unique_parents_in_order(results: &[VectorSearchResult]) -> Vec<(String, String)> {
+    let mut seen: HashMap<(String, String), ()> = HashMap::new();
+    let mut parents = Vec::new();
+
+    for result in results {
+        let key = (result.document_slug.clone(), result.section_anchor.clone());
+        if seen.insert(key.clone(), ()).is_none() {
+            parents.push(key);
+        }
+    }
+
+    parents
+}
+
+fn merge_parent_sections(
+    reranked_results: Vec<VectorSearchResult>,
+    parents: Vec<(String, String)>,
+    fetched_sections: Vec<Result<Vec<VectorSearchResult>, AppError>>,
+) -> Result<Vec<VectorSearchResult>, AppError> {
+    let mut parent_scores: HashMap<(String, String), VectorSearchResult> = HashMap::new();
+    for result in reranked_results {
+        let key = (result.document_slug.clone(), result.section_anchor.clone());
+        match parent_scores.get(&key) {
+            Some(existing) if existing.score >= result.score => {}
+            _ => {
+                parent_scores.insert(key, result);
+            }
+        }
+    }
+
+    let mut expanded = Vec::new();
+    for ((document_slug, section_anchor), fetched) in parents.into_iter().zip(fetched_sections) {
+        let siblings = fetched?;
+        let Some(best_parent_hit) =
+            parent_scores.get(&(document_slug.clone(), section_anchor.clone()))
+        else {
+            continue;
+        };
+
+        if siblings.is_empty() {
+            expanded.push(best_parent_hit.clone());
+            continue;
+        }
+
+        let merged_text = merge_chunk_texts(
+            &siblings
+                .iter()
+                .map(|chunk| chunk.chunk_text.as_str())
+                .collect::<Vec<_>>(),
+        );
+
+        let mut parent_result = best_parent_hit.clone();
+        parent_result.chunk_text = merged_text;
+        parent_result.chunk_index = siblings.first().map(|chunk| chunk.chunk_index).unwrap_or(0);
+        if let Some(first) = siblings.first() {
+            parent_result.section_path = first.section_path.clone();
+            parent_result.document_title = first.document_title.clone();
+        }
+
+        expanded.push(parent_result);
+    }
+
+    Ok(expanded)
+}
+
+fn merge_chunk_texts(chunks: &[&str]) -> String {
+    let mut merged = String::new();
+
+    for chunk in chunks {
+        if chunk.is_empty() {
+            continue;
+        }
+
+        if merged.is_empty() {
+            merged.push_str(chunk);
+            continue;
+        }
+
+        if merged.contains(chunk) {
+            continue;
+        }
+
+        let mut overlap_start = 0usize;
+        for (idx, _) in chunk.char_indices() {
+            if merged.ends_with(&chunk[..idx]) {
+                overlap_start = idx;
+            }
+        }
+
+        if overlap_start == 0 && !merged.ends_with('\n') {
+            merged.push_str("\n\n");
+        }
+        merged.push_str(&chunk[overlap_start..]);
+    }
+
+    merged
+}
+
 fn summarize_messages(messages: &[ChatCompletionRequestMessage]) -> Vec<String> {
     messages.iter().map(summarize_message).collect()
 }
@@ -736,10 +876,11 @@ fn summarize_search_results(
         .iter()
         .map(|result| {
             format!(
-                "id={} score={:.4} slug={} title={} chunk={}",
+                "id={} score={:.4} slug={} anchor={} title={} chunk={}",
                 result.point_id,
                 result.score,
                 result.document_slug,
+                result.section_anchor,
                 result.document_title,
                 preview_text(&result.chunk_text, 240)
             )
@@ -847,6 +988,7 @@ mod tests {
                 chunk_text: "First chunk".into(),
                 document_slug: "docs/a".into(),
                 document_title: "Doc A".into(),
+                chunk_index: 0,
                 section_path: vec!["Intro".into()],
                 section_anchor: "intro".into(),
                 score: 0.42,
@@ -856,6 +998,7 @@ mod tests {
                 chunk_text: "Better chunk".into(),
                 document_slug: "docs/a".into(),
                 document_title: "Doc A".into(),
+                chunk_index: 1,
                 section_path: vec!["Intro".into()],
                 section_anchor: "intro".into(),
                 score: 0.81,
@@ -865,6 +1008,7 @@ mod tests {
                 chunk_text: "Other chunk".into(),
                 document_slug: "docs/b".into(),
                 document_title: "Doc B".into(),
+                chunk_index: 0,
                 section_path: vec!["Usage".into()],
                 section_anchor: "usage".into(),
                 score: 0.65,
@@ -888,6 +1032,7 @@ mod tests {
                 chunk_text: "Storage chunk".into(),
                 document_slug: "docs/a".into(),
                 document_title: "Doc A".into(),
+                chunk_index: 0,
                 section_path: vec!["Architecture".into(), "Storage".into()],
                 section_anchor: "architecture-storage".into(),
                 score: 0.77,
@@ -897,6 +1042,7 @@ mod tests {
                 chunk_text: "Deployment chunk".into(),
                 document_slug: "docs/a".into(),
                 document_title: "Doc A".into(),
+                chunk_index: 1,
                 section_path: vec!["Architecture".into(), "Deployment".into()],
                 section_anchor: "architecture-deployment".into(),
                 score: 0.71,
@@ -909,5 +1055,89 @@ mod tests {
             sources[1].section_anchor.as_deref(),
             Some("architecture-deployment")
         );
+    }
+
+    #[test]
+    fn merge_chunk_texts_trims_overlapping_prefix() {
+        let merged = merge_chunk_texts(&[
+            "## Storage\n\nFirst half of the section.",
+            "section.\n\nSecond half of the section.",
+        ]);
+
+        assert_eq!(
+            merged,
+            "## Storage\n\nFirst half of the section.\n\nSecond half of the section."
+        );
+    }
+
+    #[test]
+    fn merge_parent_sections_replaces_top_hits_with_full_parent_text() {
+        let reranked = vec![
+            VectorSearchResult {
+                point_id: "p1".into(),
+                chunk_text: "chunk-a".into(),
+                document_slug: "docs/a".into(),
+                document_title: "Doc A".into(),
+                chunk_index: 0,
+                section_path: vec!["Architecture".into(), "Storage".into()],
+                section_anchor: "architecture-storage".into(),
+                score: 0.91,
+            },
+            VectorSearchResult {
+                point_id: "p2".into(),
+                chunk_text: "chunk-b".into(),
+                document_slug: "docs/b".into(),
+                document_title: "Doc B".into(),
+                chunk_index: 0,
+                section_path: vec!["Usage".into()],
+                section_anchor: "usage".into(),
+                score: 0.77,
+            },
+        ];
+        let parents = unique_parents_in_order(&reranked);
+        let fetched = vec![
+            Ok(vec![
+                VectorSearchResult {
+                    point_id: "f1".into(),
+                    chunk_text: "## Storage\n\nPart one.".into(),
+                    document_slug: "docs/a".into(),
+                    document_title: "Doc A".into(),
+                    chunk_index: 0,
+                    section_path: vec!["Architecture".into(), "Storage".into()],
+                    section_anchor: "architecture-storage".into(),
+                    score: 0.0,
+                },
+                VectorSearchResult {
+                    point_id: "f2".into(),
+                    chunk_text: "Part one.\n\nPart two.".into(),
+                    document_slug: "docs/a".into(),
+                    document_title: "Doc A".into(),
+                    chunk_index: 1,
+                    section_path: vec!["Architecture".into(), "Storage".into()],
+                    section_anchor: "architecture-storage".into(),
+                    score: 0.0,
+                },
+            ]),
+            Ok(vec![VectorSearchResult {
+                point_id: "f3".into(),
+                chunk_text: "## Usage\n\nOnly chunk.".into(),
+                document_slug: "docs/b".into(),
+                document_title: "Doc B".into(),
+                chunk_index: 0,
+                section_path: vec!["Usage".into()],
+                section_anchor: "usage".into(),
+                score: 0.0,
+            }]),
+        ];
+
+        let expanded = merge_parent_sections(reranked, parents, fetched).unwrap();
+
+        assert_eq!(expanded.len(), 2);
+        assert_eq!(expanded[0].score, 0.91);
+        assert_eq!(
+            expanded[0].chunk_text,
+            "## Storage\n\nPart one.\n\nPart two."
+        );
+        assert_eq!(expanded[1].chunk_text, "## Usage\n\nOnly chunk.");
     }
 }

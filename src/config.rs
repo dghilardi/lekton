@@ -205,6 +205,10 @@ pub struct RagConfig {
     /// Overlap between consecutive chunks in tokens. Must be less than `chunk_size_tokens`.
     /// Default: 64.
     pub chunk_overlap_tokens: u32,
+    /// When `true`, the final top-K reranked chunks are expanded to their full parent section
+    /// before building the LLM context. Default: `false`.
+    #[serde(default)]
+    pub expand_to_parent: bool,
     /// When `true`, the original chunk text is stored alongside its embedding in the cache.
     /// Useful for debugging but increases storage. Default: `false`.
     #[serde(default)]

@@ -50,6 +50,7 @@ mod tests {
             chunk_text: format!("chunk for {slug}"),
             document_slug: slug.to_string(),
             document_title: slug.to_string(),
+            chunk_index: 0,
             section_path: Vec::new(),
             section_anchor: String::new(),
             score,

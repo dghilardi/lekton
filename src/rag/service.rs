@@ -190,6 +190,7 @@ mod tests {
             reranker_api_key: String::new(),
             chunk_size_tokens: 256,
             chunk_overlap_tokens: 64,
+            expand_to_parent: false,
         };
         assert!(DefaultRagService::from_rag_config(&config).is_err());
     }

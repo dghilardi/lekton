@@ -58,11 +58,8 @@ fn parse_heading(line: &str) -> Option<(u8, &str)> {
         return None;
     }
     let rest = &trimmed[hashes..];
-    if rest.starts_with(' ') {
-        Some((hashes as u8, rest[1..].trim_end()))
-    } else {
-        None
-    }
+    rest.strip_prefix(' ')
+        .map(|stripped| (hashes as u8, stripped.trim_end()))
 }
 
 /// Split a Markdown document by H1/H2 headings into raw sections.

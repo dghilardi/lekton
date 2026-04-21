@@ -750,13 +750,21 @@ fn summarize_search_results(
 fn build_source_references(
     results: &[crate::rag::vectorstore::VectorSearchResult],
 ) -> Vec<SourceReference> {
-    let mut deduped: HashMap<&str, SourceReference> = HashMap::new();
+    let mut deduped: HashMap<(String, String), SourceReference> = HashMap::new();
 
     for result in results {
         let snippet = preview_text(&result.chunk_text, 180);
+        let section_title = result.section_path.last().cloned();
+        let section_anchor = if result.section_anchor.is_empty() {
+            None
+        } else {
+            Some(result.section_anchor.clone())
+        };
         let candidate = SourceReference {
             document_slug: result.document_slug.clone(),
             document_title: result.document_title.clone(),
+            section_title,
+            section_anchor: section_anchor.clone(),
             score: result.score,
             snippet: if snippet.is_empty() {
                 None
@@ -764,11 +772,15 @@ fn build_source_references(
                 Some(snippet)
             },
         };
+        let dedupe_key = (
+            result.document_slug.clone(),
+            section_anchor.clone().unwrap_or_default(),
+        );
 
-        match deduped.get(result.document_slug.as_str()) {
+        match deduped.get(&dedupe_key) {
             Some(existing) if existing.score >= candidate.score => {}
             _ => {
-                deduped.insert(result.document_slug.as_str(), candidate);
+                deduped.insert(dedupe_key, candidate);
             }
         }
     }
@@ -778,6 +790,7 @@ fn build_source_references(
         b.score
             .total_cmp(&a.score)
             .then_with(|| a.document_slug.cmp(&b.document_slug))
+            .then_with(|| a.section_anchor.cmp(&b.section_anchor))
     });
     sources
 }
@@ -834,6 +847,8 @@ mod tests {
                 chunk_text: "First chunk".into(),
                 document_slug: "docs/a".into(),
                 document_title: "Doc A".into(),
+                section_path: vec!["Intro".into()],
+                section_anchor: "intro".into(),
                 score: 0.42,
             },
             VectorSearchResult {
@@ -841,6 +856,8 @@ mod tests {
                 chunk_text: "Better chunk".into(),
                 document_slug: "docs/a".into(),
                 document_title: "Doc A".into(),
+                section_path: vec!["Intro".into()],
+                section_anchor: "intro".into(),
                 score: 0.81,
             },
             VectorSearchResult {
@@ -848,14 +865,49 @@ mod tests {
                 chunk_text: "Other chunk".into(),
                 document_slug: "docs/b".into(),
                 document_title: "Doc B".into(),
+                section_path: vec!["Usage".into()],
+                section_anchor: "usage".into(),
                 score: 0.65,
             },
         ]);
 
         assert_eq!(sources.len(), 2);
         assert_eq!(sources[0].document_slug, "docs/a");
+        assert_eq!(sources[0].section_title.as_deref(), Some("Intro"));
+        assert_eq!(sources[0].section_anchor.as_deref(), Some("intro"));
         assert_eq!(sources[0].score, 0.81);
         assert_eq!(sources[0].snippet.as_deref(), Some("Better chunk"));
         assert_eq!(sources[1].document_slug, "docs/b");
+    }
+
+    #[test]
+    fn build_source_references_keeps_distinct_sections_from_same_document() {
+        let sources = build_source_references(&[
+            VectorSearchResult {
+                point_id: "p1".into(),
+                chunk_text: "Storage chunk".into(),
+                document_slug: "docs/a".into(),
+                document_title: "Doc A".into(),
+                section_path: vec!["Architecture".into(), "Storage".into()],
+                section_anchor: "architecture-storage".into(),
+                score: 0.77,
+            },
+            VectorSearchResult {
+                point_id: "p2".into(),
+                chunk_text: "Deployment chunk".into(),
+                document_slug: "docs/a".into(),
+                document_title: "Doc A".into(),
+                section_path: vec!["Architecture".into(), "Deployment".into()],
+                section_anchor: "architecture-deployment".into(),
+                score: 0.71,
+            },
+        ]);
+
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[0].section_title.as_deref(), Some("Storage"));
+        assert_eq!(
+            sources[1].section_anchor.as_deref(),
+            Some("architecture-deployment")
+        );
     }
 }

@@ -437,6 +437,8 @@ mod ssr {
                 chunk_text: format!("chunk for {slug}"),
                 document_slug: slug.into(),
                 document_title: slug.into(),
+                section_path: Vec::new(),
+                section_anchor: String::new(),
                 score,
             }
         }

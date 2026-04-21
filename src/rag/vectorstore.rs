@@ -45,6 +45,8 @@ pub struct VectorSearchResult {
     pub chunk_text: String,
     pub document_slug: String,
     pub document_title: String,
+    pub section_path: Vec<String>,
+    pub section_anchor: String,
     pub score: f32,
 }
 
@@ -264,12 +266,31 @@ impl VectorStore for QdrantVectorStore {
                     .and_then(|v| v.as_str())
                     .cloned()
                     .unwrap_or_default();
+                let section_anchor = scored
+                    .payload
+                    .get("section_anchor")
+                    .and_then(|v| v.as_str())
+                    .cloned()
+                    .unwrap_or_default();
+                let section_path = scored
+                    .payload
+                    .get("section_path")
+                    .and_then(|v| v.as_list())
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(|v| v.as_str().cloned())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
 
                 VectorSearchResult {
                     point_id,
                     chunk_text,
                     document_slug,
                     document_title,
+                    section_path,
+                    section_anchor,
                     score: scored.score,
                 }
             })

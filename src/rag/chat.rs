@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use async_openai::types::chat::{
     ChatCompletionRequestAssistantMessage, ChatCompletionRequestAssistantMessageContent,
@@ -612,10 +615,9 @@ impl ChatService {
             (futures::future::join_all(vector_searches).await, vec![])
         };
 
-        // Flatten results from all sub-query searches, propagating errors.
-        // Log per-sub-query hits so retrieval failures can be triaged by which
-        // sub-query did or didn't bring back the expected chunk.
-        let mut merged_chunks: Vec<VectorSearchResult> = Vec::new();
+        // Collect per-sub-query results, preserving the list structure needed
+        // for RRF-based merging with per-sub-query diversity guarantees.
+        let mut chunks_per_subquery: Vec<Vec<VectorSearchResult>> = Vec::new();
         for (sub_query, result) in queries_to_embed.iter().zip(vector_results_nested) {
             let chunks = result?;
             tracing::debug!(
@@ -626,16 +628,21 @@ impl ChatService {
                 scores = ?chunks.iter().map(|c| c.score).collect::<Vec<_>>(),
                 "RAG: sub-query hits"
             );
-            merged_chunks.extend(chunks);
+            chunks_per_subquery.push(chunks);
         }
 
-        // Deduplicate when multiple sub-queries were used (same chunk can appear
-        // in results for several sub-queries).
-        if queries_to_embed.len() > 1 {
-            merged_chunks = dedup_chunks(merged_chunks);
-        }
+        let (merged_chunks, guaranteed_ids) = if chunks_per_subquery.len() > 1 {
+            merge_subquery_chunks(chunks_per_subquery)
+        } else {
+            (
+                chunks_per_subquery.into_iter().flatten().collect(),
+                Vec::new(),
+            )
+        };
 
         // Apply RRF if hybrid is enabled; otherwise keep retrieval order.
+        // `take_with_guarantee` is used in both paths so that the per-sub-query
+        // diversity contract survives hybrid reordering.
         let pre_rerank: Vec<VectorSearchResult> = if !text_slugs.is_empty() {
             tracing::debug!(
                 session_id = %session_id,
@@ -643,9 +650,9 @@ impl ChatService {
                 "RAG: applying hybrid RRF"
             );
             let fused = crate::rag::rrf::fuse(merged_chunks, &text_slugs);
-            fused.into_iter().take(MAX_CONTEXT_CHUNKS).collect()
+            take_with_guarantee(fused, &guaranteed_ids, MAX_CONTEXT_CHUNKS)
         } else {
-            merged_chunks.into_iter().take(MAX_CONTEXT_CHUNKS).collect()
+            take_with_guarantee(merged_chunks, &guaranteed_ids, MAX_CONTEXT_CHUNKS)
         };
 
         tracing::debug!(
@@ -705,24 +712,119 @@ impl ChatService {
     }
 }
 
-/// Deduplicate chunks from multiple sub-query searches, keeping the highest
-/// score for each unique chunk text.
-fn dedup_chunks(chunks: Vec<VectorSearchResult>) -> Vec<VectorSearchResult> {
-    let mut best: HashMap<String, VectorSearchResult> = HashMap::new();
-    for chunk in chunks {
-        match best.entry(chunk.chunk_text.clone()) {
-            std::collections::hash_map::Entry::Occupied(mut e) => {
-                if chunk.score > e.get().score {
-                    *e.get_mut() = chunk;
-                }
+/// Merge and deduplicate chunks from multiple sub-query searches.
+///
+/// Applies RRF (Reciprocal Rank Fusion) across sub-queries — each chunk
+/// accumulates `1/(K + rank + 1)` for every sub-query where it appears —
+/// and guarantees the top-ranked chunk from each sub-query is present in
+/// the output. This prevents a single high-scoring topic from claiming all
+/// context slots in a multi-hop query (e.g. "compare X and Y" where X and Y
+/// come from different documents with different cosine similarity ranges).
+///
+/// Output order: guaranteed chunks first (one per sub-query, in sub-query
+/// order), then remaining candidates sorted by RRF score descending.
+/// Returns `(rrf_sorted_candidates, guaranteed_ids)`.
+///
+/// `guaranteed_ids` contains the `point_id` of the top-ranked chunk from each
+/// unique sub-query (in sub-query order, deduplicated). Callers should pass
+/// this to [`take_with_guarantee`] so the diversity contract survives any
+/// subsequent reordering (e.g. hybrid `rrf::fuse`).
+fn merge_subquery_chunks(
+    chunks_per_subquery: Vec<Vec<VectorSearchResult>>,
+) -> (Vec<VectorSearchResult>, Vec<String>) {
+    const K: usize = 60;
+
+    let mut rrf: HashMap<String, (VectorSearchResult, f64)> = HashMap::new();
+    let mut guaranteed_ids: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+
+    for sub_query_chunks in &chunks_per_subquery {
+        if let Some(chunk) = sub_query_chunks.first() {
+            if seen.insert(chunk.point_id.clone()) {
+                guaranteed_ids.push(chunk.point_id.clone());
             }
-            std::collections::hash_map::Entry::Vacant(e) => {
-                e.insert(chunk);
+        }
+        for (rank, chunk) in sub_query_chunks.iter().enumerate() {
+            let contrib = 1.0 / (K + rank + 1) as f64;
+            let entry = rrf
+                .entry(chunk.point_id.clone())
+                .or_insert_with(|| (chunk.clone(), 0.0));
+            entry.1 += contrib;
+            if chunk.score > entry.0.score {
+                entry.0 = chunk.clone();
             }
         }
     }
-    let mut result: Vec<VectorSearchResult> = best.into_values().collect();
-    result.sort_by(|a, b| b.score.total_cmp(&a.score));
+
+    let mut sorted: Vec<(String, VectorSearchResult, f64)> = rrf
+        .into_iter()
+        .map(|(id, (chunk, score))| (id, chunk, score))
+        .collect();
+    sorted.sort_by(|a, b| b.2.total_cmp(&a.2));
+
+    let sorted_idx: HashMap<&str, usize> = sorted
+        .iter()
+        .enumerate()
+        .map(|(i, (id, _, _))| (id.as_str(), i))
+        .collect();
+
+    let guaranteed_set: HashSet<&str> = guaranteed_ids.iter().map(|s| s.as_str()).collect();
+
+    let mut result: Vec<VectorSearchResult> = guaranteed_ids
+        .iter()
+        .filter_map(|id| sorted_idx.get(id.as_str()).map(|&i| sorted[i].1.clone()))
+        .collect();
+
+    for (id, chunk, _) in &sorted {
+        if !guaranteed_set.contains(id.as_str()) {
+            result.push(chunk.clone());
+        }
+    }
+
+    (result, guaranteed_ids)
+}
+
+/// Truncate `candidates` to `limit`, ensuring every `guaranteed_ids` entry
+/// appears in the output.
+///
+/// Guaranteed chunks are placed first (in the order given), then remaining
+/// slots are filled from `candidates` in their existing order. This preserves
+/// the diversity guarantee even after `candidates` has been reordered by an
+/// external step such as hybrid `rrf::fuse`.
+fn take_with_guarantee(
+    candidates: Vec<VectorSearchResult>,
+    guaranteed_ids: &[String],
+    limit: usize,
+) -> Vec<VectorSearchResult> {
+    let candidate_map: HashMap<&str, VectorSearchResult> = candidates
+        .iter()
+        .map(|c| (c.point_id.as_str(), c.clone()))
+        .collect();
+
+    let mut result: Vec<VectorSearchResult> = Vec::with_capacity(limit);
+    let mut included: HashSet<String> = HashSet::new();
+
+    for id in guaranteed_ids {
+        if result.len() >= limit {
+            break;
+        }
+        if let Some(chunk) = candidate_map.get(id.as_str()) {
+            if included.insert(id.clone()) {
+                result.push(chunk.clone());
+            }
+        }
+    }
+
+    for chunk in candidates {
+        if result.len() >= limit {
+            break;
+        }
+        if !included.contains(&chunk.point_id) {
+            included.insert(chunk.point_id.clone());
+            result.push(chunk);
+        }
+    }
+
     result
 }
 
@@ -1139,5 +1241,118 @@ mod tests {
             "## Storage\n\nPart one.\n\nPart two."
         );
         assert_eq!(expanded[1].chunk_text, "## Usage\n\nOnly chunk.");
+    }
+
+    fn make_chunk(id: &str, score: f32) -> VectorSearchResult {
+        VectorSearchResult {
+            point_id: id.to_string(),
+            chunk_text: format!("text for {id}"),
+            document_slug: id.to_string(),
+            document_title: id.to_string(),
+            chunk_index: 0,
+            section_path: Vec::new(),
+            section_anchor: String::new(),
+            score,
+        }
+    }
+
+    #[test]
+    fn merge_subquery_guarantees_top1_per_subquery() {
+        let sq_a = vec![
+            make_chunk("a1", 0.69),
+            make_chunk("a2", 0.68),
+            make_chunk("a3", 0.67),
+        ];
+        let sq_b = vec![
+            make_chunk("b1", 0.76),
+            make_chunk("b2", 0.75),
+            make_chunk("b3", 0.74),
+            make_chunk("b4", 0.73),
+            make_chunk("b5", 0.72),
+        ];
+
+        let (merged, guaranteed) = merge_subquery_chunks(vec![sq_a, sq_b]);
+        let ids: Vec<&str> = merged.iter().map(|c| c.point_id.as_str()).collect();
+        assert!(
+            ids.contains(&"a1"),
+            "top chunk from sub-query A must be present: {ids:?}"
+        );
+        assert!(
+            ids.contains(&"b1"),
+            "top chunk from sub-query B must be present: {ids:?}"
+        );
+        assert_eq!(guaranteed, vec!["a1", "b1"]);
+    }
+
+    #[test]
+    fn merge_subquery_deduplicates_cross_subquery() {
+        let sq_a = vec![make_chunk("shared", 0.80), make_chunk("a1", 0.70)];
+        let sq_b = vec![make_chunk("shared", 0.75), make_chunk("b1", 0.65)];
+
+        let (merged, _) = merge_subquery_chunks(vec![sq_a, sq_b]);
+        let count = merged.iter().filter(|c| c.point_id == "shared").count();
+        assert_eq!(
+            count, 1,
+            "shared chunk must appear exactly once: {merged:?}"
+        );
+    }
+
+    #[test]
+    fn merge_subquery_rrf_boosts_cross_subquery_chunks() {
+        let sq_a = vec![make_chunk("unique", 0.90), make_chunk("cross", 0.80)];
+        let sq_b = vec![make_chunk("cross", 0.75), make_chunk("other", 0.70)];
+
+        let (merged, _) = merge_subquery_chunks(vec![sq_a, sq_b]);
+
+        // "unique" is guaranteed (top of SQ-A), so it comes first.
+        // After guaranteed slots, "cross" must outrank "other" due to multi-subquery RRF.
+        let pos_cross = merged.iter().position(|c| c.point_id == "cross").unwrap();
+        let pos_other = merged.iter().position(|c| c.point_id == "other").unwrap();
+        assert!(
+            pos_cross < pos_other,
+            "cross should rank above other: {merged:?}"
+        );
+    }
+
+    #[test]
+    fn take_with_guarantee_keeps_guaranteed_after_reorder() {
+        // Simulate hybrid rrf::fuse pushing guaranteed chunk "a1" to position 5
+        // (beyond the limit of 3), which plain .take(3) would drop.
+        let candidates = vec![
+            make_chunk("b1", 0.80),
+            make_chunk("b2", 0.78),
+            make_chunk("b3", 0.76),
+            make_chunk("b4", 0.74),
+            make_chunk("a1", 0.69), // guaranteed but pushed to index 4
+        ];
+        let guaranteed = vec!["a1".to_string(), "b1".to_string()];
+
+        let result = take_with_guarantee(candidates, &guaranteed, 3);
+        let ids: Vec<&str> = result.iter().map(|c| c.point_id.as_str()).collect();
+
+        assert_eq!(result.len(), 3);
+        assert!(
+            ids.contains(&"a1"),
+            "guaranteed a1 must survive truncation: {ids:?}"
+        );
+        assert!(
+            ids.contains(&"b1"),
+            "guaranteed b1 must survive truncation: {ids:?}"
+        );
+    }
+
+    #[test]
+    fn take_with_guarantee_single_subquery_behaves_like_take() {
+        let candidates = vec![
+            make_chunk("c1", 0.90),
+            make_chunk("c2", 0.80),
+            make_chunk("c3", 0.70),
+        ];
+
+        // No guaranteed ids (single sub-query path)
+        let result = take_with_guarantee(candidates.clone(), &[], 2);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].point_id, "c1");
+        assert_eq!(result[1].point_id, "c2");
     }
 }

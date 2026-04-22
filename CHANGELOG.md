@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Multi-hop RAG retrieval now uses RRF across sub-queries with a per-sub-query diversity guarantee: the top-ranked chunk from each sub-query is always included in the context window, preventing high-scoring topics from monopolising all context slots. The guarantee is enforced via `take_with_guarantee` and survives hybrid `rrf::fuse` reordering.
+
 ## [0.16.0] 2026-04-21
 
 ### Added

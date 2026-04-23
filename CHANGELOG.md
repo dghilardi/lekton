@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.17.0] 2026-04-23
+
 ### Changed
 - RAG LLM configuration refactored from a flat `[rag]` block to a structured hierarchy: `[rag.llm]` holds shared defaults (url, api_key, model, headers, vertex settings); `[rag.chat]` configures the main chat step; optional steps (`[rag.analyzer]`, `[rag.hyde]`, `[rag.rewriter]`) are enabled by presence and disabled by absence, with each step able to override any LLM field independently (endpoint, auth, model, headers, Vertex project/location).
 

@@ -117,6 +117,16 @@ pub async fn update_access_level_handler(
     };
 
     state.access_level_repo.update(updated.clone()).await?;
+
+    // Spawn cascade recompute if the inheritance structure changed
+    if existing.inherits_from != updated.inherits_from {
+        crate::jobs::recompute_access_levels::spawn_recompute_for_level(
+            updated.name.clone(),
+            state.access_level_repo.clone(),
+            state.user_repo.clone(),
+        );
+    }
+
     Ok(Json(updated))
 }
 

@@ -111,24 +111,24 @@ pub enum ChatEvent {
 }
 
 impl ChatService {
-    pub fn from_rag_config(
+    pub async fn from_rag_config(
         config: &RagConfig,
-        llm_provider: Arc<LlmProvider>,
         chat_repo: Arc<dyn ChatRepository>,
         embedding: Arc<dyn EmbeddingService>,
         vectorstore: Arc<dyn VectorStore>,
         search_service: Option<Arc<dyn SearchService>>,
         reranker: Option<Arc<dyn Reranker>>,
     ) -> Result<Self, AppError> {
-        if config.chat_model.is_empty() {
+        let chat_resolved = config.resolve_chat();
+        if chat_resolved.model.is_empty() {
             return Err(AppError::Internal(
-                "chat_model is required for RAG chat".into(),
+                "rag.chat.model (or rag.llm.model) is required for RAG chat".into(),
             ));
         }
 
         let mut tera = tera::Tera::default();
         let template_name = "system_prompt";
-        tera.add_raw_template(template_name, &config.system_prompt_template)
+        tera.add_raw_template(template_name, &config.chat.system_prompt_template)
             .map_err(|e| AppError::Internal(format!("invalid system_prompt_template: {e}")))?;
 
         let hybrid_search_service = if config.hybrid_search_enabled {
@@ -149,33 +149,51 @@ impl ChatService {
             tracing::info!("RAG cross-encoder reranker enabled");
         }
 
-        let analyzer_provider = if !config.analyzer_url.is_empty() {
-            tracing::info!(url = %config.analyzer_url, "RAG query analyzer using dedicated endpoint");
-            Arc::new(LlmProvider::new_openai_compatible(
-                config.analyzer_url.clone(),
-                String::new(),
+        let analyzer = if let Some(ref step) = config.analyzer {
+            let resolved = config.resolve_step(step);
+            let provider = Arc::new(LlmProvider::initialize(&resolved).await?);
+            tracing::info!(model = %step.model, "RAG query analyzer enabled");
+            Some(QueryAnalyzer::new(
+                provider,
+                step.model.clone(),
+                step.max_tokens.unwrap_or(256),
+                resolved.headers,
             ))
         } else {
-            llm_provider.clone()
+            None
         };
-        let analyzer = QueryAnalyzer::from_rag_config(config, analyzer_provider);
-        if analyzer.is_some() {
-            tracing::info!(model = %config.analyzer_model, "RAG query analyzer enabled");
-        }
 
-        let hyde_provider = if !config.hyde_url.is_empty() {
-            tracing::info!(url = %config.hyde_url, "RAG HyDE using dedicated endpoint");
-            Arc::new(LlmProvider::new_openai_compatible(
-                config.hyde_url.clone(),
-                String::new(),
+        let hyde = if let Some(ref step) = config.hyde {
+            let resolved = config.resolve_step(step);
+            let provider = Arc::new(LlmProvider::initialize(&resolved).await?);
+            tracing::info!(model = %step.model, "RAG HyDE enabled");
+            Some(HydeService::new(
+                provider,
+                step.model.clone(),
+                step.max_tokens.unwrap_or(256),
+                resolved.headers,
             ))
         } else {
-            llm_provider.clone()
+            None
         };
-        let hyde = HydeService::from_rag_config(config, hyde_provider);
-        if hyde.is_some() {
-            tracing::info!(model = %config.hyde_model, "RAG HyDE enabled");
-        }
+
+        let query_rewriter = if let Some(ref step) = config.rewriter {
+            let resolved = config.resolve_step(step);
+            let provider = Arc::new(LlmProvider::initialize(&resolved).await?);
+            tracing::info!(model = %step.model, "RAG query rewriter enabled");
+            Some(QueryRewriter::new(
+                provider,
+                step.model.clone(),
+                step.max_tokens.unwrap_or(80),
+                resolved.headers,
+            ))
+        } else {
+            None
+        };
+
+        let chat_provider = Arc::new(LlmProvider::initialize(&chat_resolved).await?);
+        let chat_headers = chat_resolved.headers.clone();
+        let chat_model = chat_resolved.model.clone();
 
         Ok(Self {
             embedding,
@@ -186,12 +204,12 @@ impl ChatService {
             analyzer,
             hyde,
             chat_repo,
-            llm_provider: llm_provider.clone(),
-            chat_model: config.chat_model.clone(),
-            chat_headers: config.chat_headers.clone(),
+            llm_provider: chat_provider,
+            chat_model,
+            chat_headers,
             tera,
             system_template_name: template_name.to_string(),
-            query_rewriter: QueryRewriter::from_rag_config(config, llm_provider),
+            query_rewriter,
         })
     }
 

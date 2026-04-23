@@ -16,7 +16,6 @@ use crate::db::chat_repository::ChatRepository;
 use crate::error::AppError;
 use crate::rag::chat::ChatService;
 use crate::rag::embedding::{EmbeddingService, OpenAICompatibleEmbedding};
-use crate::rag::provider::LlmProvider;
 use crate::rag::reranker::{CrossEncoderReranker, Reranker};
 use crate::rag::vectorstore::{QdrantVectorStore, VectorStore};
 use crate::search::client::{MeilisearchService, SearchService};
@@ -38,15 +37,10 @@ impl RagEvalContext {
         if !config.rag.is_enabled() {
             return Err(AppError::Internal(
                 "RAG is not enabled in the loaded configuration — \
-                 set rag.qdrant_url, rag.embedding_url and rag.chat_model"
+                 set rag.qdrant_url, rag.embedding_url, rag.llm.url and rag.chat.model"
                     .into(),
             ));
         }
-
-        let llm_provider =
-            Arc::new(LlmProvider::initialize(&config.rag).await.map_err(|e| {
-                AppError::Internal(format!("LLM provider initialization failed: {e}"))
-            })?);
 
         let embedding: Arc<dyn EmbeddingService> =
             Arc::new(OpenAICompatibleEmbedding::from_rag_config(&config.rag)?);
@@ -77,13 +71,13 @@ impl RagEvalContext {
 
         let chat_service = ChatService::from_rag_config(
             &config.rag,
-            llm_provider,
             chat_repo,
             embedding.clone(),
             vectorstore.clone(),
             search_service,
             reranker,
-        )?;
+        )
+        .await?;
 
         Ok(Self {
             chat_service: Arc::new(chat_service),

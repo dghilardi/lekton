@@ -142,13 +142,91 @@ fn default_mcp_allowed_hosts() -> Vec<String> {
 
 // ── RAG ──────────────────────────────────────────────────────────────────────
 
+/// Base LLM configuration shared across all RAG pipeline steps.
+///
+/// Each individual step (`chat`, `analyzer`, `hyde`, `rewriter`) may override
+/// any of these fields. Fields left unset in a step config fall back to the
+/// values defined here.
+///
+/// Via env: `LKN__RAG__LLM__URL`, `LKN__RAG__LLM__HEADERS__X_FOO`, …
+#[derive(Debug, Deserialize)]
+pub struct LlmConfig {
+    /// OpenAI-compatible base URL (e.g. `https://api.openai.com/v1`).
+    pub url: String,
+    /// API key for the LLM endpoint.
+    pub api_key: String,
+    /// Default model name. Can be overridden per step.
+    #[serde(default)]
+    pub model: String,
+    /// Extra HTTP headers added to every LLM request.
+    ///
+    /// Keys are normalised before use: underscores (`_`) → hyphens (`-`).
+    /// Via env: `LKN__RAG__LLM__HEADERS__X_PRODUCER=LEKTON` → `x-producer: LEKTON`
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    /// Google Cloud project ID. When set, Vertex AI is used instead of the
+    /// OpenAI-compatible endpoint.
+    #[serde(default)]
+    pub vertex_project_id: String,
+    /// Vertex AI region. Defaults to `us-central1` when empty.
+    #[serde(default)]
+    pub vertex_location: String,
+}
+
+/// Per-step LLM configuration. All fields except `model` are optional and fall
+/// back to the corresponding field in [`LlmConfig`] when absent.
+///
+/// A step is **disabled** when its `[rag.<step>]` TOML section is entirely absent
+/// (deserialises as `None`). When the section is present, `model` is required.
+#[derive(Debug, Deserialize, Clone)]
+pub struct LlmStepConfig {
+    /// Model name for this step (required).
+    pub model: String,
+    /// Override the LLM endpoint URL. Falls back to `rag.llm.url`.
+    pub url: Option<String>,
+    /// Override the API key. Falls back to `rag.llm.api_key`.
+    pub api_key: Option<String>,
+    /// Override HTTP headers. `None` inherits from `rag.llm.headers`;
+    /// `Some({})` sends no extra headers.
+    #[serde(default)]
+    pub headers: Option<HashMap<String, String>>,
+    /// Override the Vertex AI project ID. Falls back to `rag.llm.vertex_project_id`.
+    pub vertex_project_id: Option<String>,
+    /// Override the Vertex AI location. Falls back to `rag.llm.vertex_location`.
+    pub vertex_location: Option<String>,
+    /// Maximum tokens for this step's LLM call.
+    /// Each service has its own built-in default when this is absent.
+    pub max_tokens: Option<u32>,
+}
+
+/// Configuration for the main chat step. Always active when RAG chat is enabled.
+/// All LLM fields are optional and fall back to [`LlmConfig`].
+#[derive(Debug, Deserialize)]
+pub struct ChatStepConfig {
+    /// Override the model. Falls back to `rag.llm.model`.
+    pub model: Option<String>,
+    /// Override the LLM endpoint URL. Falls back to `rag.llm.url`.
+    pub url: Option<String>,
+    /// Override the API key. Falls back to `rag.llm.api_key`.
+    pub api_key: Option<String>,
+    /// Override HTTP headers. `None` inherits from `rag.llm.headers`.
+    #[serde(default)]
+    pub headers: Option<HashMap<String, String>>,
+    /// Override the Vertex AI project ID. Falls back to `rag.llm.vertex_project_id`.
+    pub vertex_project_id: Option<String>,
+    /// Override the Vertex AI location. Falls back to `rag.llm.vertex_location`.
+    pub vertex_location: Option<String>,
+    /// Tera template for the system prompt. Variables: `{{ context }}`, `{{ question }}`.
+    pub system_prompt_template: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct RagConfig {
     /// Qdrant gRPC endpoint (e.g. `http://localhost:6334`). Empty disables RAG.
     pub qdrant_url: String,
-    /// Qdrant collection name. Switchable for model fine-tuning.
+    /// Qdrant collection name.
     pub qdrant_collection: String,
-    /// OpenAI-compatible embedding endpoint (e.g. Ollama at `http://localhost:11434/v1`).
+    /// OpenAI-compatible embedding endpoint.
     pub embedding_url: String,
     /// Embedding model name (e.g. `nomic-embed-text`).
     pub embedding_model: String,
@@ -156,105 +234,163 @@ pub struct RagConfig {
     pub embedding_dimensions: u32,
     /// API key for the embedding endpoint. Optional.
     pub embedding_api_key: String,
-    /// OpenAI-compatible chat/completion endpoint (e.g. OpenRouter, Ollama).
-    pub chat_url: String,
-    /// Chat model name (e.g. `meta-llama/llama-3-70b`).
-    pub chat_model: String,
-    /// API key for the chat endpoint. Used for OpenRouter and other static-key providers.
-    pub chat_api_key: String,
-    /// Google Cloud project ID used to route chat requests to Vertex AI.
-    /// When set, the app initializes the Vertex AI provider instead of OpenRouter.
-    #[serde(default)]
-    pub vertex_project_id: String,
-    /// Vertex AI location. Defaults to `us-central1` when empty.
-    #[serde(default)]
-    pub vertex_location: String,
-    /// Tera template for the system prompt. Available variables: `{{context}}`, `{{question}}`.
-    pub system_prompt_template: String,
-    /// Model used to rewrite follow-up questions into standalone queries before embedding.
-    /// Uses the same `chat_url` / `chat_api_key` endpoint.
-    /// Empty string disables query rewriting (default).
-    pub rewrite_model: String,
-    /// Maximum tokens for the query-rewriting LLM call.
-    pub rewrite_max_tokens: u32,
-    /// Extra HTTP headers added to every chat and query-rewrite request.
-    ///
-    /// Keys are normalised before use: underscores (`_`) are replaced with hyphens (`-`).
-    /// This allows setting hyphenated header names via environment variables, which cannot
-    /// contain hyphens:
-    ///
-    /// ```text
-    /// LKN__RAG__CHAT_HEADERS__X_PRODUCER=LEKTON  →  x-producer: LEKTON
-    /// ```
-    ///
-    /// In `config/lekton.toml`, quoted keys preserve hyphens directly:
-    ///
-    /// ```toml
-    /// [rag.chat_headers]
-    /// "x-producer" = "LEKTON"
-    /// ```
-    #[serde(default)]
-    pub chat_headers: HashMap<String, String>,
-    /// Extra HTTP headers added to every embedding request.
-    ///
-    /// Same key-normalisation rules apply as for `chat_headers`.
+    /// Extra HTTP headers for embedding requests. Same normalisation rules as LLM headers.
     #[serde(default)]
     pub embedding_headers: HashMap<String, String>,
-    /// Target chunk size in tokens (cl100k_base). Default: 256 ≈ 1024 characters.
-    pub chunk_size_tokens: u32,
-    /// Overlap between consecutive chunks in tokens. Must be less than `chunk_size_tokens`.
-    /// Default: 64.
-    pub chunk_overlap_tokens: u32,
-    /// When `true`, the final top-K reranked chunks are expanded to their full parent section
-    /// before building the LLM context. Default: `false`.
-    #[serde(default)]
-    pub expand_to_parent: bool,
     /// When `true`, the original chunk text is stored alongside its embedding in the cache.
-    /// Useful for debugging but increases storage. Default: `false`.
     #[serde(default)]
     pub embedding_cache_store_text: bool,
     /// When `true`, embeddings generated for chat queries are also cached.
-    /// Default: `false` (only chunk embeddings are cached).
     #[serde(default)]
     pub embedding_cache_query: bool,
-    /// When `true`, the RAG chat pipeline combines Qdrant vector search with
-    /// Meilisearch full-text search and merges results using Reciprocal Rank
-    /// Fusion (RRF). Requires Meilisearch to be configured.
-    /// Default: `false`.
+    /// Target chunk size in tokens (cl100k_base). Default: 256.
+    pub chunk_size_tokens: u32,
+    /// Overlap between consecutive chunks in tokens.
+    pub chunk_overlap_tokens: u32,
+    /// When `true`, reranked chunks are expanded to their full parent section.
+    #[serde(default)]
+    pub expand_to_parent: bool,
+    /// When `true`, combines Qdrant vector search with Meilisearch full-text search via RRF.
     #[serde(default)]
     pub hybrid_search_enabled: bool,
-    /// Model used to classify query complexity and emit sub-queries for parallel retrieval.
-    /// Uses `analyzer_url` when set, otherwise falls back to `chat_url`.
-    /// Empty string disables query decomposition (default).
-    pub analyzer_model: String,
-    /// Maximum tokens for the analyzer LLM call.
-    pub analyzer_max_tokens: u32,
-    /// Optional dedicated OpenAI-compatible endpoint for the query analyzer.
-    /// Falls back to `chat_url` when empty.
-    pub analyzer_url: String,
-    /// Model used for HyDE (Hypothetical Document Embeddings): generates a synthetic
-    /// answer document whose embedding is used in place of the raw query embedding.
-    /// Uses `hyde_url` when set, otherwise falls back to `chat_url`.
-    /// Empty string disables HyDE (default).
-    pub hyde_model: String,
-    /// Maximum tokens for the HyDE generation LLM call.
-    pub hyde_max_tokens: u32,
-    /// Optional dedicated OpenAI-compatible endpoint for HyDE generation.
-    /// Falls back to `chat_url` when empty.
-    pub hyde_url: String,
     /// Cross-encoder reranker endpoint (Jina/Infinity/Cohere-compatible `/rerank` API).
-    /// Empty string disables reranking. Default: `""`.
+    /// Empty string disables reranking.
     pub reranker_url: String,
     /// Model name passed to the reranker endpoint. Optional for self-hosted servers.
     pub reranker_model: String,
     /// API key for the reranker endpoint. Optional.
     pub reranker_api_key: String,
+
+    /// Default LLM configuration shared by all pipeline steps.
+    pub llm: LlmConfig,
+
+    /// Main chat step configuration. Required for RAG chat to function.
+    pub chat: ChatStepConfig,
+
+    /// Query analyzer: classifies complexity and decomposes into sub-queries.
+    /// Absent = disabled (all queries treated as simple).
+    #[serde(default)]
+    pub analyzer: Option<LlmStepConfig>,
+
+    /// HyDE: generates a hypothetical answer document for embedding instead of the raw query.
+    /// Absent = disabled.
+    #[serde(default)]
+    pub hyde: Option<LlmStepConfig>,
+
+    /// Query rewriter: rewrites follow-up questions into standalone queries for multi-turn chat.
+    /// Absent = disabled (first-turn pass-through only).
+    #[serde(default)]
+    pub rewriter: Option<LlmStepConfig>,
 }
 
 impl RagConfig {
     /// Returns `true` when RAG is fully configured (both Qdrant and embedding URLs set).
     pub fn is_enabled(&self) -> bool {
         !self.qdrant_url.is_empty() && !self.embedding_url.is_empty()
+    }
+}
+
+/// Fully resolved LLM configuration for a single pipeline step, after merging
+/// step-level overrides with the base [`LlmConfig`].
+#[cfg(feature = "ssr")]
+pub struct ResolvedLlmConfig {
+    pub url: String,
+    pub api_key: String,
+    pub model: String,
+    pub headers: HashMap<String, String>,
+    /// `None` when Vertex AI is not configured for this step.
+    pub vertex_project_id: Option<String>,
+    /// `None` when using the Vertex AI default location (`us-central1`).
+    pub vertex_location: Option<String>,
+}
+
+#[cfg(feature = "ssr")]
+fn non_empty(s: &str) -> Option<String> {
+    let t = s.trim().to_string();
+    if t.is_empty() {
+        None
+    } else {
+        Some(t)
+    }
+}
+
+#[cfg(feature = "ssr")]
+impl RagConfig {
+    /// Resolve the chat step config by merging `rag.chat` overrides onto `rag.llm`.
+    pub fn resolve_chat(&self) -> ResolvedLlmConfig {
+        ResolvedLlmConfig {
+            url: self
+                .chat
+                .url
+                .as_deref()
+                .and_then(non_empty)
+                .or_else(|| non_empty(&self.llm.url))
+                .unwrap_or_default(),
+            api_key: self
+                .chat
+                .api_key
+                .as_deref()
+                .and_then(non_empty)
+                .or_else(|| non_empty(&self.llm.api_key))
+                .unwrap_or_default(),
+            model: self
+                .chat
+                .model
+                .as_deref()
+                .and_then(non_empty)
+                .or_else(|| non_empty(&self.llm.model))
+                .unwrap_or_default(),
+            headers: self
+                .chat
+                .headers
+                .clone()
+                .unwrap_or_else(|| self.llm.headers.clone()),
+            vertex_project_id: self
+                .chat
+                .vertex_project_id
+                .as_deref()
+                .and_then(non_empty)
+                .or_else(|| non_empty(&self.llm.vertex_project_id)),
+            vertex_location: self
+                .chat
+                .vertex_location
+                .as_deref()
+                .and_then(non_empty)
+                .or_else(|| non_empty(&self.llm.vertex_location)),
+        }
+    }
+
+    /// Resolve a pipeline step config by merging its overrides onto `rag.llm`.
+    pub fn resolve_step(&self, step: &LlmStepConfig) -> ResolvedLlmConfig {
+        ResolvedLlmConfig {
+            url: step
+                .url
+                .as_deref()
+                .and_then(non_empty)
+                .or_else(|| non_empty(&self.llm.url))
+                .unwrap_or_default(),
+            api_key: step
+                .api_key
+                .as_deref()
+                .and_then(non_empty)
+                .or_else(|| non_empty(&self.llm.api_key))
+                .unwrap_or_default(),
+            model: step.model.clone(),
+            headers: step
+                .headers
+                .clone()
+                .unwrap_or_else(|| self.llm.headers.clone()),
+            vertex_project_id: step
+                .vertex_project_id
+                .as_deref()
+                .and_then(non_empty)
+                .or_else(|| non_empty(&self.llm.vertex_project_id)),
+            vertex_location: step
+                .vertex_location
+                .as_deref()
+                .and_then(non_empty)
+                .or_else(|| non_empty(&self.llm.vertex_location)),
+        }
     }
 }
 
@@ -309,7 +445,7 @@ mod tests {
     fn test_rag_headers_from_env() {
         // Underscores in the env-var key segment are normalised to hyphens at request time,
         // but config-rs stores them as-is.  Verify that the raw key is loaded correctly.
-        std::env::set_var("LKN__RAG__CHAT_HEADERS__X_PRODUCER", "LEKTON");
+        std::env::set_var("LKN__RAG__LLM__HEADERS__X_PRODUCER", "LEKTON");
         std::env::set_var(
             "LKN__RAG__EMBEDDING_HEADERS__AUTHORIZATION_EXTRA",
             "Bearer tok",
@@ -319,11 +455,7 @@ mod tests {
             super::AppConfig::load().expect("Failed to load config with rag header env vars");
 
         assert_eq!(
-            config
-                .rag
-                .chat_headers
-                .get("x_producer")
-                .map(String::as_str),
+            config.rag.llm.headers.get("x_producer").map(String::as_str),
             Some("LEKTON")
         );
         assert_eq!(
@@ -339,13 +471,31 @@ mod tests {
     #[test]
     #[cfg(feature = "ssr")]
     fn test_rag_vertex_provider_from_env() {
-        std::env::set_var("LKN__RAG__VERTEX_PROJECT_ID", "test-project");
-        std::env::set_var("LKN__RAG__VERTEX_LOCATION", "europe-west1");
+        std::env::set_var("LKN__RAG__LLM__VERTEX_PROJECT_ID", "test-project");
+        std::env::set_var("LKN__RAG__LLM__VERTEX_LOCATION", "europe-west1");
 
         let config =
             super::AppConfig::load().expect("Failed to load config with Vertex AI env vars");
 
-        assert_eq!(config.rag.vertex_project_id, "test-project");
-        assert_eq!(config.rag.vertex_location, "europe-west1");
+        assert_eq!(config.rag.llm.vertex_project_id, "test-project");
+        assert_eq!(config.rag.llm.vertex_location, "europe-west1");
+    }
+
+    #[test]
+    #[cfg(feature = "ssr")]
+    fn test_rag_step_config_resolve() {
+        use std::collections::HashMap;
+
+        let config = super::AppConfig::load().unwrap();
+
+        // Analyzer absent in defaults → None
+        assert!(config.rag.analyzer.is_none());
+        assert!(config.rag.hyde.is_none());
+        assert!(config.rag.rewriter.is_none());
+
+        // resolve_chat falls back to llm.model when chat.model is None
+        let resolved = config.rag.resolve_chat();
+        assert_eq!(resolved.model, config.rag.llm.model);
+        let _ = HashMap::<String, String>::new(); // suppress unused import
     }
 }

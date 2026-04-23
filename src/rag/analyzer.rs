@@ -7,7 +7,6 @@ use async_openai::types::chat::{
 };
 use serde::Deserialize;
 
-use crate::config::RagConfig;
 use crate::error::AppError;
 use crate::rag::client::format_llm_error;
 use crate::rag::provider::LlmProvider;
@@ -67,17 +66,18 @@ pub struct QueryAnalyzer {
 }
 
 impl QueryAnalyzer {
-    /// Returns `None` when `analyzer_model` is empty (feature disabled).
-    pub fn from_rag_config(config: &RagConfig, llm_provider: Arc<LlmProvider>) -> Option<Self> {
-        if config.analyzer_model.is_empty() {
-            return None;
-        }
-        Some(Self {
+    pub fn new(
+        llm_provider: Arc<LlmProvider>,
+        model: String,
+        max_tokens: u32,
+        headers: HashMap<String, String>,
+    ) -> Self {
+        Self {
             llm_provider,
-            model: config.analyzer_model.clone(),
-            max_tokens: config.analyzer_max_tokens,
-            headers: config.chat_headers.clone(),
-        })
+            model,
+            max_tokens,
+            headers,
+        }
     }
 
     /// Classify `query` and return a retrieval plan.

@@ -251,19 +251,7 @@ async fn main() {
     ) = if config.rag.is_enabled() {
         use lekton::rag::cached_embedding::CachedEmbeddingService;
         use lekton::rag::embedding::OpenAICompatibleEmbedding;
-        use lekton::rag::provider::LlmProvider;
         use lekton::rag::vectorstore::QdrantVectorStore;
-
-        let llm_provider = match LlmProvider::initialize(&config.rag).await {
-            Ok(provider) => {
-                tracing::info!(provider = provider.kind(), "LLM provider initialized");
-                Some(Arc::new(provider))
-            }
-            Err(e) => {
-                tracing::warn!("Failed to initialize LLM provider: {e} — RAG chat disabled");
-                None
-            }
-        };
 
         match (
             OpenAICompatibleEmbedding::from_rag_config(&config.rag),
@@ -311,40 +299,34 @@ async fn main() {
                         config.rag.chunk_overlap_tokens as usize,
                     ));
 
-                    let chat_svc = match (&chat_repo, &llm_provider) {
-                        (Some(chat_repo), Some(llm_provider)) => {
-                            let reranker: Option<Arc<dyn lekton::rag::reranker::Reranker>> =
-                                lekton::rag::reranker::CrossEncoderReranker::from_rag_config(
-                                    &config.rag,
-                                )
-                                .map(|r| Arc::new(r) as Arc<dyn lekton::rag::reranker::Reranker>);
-
-                            match lekton::rag::chat::ChatService::from_rag_config(
+                    let chat_svc = if let Some(ref chat_repo) = chat_repo {
+                        let reranker: Option<Arc<dyn lekton::rag::reranker::Reranker>> =
+                            lekton::rag::reranker::CrossEncoderReranker::from_rag_config(
                                 &config.rag,
-                                llm_provider.clone(),
-                                chat_repo.clone(),
-                                query_embedding,
-                                vectorstore.clone(),
-                                search_service.clone(),
-                                reranker,
-                            ) {
-                                Ok(svc) => {
-                                    tracing::info!("RAG chat service initialized");
-                                    Some(Arc::new(svc))
-                                }
-                                Err(e) => {
-                                    tracing::warn!("RAG chat not available: {e}");
-                                    None
-                                }
+                            )
+                            .map(|r| Arc::new(r) as Arc<dyn lekton::rag::reranker::Reranker>);
+
+                        match lekton::rag::chat::ChatService::from_rag_config(
+                            &config.rag,
+                            chat_repo.clone(),
+                            query_embedding,
+                            vectorstore.clone(),
+                            search_service.clone(),
+                            reranker,
+                        )
+                        .await
+                        {
+                            Ok(svc) => {
+                                tracing::info!("RAG chat service initialized");
+                                Some(Arc::new(svc))
+                            }
+                            Err(e) => {
+                                tracing::warn!("RAG chat not available: {e}");
+                                None
                             }
                         }
-                        (Some(_), None) => {
-                            tracing::warn!(
-                                "RAG chat disabled because no LLM provider is available"
-                            );
-                            None
-                        }
-                        (None, _) => None,
+                    } else {
+                        None
                     };
 
                     tracing::info!(

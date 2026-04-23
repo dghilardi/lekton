@@ -14,9 +14,9 @@
 //!
 //! Configuration is loaded the same way the server loads it (config files +
 //! `LKN__*` env vars). The runner needs `rag.qdrant_url`, `rag.embedding_url`,
-//! `rag.embedding_model`, `rag.embedding_dimensions`, and `rag.chat_model` at a
-//! minimum; analyzer/HyDE/reranker/Meilisearch are picked up if configured and
-//! contribute to the measured numbers.
+//! `rag.embedding_model`, `rag.embedding_dimensions`, `rag.llm.url` and
+//! `rag.chat.model` at a minimum; analyzer/HyDE/reranker/Meilisearch are
+//! picked up if configured and contribute to the measured numbers.
 
 #[cfg(not(feature = "ssr"))]
 fn main() {

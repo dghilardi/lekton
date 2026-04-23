@@ -88,6 +88,7 @@ impl EmbeddingService for OpenAICompatibleEmbedding {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{ChatStepConfig, LlmConfig, LlmStepConfig, RagConfig};
 
     fn make_config(embedding_url: &str) -> RagConfig {
         RagConfig {
@@ -97,31 +98,36 @@ mod tests {
             embedding_model: "nomic-embed-text".into(),
             embedding_dimensions: 768,
             embedding_api_key: String::new(),
-            chat_url: String::new(),
-            chat_model: String::new(),
-            chat_api_key: String::new(),
-            vertex_project_id: String::new(),
-            vertex_location: String::new(),
-            system_prompt_template: String::new(),
-            rewrite_model: String::new(),
-            rewrite_max_tokens: 80,
-            chat_headers: std::collections::HashMap::new(),
             embedding_headers: std::collections::HashMap::new(),
             embedding_cache_store_text: false,
             embedding_cache_query: false,
-            hybrid_search_enabled: false,
-            reranker_url: String::new(),
-            analyzer_model: String::new(),
-            analyzer_max_tokens: 256,
-            hyde_model: String::new(),
-            hyde_max_tokens: 256,
-            analyzer_url: String::new(),
-            hyde_url: String::new(),
-            reranker_model: String::new(),
-            reranker_api_key: String::new(),
             chunk_size_tokens: 256,
             chunk_overlap_tokens: 64,
             expand_to_parent: false,
+            hybrid_search_enabled: false,
+            reranker_url: String::new(),
+            reranker_model: String::new(),
+            reranker_api_key: String::new(),
+            llm: LlmConfig {
+                url: String::new(),
+                api_key: String::new(),
+                model: String::new(),
+                headers: std::collections::HashMap::new(),
+                vertex_project_id: String::new(),
+                vertex_location: String::new(),
+            },
+            chat: ChatStepConfig {
+                model: None,
+                url: None,
+                api_key: None,
+                headers: None,
+                vertex_project_id: None,
+                vertex_location: None,
+                system_prompt_template: String::new(),
+            },
+            analyzer: None,
+            hyde: None,
+            rewriter: None,
         }
     }
 
@@ -144,8 +150,6 @@ mod tests {
         config
             .embedding_headers
             .insert("x_producer".to_string(), "LEKTON".to_string());
-        // Header normalisation is exercised in client.rs; here we just verify
-        // that the config path succeeds end-to-end.
         assert!(OpenAICompatibleEmbedding::from_rag_config(&config).is_ok());
     }
 }

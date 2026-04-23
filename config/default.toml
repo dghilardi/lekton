@@ -41,32 +41,15 @@ scopes = "openid profile email"
 allowed_hosts = ["localhost", "127.0.0.1", "::1"]
 
 [rag]
-# Leave empty to disable RAG entirely.
+# Leave both empty to disable RAG entirely.
 qdrant_url = ""
 qdrant_collection = "docs_collection"
 embedding_url = ""
 embedding_model = "nomic-embed-text"
 embedding_dimensions = 768
 embedding_api_key = ""
-chat_url = ""
-chat_model = ""
-chat_api_key = ""
-vertex_project_id = ""
-vertex_location = ""
-system_prompt_template = """You are a helpful assistant for an internal developer portal. \
-Answer the user's question based on the following context extracted from the documentation.
-
-Context:
-{{ context }}
-
-If the context does not contain enough information to answer, say so honestly."""
-# Leave empty to disable query rewriting (first-turn pass-through only).
-rewrite_model = ""
-rewrite_max_tokens = 80
 
 # Token-aware chunking (cl100k_base tokenizer).
-# chunk_size_tokens: target chunk size in tokens (default: 256 ≈ 1024 chars).
-# chunk_overlap_tokens: overlap between consecutive chunks (default: 64 tokens).
 chunk_size_tokens = 256
 chunk_overlap_tokens = 64
 # Expand top reranked chunks to their full parent section before prompt injection.
@@ -76,35 +59,68 @@ expand_to_parent = false
 embedding_cache_store_text = false
 # Cache embeddings generated for chat queries (in addition to chunk embeddings).
 embedding_cache_query = false
-# Query analyzer: classifies query complexity and emits sub-queries for parallel retrieval.
-# Leave empty to disable (all queries treated as simple).
-analyzer_model = ""
-analyzer_max_tokens = 256
-# Optional dedicated endpoint for the analyzer (e.g. local Ollama while chat uses cloud).
-# Falls back to chat_url when empty.
-analyzer_url = ""
-
-# HyDE: generates a hypothetical answer document and uses its embedding instead of the
-# raw query embedding. Improves recall when query phrasing differs from document style.
-# Leave empty to disable.
-hyde_model = ""
-hyde_max_tokens = 256
-# Optional dedicated endpoint for HyDE generation. Falls back to chat_url when empty.
-hyde_url = ""
 
 # Combine vector search (Qdrant) with full-text search (Meilisearch) using RRF.
 # Requires search.url to be configured. Disabled by default.
 hybrid_search_enabled = false
+
 # Cross-encoder reranker endpoint (Jina/Infinity/Cohere-compatible /rerank API).
 # Leave empty to disable reranking.
 reranker_url = ""
 reranker_model = ""
 reranker_api_key = ""
 
-# Extra HTTP headers for chat/rewrite requests. Keys are normalised: _ → - at request time.
-# Via env: LKN__RAG__CHAT_HEADERS__X_PRODUCER=LEKTON  →  x-producer: LEKTON
-# Via file: use quoted keys to preserve hyphens: "x-producer" = "LEKTON"
-[rag.chat_headers]
-
-# Extra HTTP headers for embedding requests. Same normalisation rules apply.
+# Extra HTTP headers for embedding requests. Keys normalised: _ → - at request time.
+# Via env: LKN__RAG__EMBEDDING_HEADERS__X_PRODUCER=LEKTON  →  x-producer: LEKTON
 [rag.embedding_headers]
+
+# Default LLM configuration shared by all RAG pipeline steps.
+# Individual steps (rag.chat, rag.analyzer, rag.hyde, rag.rewriter) may override
+# any of these fields.
+#
+# Use Vertex AI: set vertex_project_id (and optionally vertex_location).
+# Use OpenAI-compatible: set url and optionally api_key.
+#
+# Via env: LKN__RAG__LLM__URL, LKN__RAG__LLM__API_KEY, LKN__RAG__LLM__MODEL,
+#          LKN__RAG__LLM__VERTEX_PROJECT_ID, LKN__RAG__LLM__VERTEX_LOCATION
+#          LKN__RAG__LLM__HEADERS__X_FOO=bar  →  x-foo: bar
+[rag.llm]
+url = ""
+api_key = ""
+model = ""
+vertex_project_id = ""
+vertex_location = ""
+
+[rag.llm.headers]
+
+# Main chat step. Always active when RAG is enabled.
+# All LLM fields (url, api_key, model, headers, vertex_*) are optional here
+# and fall back to [rag.llm] when absent.
+#
+# Via env: LKN__RAG__CHAT__MODEL, LKN__RAG__CHAT__URL, …
+[rag.chat]
+system_prompt_template = """You are a helpful assistant for an internal developer portal. \
+Answer the user's question based on the following context extracted from the documentation.
+
+Context:
+{{ context }}
+
+If the context does not contain enough information to answer, say so honestly."""
+
+# Optional RAG pipeline steps — comment out or remove the entire section to disable.
+#
+# [rag.analyzer]       # query complexity classifier + sub-query decomposition
+# model = ""           # required to enable this step
+# max_tokens = 256
+# url = ""             # override rag.llm.url for this step only
+# api_key = ""
+# vertex_project_id = ""
+# vertex_location = ""
+#
+# [rag.hyde]           # hypothetical document embeddings
+# model = ""
+# max_tokens = 256
+#
+# [rag.rewriter]       # multi-turn query rewriter
+# model = ""
+# max_tokens = 80

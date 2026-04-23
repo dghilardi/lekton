@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- RAG LLM configuration refactored from a flat `[rag]` block to a structured hierarchy: `[rag.llm]` holds shared defaults (url, api_key, model, headers, vertex settings); `[rag.chat]` configures the main chat step; optional steps (`[rag.analyzer]`, `[rag.hyde]`, `[rag.rewriter]`) are enabled by presence and disabled by absence, with each step able to override any LLM field independently (endpoint, auth, model, headers, Vertex project/location).
+
 ### Fixed
 - Multi-hop RAG retrieval now uses RRF across sub-queries with a per-sub-query diversity guarantee: the top-ranked chunk from each sub-query is always included in the context window, preventing high-scoring topics from monopolising all context slots. The guarantee is enforced via `take_with_guarantee` and survives hybrid `rrf::fuse` reordering.
 

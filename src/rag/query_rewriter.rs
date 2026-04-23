@@ -12,7 +12,6 @@ use async_openai::types::chat::{
     ChatCompletionRequestUserMessageContent, CreateChatCompletionRequest,
 };
 
-use crate::config::RagConfig;
 use crate::db::chat_models::ChatMessage;
 use crate::error::AppError;
 use crate::rag::client::format_llm_error;
@@ -38,20 +37,18 @@ pub struct QueryRewriter {
 }
 
 impl QueryRewriter {
-    /// Build a rewriter from `RagConfig`.
-    ///
-    /// Returns `None` when `rewrite_model` is empty (feature disabled).
-    pub fn from_rag_config(config: &RagConfig, llm_provider: Arc<LlmProvider>) -> Option<Self> {
-        if config.rewrite_model.is_empty() {
-            return None;
-        }
-
-        Some(Self {
+    pub fn new(
+        llm_provider: Arc<LlmProvider>,
+        model: String,
+        max_tokens: u32,
+        headers: HashMap<String, String>,
+    ) -> Self {
+        Self {
             llm_provider,
-            model: config.rewrite_model.clone(),
-            max_tokens: config.rewrite_max_tokens,
-            headers: config.chat_headers.clone(),
-        })
+            model,
+            max_tokens,
+            headers,
+        }
     }
 
     /// Rewrite `user_message` into a standalone query using `history` as context.

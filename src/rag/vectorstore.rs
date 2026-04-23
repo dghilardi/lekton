@@ -422,126 +422,70 @@ impl VectorStore for QdrantVectorStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{ChatStepConfig, LlmConfig};
 
-    #[test]
-    fn from_rag_config_fails_with_empty_url() {
-        let config = RagConfig {
-            qdrant_url: String::new(),
+    fn make_config(qdrant_url: &str) -> RagConfig {
+        RagConfig {
+            qdrant_url: qdrant_url.into(),
             qdrant_collection: "test".into(),
             embedding_url: String::new(),
             embedding_model: String::new(),
             embedding_dimensions: 768,
             embedding_api_key: String::new(),
-            chat_url: String::new(),
-            chat_model: String::new(),
-            chat_api_key: String::new(),
-            vertex_project_id: String::new(),
-            vertex_location: String::new(),
-            system_prompt_template: String::new(),
-            rewrite_model: String::new(),
-            rewrite_max_tokens: 80,
-            chat_headers: std::collections::HashMap::new(),
             embedding_headers: std::collections::HashMap::new(),
             embedding_cache_store_text: false,
             embedding_cache_query: false,
-            hybrid_search_enabled: false,
-            reranker_url: String::new(),
-            analyzer_model: String::new(),
-            analyzer_max_tokens: 256,
-            hyde_model: String::new(),
-            hyde_max_tokens: 256,
-            analyzer_url: String::new(),
-            hyde_url: String::new(),
-            reranker_model: String::new(),
-            reranker_api_key: String::new(),
             chunk_size_tokens: 256,
             chunk_overlap_tokens: 64,
             expand_to_parent: false,
-        };
-        assert!(QdrantVectorStore::from_rag_config(&config).is_err());
+            hybrid_search_enabled: false,
+            reranker_url: String::new(),
+            reranker_model: String::new(),
+            reranker_api_key: String::new(),
+            llm: LlmConfig {
+                url: String::new(),
+                api_key: String::new(),
+                model: String::new(),
+                headers: std::collections::HashMap::new(),
+                vertex_project_id: String::new(),
+                vertex_location: String::new(),
+            },
+            chat: ChatStepConfig {
+                model: None,
+                url: None,
+                api_key: None,
+                headers: None,
+                vertex_project_id: None,
+                vertex_location: None,
+                system_prompt_template: String::new(),
+            },
+            analyzer: None,
+            hyde: None,
+            rewriter: None,
+        }
+    }
+
+    #[test]
+    fn from_rag_config_fails_with_empty_url() {
+        assert!(QdrantVectorStore::from_rag_config(&make_config("")).is_err());
     }
 
     #[test]
     fn from_rag_config_succeeds_with_url() {
-        let config = RagConfig {
-            qdrant_url: "http://localhost:6334".into(),
-            qdrant_collection: "test_collection".into(),
-            embedding_url: String::new(),
-            embedding_model: String::new(),
-            embedding_dimensions: 768,
-            embedding_api_key: String::new(),
-            chat_url: String::new(),
-            chat_model: String::new(),
-            chat_api_key: String::new(),
-            vertex_project_id: String::new(),
-            vertex_location: String::new(),
-            system_prompt_template: String::new(),
-            rewrite_model: String::new(),
-            rewrite_max_tokens: 80,
-            chat_headers: std::collections::HashMap::new(),
-            embedding_headers: std::collections::HashMap::new(),
-            embedding_cache_store_text: false,
-            embedding_cache_query: false,
-            hybrid_search_enabled: false,
-            reranker_url: String::new(),
-            analyzer_model: String::new(),
-            analyzer_max_tokens: 256,
-            hyde_model: String::new(),
-            hyde_max_tokens: 256,
-            analyzer_url: String::new(),
-            hyde_url: String::new(),
-            reranker_model: String::new(),
-            reranker_api_key: String::new(),
-            chunk_size_tokens: 256,
-            chunk_overlap_tokens: 64,
-            expand_to_parent: false,
-        };
+        let mut config = make_config("http://localhost:6334");
+        config.qdrant_collection = "test_collection".into();
         assert!(QdrantVectorStore::from_rag_config(&config).is_ok());
     }
 
     #[test]
     fn search_returns_empty_when_no_access() {
-        // Synchronous check: empty access_levels should short-circuit
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
 
-        let config = RagConfig {
-            qdrant_url: "http://localhost:6334".into(),
-            qdrant_collection: "test".into(),
-            embedding_url: String::new(),
-            embedding_model: String::new(),
-            embedding_dimensions: 768,
-            embedding_api_key: String::new(),
-            chat_url: String::new(),
-            chat_model: String::new(),
-            chat_api_key: String::new(),
-            vertex_project_id: String::new(),
-            vertex_location: String::new(),
-            system_prompt_template: String::new(),
-            rewrite_model: String::new(),
-            rewrite_max_tokens: 80,
-            chat_headers: std::collections::HashMap::new(),
-            embedding_headers: std::collections::HashMap::new(),
-            embedding_cache_store_text: false,
-            embedding_cache_query: false,
-            hybrid_search_enabled: false,
-            reranker_url: String::new(),
-            analyzer_model: String::new(),
-            analyzer_max_tokens: 256,
-            hyde_model: String::new(),
-            hyde_max_tokens: 256,
-            analyzer_url: String::new(),
-            hyde_url: String::new(),
-            reranker_model: String::new(),
-            reranker_api_key: String::new(),
-            chunk_size_tokens: 256,
-            chunk_overlap_tokens: 64,
-            expand_to_parent: false,
-        };
-        let store = QdrantVectorStore::from_rag_config(&config).unwrap();
-
+        let store =
+            QdrantVectorStore::from_rag_config(&make_config("http://localhost:6334")).unwrap();
         let result =
             rt.block_on(async { store.search(vec![0.0; 768], 10, Some(&[]), false).await });
         assert!(result.unwrap().is_empty());

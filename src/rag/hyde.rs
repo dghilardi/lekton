@@ -6,7 +6,6 @@ use async_openai::types::chat::{
     ChatCompletionRequestUserMessageContent, CreateChatCompletionRequest,
 };
 
-use crate::config::RagConfig;
 use crate::error::AppError;
 use crate::rag::client::format_llm_error;
 use crate::rag::provider::LlmProvider;
@@ -25,17 +24,18 @@ pub struct HydeService {
 }
 
 impl HydeService {
-    /// Returns `None` when `hyde_model` is empty (feature disabled).
-    pub fn from_rag_config(config: &RagConfig, llm_provider: Arc<LlmProvider>) -> Option<Self> {
-        if config.hyde_model.is_empty() {
-            return None;
-        }
-        Some(Self {
+    pub fn new(
+        llm_provider: Arc<LlmProvider>,
+        model: String,
+        max_tokens: u32,
+        headers: HashMap<String, String>,
+    ) -> Self {
+        Self {
             llm_provider,
-            model: config.hyde_model.clone(),
-            max_tokens: config.hyde_max_tokens,
-            headers: config.chat_headers.clone(),
-        })
+            model,
+            max_tokens,
+            headers,
+        }
     }
 
     /// Replace each query with a hypothetical document for embedding.
@@ -118,62 +118,28 @@ impl HydeService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ResolvedLlmConfig;
 
-    fn make_config(hyde_model: &str) -> RagConfig {
-        RagConfig {
-            qdrant_url: String::new(),
-            qdrant_collection: String::new(),
-            embedding_url: String::new(),
-            embedding_model: String::new(),
-            embedding_dimensions: 768,
-            embedding_api_key: String::new(),
-            chat_url: "http://localhost:11434/v1".to_string(),
-            chat_model: String::new(),
-            chat_api_key: String::new(),
-            vertex_project_id: String::new(),
-            vertex_location: String::new(),
-            system_prompt_template: String::new(),
-            rewrite_model: String::new(),
-            rewrite_max_tokens: 80,
-            chat_headers: std::collections::HashMap::new(),
-            embedding_headers: std::collections::HashMap::new(),
-            embedding_cache_store_text: false,
-            embedding_cache_query: false,
-            hybrid_search_enabled: false,
-            analyzer_model: String::new(),
-            analyzer_max_tokens: 256,
-            reranker_url: String::new(),
-            reranker_model: String::new(),
-            reranker_api_key: String::new(),
-            chunk_size_tokens: 256,
-            chunk_overlap_tokens: 64,
-            expand_to_parent: false,
-            hyde_model: hyde_model.to_string(),
-            hyde_max_tokens: 256,
-            analyzer_url: String::new(),
-            hyde_url: String::new(),
-        }
-    }
-
-    fn make_provider(config: &RagConfig) -> Arc<LlmProvider> {
+    fn make_provider() -> Arc<LlmProvider> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
-        Arc::new(rt.block_on(LlmProvider::initialize(config)).unwrap())
+        let resolved = ResolvedLlmConfig {
+            url: "http://localhost:11434/v1".into(),
+            api_key: String::new(),
+            model: String::new(),
+            headers: HashMap::new(),
+            vertex_project_id: None,
+            vertex_location: None,
+        };
+        Arc::new(rt.block_on(LlmProvider::initialize(&resolved)).unwrap())
     }
 
     #[test]
-    fn returns_none_when_model_empty() {
-        let config = make_config("");
-        let provider = make_provider(&config);
-        assert!(HydeService::from_rag_config(&config, provider).is_none());
-    }
-
-    #[test]
-    fn returns_some_when_model_set() {
-        let config = make_config("phi3:mini");
-        let provider = make_provider(&config);
-        assert!(HydeService::from_rag_config(&config, provider).is_some());
+    fn constructs_with_model() {
+        let provider = make_provider();
+        let svc = HydeService::new(provider, "phi3:mini".into(), 256, HashMap::new());
+        assert_eq!(svc.model, "phi3:mini");
     }
 }

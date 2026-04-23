@@ -474,13 +474,12 @@ async fn main() {
             axum::routing::get(api::admin::list_users_handler),
         )
         .route(
-            "/api/v1/admin/users/{user_id}/permissions",
-            axum::routing::get(api::admin::get_user_permissions_handler)
-                .put(api::admin::set_user_permissions_handler),
+            "/api/v1/admin/users/{user_id}",
+            axum::routing::get(api::admin::get_user_handler),
         )
         .route(
-            "/api/v1/admin/users/{user_id}/permissions/{level}",
-            axum::routing::delete(api::admin::delete_user_permission_handler),
+            "/api/v1/admin/users/{user_id}/access-levels",
+            axum::routing::put(api::admin::set_user_access_levels_handler),
         )
         .route(
             "/api/v1/admin/service-tokens",

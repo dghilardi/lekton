@@ -29,30 +29,62 @@ pub struct AuthenticatedUser {
     pub is_admin: bool,
 }
 
-/// Full request context: identity + loaded RBAC permissions.
+/// Full request context: identity + pre-computed access level set.
 ///
 /// Constructed by the Axum auth extractor after validating the JWT and
-/// fetching the user's permission records from MongoDB.
+/// loading the user document from MongoDB.
 /// Server-side only (`ssr` feature).
 #[cfg(feature = "ssr")]
 #[derive(Debug, Clone)]
 pub struct UserContext {
     /// Authenticated identity.
     pub user: AuthenticatedUser,
-    /// The user's RBAC permissions, one record per access level.
-    pub permissions: Vec<crate::db::auth_models::UserPermission>,
+    /// Pre-computed transitive closure of the user's assigned access levels.
+    /// Does not include the implicitly injected `"public"` and `"loggeduser"` levels.
+    pub effective_access_levels: Vec<String>,
+    /// May create or update published documents at any accessible level.
+    pub can_write: bool,
+    /// May read draft documents at any accessible level.
+    pub can_read_draft: bool,
+    /// May create or update draft documents at any accessible level.
+    pub can_write_draft: bool,
 }
 
 #[cfg(feature = "ssr")]
 impl UserContext {
+    /// Build a `UserContext` from a loaded [`User`](crate::db::auth_models::User) document.
+    pub fn from_user_doc(
+        auth_user: AuthenticatedUser,
+        user: &crate::db::auth_models::User,
+    ) -> Self {
+        Self {
+            user: auth_user,
+            effective_access_levels: user.effective_access_levels.clone(),
+            can_write: user.can_write,
+            can_read_draft: user.can_read_draft,
+            can_write_draft: user.can_write_draft,
+        }
+    }
+
+    /// Returns the full set of levels the user can read: effective levels plus
+    /// the implicitly granted `"public"` and `"loggeduser"` levels.
+    fn accessible_levels(&self) -> std::collections::HashSet<&str> {
+        let mut set: std::collections::HashSet<&str> = self
+            .effective_access_levels
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        set.insert("public");
+        set.insert("loggeduser");
+        set
+    }
+
     /// Returns `true` if the user may read published documents at `level`.
     pub fn can_read(&self, level: &str) -> bool {
         if self.user.is_admin {
             return true;
         }
-        self.permissions
-            .iter()
-            .any(|p| p.access_level_name == level && p.can_read)
+        self.accessible_levels().contains(level)
     }
 
     /// Returns `true` if the user may create/update documents at `level`.
@@ -60,9 +92,7 @@ impl UserContext {
         if self.user.is_admin {
             return true;
         }
-        self.permissions
-            .iter()
-            .any(|p| p.access_level_name == level && p.can_write)
+        self.can_write && self.accessible_levels().contains(level)
     }
 
     /// Returns `true` if the user may read draft documents at `level`.
@@ -70,9 +100,7 @@ impl UserContext {
         if self.user.is_admin {
             return true;
         }
-        self.permissions
-            .iter()
-            .any(|p| p.access_level_name == level && p.can_read_draft)
+        self.can_read_draft && self.accessible_levels().contains(level)
     }
 
     /// Returns `true` if the user may write draft documents at `level`.
@@ -80,43 +108,38 @@ impl UserContext {
         if self.user.is_admin {
             return true;
         }
-        self.permissions
-            .iter()
-            .any(|p| p.access_level_name == level && p.can_write_draft)
+        self.can_write_draft && self.accessible_levels().contains(level)
     }
 
     /// Collects the access level names the user can read (published docs).
     ///
     /// Returns `None` for admin users (meaning: no restriction).
+    /// For authenticated users, includes `"public"` and `"loggeduser"` in addition
+    /// to the pre-computed effective levels.
     pub fn readable_levels(&self) -> Option<Vec<String>> {
         if self.user.is_admin {
             return None;
         }
-        Some(
-            self.permissions
-                .iter()
-                .filter(|p| p.can_read)
-                .map(|p| p.access_level_name.clone())
-                .collect(),
-        )
+        let mut levels: Vec<String> = self.effective_access_levels.clone();
+        if !levels.contains(&"public".to_string()) {
+            levels.push("public".to_string());
+        }
+        if !levels.contains(&"loggeduser".to_string()) {
+            levels.push("loggeduser".to_string());
+        }
+        Some(levels)
     }
 
     /// Returns `(readable_levels, include_draft)` suitable for passing to
     /// `DocumentRepository::list_by_access_levels` or `SearchService::search`.
     ///
     /// Admin → `(None, true)` (see everything).
+    /// Authenticated user → effective levels + `"public"` + `"loggeduser"`.
     pub fn document_visibility(&self) -> (Option<Vec<String>>, bool) {
         if self.user.is_admin {
             return (None, true);
         }
-        let levels: Vec<String> = self
-            .permissions
-            .iter()
-            .filter(|p| p.can_read)
-            .map(|p| p.access_level_name.clone())
-            .collect();
-        let include_draft = self.permissions.iter().any(|p| p.can_read_draft);
-        (Some(levels), include_draft)
+        (self.readable_levels(), self.can_read_draft)
     }
 }
 
@@ -167,21 +190,13 @@ mod tests {
     #[cfg(feature = "ssr")]
     mod context_tests {
         use super::*;
-        use crate::db::auth_models::UserPermission;
 
-        fn make_perm(level: &str, read: bool, write: bool, read_draft: bool) -> UserPermission {
-            UserPermission {
-                id: uuid::Uuid::new_v4().to_string(),
-                user_id: "u1".to_string(),
-                access_level_name: level.to_string(),
-                can_read: read,
-                can_write: write,
-                can_read_draft: read_draft,
-                can_write_draft: false,
-            }
-        }
-
-        fn make_context(is_admin: bool, perms: Vec<UserPermission>) -> UserContext {
+        fn make_context(
+            is_admin: bool,
+            effective_levels: Vec<String>,
+            can_write: bool,
+            can_read_draft: bool,
+        ) -> UserContext {
             UserContext {
                 user: AuthenticatedUser {
                     user_id: "u1".to_string(),
@@ -189,13 +204,16 @@ mod tests {
                     name: None,
                     is_admin,
                 },
-                permissions: perms,
+                effective_access_levels: effective_levels,
+                can_write,
+                can_read_draft,
+                can_write_draft: false,
             }
         }
 
         #[test]
         fn test_admin_bypasses_all_checks() {
-            let ctx = make_context(true, vec![]);
+            let ctx = make_context(true, vec![], false, false);
             assert!(ctx.can_read("anything"));
             assert!(ctx.can_write("anything"));
             assert!(ctx.can_read_draft("anything"));
@@ -203,56 +221,39 @@ mod tests {
         }
 
         #[test]
-        fn test_regular_user_respects_permissions() {
-            let ctx = make_context(
-                false,
-                vec![
-                    make_perm("public", true, false, false),
-                    make_perm("internal", true, true, true),
-                ],
-            );
-            assert!(ctx.can_read("public"));
-            assert!(!ctx.can_write("public"));
-            assert!(ctx.can_write("internal"));
-            assert!(ctx.can_read_draft("internal"));
-            assert!(!ctx.can_read("secret"));
+        fn test_regular_user_respects_effective_levels() {
+            let ctx = make_context(false, vec!["internal".to_string()], true, true);
+            assert!(ctx.can_read("public")); // implicit
+            assert!(ctx.can_read("loggeduser")); // implicit
+            assert!(ctx.can_read("internal")); // effective
+            assert!(!ctx.can_read("secret")); // not accessible
+            assert!(ctx.can_write("internal")); // can_write=true + accessible
+            assert!(!ctx.can_write("secret")); // not accessible
         }
 
         #[test]
-        fn test_readable_levels_excludes_write_only() {
-            let ctx = make_context(
-                false,
-                vec![
-                    make_perm("public", true, false, false),
-                    make_perm("internal", false, true, false), // write-only, unusual but valid
-                ],
-            );
+        fn test_readable_levels_always_includes_implicit() {
+            let ctx = make_context(false, vec!["internal".to_string()], false, false);
             let levels = ctx.readable_levels().unwrap();
             assert!(levels.contains(&"public".to_string()));
-            assert!(!levels.contains(&"internal".to_string()));
-        }
-
-        #[test]
-        fn test_document_visibility_includes_draft() {
-            let ctx = make_context(
-                false,
-                vec![
-                    make_perm("public", true, false, false),
-                    make_perm("internal", true, false, true),
-                ],
-            );
-            let (levels, include_draft) = ctx.document_visibility();
-            let levels = levels.unwrap();
-            assert!(levels.contains(&"public".to_string()));
+            assert!(levels.contains(&"loggeduser".to_string()));
             assert!(levels.contains(&"internal".to_string()));
-            assert!(include_draft);
         }
 
         #[test]
         fn test_document_visibility_no_draft() {
-            let ctx = make_context(false, vec![make_perm("public", true, false, false)]);
+            let ctx = make_context(false, vec!["internal".to_string()], false, false);
             let (_, include_draft) = ctx.document_visibility();
             assert!(!include_draft);
+        }
+
+        #[test]
+        fn test_document_visibility_with_draft() {
+            let ctx = make_context(false, vec!["internal".to_string()], false, true);
+            let (levels, include_draft) = ctx.document_visibility();
+            let levels = levels.unwrap();
+            assert!(levels.contains(&"internal".to_string()));
+            assert!(include_draft);
         }
     }
 }

@@ -311,7 +311,10 @@ mod ssr {
                 name: Some("rag-eval".into()),
                 is_admin: true,
             },
-            permissions: Vec::new(),
+            effective_access_levels: vec![],
+            can_write: true,
+            can_read_draft: true,
+            can_write_draft: true,
         }
     }
 

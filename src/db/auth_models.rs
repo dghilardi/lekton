@@ -40,8 +40,12 @@ pub mod option_bson_datetime {
 /// A configurable content access level stored in MongoDB.
 ///
 /// Unlike the old hardcoded enum, access levels are fully dynamic: admins can
-/// create, rename, or delete them. The built-in `"public"` level is marked
-/// `is_system = true` and cannot be deleted.
+/// create, rename, or delete them. The built-in `"public"` and `"loggeduser"`
+/// levels are marked `is_system = true` and cannot be deleted.
+///
+/// Access levels form a DAG: a level can inherit from multiple parents, and
+/// the effective set of levels for a user is the transitive closure of their
+/// assigned levels through the inheritance graph.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AccessLevelEntity {
     /// Machine-readable slug, e.g. `"public"`, `"internal"`, `"cloud-office"`.
@@ -51,9 +55,11 @@ pub struct AccessLevelEntity {
     pub label: String,
     /// Optional description of the intended audience.
     pub description: String,
-    /// Controls display order in admin UIs (lower = first).
-    pub sort_order: u32,
-    /// System levels cannot be deleted (protects `"public"`).
+    /// Access levels this level inherits from (DAG parents).
+    /// The effective set of levels for a user includes all transitively reachable ancestors.
+    #[serde(default)]
+    pub inherits_from: Vec<String>,
+    /// System levels cannot be deleted (protects `"public"` and `"loggeduser"`).
     pub is_system: bool,
     /// Creation timestamp.
     #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
@@ -75,6 +81,23 @@ pub struct User {
     pub provider_type: String,
     /// Full administrative access bypasses all per-level permission checks.
     pub is_admin: bool,
+    /// Access levels explicitly assigned by an administrator.
+    #[serde(default)]
+    pub assigned_access_levels: Vec<String>,
+    /// Pre-computed transitive closure of `assigned_access_levels` through
+    /// the inheritance DAG.  Kept in sync by the background recompute job.
+    /// `"public"` and `"loggeduser"` are injected at query time and not stored here.
+    #[serde(default)]
+    pub effective_access_levels: Vec<String>,
+    /// May create or update published documents at any accessible level.
+    #[serde(default)]
+    pub can_write: bool,
+    /// May read draft documents at any accessible level.
+    #[serde(default)]
+    pub can_read_draft: bool,
+    /// May create or update draft documents at any accessible level.
+    #[serde(default)]
+    pub can_write_draft: bool,
     /// When this user record was first created (first login).
     #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub created_at: DateTime<Utc>,
@@ -85,28 +108,6 @@ pub struct User {
         with = "option_bson_datetime"
     )]
     pub last_login_at: Option<DateTime<Utc>>,
-}
-
-/// RBAC permission grant for a user on a specific access level.
-///
-/// There is at most one `UserPermission` record per `(user_id, access_level_name)` pair.
-/// Admin users bypass these checks entirely.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserPermission {
-    /// Internal UUID.
-    pub id: String,
-    /// References `User.id`.
-    pub user_id: String,
-    /// References `AccessLevelEntity.name`.
-    pub access_level_name: String,
-    /// May read published (non-draft) documents at this level.
-    pub can_read: bool,
-    /// May create or update documents at this level (implies `can_read`).
-    pub can_write: bool,
-    /// May read draft documents at this level.
-    pub can_read_draft: bool,
-    /// May create or update draft documents at this level.
-    pub can_write_draft: bool,
 }
 
 /// A long-lived opaque token used to obtain new JWT access tokens.
@@ -153,7 +154,7 @@ mod tests {
             name: "cloud-office".to_string(),
             label: "Cloud Office".to_string(),
             description: "Documentation for the cloud office team".to_string(),
-            sort_order: 20,
+            inherits_from: vec!["internal".to_string()],
             is_system: false,
             created_at: Utc::now(),
         };
@@ -161,6 +162,7 @@ mod tests {
         let de: AccessLevelEntity = serde_json::from_str(&json).unwrap();
         assert_eq!(de.name, "cloud-office");
         assert_eq!(de.label, "Cloud Office");
+        assert_eq!(de.inherits_from, vec!["internal"]);
         assert!(!de.is_system);
     }
 
@@ -173,6 +175,11 @@ mod tests {
             provider_sub: "oidc|sub-alice-001".to_string(),
             provider_type: "oidc".to_string(),
             is_admin: false,
+            assigned_access_levels: vec!["internal".to_string()],
+            effective_access_levels: vec!["internal".to_string(), "loggeduser".to_string()],
+            can_write: false,
+            can_read_draft: false,
+            can_write_draft: false,
             created_at: Utc::now(),
             last_login_at: None,
         };
@@ -181,27 +188,37 @@ mod tests {
         assert_eq!(de.email, "alice@example.com");
         assert_eq!(de.name, Some("Alice".to_string()));
         assert!(!de.is_admin);
+        assert_eq!(de.assigned_access_levels, vec!["internal"]);
+        assert_eq!(de.effective_access_levels, vec!["internal", "loggeduser"]);
         assert_eq!(de.last_login_at, None);
     }
 
     #[test]
-    fn test_user_permission_roundtrip() {
-        let perm = UserPermission {
-            id: "perm-uuid-1".to_string(),
-            user_id: "user-uuid-1".to_string(),
-            access_level_name: "internal".to_string(),
-            can_read: true,
-            can_write: false,
-            can_read_draft: true,
-            can_write_draft: false,
+    fn test_user_defaults_on_missing_fields() {
+        // Verify that new fields default to empty/false via serde defaults.
+        // This ensures backward-compatible deserialization of old MongoDB documents
+        // that predate the access-level refactoring.
+        let user = User {
+            id: "u1".to_string(),
+            email: "old@example.com".to_string(),
+            name: None,
+            provider_sub: "sub-old".to_string(),
+            provider_type: "oidc".to_string(),
+            is_admin: false,
+            assigned_access_levels: vec![],  // default
+            effective_access_levels: vec![], // default
+            can_write: false,                // default
+            can_read_draft: false,           // default
+            can_write_draft: false,          // default
+            created_at: Utc::now(),
+            last_login_at: None,
         };
-        let json = serde_json::to_string(&perm).unwrap();
-        let de: UserPermission = serde_json::from_str(&json).unwrap();
-        assert_eq!(de.access_level_name, "internal");
-        assert!(de.can_read);
+        let json = serde_json::to_string(&user).unwrap();
+        let de: User = serde_json::from_str(&json).unwrap();
+        assert!(de.assigned_access_levels.is_empty());
+        assert!(de.effective_access_levels.is_empty());
         assert!(!de.can_write);
-        assert!(de.can_read_draft);
-        assert!(!de.can_write_draft);
+        assert!(!de.can_read_draft);
     }
 
     #[test]

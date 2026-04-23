@@ -1133,15 +1133,10 @@ mod tests {
                 name: None,
                 is_admin: false,
             },
-            permissions: vec![crate::db::auth_models::UserPermission {
-                id: "perm-1".to_string(),
-                user_id: "u1".to_string(),
-                access_level_name: "internal".to_string(),
-                can_read: true,
-                can_write: false,
-                can_read_draft: false,
-                can_write_draft: false,
-            }],
+            effective_access_levels: vec!["internal".to_string()],
+            can_write: false,
+            can_read_draft: false,
+            can_write_draft: false,
         }
     }
 

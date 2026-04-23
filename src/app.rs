@@ -147,16 +147,25 @@ pub(crate) async fn request_document_visibility(
         .map(|claims| TokenService::claims_to_user(&claims));
 
     if let Some(auth_user) = maybe_user {
-        let perms = state
+        if auth_user.is_admin {
+            return Ok((None, true));
+        }
+        let user_doc = state
             .user_repo
-            .get_permissions(&auth_user.user_id)
+            .find_user_by_id(&auth_user.user_id)
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
-        return Ok(UserContext {
-            user: auth_user,
-            permissions: perms,
-        }
-        .document_visibility());
+        let ctx = match user_doc {
+            Some(u) => UserContext::from_user_doc(auth_user, &u),
+            None => UserContext {
+                user: auth_user,
+                effective_access_levels: vec![],
+                can_write: false,
+                can_read_draft: false,
+                can_write_draft: false,
+            },
+        };
+        return Ok(ctx.document_visibility());
     }
 
     // Fall back to demo session cookie when demo mode is active.
@@ -969,14 +978,20 @@ async fn prompt_visibility_for_user(
         return Ok((None, true));
     }
 
-    let perms = state
+    let user_doc = state
         .user_repo
-        .get_permissions(&user.user_id)
+        .find_user_by_id(&user.user_id)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
-    let user_ctx = crate::auth::models::UserContext {
-        user: user.clone(),
-        permissions: perms,
+    let user_ctx = match user_doc {
+        Some(u) => crate::auth::models::UserContext::from_user_doc(user.clone(), &u),
+        None => crate::auth::models::UserContext {
+            user: user.clone(),
+            effective_access_levels: vec![],
+            can_write: false,
+            can_read_draft: false,
+            can_write_draft: false,
+        },
     };
     Ok(user_ctx.document_visibility())
 }

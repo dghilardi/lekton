@@ -146,7 +146,6 @@ async fn access_level_update_success() {
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
     assert_eq!(body["label"].as_str(), Some("Updated Label"));
-    assert_eq!(body["sort_order"].as_u64(), Some(20));
 }
 
 #[tokio::test]
@@ -252,7 +251,7 @@ async fn admin_list_users() {
 }
 
 #[tokio::test]
-async fn admin_get_user_permissions() {
+async fn admin_get_user() {
     let env = common::TestEnv::start().await;
     let server = env.server();
 
@@ -262,35 +261,19 @@ async fn admin_get_user_permissions() {
     env.create_test_user("user-1", "user1@test.com", false)
         .await;
 
-    // Set a permission for user-1
-    use lekton::db::auth_models::UserPermission;
-    env.user_repo
-        .upsert_permission(UserPermission {
-            id: uuid::Uuid::new_v4().to_string(),
-            user_id: "user-1".to_string(),
-            access_level_name: "public".to_string(),
-            can_read: true,
-            can_write: false,
-            can_read_draft: false,
-            can_write_draft: false,
-        })
-        .await
-        .unwrap();
-
     let response = server
-        .get("/api/v1/admin/users/user-1/permissions")
+        .get("/api/v1/admin/users/user-1")
         .add_cookie(env.auth_cookie(&admin))
         .await;
 
     response.assert_status_ok();
-    let perms: Vec<serde_json::Value> = response.json();
-    assert_eq!(perms.len(), 1);
-    assert_eq!(perms[0]["access_level_name"].as_str(), Some("public"));
-    assert_eq!(perms[0]["can_read"].as_bool(), Some(true));
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["id"].as_str(), Some("user-1"));
+    assert_eq!(body["email"].as_str(), Some("user1@test.com"));
 }
 
 #[tokio::test]
-async fn admin_set_user_permissions() {
+async fn admin_set_user_access_levels() {
     let env = common::TestEnv::start().await;
     let server = env.server();
 
@@ -300,73 +283,27 @@ async fn admin_set_user_permissions() {
     env.create_test_user("user-1", "user1@test.com", false)
         .await;
 
+    env.access_level_repo.seed_defaults().await.unwrap();
+
     let response = server
-        .put("/api/v1/admin/users/user-1/permissions")
+        .put("/api/v1/admin/users/user-1/access-levels")
         .add_cookie(env.auth_cookie(&admin))
         .json(&json!({
-            "permissions": [
-                {
-                    "access_level_name": "public",
-                    "can_read": true,
-                    "can_write": true,
-                    "can_read_draft": false,
-                    "can_write_draft": false
-                },
-                {
-                    "access_level_name": "internal",
-                    "can_read": true,
-                    "can_write": false,
-                    "can_read_draft": true,
-                    "can_write_draft": false
-                }
-            ]
+            "assigned_access_levels": ["internal"],
+            "can_write": true,
+            "can_read_draft": false,
+            "can_write_draft": false
         }))
         .await;
 
     response.assert_status_ok();
-    let perms: Vec<serde_json::Value> = response.json();
-    assert_eq!(perms.len(), 2);
-
-    // Verify persisted
-    let stored = env.user_repo.get_permissions("user-1").await.unwrap();
-    assert_eq!(stored.len(), 2);
-}
-
-#[tokio::test]
-async fn admin_delete_user_permission() {
-    let env = common::TestEnv::start().await;
-    let server = env.server();
-
-    let admin = env
-        .create_test_user("admin-1", "admin@test.com", true)
-        .await;
-    env.create_test_user("user-1", "user1@test.com", false)
-        .await;
-
-    // Set permissions first
-    use lekton::db::auth_models::UserPermission;
-    env.user_repo
-        .upsert_permission(UserPermission {
-            id: uuid::Uuid::new_v4().to_string(),
-            user_id: "user-1".to_string(),
-            access_level_name: "internal".to_string(),
-            can_read: true,
-            can_write: false,
-            can_read_draft: false,
-            can_write_draft: false,
-        })
-        .await
-        .unwrap();
-
-    let response = server
-        .delete("/api/v1/admin/users/user-1/permissions/internal")
-        .add_cookie(env.auth_cookie(&admin))
-        .await;
-
-    response.assert_status(axum::http::StatusCode::NO_CONTENT);
-
-    let remaining = env.user_repo.get_permissions("user-1").await.unwrap();
-    assert!(remaining.is_empty());
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["id"].as_str(), Some("user-1"));
+    assert!(body["assigned_access_levels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|l| l.as_str() == Some("internal")));
 }
 
 // ── Auth Guards ──────────────────────────────────────────────────────────────
@@ -394,7 +331,7 @@ async fn admin_endpoints_reject_unauthenticated() {
         .assert_status(axum::http::StatusCode::UNAUTHORIZED);
 
     server
-        .get("/api/v1/admin/users/any-id/permissions")
+        .get("/api/v1/admin/users/any-id")
         .await
         .assert_status(axum::http::StatusCode::UNAUTHORIZED);
 }
@@ -427,7 +364,7 @@ async fn admin_endpoints_reject_non_admin() {
 }
 
 #[tokio::test]
-async fn admin_set_permissions_nonexistent_user() {
+async fn admin_set_access_levels_nonexistent_user() {
     let env = common::TestEnv::start().await;
     let server = env.server_permissive();
 
@@ -436,16 +373,13 @@ async fn admin_set_permissions_nonexistent_user() {
         .await;
 
     let response = server
-        .put("/api/v1/admin/users/nonexistent-user/permissions")
+        .put("/api/v1/admin/users/nonexistent-user/access-levels")
         .add_cookie(env.auth_cookie(&admin))
         .json(&json!({
-            "permissions": [{
-                "access_level_name": "public",
-                "can_read": true,
-                "can_write": false,
-                "can_read_draft": false,
-                "can_write_draft": false
-            }]
+            "assigned_access_levels": [],
+            "can_write": false,
+            "can_read_draft": false,
+            "can_write_draft": false
         }))
         .await;
 

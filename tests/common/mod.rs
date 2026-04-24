@@ -270,13 +270,12 @@ impl TestEnv {
                 get(lekton::api::admin::list_users_handler),
             )
             .route(
-                "/api/v1/admin/users/{user_id}/permissions",
-                get(lekton::api::admin::get_user_permissions_handler)
-                    .put(lekton::api::admin::set_user_permissions_handler),
+                "/api/v1/admin/users/{user_id}",
+                get(lekton::api::admin::get_user_handler),
             )
             .route(
-                "/api/v1/admin/users/{user_id}/permissions/{level}",
-                axum::routing::delete(lekton::api::admin::delete_user_permission_handler),
+                "/api/v1/admin/users/{user_id}/access-levels",
+                axum::routing::put(lekton::api::admin::set_user_access_levels_handler),
             )
             .route(
                 "/api/v1/admin/service-tokens",
@@ -356,6 +355,11 @@ impl TestEnv {
             provider_sub: format!("sub-{}", user_id),
             provider_type: "oidc".to_string(),
             is_admin,
+            assigned_access_levels: vec![],
+            effective_access_levels: vec![],
+            can_write: false,
+            can_read_draft: false,
+            can_write_draft: false,
             created_at: chrono::Utc::now(),
             last_login_at: None,
         };

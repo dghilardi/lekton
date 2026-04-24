@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 ### Added
+- Database migration framework: idempotent startup migrations tracked in `__migrations` collection; failed migrations block startup until resolved. First migration backfills `created_at` on existing `AccessLevelEntity` documents.
 - Access-level inheritance: levels form a DAG via a new `inherits_from` field; a user assigned `cloud-developer` automatically inherits access to `developer`, `internal`, and so on. Cycle detection prevents invalid hierarchies.
 - Implicit system levels `public` (every request) and `loggeduser` (every authenticated request) — injected at query time, never stored on users.
 - Pre-computed `effective_access_levels` on the `User` document, kept in sync by a background recompute job when the inheritance graph changes.

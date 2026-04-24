@@ -180,6 +180,12 @@ async fn main() {
         None
     };
 
+    // Run database migrations before seeding or serving traffic.
+    lekton::db::migrations::build_plan()
+        .run(mongo_db.clone())
+        .await
+        .expect("Database migration failed — check __migrations collection and restart");
+
     // Seed default access levels (no-op if already present).
     if let Err(e) = access_level_repo.seed_defaults().await {
         tracing::warn!("Failed to seed default access levels: {e}");

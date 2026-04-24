@@ -14,6 +14,12 @@ pub trait DocumentRepository: Send + Sync {
     /// Find a document by its slug.
     async fn find_by_slug(&self, slug: &str) -> Result<Option<Document>, AppError>;
 
+    /// List every document regardless of access level, draft, hidden, or archive state.
+    ///
+    /// This is intended for administrative maintenance jobs that must reconcile
+    /// derived stores with the canonical document metadata.
+    async fn list_all(&self) -> Result<Vec<Document>, AppError>;
+
     /// List documents the caller is allowed to see.
     ///
     /// - `allowed_levels`: the set of `access_level` names the caller can read
@@ -91,6 +97,24 @@ impl DocumentRepository for MongoDocumentRepository {
         use mongodb::bson::doc;
 
         Ok(self.collection.find_one(doc! { "slug": slug }).await?)
+    }
+
+    async fn list_all(&self) -> Result<Vec<Document>, AppError> {
+        use futures::TryStreamExt;
+        use mongodb::bson::doc;
+        use mongodb::options::FindOptions;
+
+        let options = FindOptions::builder()
+            .sort(doc! { "order": 1, "slug": 1 })
+            .build();
+        let mut cursor = self.collection.find(doc! {}).with_options(options).await?;
+
+        let mut documents = Vec::new();
+        while let Some(document) = cursor.try_next().await? {
+            documents.push(document);
+        }
+
+        Ok(documents)
     }
 
     async fn list_by_access_levels(

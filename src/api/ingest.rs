@@ -570,6 +570,10 @@ mod tests {
                 .cloned())
         }
 
+        async fn list_all(&self) -> Result<Vec<Document>, AppError> {
+            Ok(self.documents.lock().unwrap().clone())
+        }
+
         async fn list_by_access_levels(
             &self,
             allowed_levels: Option<&[String]>,

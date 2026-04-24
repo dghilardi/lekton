@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+### Added
+- Admin-triggered Meilisearch reindex: rebuild the full-text search index from stored documents, with REST endpoints and an admin panel button.
 
 ## [0.18.0] 2026-04-24
 ### Added

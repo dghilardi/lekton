@@ -217,6 +217,13 @@ async fn main() {
                 None
             }
         };
+    let search_reindex_state = if search_service.is_some() {
+        Some(Arc::new(
+            lekton::search::reindex::SearchReindexState::default(),
+        ))
+    } else {
+        None
+    };
 
     // Service token for API authentication
     let service_token = match config.auth.service_token.as_deref() {
@@ -388,6 +395,7 @@ async fn main() {
         rag_service,
         chat_repo,
         chat_service,
+        search_reindex_state,
         feedback_repo,
         documentation_feedback_repo,
         embedding_cache_repo,
@@ -522,6 +530,14 @@ async fn main() {
         .route(
             "/api/v1/admin/rag/reindex/status",
             axum::routing::get(api::rag::reindex_status_handler),
+        )
+        .route(
+            "/api/v1/admin/search/reindex",
+            axum::routing::post(api::search::trigger_reindex_handler),
+        )
+        .route(
+            "/api/v1/admin/search/reindex/status",
+            axum::routing::get(api::search::reindex_status_handler),
         )
         .route(
             "/api/v1/admin/rag/feedback",

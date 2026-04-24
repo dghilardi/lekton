@@ -1,5 +1,13 @@
 use crate::search::client::SearchHit;
 
+#[cfg(feature = "ssr")]
+#[derive(serde::Serialize)]
+pub struct SearchReindexStatusResponse {
+    pub is_running: bool,
+    pub progress: u32,
+    pub search_enabled: bool,
+}
+
 /// Query parameters for the search endpoint.
 ///
 /// NOTE: Once the auth extractor is wired up (task 11) the `access_levels`
@@ -45,4 +53,89 @@ pub async fn search_handler(
         .await?;
 
     Ok(axum::Json(results))
+}
+
+/// `POST /api/v1/admin/search/reindex` — trigger full Meilisearch re-index.
+#[cfg(feature = "ssr")]
+pub async fn trigger_reindex_handler(
+    crate::auth::extractor::RequiredAuthUser(user): crate::auth::extractor::RequiredAuthUser,
+    axum::extract::State(state): axum::extract::State<crate::app::AppState>,
+) -> Result<(axum::http::StatusCode, axum::Json<serde_json::Value>), crate::error::AppError> {
+    use std::sync::atomic::Ordering;
+
+    if !user.is_admin {
+        return Err(crate::error::AppError::Forbidden(
+            "Admin privileges required".into(),
+        ));
+    }
+
+    let search = state
+        .search_service
+        .as_ref()
+        .ok_or_else(|| crate::error::AppError::BadRequest("Search is not enabled".into()))?;
+
+    let reindex = state.search_reindex_state.as_ref().ok_or_else(|| {
+        crate::error::AppError::Internal("search reindex state not available".into())
+    })?;
+
+    if reindex
+        .is_running
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Ok((
+            axum::http::StatusCode::CONFLICT,
+            axum::Json(serde_json::json!({
+                "message": "Search re-index is already in progress",
+                "progress": reindex.progress.load(Ordering::Relaxed),
+            })),
+        ));
+    }
+
+    let reindex_clone = reindex.clone();
+    let document_repo = state.document_repo.clone();
+    let storage = state.storage_client.clone();
+    let search_clone = search.clone();
+
+    tokio::spawn(async move {
+        crate::search::reindex::run_reindex(reindex_clone, document_repo, storage, search_clone)
+            .await;
+    });
+
+    Ok((
+        axum::http::StatusCode::ACCEPTED,
+        axum::Json(serde_json::json!({
+            "message": "Search re-index started",
+        })),
+    ))
+}
+
+/// `GET /api/v1/admin/search/reindex/status` — poll Meilisearch re-index progress.
+#[cfg(feature = "ssr")]
+pub async fn reindex_status_handler(
+    crate::auth::extractor::RequiredAuthUser(user): crate::auth::extractor::RequiredAuthUser,
+    axum::extract::State(state): axum::extract::State<crate::app::AppState>,
+) -> Result<axum::Json<SearchReindexStatusResponse>, crate::error::AppError> {
+    use std::sync::atomic::Ordering;
+
+    if !user.is_admin {
+        return Err(crate::error::AppError::Forbidden(
+            "Admin privileges required".into(),
+        ));
+    }
+
+    let search_enabled = state.search_service.is_some();
+    let (is_running, progress) = match &state.search_reindex_state {
+        Some(reindex) => (
+            reindex.is_running.load(Ordering::Acquire),
+            reindex.progress.load(Ordering::Relaxed),
+        ),
+        None => (false, 0),
+    };
+
+    Ok(axum::Json(SearchReindexStatusResponse {
+        is_running,
+        progress,
+        search_enabled,
+    }))
 }

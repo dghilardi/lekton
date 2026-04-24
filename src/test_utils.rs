@@ -57,7 +57,7 @@ impl crate::storage::client::StorageClient for MockStorage {
 
 // ── MockUserRepository ─────────────────────────────────────────────────────
 
-use crate::db::auth_models::{RefreshToken, UserPermission};
+use crate::db::auth_models::RefreshToken;
 use crate::db::user_repository::UserRepository;
 use chrono::Utc;
 
@@ -65,7 +65,6 @@ use chrono::Utc;
 #[derive(Default)]
 pub struct MockUserRepository {
     pub users: Mutex<Vec<crate::db::auth_models::User>>,
-    pub permissions: Mutex<Vec<UserPermission>>,
     pub tokens: Mutex<Vec<RefreshToken>>,
 }
 
@@ -128,36 +127,52 @@ impl UserRepository for MockUserRepository {
         Ok(self.users.lock().unwrap().clone())
     }
 
-    async fn upsert_permission(&self, perm: UserPermission) -> Result<(), AppError> {
-        let mut perms = self.permissions.lock().unwrap();
-        perms.retain(|p| {
-            !(p.user_id == perm.user_id && p.access_level_name == perm.access_level_name)
-        });
-        perms.push(perm);
+    async fn set_user_access_levels(
+        &self,
+        user_id: &str,
+        assigned: Vec<String>,
+        effective: Vec<String>,
+        can_write: bool,
+        can_read_draft: bool,
+        can_write_draft: bool,
+    ) -> Result<(), AppError> {
+        let mut users = self.users.lock().unwrap();
+        let user = users
+            .iter_mut()
+            .find(|u| u.id == user_id)
+            .ok_or_else(|| AppError::NotFound(format!("User '{user_id}' not found")))?;
+        user.assigned_access_levels = assigned;
+        user.effective_access_levels = effective;
+        user.can_write = can_write;
+        user.can_read_draft = can_read_draft;
+        user.can_write_draft = can_write_draft;
         Ok(())
     }
 
-    async fn get_permissions(&self, user_id: &str) -> Result<Vec<UserPermission>, AppError> {
+    async fn update_user_effective_levels(
+        &self,
+        user_id: &str,
+        effective: Vec<String>,
+    ) -> Result<(), AppError> {
+        let mut users = self.users.lock().unwrap();
+        if let Some(u) = users.iter_mut().find(|u| u.id == user_id) {
+            u.effective_access_levels = effective;
+        }
+        Ok(())
+    }
+
+    async fn list_users_with_assigned_level(
+        &self,
+        level_name: &str,
+    ) -> Result<Vec<crate::db::auth_models::User>, AppError> {
         Ok(self
-            .permissions
+            .users
             .lock()
             .unwrap()
             .iter()
-            .filter(|p| p.user_id == user_id)
+            .filter(|u| u.assigned_access_levels.contains(&level_name.to_string()))
             .cloned()
             .collect())
-    }
-
-    async fn delete_permission(
-        &self,
-        user_id: &str,
-        access_level_name: &str,
-    ) -> Result<(), AppError> {
-        self.permissions
-            .lock()
-            .unwrap()
-            .retain(|p| !(p.user_id == user_id && p.access_level_name == access_level_name));
-        Ok(())
     }
 
     async fn create_refresh_token(&self, token: RefreshToken) -> Result<(), AppError> {

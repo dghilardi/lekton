@@ -24,7 +24,7 @@ use crate::auth::middleware::build_user_from_claims;
 use crate::auth::models::AuthenticatedUser;
 use crate::auth::provider::AuthFlowState;
 use crate::auth::token_service::TokenService;
-use crate::db::auth_models::{RefreshToken, UserPermission};
+use crate::db::auth_models::RefreshToken;
 use crate::error::AppError;
 
 // ── Response types ────────────────────────────────────────────────────────────
@@ -86,19 +86,8 @@ pub async fn upsert_user_after_login(
         provider_type,
     );
     user_repo.create_user(new_user.clone()).await?;
-
-    // Grant default read permission on the "public" level
-    user_repo
-        .upsert_permission(UserPermission {
-            id: uuid::Uuid::new_v4().to_string(),
-            user_id: user_id.clone(),
-            access_level_name: "public".to_string(),
-            can_read: true,
-            can_write: false,
-            can_read_draft: false,
-            can_write_draft: false,
-        })
-        .await?;
+    // New users start with no explicit access levels.
+    // "public" is injected implicitly at query time for all users.
 
     Ok(AuthenticatedUser {
         user_id,
@@ -375,7 +364,7 @@ mod tests {
     // ── Tests ─────────────────────────────────────────────────────────────────
 
     #[tokio::test]
-    async fn test_upsert_new_user_creates_user_and_public_permission() {
+    async fn test_upsert_new_user_creates_user_with_no_explicit_levels() {
         let repo = MockRepo::default();
 
         let user = upsert_user_after_login(&repo, "sub-1", "a@test.com", None, "oidc")
@@ -385,11 +374,10 @@ mod tests {
         assert_eq!(user.email, "a@test.com");
         assert!(!user.is_admin);
 
-        let perms = repo.get_permissions(&user.user_id).await.unwrap();
-        assert_eq!(perms.len(), 1);
-        assert_eq!(perms[0].access_level_name, "public");
-        assert!(perms[0].can_read);
-        assert!(!perms[0].can_write);
+        // New users have no explicit access levels; "public" is implicit
+        let db_user = repo.find_user_by_id(&user.user_id).await.unwrap().unwrap();
+        assert!(db_user.assigned_access_levels.is_empty());
+        assert!(db_user.effective_access_levels.is_empty());
     }
 
     #[tokio::test]

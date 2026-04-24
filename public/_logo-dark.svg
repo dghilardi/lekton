@@ -1,0 +1,18 @@
+<svg 
+    xmlns="http://www.w3.org/2000/svg" 
+    viewBox="0 0 510 340"
+    width="512"
+    height="340"
+>
+    <mask id="c_mask">
+        <rect fill="white" width="512" height="512"/>
+        <circle fill="black" cx="150" cy="150" r="61"/>
+        <circle fill="black" cx="360" cy="150" r="160"/>
+    </mask>
+    <mask id="o_mask">
+        <rect fill="white" width="512" height="512"/>
+        <circle fill="black" cx="360" cy="150" r="61"/>
+    </mask>
+    <circle fill="#00BC70" cx="150" cy="150" r="140" mask="url(#c_mask)"/>
+    <circle fill="#FFFFFF" cx="360" cy="150" r="140" mask="url(#o_mask)"/>
+</svg>

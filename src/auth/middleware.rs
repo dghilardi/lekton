@@ -25,6 +25,11 @@ pub fn build_user_from_claims(
         provider_sub,
         provider_type: provider_type.to_string(),
         is_admin: false,
+        assigned_access_levels: vec![],
+        effective_access_levels: vec![],
+        can_write: false,
+        can_read_draft: false,
+        can_write_draft: false,
         created_at: Utc::now(),
         last_login_at: None,
     }

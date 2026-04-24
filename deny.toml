@@ -19,6 +19,7 @@ ignore = [
     { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile: transitive via aws-sdk rustls 0.21 chain, no upgrade" },
     { id = "RUSTSEC-2026-0098", reason = "rustls-webpki 0.101: transitive via aws-sdk rustls 0.21, pinned by semver" },
     { id = "RUSTSEC-2026-0099", reason = "rustls-webpki 0.101: transitive via aws-sdk rustls 0.21, pinned by semver" },
+    { id = "RUSTSEC-2026-0104", reason = "rustls-webpki 0.101: transitive via aws-sdk rustls 0.21, CRL panic, no upgrade path" },
 ]
 
 # License policy

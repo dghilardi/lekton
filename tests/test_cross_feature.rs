@@ -19,8 +19,7 @@ async fn ingest_with_custom_access_level_then_search() {
         .json(&json!({
             "name": "secret",
             "label": "Secret",
-            "description": "Top secret docs",
-            "sort_order": 100
+            "description": "Top secret docs"
         }))
         .await;
 
@@ -77,23 +76,19 @@ async fn admin_creates_level_assigns_permission_user_sees_doc() {
         .json(&json!({
             "name": "team-alpha",
             "label": "Team Alpha",
-            "description": "Alpha team docs",
-            "sort_order": 50
+            "description": "Alpha team docs"
         }))
         .await;
 
-    // 2. Assign read permission to user-1 for team-alpha
+    // 2. Assign team-alpha level to user-1
     server
-        .put("/api/v1/admin/users/user-1/permissions")
+        .put("/api/v1/admin/users/user-1/access-levels")
         .add_cookie(env.auth_cookie(&admin))
         .json(&json!({
-            "permissions": [{
-                "access_level_name": "team-alpha",
-                "can_read": true,
-                "can_write": false,
-                "can_read_draft": false,
-                "can_write_draft": false
-            }]
+            "assigned_access_levels": ["team-alpha"],
+            "can_write": false,
+            "can_read_draft": false,
+            "can_write_draft": false
         }))
         .await;
 
@@ -122,11 +117,16 @@ async fn admin_creates_level_assigns_permission_user_sees_doc() {
         "should find doc with correct access level"
     );
 
-    // 5. Verify the permission was persisted
-    let perms = env.user_repo.get_permissions("user-1").await.unwrap();
-    assert_eq!(perms.len(), 1);
-    assert_eq!(perms[0].access_level_name, "team-alpha");
-    assert!(perms[0].can_read);
+    // 5. Verify the access level assignment was persisted
+    let user = env
+        .user_repo
+        .find_user_by_id("user-1")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(user
+        .assigned_access_levels
+        .contains(&"team-alpha".to_string()));
 }
 
 #[tokio::test]
@@ -255,7 +255,7 @@ async fn seed_defaults_idempotent() {
     env.access_level_repo.seed_defaults().await.unwrap();
     env.access_level_repo.seed_defaults().await.unwrap();
 
-    // Should still have exactly 4 default levels, not 8
+    // Should still have exactly 5 default levels, not 10
     let levels = env.access_level_repo.list_all().await.unwrap();
-    assert_eq!(levels.len(), 4, "seed_defaults should be idempotent");
+    assert_eq!(levels.len(), 5, "seed_defaults should be idempotent");
 }

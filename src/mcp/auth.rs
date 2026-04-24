@@ -64,7 +64,7 @@ pub async fn pat_auth_middleware(
     });
 
     let user_ctx = match token.user_id.as_deref() {
-        // PAT linked to a real user — resolve permissions from DB
+        // PAT linked to a real user — load user document for effective levels
         Some(user_id) => {
             let user = auth
                 .user_repo
@@ -73,21 +73,13 @@ pub async fn pat_auth_middleware(
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
                 .ok_or(StatusCode::UNAUTHORIZED)?;
 
-            let permissions = auth
-                .user_repo
-                .get_permissions(user_id)
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-            UserContext {
-                user: AuthenticatedUser {
-                    user_id: user.id,
-                    email: user.email,
-                    name: user.name,
-                    is_admin: user.is_admin,
-                },
-                permissions,
-            }
+            let auth_user = AuthenticatedUser {
+                user_id: user.id.clone(),
+                email: user.email.clone(),
+                name: user.name.clone(),
+                is_admin: user.is_admin,
+            };
+            UserContext::from_user_doc(auth_user, &user)
         }
         // Admin PAT — no user_id, full access to all documents
         None => UserContext {
@@ -97,7 +89,10 @@ pub async fn pat_auth_middleware(
                 name: Some(token.name.clone()),
                 is_admin: true,
             },
-            permissions: vec![],
+            effective_access_levels: vec![],
+            can_write: true,
+            can_read_draft: true,
+            can_write_draft: true,
         },
     };
 

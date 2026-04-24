@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::AppState;
 use crate::auth::extractor::RequiredAuthUser;
-use crate::db::auth_models::{AccessLevelEntity, User, UserPermission};
+use crate::db::auth_models::{AccessLevelEntity, User};
 use crate::error::AppError;
 
 // ── Guard helper ──────────────────────────────────────────────────────────────
@@ -42,14 +42,16 @@ pub struct CreateAccessLevelRequest {
     pub name: String,
     pub label: String,
     pub description: String,
-    pub sort_order: u32,
+    #[serde(default)]
+    pub inherits_from: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateAccessLevelRequest {
     pub label: String,
     pub description: String,
-    pub sort_order: u32,
+    #[serde(default)]
+    pub inherits_from: Vec<String>,
 }
 
 /// `GET /api/v1/admin/access-levels`
@@ -81,7 +83,7 @@ pub async fn create_access_level_handler(
         name: name.clone(),
         label: req.label,
         description: req.description,
-        sort_order: req.sort_order,
+        inherits_from: req.inherits_from,
         is_system: false,
         created_at: Utc::now(),
     };
@@ -109,12 +111,22 @@ pub async fn update_access_level_handler(
         name: existing.name,
         label: req.label,
         description: req.description,
-        sort_order: req.sort_order,
+        inherits_from: req.inherits_from,
         is_system: existing.is_system,
         created_at: existing.created_at,
     };
 
     state.access_level_repo.update(updated.clone()).await?;
+
+    // Spawn cascade recompute if the inheritance structure changed
+    if existing.inherits_from != updated.inherits_from {
+        crate::jobs::recompute_access_levels::spawn_recompute_for_level(
+            updated.name.clone(),
+            state.access_level_repo.clone(),
+            state.user_repo.clone(),
+        );
+    }
+
     Ok(Json(updated))
 }
 
@@ -131,13 +143,6 @@ pub async fn delete_access_level_handler(
 
 // ── User management ───────────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
-pub struct UserWithPermissions {
-    #[serde(flatten)]
-    pub user: User,
-    pub permissions: Vec<UserPermission>,
-}
-
 /// `GET /api/v1/admin/users`
 pub async fn list_users_handler(
     State(state): State<AppState>,
@@ -148,42 +153,47 @@ pub async fn list_users_handler(
     Ok(Json(users))
 }
 
-/// `GET /api/v1/admin/users/{user_id}/permissions`
-pub async fn get_user_permissions_handler(
+/// `GET /api/v1/admin/users/{user_id}`
+pub async fn get_user_handler(
     State(state): State<AppState>,
     RequiredAuthUser(caller): RequiredAuthUser,
     Path(user_id): Path<String>,
-) -> Result<Json<Vec<UserPermission>>, AppError> {
+) -> Result<Json<User>, AppError> {
     require_admin(&caller)?;
-    let perms = state.user_repo.get_permissions(&user_id).await?;
-    Ok(Json(perms))
+    let user = state
+        .user_repo
+        .find_user_by_id(&user_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("User '{user_id}' not found")))?;
+    Ok(Json(user))
 }
 
-/// Request body for replacing a user's full permission set.
+/// Request body for assigning access levels to a user.
 #[derive(Debug, Deserialize)]
-pub struct SetPermissionsRequest {
-    pub permissions: Vec<PermissionEntry>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PermissionEntry {
-    pub access_level_name: String,
-    pub can_read: bool,
+pub struct SetUserAccessLevelsRequest {
+    /// Access levels explicitly assigned to this user.
+    pub assigned_access_levels: Vec<String>,
+    /// May create or update published documents.
+    #[serde(default)]
     pub can_write: bool,
+    /// May read draft documents.
+    #[serde(default)]
     pub can_read_draft: bool,
+    /// May create or update draft documents.
+    #[serde(default)]
     pub can_write_draft: bool,
 }
 
-/// `PUT /api/v1/admin/users/{user_id}/permissions`
+/// `PUT /api/v1/admin/users/{user_id}/access-levels`
 ///
-/// Replaces the full permission set for a user.  Each entry is upserted
-/// individually (insert-or-replace by `(user_id, access_level_name)`).
-pub async fn set_user_permissions_handler(
+/// Replaces the access-level assignment for a user and immediately recomputes
+/// the effective (transitive) set through the inheritance DAG.
+pub async fn set_user_access_levels_handler(
     State(state): State<AppState>,
     RequiredAuthUser(caller): RequiredAuthUser,
     Path(user_id): Path<String>,
-    Json(req): Json<SetPermissionsRequest>,
-) -> Result<Json<Vec<UserPermission>>, AppError> {
+    Json(req): Json<SetUserAccessLevelsRequest>,
+) -> Result<Json<User>, AppError> {
     require_admin(&caller)?;
 
     // Verify the target user exists
@@ -193,33 +203,39 @@ pub async fn set_user_permissions_handler(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("User '{user_id}' not found")))?;
 
-    let mut upserted = Vec::new();
-    for entry in req.permissions {
-        let perm = UserPermission {
-            id: uuid::Uuid::new_v4().to_string(),
-            user_id: user_id.clone(),
-            access_level_name: entry.access_level_name,
-            can_read: entry.can_read,
-            can_write: entry.can_write,
-            can_read_draft: entry.can_read_draft,
-            can_write_draft: entry.can_write_draft,
-        };
-        state.user_repo.upsert_permission(perm.clone()).await?;
-        upserted.push(perm);
+    // Validate that all assigned levels exist
+    for level in &req.assigned_access_levels {
+        if !state.access_level_repo.exists(level).await? {
+            return Err(AppError::BadRequest(format!(
+                "Access level '{level}' does not exist"
+            )));
+        }
     }
 
-    Ok(Json(upserted))
-}
+    // Compute effective set (transitive closure through inheritance DAG)
+    let effective = state
+        .access_level_repo
+        .compute_effective_levels(&req.assigned_access_levels)
+        .await?;
 
-/// `DELETE /api/v1/admin/users/{user_id}/permissions/{level}`
-pub async fn delete_user_permission_handler(
-    State(state): State<AppState>,
-    RequiredAuthUser(caller): RequiredAuthUser,
-    Path((user_id, level)): Path<(String, String)>,
-) -> Result<StatusCode, AppError> {
-    require_admin(&caller)?;
-    state.user_repo.delete_permission(&user_id, &level).await?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .user_repo
+        .set_user_access_levels(
+            &user_id,
+            req.assigned_access_levels,
+            effective,
+            req.can_write,
+            req.can_read_draft,
+            req.can_write_draft,
+        )
+        .await?;
+
+    let updated = state
+        .user_repo
+        .find_user_by_id(&user_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("User '{user_id}' not found")))?;
+    Ok(Json(updated))
 }
 
 // ── Service token management ─────────────────────────────────────────────────

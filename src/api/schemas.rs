@@ -597,14 +597,17 @@ async fn schema_visibility_from_request(
             Ok(Some(vec!["public".to_string()]))
         }
         Some(user) => {
-            let perms = state.user_repo.get_permissions(&user.user_id).await?;
-            Ok(Some(
-                perms
-                    .into_iter()
-                    .filter(|p| p.can_read)
-                    .map(|p| p.access_level_name)
-                    .collect(),
-            ))
+            let user_doc = state.user_repo.find_user_by_id(&user.user_id).await?;
+            let effective = user_doc
+                .map(|u| {
+                    let mut levels = u.effective_access_levels;
+                    if !levels.contains(&"loggeduser".to_string()) {
+                        levels.push("loggeduser".to_string());
+                    }
+                    levels
+                })
+                .unwrap_or_else(|| vec!["loggeduser".to_string()]);
+            Ok(Some(effective))
         }
         None => Ok(Some(vec!["public".to_string()])),
     }
@@ -755,7 +758,7 @@ mod tests {
                     name: name.to_string(),
                     label: name.to_string(),
                     description: String::new(),
-                    sort_order: 0,
+                    inherits_from: vec![],
                     is_system: false,
                     created_at: Utc::now(),
                 })
@@ -775,6 +778,12 @@ mod tests {
         }
         async fn seed_defaults(&self) -> Result<(), AppError> {
             Ok(())
+        }
+        async fn compute_effective_levels(
+            &self,
+            roots: &[String],
+        ) -> Result<Vec<String>, AppError> {
+            Ok(roots.to_vec())
         }
     }
 

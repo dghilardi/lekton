@@ -147,16 +147,25 @@ pub(crate) async fn request_document_visibility(
         .map(|claims| TokenService::claims_to_user(&claims));
 
     if let Some(auth_user) = maybe_user {
-        let perms = state
+        if auth_user.is_admin {
+            return Ok((None, true));
+        }
+        let user_doc = state
             .user_repo
-            .get_permissions(&auth_user.user_id)
+            .find_user_by_id(&auth_user.user_id)
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
-        return Ok(UserContext {
-            user: auth_user,
-            permissions: perms,
-        }
-        .document_visibility());
+        let ctx = match user_doc {
+            Some(u) => UserContext::from_user_doc(auth_user, &u),
+            None => UserContext {
+                user: auth_user,
+                effective_access_levels: vec![],
+                can_write: false,
+                can_read_draft: false,
+                can_write_draft: false,
+            },
+        };
+        return Ok(ctx.document_visibility());
     }
 
     // Fall back to demo session cookie when demo mode is active.
@@ -969,14 +978,20 @@ async fn prompt_visibility_for_user(
         return Ok((None, true));
     }
 
-    let perms = state
+    let user_doc = state
         .user_repo
-        .get_permissions(&user.user_id)
+        .find_user_by_id(&user.user_id)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
-    let user_ctx = crate::auth::models::UserContext {
-        user: user.clone(),
-        permissions: perms,
+    let user_ctx = match user_doc {
+        Some(u) => crate::auth::models::UserContext::from_user_doc(user.clone(), &u),
+        None => crate::auth::models::UserContext {
+            user: user.clone(),
+            effective_access_levels: vec![],
+            can_write: false,
+            can_read_draft: false,
+            can_write_draft: false,
+        },
     };
     Ok(user_ctx.document_visibility())
 }
@@ -1594,6 +1609,227 @@ pub async fn mark_documentation_feedback_duplicate(
             &id,
             &duplicate_of,
             resolution_note.filter(|value| !value.trim().is_empty()),
+        )
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+// ── Access level admin ────────────────────────────────────────────────────────
+
+/// Simplified access-level info returned to the Leptos client.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccessLevelInfo {
+    pub name: String,
+    pub label: String,
+    pub description: String,
+    pub inherits_from: Vec<String>,
+    pub is_system: bool,
+}
+
+/// List all access levels (admin only).
+#[server(ListAdminAccessLevels, "/api")]
+pub async fn list_admin_access_levels() -> Result<Vec<AccessLevelInfo>, ServerFnError> {
+    let state = expect_context::<AppState>();
+    require_admin_user(&state).await?;
+
+    let levels = state
+        .access_level_repo
+        .list_all()
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(levels
+        .into_iter()
+        .map(|l| AccessLevelInfo {
+            name: l.name,
+            label: l.label,
+            description: l.description,
+            inherits_from: l.inherits_from,
+            is_system: l.is_system,
+        })
+        .collect())
+}
+
+/// Create a new access level (admin only).
+#[server(CreateAdminAccessLevel, "/api")]
+pub async fn create_admin_access_level(
+    name: String,
+    label: String,
+    description: String,
+    inherits_from: Vec<String>,
+) -> Result<(), ServerFnError> {
+    use crate::db::auth_models::AccessLevelEntity;
+
+    let state = expect_context::<AppState>();
+    require_admin_user(&state).await?;
+
+    let name = name.trim().to_lowercase();
+    if name.is_empty() {
+        return Err(ServerFnError::new("Name cannot be empty"));
+    }
+
+    let level = AccessLevelEntity {
+        name,
+        label,
+        description,
+        inherits_from,
+        is_system: false,
+        created_at: chrono::Utc::now(),
+    };
+    state
+        .access_level_repo
+        .create(level)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+/// Update an existing access level (admin only).
+#[server(UpdateAdminAccessLevel, "/api")]
+pub async fn update_admin_access_level(
+    name: String,
+    label: String,
+    description: String,
+    inherits_from: Vec<String>,
+) -> Result<(), ServerFnError> {
+    let state = expect_context::<AppState>();
+    require_admin_user(&state).await?;
+
+    let existing = state
+        .access_level_repo
+        .find_by_name(&name)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+        .ok_or_else(|| ServerFnError::new(format!("Access level '{name}' not found")))?;
+
+    let inheritance_changed = existing.inherits_from != inherits_from;
+
+    let updated = crate::db::auth_models::AccessLevelEntity {
+        name: existing.name.clone(),
+        label,
+        description,
+        inherits_from,
+        is_system: existing.is_system,
+        created_at: existing.created_at,
+    };
+
+    state
+        .access_level_repo
+        .update(updated)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    if inheritance_changed {
+        crate::jobs::recompute_access_levels::spawn_recompute_for_level(
+            existing.name,
+            state.access_level_repo.clone(),
+            state.user_repo.clone(),
+        );
+    }
+
+    Ok(())
+}
+
+/// Delete an access level (admin only). Fails for system levels.
+#[server(DeleteAdminAccessLevel, "/api")]
+pub async fn delete_admin_access_level(name: String) -> Result<(), ServerFnError> {
+    let state = expect_context::<AppState>();
+    require_admin_user(&state).await?;
+
+    state
+        .access_level_repo
+        .delete(&name)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+// ── User admin ────────────────────────────────────────────────────────────────
+
+/// Simplified user info returned to the Leptos client.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdminUserInfo {
+    pub id: String,
+    pub email: String,
+    pub name: Option<String>,
+    pub is_admin: bool,
+    pub assigned_access_levels: Vec<String>,
+    pub effective_access_levels: Vec<String>,
+    pub can_write: bool,
+    pub can_read_draft: bool,
+    pub can_write_draft: bool,
+    pub last_login_at: Option<String>,
+}
+
+/// List all registered users (admin only).
+#[server(ListAdminUsers, "/api")]
+pub async fn list_admin_users() -> Result<Vec<AdminUserInfo>, ServerFnError> {
+    let state = expect_context::<AppState>();
+    require_admin_user(&state).await?;
+
+    let users = state
+        .user_repo
+        .list_users()
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(users
+        .into_iter()
+        .map(|u| AdminUserInfo {
+            id: u.id,
+            email: u.email,
+            name: u.name,
+            is_admin: u.is_admin,
+            assigned_access_levels: u.assigned_access_levels,
+            effective_access_levels: u.effective_access_levels,
+            can_write: u.can_write,
+            can_read_draft: u.can_read_draft,
+            can_write_draft: u.can_write_draft,
+            last_login_at: u
+                .last_login_at
+                .map(|d| d.format("%Y-%m-%d %H:%M").to_string()),
+        })
+        .collect())
+}
+
+/// Assign access levels to a user and recompute effective levels (admin only).
+#[server(SetAdminUserAccessLevels, "/api")]
+pub async fn set_admin_user_access_levels(
+    user_id: String,
+    assigned: Vec<String>,
+    can_write: bool,
+    can_read_draft: bool,
+    can_write_draft: bool,
+) -> Result<(), ServerFnError> {
+    let state = expect_context::<AppState>();
+    require_admin_user(&state).await?;
+
+    for level in &assigned {
+        if !state
+            .access_level_repo
+            .exists(level)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+        {
+            return Err(ServerFnError::new(format!(
+                "Access level '{level}' does not exist"
+            )));
+        }
+    }
+
+    let effective = state
+        .access_level_repo
+        .compute_effective_levels(&assigned)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    state
+        .user_repo
+        .set_user_access_levels(
+            &user_id,
+            assigned,
+            effective,
+            can_write,
+            can_read_draft,
+            can_write_draft,
         )
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))

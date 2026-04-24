@@ -4,12 +4,16 @@ use leptos_router::params::Params;
 
 #[allow(unused_imports)]
 use crate::app::deactivate_service_token;
+#[allow(unused_imports)]
 use crate::app::{
-    admin_list_pats, admin_toggle_pat, create_service_token, get_custom_css, get_navigation,
-    get_navigation_order, get_rag_reindex_status, list_documentation_feedback, list_service_tokens,
-    mark_documentation_feedback_duplicate, resolve_documentation_feedback, save_custom_css,
-    save_navigation_order, trigger_rag_reindex, CreateTokenResult, DocumentationFeedbackAdminItem,
-    DocumentationFeedbackAdminListResult, NavItem, NavigationOrderEntry, ServiceTokenInfo,
+    admin_list_pats, admin_toggle_pat, create_admin_access_level, create_service_token,
+    delete_admin_access_level, get_custom_css, get_navigation, get_navigation_order,
+    get_rag_reindex_status, list_admin_access_levels, list_admin_users,
+    list_documentation_feedback, list_service_tokens, mark_documentation_feedback_duplicate,
+    resolve_documentation_feedback, save_custom_css, save_navigation_order,
+    set_admin_user_access_levels, trigger_rag_reindex, update_admin_access_level, AccessLevelInfo,
+    CreateTokenResult, DocumentationFeedbackAdminItem, DocumentationFeedbackAdminListResult,
+    NavItem, NavigationOrderEntry, ServiceTokenInfo,
 };
 use crate::auth::refresh_client::with_auth_retry;
 
@@ -88,10 +92,14 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
                            "navigation" => "Navigation Setup",
                            "css" => "Visual Customization",
                            "rag" => "RAG Index Management",
+                           "access-levels" => "Access Levels",
+                           "users" => "User Management",
                            _ => "Administration",
                        };
                        let subtitle = match current_section.as_str() {
                            "documentation-feedback" => "Review MCP-reported documentation gaps, resolve them, and keep the registry tidy.",
+                           "access-levels" => "Manage content access levels and their inheritance hierarchy.",
+                           "users" => "Assign access levels and permissions to registered users.",
                            _ => "Manage your instance configuration, service tokens, and theming.",
                        };
                        view! {
@@ -112,6 +120,8 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
                     "navigation" => view! { <NavigationOrderEditor /> }.into_any(),
                     "css" => view! { <CustomCssEditor /> }.into_any(),
                     "rag" => view! { <RagReindexSection /> }.into_any(),
+                    "access-levels" => view! { <AccessLevelManager /> }.into_any(),
+                    "users" => view! { <UserManager /> }.into_any(),
                     _ => view! { <div class="alert alert-warning">"Page not found"</div> }.into_any(),
                 }}
             </div>
@@ -1850,6 +1860,532 @@ fn AdminPatManager() -> impl IntoView {
                     }
                 })}
             </Suspense>
+        </div>
+    }
+}
+
+// ── Access Level Manager ──────────────────────────────────────────────────────
+
+#[component]
+fn AccessLevelManager() -> impl IntoView {
+    let (refresh, set_refresh) = signal(0u32);
+
+    let levels_resource = LocalResource::new(move || {
+        let _ = refresh.get();
+        with_auth_retry(list_admin_access_levels)
+    });
+
+    // Which level is currently being edited (by name)
+    let editing = RwSignal::new(Option::<String>::None);
+    let edit_label = RwSignal::new(String::new());
+    let edit_description = RwSignal::new(String::new());
+    let edit_inherits = RwSignal::new(Vec::<String>::new());
+
+    let show_create = RwSignal::new(false);
+    let new_name = RwSignal::new(String::new());
+    let new_label = RwSignal::new(String::new());
+    let new_description = RwSignal::new(String::new());
+    let new_inherits = RwSignal::new(Vec::<String>::new());
+
+    let error_msg = RwSignal::new(Option::<String>::None);
+
+    let save_edit_action = Action::new_local(move |_: &()| async move {
+        let Some(name) = editing.get_untracked() else {
+            return;
+        };
+        let result = with_auth_retry(|| {
+            update_admin_access_level(
+                name.clone(),
+                edit_label.get_untracked(),
+                edit_description.get_untracked(),
+                edit_inherits.get_untracked(),
+            )
+        })
+        .await;
+        match result {
+            Ok(_) => {
+                editing.set(None);
+                error_msg.set(None);
+                set_refresh.update(|c| *c += 1);
+            }
+            Err(e) => error_msg.set(Some(e.to_string())),
+        }
+    });
+
+    let create_action = Action::new_local(move |_: &()| async move {
+        let result = with_auth_retry(|| {
+            create_admin_access_level(
+                new_name.get_untracked(),
+                new_label.get_untracked(),
+                new_description.get_untracked(),
+                new_inherits.get_untracked(),
+            )
+        })
+        .await;
+        match result {
+            Ok(_) => {
+                show_create.set(false);
+                new_name.set(String::new());
+                new_label.set(String::new());
+                new_description.set(String::new());
+                new_inherits.set(vec![]);
+                error_msg.set(None);
+                set_refresh.update(|c| *c += 1);
+            }
+            Err(e) => error_msg.set(Some(e.to_string())),
+        }
+    });
+
+    view! {
+        <div class="card bg-base-100 shadow-xl border border-base-200 overflow-hidden">
+            <div class="card-body p-0">
+                <div class="p-8 pb-4">
+                    <h2 class="card-title text-2xl mb-1">"Access Levels"</h2>
+                    <p class="text-base-content/60 text-sm">
+                        "Define content access levels and their inheritance hierarchy. "
+                        "System levels (public, loggeduser) are injected automatically and cannot be deleted."
+                    </p>
+                </div>
+
+                {move || error_msg.get().map(|e| view! {
+                    <div class="mx-8 alert alert-error text-sm">
+                        <span>{e}</span>
+                        <button class="btn btn-ghost btn-xs" on:click=move |_| error_msg.set(None)>"✕"</button>
+                    </div>
+                })}
+
+                <div class="px-8 py-4 space-y-3">
+                    <Suspense fallback=move || view! {
+                        <div class="flex justify-center py-8">
+                            <span class="loading loading-spinner loading-md text-primary"></span>
+                        </div>
+                    }>
+                        {move || levels_resource.get().map(|result| match result {
+                            Err(e) => view! {
+                                <div class="alert alert-error text-sm"><span>{e.to_string()}</span></div>
+                            }.into_any(),
+                            Ok(levels) => {
+                                let levels_for_inherit = levels.clone();
+                                view! {
+                                    <div class="space-y-2">
+                                        <For
+                                            each=move || levels.clone()
+                                            key=|l| l.name.clone()
+                                            children=move |level| {
+                                                let name = level.name.clone();
+                                                let name_for_edit = name.clone();
+                                                let name_for_del = name.clone();
+                                                let name_for_memo = name.clone();
+                                                let is_editing = Memo::new(move |_| {
+                                                    editing.get().as_deref() == Some(name_for_memo.as_str())
+                                                });
+                                                let all_levels = levels_for_inherit.clone();
+
+                                                view! {
+                                                    <div class="border border-base-200 rounded-xl overflow-hidden">
+                                                        <div class="flex items-center gap-3 p-4 bg-base-100">
+                                                            <div class="flex-1 min-w-0">
+                                                                <div class="flex items-center gap-2 flex-wrap">
+                                                                    <span class="font-mono text-sm font-semibold">{level.name.clone()}</span>
+                                                                    <span class="text-base-content/60 text-sm">{level.label.clone()}</span>
+                                                                    {if level.is_system {
+                                                                        view! { <span class="badge badge-warning badge-sm">"system"</span> }.into_any()
+                                                                    } else {
+                                                                        view! { <span /> }.into_any()
+                                                                    }}
+                                                                </div>
+                                                                {if !level.inherits_from.is_empty() {
+                                                                    let chips = level.inherits_from.clone();
+                                                                    view! {
+                                                                        <div class="flex gap-1 mt-1 flex-wrap">
+                                                                            <span class="text-xs text-base-content/50">"inherits:"</span>
+                                                                            {chips.into_iter().map(|p| view! {
+                                                                                <span class="badge badge-ghost badge-xs">{p}</span>
+                                                                            }).collect::<Vec<_>>()}
+                                                                        </div>
+                                                                    }.into_any()
+                                                                } else {
+                                                                    view! { <span /> }.into_any()
+                                                                }}
+                                                            </div>
+                                                            <div class="flex gap-2 shrink-0">
+                                                                <button
+                                                                    class="btn btn-ghost btn-xs"
+                                                                    on:click=move |_| {
+                                                                        if is_editing.get() {
+                                                                            editing.set(None);
+                                                                        } else {
+                                                                            editing.set(Some(name_for_edit.clone()));
+                                                                            edit_label.set(level.label.clone());
+                                                                            edit_description.set(level.description.clone());
+                                                                            edit_inherits.set(level.inherits_from.clone());
+                                                                        }
+                                                                    }
+                                                                >
+                                                                    {move || if is_editing.get() { "✕" } else { "Edit" }}
+                                                                </button>
+                                                                {if !level.is_system {
+                                                                    let del_name = name_for_del.clone();
+                                                                    view! {
+                                                                        <button
+                                                                            class="btn btn-ghost btn-xs text-error"
+                                                                            on:click=move |_| {
+                                                                                let n = del_name.clone();
+                                                                                leptos::task::spawn_local(async move {
+                                                                                    let _ = with_auth_retry(|| delete_admin_access_level(n.clone())).await;
+                                                                                    set_refresh.update(|c| *c += 1);
+                                                                                });
+                                                                            }
+                                                                        >"Delete"</button>
+                                                                    }.into_any()
+                                                                } else {
+                                                                    view! { <span /> }.into_any()
+                                                                }}
+                                                            </div>
+                                                        </div>
+
+                                                        <Show when=move || is_editing.get()>
+                                                            <div class="border-t border-base-200 p-4 bg-base-50 space-y-3">
+                                                                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                                                    <label class="form-control">
+                                                                        <span class="label-text text-xs font-medium">"Label"</span>
+                                                                        <input
+                                                                            type="text"
+                                                                            class="input input-sm input-bordered mt-1"
+                                                                            prop:value=move || edit_label.get()
+                                                                            on:input=move |e| edit_label.set(event_target_value(&e))
+                                                                        />
+                                                                    </label>
+                                                                    <label class="form-control">
+                                                                        <span class="label-text text-xs font-medium">"Description"</span>
+                                                                        <input
+                                                                            type="text"
+                                                                            class="input input-sm input-bordered mt-1"
+                                                                            prop:value=move || edit_description.get()
+                                                                            on:input=move |e| edit_description.set(event_target_value(&e))
+                                                                        />
+                                                                    </label>
+                                                                </div>
+                                                                <div>
+                                                                    <span class="label-text text-xs font-medium">"Inherits from"</span>
+                                                                    <div class="flex gap-3 flex-wrap mt-1">
+                                                                        {all_levels.iter().filter(|l| l.name != name).map(|l| {
+                                                                            let lname = l.name.clone();
+                                                                            let lname2 = lname.clone();
+                                                                            view! {
+                                                                                <label class="flex items-center gap-1 cursor-pointer">
+                                                                                    <input
+                                                                                        type="checkbox"
+                                                                                        class="checkbox checkbox-xs"
+                                                                                        prop:checked=move || edit_inherits.get().contains(&lname)
+                                                                                        on:change=move |e| {
+                                                                                            let checked = event_target_checked(&e);
+                                                                                            edit_inherits.update(|v| {
+                                                                                                if checked {
+                                                                                                    if !v.contains(&lname2) { v.push(lname2.clone()); }
+                                                                                                } else {
+                                                                                                    v.retain(|x| x != &lname2);
+                                                                                                }
+                                                                                            });
+                                                                                        }
+                                                                                    />
+                                                                                    <span class="text-xs font-mono">{l.name.clone()}</span>
+                                                                                </label>
+                                                                            }
+                                                                        }).collect::<Vec<_>>()}
+                                                                    </div>
+                                                                </div>
+                                                                <button
+                                                                    class="btn btn-primary btn-sm"
+                                                                    on:click=move |_| { save_edit_action.dispatch(()); }
+                                                                >"Save"</button>
+                                                            </div>
+                                                        </Show>
+                                                    </div>
+                                                }
+                                            }
+                                        />
+                                    </div>
+                                }.into_any()
+                            }
+                        })}
+                    </Suspense>
+                </div>
+
+                <div class="border-t border-base-200 p-8">
+                    <Show
+                        when=move || !show_create.get()
+                        fallback=|| view! { <span /> }
+                    >
+                        <button
+                            class="btn btn-primary btn-sm"
+                            on:click=move |_| show_create.set(true)
+                        >"+ New Access Level"</button>
+                    </Show>
+                    <Show when=move || show_create.get()>
+                        <div class="space-y-3">
+                            <h3 class="font-semibold text-sm">"Create Access Level"</h3>
+                            <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                <label class="form-control">
+                                    <span class="label-text text-xs font-medium">"Name (slug)"</span>
+                                    <input
+                                        type="text"
+                                        class="input input-sm input-bordered mt-1"
+                                        placeholder="e.g. cloud-developer"
+                                        prop:value=move || new_name.get()
+                                        on:input=move |e| new_name.set(event_target_value(&e))
+                                    />
+                                </label>
+                                <label class="form-control">
+                                    <span class="label-text text-xs font-medium">"Label"</span>
+                                    <input
+                                        type="text"
+                                        class="input input-sm input-bordered mt-1"
+                                        prop:value=move || new_label.get()
+                                        on:input=move |e| new_label.set(event_target_value(&e))
+                                    />
+                                </label>
+                                <label class="form-control">
+                                    <span class="label-text text-xs font-medium">"Description"</span>
+                                    <input
+                                        type="text"
+                                        class="input input-sm input-bordered mt-1"
+                                        prop:value=move || new_description.get()
+                                        on:input=move |e| new_description.set(event_target_value(&e))
+                                    />
+                                </label>
+                            </div>
+                            <div>
+                                <span class="label-text text-xs font-medium">"Inherits from (comma-separated names)"</span>
+                                <input
+                                    type="text"
+                                    class="input input-sm input-bordered mt-1 w-full"
+                                    placeholder="e.g. internal,developer"
+                                    on:input=move |e| {
+                                        let val = event_target_value(&e);
+                                        new_inherits.set(
+                                            val.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+                                        );
+                                    }
+                                />
+                            </div>
+                            <div class="flex gap-2">
+                                <button class="btn btn-primary btn-sm" on:click=move |_| { create_action.dispatch(()); }>"Create"</button>
+                                <button class="btn btn-ghost btn-sm" on:click=move |_| show_create.set(false)>"Cancel"</button>
+                            </div>
+                        </div>
+                    </Show>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+// ── User Manager ──────────────────────────────────────────────────────────────
+
+#[component]
+fn UserManager() -> impl IntoView {
+    let (refresh, set_refresh) = signal(0u32);
+
+    let users_resource = LocalResource::new(move || {
+        let _ = refresh.get();
+        with_auth_retry(list_admin_users)
+    });
+
+    let levels_resource = LocalResource::new(move || with_auth_retry(list_admin_access_levels));
+
+    let editing = RwSignal::new(Option::<String>::None);
+    let edit_assigned = RwSignal::new(Vec::<String>::new());
+    let edit_can_write = RwSignal::new(false);
+    let edit_can_read_draft = RwSignal::new(false);
+    let edit_can_write_draft = RwSignal::new(false);
+    let error_msg = RwSignal::new(Option::<String>::None);
+
+    let save_action = Action::new_local(move |_: &()| async move {
+        let Some(user_id) = editing.get_untracked() else {
+            return;
+        };
+        let result = with_auth_retry(|| {
+            set_admin_user_access_levels(
+                user_id.clone(),
+                edit_assigned.get_untracked(),
+                edit_can_write.get_untracked(),
+                edit_can_read_draft.get_untracked(),
+                edit_can_write_draft.get_untracked(),
+            )
+        })
+        .await;
+        match result {
+            Ok(_) => {
+                editing.set(None);
+                error_msg.set(None);
+                set_refresh.update(|c| *c += 1);
+            }
+            Err(e) => error_msg.set(Some(e.to_string())),
+        }
+    });
+
+    view! {
+        <div class="card bg-base-100 shadow-xl border border-base-200 overflow-hidden">
+            <div class="card-body p-0">
+                <div class="p-8 pb-4">
+                    <h2 class="card-title text-2xl mb-1">"Users"</h2>
+                    <p class="text-base-content/60 text-sm">
+                        "Assign access levels and write permissions to registered users."
+                    </p>
+                </div>
+
+                {move || error_msg.get().map(|e| view! {
+                    <div class="mx-8 alert alert-error text-sm">
+                        <span>{e}</span>
+                        <button class="btn btn-ghost btn-xs" on:click=move |_| error_msg.set(None)>"✕"</button>
+                    </div>
+                })}
+
+                <div class="px-8 py-4 space-y-3">
+                    <Suspense fallback=move || view! {
+                        <div class="flex justify-center py-8">
+                            <span class="loading loading-spinner loading-md text-primary"></span>
+                        </div>
+                    }>
+                        {move || {
+                            let users = users_resource.get()?;
+                            let levels = levels_resource.get()?.unwrap_or_default();
+                            let users = users.ok()?;
+                            Some(view! {
+                                <div class="space-y-2">
+                                    <For
+                                        each=move || users.clone()
+                                        key=|u| u.id.clone()
+                                        children=move |user| {
+                                            let uid = user.id.clone();
+                                            let uid_for_memo = uid.clone();
+                                            let is_editing = Memo::new(move |_| {
+                                                editing.get().as_deref() == Some(uid_for_memo.as_str())
+                                            });
+                                            let all_levels = levels.clone();
+
+                                            view! {
+                                                <div class="border border-base-200 rounded-xl overflow-hidden">
+                                                    <div class="flex items-start gap-3 p-4">
+                                                        <div class="flex-1 min-w-0">
+                                                            <div class="flex items-center gap-2 flex-wrap">
+                                                                <span class="font-medium text-sm">{user.email.clone()}</span>
+                                                                {if user.is_admin {
+                                                                    view! { <span class="badge badge-primary badge-sm">"admin"</span> }.into_any()
+                                                                } else { view! { <span /> }.into_any() }}
+                                                            </div>
+                                                            <div class="flex gap-1 mt-1 flex-wrap">
+                                                                {if user.assigned_access_levels.is_empty() {
+                                                                    view! { <span class="text-xs text-base-content/40 italic">"no levels assigned"</span> }.into_any()
+                                                                } else {
+                                                                    view! {
+                                                                        <>{user.assigned_access_levels.iter().map(|l| view! {
+                                                                            <span class="badge badge-outline badge-sm">{l.clone()}</span>
+                                                                        }).collect::<Vec<_>>()}</>
+                                                                    }.into_any()
+                                                                }}
+                                                            </div>
+                                                            {if !user.effective_access_levels.is_empty() && user.effective_access_levels != user.assigned_access_levels {
+                                                                let eff = user.effective_access_levels.clone();
+                                                                view! {
+                                                                    <div class="text-xs text-base-content/50 mt-1">
+                                                                        "effective: "
+                                                                        {eff.join(", ")}
+                                                                    </div>
+                                                                }.into_any()
+                                                            } else { view! { <span /> }.into_any() }}
+                                                        </div>
+                                                        <div class="flex gap-2 shrink-0">
+                                                            <button
+                                                                class="btn btn-ghost btn-xs"
+                                                                on:click=move |_| {
+                                                                    if is_editing.get() {
+                                                                        editing.set(None);
+                                                                    } else {
+                                                                        editing.set(Some(uid.clone()));
+                                                                        edit_assigned.set(user.assigned_access_levels.clone());
+                                                                        edit_can_write.set(user.can_write);
+                                                                        edit_can_read_draft.set(user.can_read_draft);
+                                                                        edit_can_write_draft.set(user.can_write_draft);
+                                                                    }
+                                                                }
+                                                            >
+                                                                {move || if is_editing.get() { "✕" } else { "Edit" }}
+                                                            </button>
+                                                        </div>
+                                                    </div>
+
+                                                    <Show when=move || is_editing.get()>
+                                                        <div class="border-t border-base-200 p-4 bg-base-50 space-y-3">
+                                                            <div>
+                                                                <span class="label-text text-xs font-medium">"Assigned access levels"</span>
+                                                                <div class="flex gap-3 flex-wrap mt-2">
+                                                                    {all_levels.iter().filter(|l| !l.is_system).map(|l| {
+                                                                        let lname = l.name.clone();
+                                                                        let lname2 = lname.clone();
+                                                                        view! {
+                                                                            <label class="flex items-center gap-1 cursor-pointer">
+                                                                                <input
+                                                                                    type="checkbox"
+                                                                                    class="checkbox checkbox-xs"
+                                                                                    prop:checked=move || edit_assigned.get().contains(&lname)
+                                                                                    on:change=move |e| {
+                                                                                        let checked = event_target_checked(&e);
+                                                                                        edit_assigned.update(|v| {
+                                                                                            if checked {
+                                                                                                if !v.contains(&lname2) { v.push(lname2.clone()); }
+                                                                                            } else {
+                                                                                                v.retain(|x| x != &lname2);
+                                                                                            }
+                                                                                        });
+                                                                                    }
+                                                                                />
+                                                                                <span class="text-xs font-mono">{l.name.clone()}</span>
+                                                                            </label>
+                                                                        }
+                                                                    }).collect::<Vec<_>>()}
+                                                                </div>
+                                                            </div>
+                                                            <div class="flex gap-4">
+                                                                <label class="flex items-center gap-2 cursor-pointer">
+                                                                    <input type="checkbox" class="checkbox checkbox-xs"
+                                                                        prop:checked=move || edit_can_write.get()
+                                                                        on:change=move |e| edit_can_write.set(event_target_checked(&e))
+                                                                    />
+                                                                    <span class="text-xs">"Can write"</span>
+                                                                </label>
+                                                                <label class="flex items-center gap-2 cursor-pointer">
+                                                                    <input type="checkbox" class="checkbox checkbox-xs"
+                                                                        prop:checked=move || edit_can_read_draft.get()
+                                                                        on:change=move |e| edit_can_read_draft.set(event_target_checked(&e))
+                                                                    />
+                                                                    <span class="text-xs">"Read drafts"</span>
+                                                                </label>
+                                                                <label class="flex items-center gap-2 cursor-pointer">
+                                                                    <input type="checkbox" class="checkbox checkbox-xs"
+                                                                        prop:checked=move || edit_can_write_draft.get()
+                                                                        on:change=move |e| edit_can_write_draft.set(event_target_checked(&e))
+                                                                    />
+                                                                    <span class="text-xs">"Write drafts"</span>
+                                                                </label>
+                                                            </div>
+                                                            <button
+                                                                class="btn btn-primary btn-sm"
+                                                                on:click=move |_| { save_action.dispatch(()); }
+                                                            >"Save"</button>
+                                                        </div>
+                                                    </Show>
+                                                </div>
+                                            }
+                                        }
+                                    />
+                                </div>
+                            })
+                        }}
+                    </Suspense>
+                </div>
+            </div>
         </div>
     }
 }

@@ -441,6 +441,12 @@ mod tests {
         async fn seed_defaults(&self) -> Result<(), AppError> {
             Ok(())
         }
+        async fn compute_effective_levels(
+            &self,
+            roots: &[String],
+        ) -> Result<Vec<String>, AppError> {
+            Ok(roots.to_vec())
+        }
     }
 
     /// A mock service token repo for unit tests.

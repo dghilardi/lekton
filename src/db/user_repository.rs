@@ -1,16 +1,13 @@
-//! Repository for `User`, `UserPermission`, and `RefreshToken` entities.
-//!
-//! All three entity types are managed through a single repository to keep
-//! the `AppState` concise and to allow transactions in the future.
+//! Repository for `User` and `RefreshToken` entities.
 
 use async_trait::async_trait;
 #[cfg(feature = "ssr")]
 use chrono::Utc;
 
-use crate::db::auth_models::{RefreshToken, User, UserPermission};
+use crate::db::auth_models::{RefreshToken, User};
 use crate::error::AppError;
 
-/// Operations for users, their RBAC permissions, and refresh tokens.
+/// Operations for users and refresh tokens.
 #[async_trait]
 pub trait UserRepository: Send + Sync {
     // ── Users ────────────────────────────────────────────────────────────────
@@ -37,20 +34,33 @@ pub trait UserRepository: Send + Sync {
     /// List all users (admin endpoint).
     async fn list_users(&self) -> Result<Vec<User>, AppError>;
 
-    // ── Permissions ──────────────────────────────────────────────────────────
-
-    /// Insert or replace the permission record for `(user_id, access_level_name)`.
-    async fn upsert_permission(&self, perm: UserPermission) -> Result<(), AppError>;
-
-    /// List all permission records for a user.
-    async fn get_permissions(&self, user_id: &str) -> Result<Vec<UserPermission>, AppError>;
-
-    /// Remove a single permission record.
-    async fn delete_permission(
+    /// Set the access levels for a user and update the pre-computed effective set.
+    ///
+    /// `assigned` is the set of levels explicitly assigned by an admin.
+    /// `effective` is the transitive closure through the inheritance DAG,
+    /// computed by [`AccessLevelRepository::compute_effective_levels`].
+    async fn set_user_access_levels(
         &self,
         user_id: &str,
-        access_level_name: &str,
+        assigned: Vec<String>,
+        effective: Vec<String>,
+        can_write: bool,
+        can_read_draft: bool,
+        can_write_draft: bool,
     ) -> Result<(), AppError>;
+
+    /// Update only the pre-computed `effective_access_levels` for a user.
+    /// Used by the background cascade-recompute job.
+    async fn update_user_effective_levels(
+        &self,
+        user_id: &str,
+        effective: Vec<String>,
+    ) -> Result<(), AppError>;
+
+    /// List all users that have `level_name` in their `assigned_access_levels`.
+    /// Used by the background cascade-recompute job to find affected users.
+    async fn list_users_with_assigned_level(&self, level_name: &str)
+        -> Result<Vec<User>, AppError>;
 
     // ── Refresh tokens ───────────────────────────────────────────────────────
 
@@ -75,7 +85,6 @@ pub trait UserRepository: Send + Sync {
 #[cfg(feature = "ssr")]
 pub struct MongoUserRepository {
     users: mongodb::Collection<User>,
-    permissions: mongodb::Collection<UserPermission>,
     refresh_tokens: mongodb::Collection<RefreshToken>,
 }
 
@@ -84,7 +93,6 @@ impl MongoUserRepository {
     pub fn new(db: &mongodb::Database) -> Self {
         Self {
             users: db.collection("users"),
-            permissions: db.collection("user_permissions"),
             refresh_tokens: db.collection("refresh_tokens"),
         }
     }
@@ -139,7 +147,6 @@ impl UserRepository for MongoUserRepository {
         use futures::TryStreamExt;
 
         let mut cursor = self.users.find(mongodb::bson::doc! {}).await?;
-
         let mut users = Vec::new();
         while let Some(u) = cursor.try_next().await? {
             users.push(u);
@@ -147,49 +154,76 @@ impl UserRepository for MongoUserRepository {
         Ok(users)
     }
 
-    // ── Permissions ──────────────────────────────────────────────────────────
-
-    async fn upsert_permission(&self, perm: UserPermission) -> Result<(), AppError> {
-        use mongodb::bson::doc;
-        use mongodb::options::ReplaceOptions;
-
-        let filter = doc! {
-            "user_id": &perm.user_id,
-            "access_level_name": &perm.access_level_name,
-        };
-        let options = ReplaceOptions::builder().upsert(true).build();
-
-        self.permissions
-            .replace_one(filter, &perm)
-            .with_options(options)
-            .await?;
-        Ok(())
-    }
-
-    async fn get_permissions(&self, user_id: &str) -> Result<Vec<UserPermission>, AppError> {
-        use futures::TryStreamExt;
-        use mongodb::bson::doc;
-
-        let mut cursor = self.permissions.find(doc! { "user_id": user_id }).await?;
-
-        let mut perms = Vec::new();
-        while let Some(p) = cursor.try_next().await? {
-            perms.push(p);
-        }
-        Ok(perms)
-    }
-
-    async fn delete_permission(
+    async fn set_user_access_levels(
         &self,
         user_id: &str,
-        access_level_name: &str,
+        assigned: Vec<String>,
+        effective: Vec<String>,
+        can_write: bool,
+        can_read_draft: bool,
+        can_write_draft: bool,
     ) -> Result<(), AppError> {
         use mongodb::bson::doc;
 
-        self.permissions
-            .delete_one(doc! { "user_id": user_id, "access_level_name": access_level_name })
+        let assigned_bson: Vec<bson::Bson> = assigned.into_iter().map(bson::Bson::String).collect();
+        let effective_bson: Vec<bson::Bson> =
+            effective.into_iter().map(bson::Bson::String).collect();
+
+        let result = self
+            .users
+            .update_one(
+                doc! { "id": user_id },
+                doc! { "$set": {
+                    "assigned_access_levels": assigned_bson,
+                    "effective_access_levels": effective_bson,
+                    "can_write": can_write,
+                    "can_read_draft": can_read_draft,
+                    "can_write_draft": can_write_draft,
+                }},
+            )
+            .await?;
+
+        if result.matched_count == 0 {
+            return Err(AppError::NotFound(format!("User '{user_id}' not found")));
+        }
+        Ok(())
+    }
+
+    async fn update_user_effective_levels(
+        &self,
+        user_id: &str,
+        effective: Vec<String>,
+    ) -> Result<(), AppError> {
+        use mongodb::bson::doc;
+
+        let effective_bson: Vec<bson::Bson> =
+            effective.into_iter().map(bson::Bson::String).collect();
+
+        self.users
+            .update_one(
+                doc! { "id": user_id },
+                doc! { "$set": { "effective_access_levels": effective_bson } },
+            )
             .await?;
         Ok(())
+    }
+
+    async fn list_users_with_assigned_level(
+        &self,
+        level_name: &str,
+    ) -> Result<Vec<User>, AppError> {
+        use futures::TryStreamExt;
+        use mongodb::bson::doc;
+
+        let mut cursor = self
+            .users
+            .find(doc! { "assigned_access_levels": level_name })
+            .await?;
+        let mut users = Vec::new();
+        while let Some(u) = cursor.try_next().await? {
+            users.push(u);
+        }
+        Ok(users)
     }
 
     // ── Refresh tokens ───────────────────────────────────────────────────────
@@ -204,7 +238,6 @@ impl UserRepository for MongoUserRepository {
         hash: &str,
     ) -> Result<Option<RefreshToken>, AppError> {
         use mongodb::bson::doc;
-
         Ok(self
             .refresh_tokens
             .find_one(doc! { "token_hash": hash })
@@ -252,20 +285,13 @@ mod tests {
             provider_sub: format!("sub-{}", id),
             provider_type: "oidc".to_string(),
             is_admin: false,
-            created_at: Utc::now(),
-            last_login_at: None,
-        }
-    }
-
-    fn make_perm(user_id: &str, level: &str, can_read: bool, can_write: bool) -> UserPermission {
-        UserPermission {
-            id: uuid::Uuid::new_v4().to_string(),
-            user_id: user_id.to_string(),
-            access_level_name: level.to_string(),
-            can_read,
-            can_write,
+            assigned_access_levels: vec![],
+            effective_access_levels: vec![],
+            can_write: false,
             can_read_draft: false,
             can_write_draft: false,
+            created_at: Utc::now(),
+            last_login_at: None,
         }
     }
 
@@ -348,49 +374,27 @@ mod tests {
             .is_some());
     }
 
-    // ── Permission tests ──────────────────────────────────────────────────────
-
     #[tokio::test]
-    async fn test_upsert_permission_creates_new() {
+    async fn test_set_and_retrieve_access_levels() {
         let repo = MockUserRepository::default();
-        repo.upsert_permission(make_perm("u1", "public", true, false))
+        repo.create_user(make_user("u1", "a@test.com"))
             .await
             .unwrap();
 
-        let perms = repo.get_permissions("u1").await.unwrap();
-        assert_eq!(perms.len(), 1);
-        assert!(perms[0].can_read);
-    }
+        repo.set_user_access_levels(
+            "u1",
+            vec!["developer".to_string()],
+            vec!["developer".to_string(), "internal".to_string()],
+            false,
+            false,
+            false,
+        )
+        .await
+        .unwrap();
 
-    #[tokio::test]
-    async fn test_upsert_permission_replaces_existing() {
-        let repo = MockUserRepository::default();
-        repo.upsert_permission(make_perm("u1", "public", true, false))
-            .await
-            .unwrap();
-        repo.upsert_permission(make_perm("u1", "public", true, true))
-            .await
-            .unwrap();
-
-        let perms = repo.get_permissions("u1").await.unwrap();
-        assert_eq!(perms.len(), 1, "upsert must not duplicate");
-        assert!(perms[0].can_write);
-    }
-
-    #[tokio::test]
-    async fn test_delete_permission() {
-        let repo = MockUserRepository::default();
-        repo.upsert_permission(make_perm("u1", "public", true, false))
-            .await
-            .unwrap();
-        repo.upsert_permission(make_perm("u1", "internal", true, false))
-            .await
-            .unwrap();
-
-        repo.delete_permission("u1", "internal").await.unwrap();
-        let perms = repo.get_permissions("u1").await.unwrap();
-        assert_eq!(perms.len(), 1);
-        assert_eq!(perms[0].access_level_name, "public");
+        let user = repo.find_user_by_id("u1").await.unwrap().unwrap();
+        assert_eq!(user.assigned_access_levels, vec!["developer"]);
+        assert_eq!(user.effective_access_levels, vec!["developer", "internal"]);
     }
 
     // ── Refresh token tests ───────────────────────────────────────────────────

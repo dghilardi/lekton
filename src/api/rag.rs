@@ -498,10 +498,25 @@ async fn build_user_context(
     state: &AppState,
     user: &crate::auth::models::AuthenticatedUser,
 ) -> Result<UserContext, AppError> {
-    let permissions = state.user_repo.get_permissions(&user.user_id).await?;
-    Ok(UserContext {
-        user: user.clone(),
-        permissions,
+    if user.is_admin {
+        return Ok(UserContext {
+            user: user.clone(),
+            effective_access_levels: vec![],
+            can_write: true,
+            can_read_draft: true,
+            can_write_draft: true,
+        });
+    }
+    let user_doc = state.user_repo.find_user_by_id(&user.user_id).await?;
+    Ok(match user_doc {
+        Some(u) => UserContext::from_user_doc(user.clone(), &u),
+        None => UserContext {
+            user: user.clone(),
+            effective_access_levels: vec![],
+            can_write: false,
+            can_read_draft: false,
+            can_write_draft: false,
+        },
     })
 }
 

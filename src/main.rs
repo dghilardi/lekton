@@ -180,6 +180,12 @@ async fn main() {
         None
     };
 
+    // Run database migrations before seeding or serving traffic.
+    lekton::db::migrations::build_plan()
+        .run(mongo_db.clone())
+        .await
+        .expect("Database migration failed — check __migrations collection and restart");
+
     // Seed default access levels (no-op if already present).
     if let Err(e) = access_level_repo.seed_defaults().await {
         tracing::warn!("Failed to seed default access levels: {e}");
@@ -474,13 +480,12 @@ async fn main() {
             axum::routing::get(api::admin::list_users_handler),
         )
         .route(
-            "/api/v1/admin/users/{user_id}/permissions",
-            axum::routing::get(api::admin::get_user_permissions_handler)
-                .put(api::admin::set_user_permissions_handler),
+            "/api/v1/admin/users/{user_id}",
+            axum::routing::get(api::admin::get_user_handler),
         )
         .route(
-            "/api/v1/admin/users/{user_id}/permissions/{level}",
-            axum::routing::delete(api::admin::delete_user_permission_handler),
+            "/api/v1/admin/users/{user_id}/access-levels",
+            axum::routing::put(api::admin::set_user_access_levels_handler),
         )
         .route(
             "/api/v1/admin/service-tokens",

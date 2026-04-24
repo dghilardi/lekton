@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+
+## [0.18.0] 2026-04-24
 ### Added
 - Database migration framework: idempotent startup migrations tracked in `__migrations` collection; failed migrations block startup until resolved. First migration backfills `created_at` on existing `AccessLevelEntity` documents.
 - Access-level inheritance: levels form a DAG via a new `inherits_from` field; a user assigned `cloud-developer` automatically inherits access to `developer`, `internal`, and so on. Cycle detection prevents invalid hierarchies.

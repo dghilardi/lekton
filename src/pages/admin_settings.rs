@@ -2031,7 +2031,7 @@ fn AccessLevelManager() -> impl IntoView {
                                                                             class="btn btn-ghost btn-xs text-error"
                                                                             on:click=move |_| {
                                                                                 let n = del_name.clone();
-                                                                                let _ = leptos::task::spawn_local(async move {
+                                                                                leptos::task::spawn_local(async move {
                                                                                     let _ = with_auth_retry(|| delete_admin_access_level(n.clone())).await;
                                                                                     set_refresh.update(|c| *c += 1);
                                                                                 });

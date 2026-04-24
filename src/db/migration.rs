@@ -18,6 +18,9 @@ mod inner {
     const CHANGELOG: &str = "__migrations";
 
     type BoxError = Box<dyn std::error::Error + Send + Sync>;
+    type MigrationFn = Box<
+        dyn FnOnce(Database) -> Pin<Box<dyn Future<Output = Result<(), BoxError>> + Send>> + Send,
+    >;
 
     #[derive(Debug, Serialize, Deserialize)]
     struct MigrationEntry {
@@ -65,15 +68,18 @@ mod inner {
     struct MigrationDef {
         change_id: &'static str,
         author: &'static str,
-        run: Box<
-            dyn FnOnce(Database) -> Pin<Box<dyn Future<Output = Result<(), BoxError>> + Send>>
-                + Send,
-        >,
+        run: MigrationFn,
     }
 
     /// Sequential plan of database migrations executed at startup.
     pub struct MigrationPlan {
         migrations: Vec<MigrationDef>,
+    }
+
+    impl Default for MigrationPlan {
+        fn default() -> Self {
+            Self::new()
+        }
     }
 
     impl MigrationPlan {

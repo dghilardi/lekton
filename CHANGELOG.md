@@ -3,6 +3,15 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+### Added
+- Access-level inheritance: levels form a DAG via a new `inherits_from` field; a user assigned `cloud-developer` automatically inherits access to `developer`, `internal`, and so on. Cycle detection prevents invalid hierarchies.
+- Implicit system levels `public` (every request) and `loggeduser` (every authenticated request) — injected at query time, never stored on users.
+- Pre-computed `effective_access_levels` on the `User` document, kept in sync by a background recompute job when the inheritance graph changes.
+- Admin UI: new "Access Levels" panel (list, create, edit inheritance, delete non-system levels) and "Users" panel (assign access levels, toggle write/draft permissions) under `/admin/access-levels` and `/admin/users`.
+
+### Changed
+- Permission model simplified: removed per-level `UserPermission` collection and granular `can_read/can_write/can_read_draft/can_write_draft` per level. Replaced with user-global `can_write`, `can_read_draft`, `can_write_draft` flags plus the assigned-levels set.
+- Admin API: `PUT /api/v1/admin/users/{user_id}/access-levels` replaces the old `/permissions` endpoints.
 
 ## [0.17.0] 2026-04-23
 

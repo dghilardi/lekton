@@ -255,7 +255,7 @@ async fn seed_defaults_idempotent() {
     env.access_level_repo.seed_defaults().await.unwrap();
     env.access_level_repo.seed_defaults().await.unwrap();
 
-    // Should still have exactly 4 default levels, not 8
+    // Should still have exactly 5 default levels, not 10
     let levels = env.access_level_repo.list_all().await.unwrap();
-    assert_eq!(levels.len(), 4, "seed_defaults should be idempotent");
+    assert_eq!(levels.len(), 5, "seed_defaults should be idempotent");
 }

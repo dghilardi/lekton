@@ -211,6 +211,7 @@ pub struct LektonMcpServer {
 }
 
 impl LektonMcpServer {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         document_repo: Arc<dyn DocumentRepository>,
         schema_repo: Arc<dyn SchemaRepository>,

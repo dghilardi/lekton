@@ -224,6 +224,8 @@ async fn main() {
     } else {
         None
     };
+    let schema_endpoint_reindex_state =
+        Arc::new(lekton::schema::reindex::SchemaEndpointReindexState::default());
 
     // Service token for API authentication
     let service_token = match config.auth.service_token.as_deref() {
@@ -396,6 +398,7 @@ async fn main() {
         chat_repo,
         chat_service,
         search_reindex_state,
+        schema_endpoint_reindex_state,
         feedback_repo,
         documentation_feedback_repo,
         embedding_cache_repo,
@@ -538,6 +541,14 @@ async fn main() {
         .route(
             "/api/v1/admin/search/reindex/status",
             axum::routing::get(api::search::reindex_status_handler),
+        )
+        .route(
+            "/api/v1/admin/schemas/reindex-endpoints",
+            axum::routing::post(api::schemas::trigger_schema_endpoint_reindex_handler),
+        )
+        .route(
+            "/api/v1/admin/schemas/reindex-endpoints/status",
+            axum::routing::get(api::schemas::schema_endpoint_reindex_status_handler),
         )
         .route(
             "/api/v1/admin/rag/feedback",

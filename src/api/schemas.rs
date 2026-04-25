@@ -845,6 +845,68 @@ pub async fn get_schema_route_handler(
     Ok(content.into_response())
 }
 
+/// Axum handler for `POST /api/v1/admin/schemas/reindex-endpoints`.
+#[cfg(feature = "ssr")]
+pub async fn trigger_schema_endpoint_reindex_handler(
+    crate::auth::extractor::RequiredAuthUser(user): crate::auth::extractor::RequiredAuthUser,
+    axum::extract::State(state): axum::extract::State<crate::app::AppState>,
+) -> Result<(axum::http::StatusCode, axum::Json<serde_json::Value>), AppError> {
+    use std::sync::atomic::Ordering;
+
+    if !user.is_admin {
+        return Err(AppError::Forbidden("Admin access required".into()));
+    }
+
+    let reindex = &state.schema_endpoint_reindex_state;
+
+    if reindex
+        .is_running
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Ok((
+            axum::http::StatusCode::CONFLICT,
+            axum::Json(serde_json::json!({
+                "message": "Schema endpoint re-index is already in progress",
+                "progress": reindex.progress.load(Ordering::Relaxed),
+            })),
+        ));
+    }
+
+    let reindex_arc = state.schema_endpoint_reindex_state.clone();
+    let schema_repo = state.schema_repo.clone();
+    let storage = state.storage_client.clone();
+
+    tokio::spawn(async move {
+        crate::schema::reindex::run_schema_endpoint_reindex(reindex_arc, schema_repo, storage)
+            .await;
+    });
+
+    Ok((
+        axum::http::StatusCode::ACCEPTED,
+        axum::Json(serde_json::json!({"message": "Schema endpoint re-index started"})),
+    ))
+}
+
+/// Axum handler for `GET /api/v1/admin/schemas/reindex-endpoints/status`.
+#[cfg(feature = "ssr")]
+pub async fn schema_endpoint_reindex_status_handler(
+    crate::auth::extractor::RequiredAuthUser(user): crate::auth::extractor::RequiredAuthUser,
+    axum::extract::State(state): axum::extract::State<crate::app::AppState>,
+) -> Result<axum::Json<serde_json::Value>, AppError> {
+    use std::sync::atomic::Ordering;
+
+    if !user.is_admin {
+        return Err(AppError::Forbidden("Admin access required".into()));
+    }
+
+    let reindex = &state.schema_endpoint_reindex_state;
+    Ok(axum::Json(serde_json::json!({
+        "is_running": reindex.is_running.load(Ordering::Acquire),
+        "progress": reindex.progress.load(Ordering::Relaxed),
+    })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

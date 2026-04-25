@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+### Added
+- MCP schema registry tools: `list_schemas`, `search_schemas`, `get_schema_detail`, `get_schema_content` — expose the schema registry to MCP clients with user-level access control.
 
 ## [0.19.3] 2026-04-25
 ### Fixed

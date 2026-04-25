@@ -613,6 +613,7 @@ async fn main() {
         };
 
         let doc_repo = app_state.document_repo.clone();
+        let schema_repo = app_state.schema_repo.clone();
         let prompt_repo = app_state.prompt_repo.clone();
         let user_prompt_preference_repo = app_state.user_prompt_preference_repo.clone();
         let documentation_feedback_repo = app_state.documentation_feedback_repo.clone();
@@ -631,6 +632,7 @@ async fn main() {
             move || {
                 Ok(LektonMcpServer::new(
                     doc_repo.clone(),
+                    schema_repo.clone(),
                     prompt_repo.clone(),
                     user_prompt_preference_repo.clone(),
                     documentation_feedback_repo.clone(),

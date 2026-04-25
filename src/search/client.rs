@@ -116,13 +116,11 @@ impl SearchService for MeilisearchService {
     }
 
     async fn delete_document(&self, slug: &str) -> Result<(), AppError> {
-        let _task: meilisearch_sdk::task_info::TaskInfo = self
-            .index()
-            .delete_document(slug)
-            .await
-            .map_err(|e| AppError::Internal(format!("Meilisearch delete error: {e}")))?;
-
-        Ok(())
+        match self.index().delete_document(slug).await {
+            Ok(_) => Ok(()),
+            Err(e) if e.to_string().contains("404") => Ok(()),
+            Err(e) => Err(AppError::Internal(format!("Meilisearch delete error: {e}"))),
+        }
     }
 
     async fn search(

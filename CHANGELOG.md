@@ -8,6 +8,9 @@ All notable changes to this project will be documented in this file.
 - Schema endpoint indexing: API operations (path, HTTP method, summary) are extracted from OpenAPI and AsyncAPI specs at ingest time and stored on `SchemaVersion`, enabling `search_schema_operations` without S3 round-trips.
 - Admin panel "Schema Endpoint Re-index" card: backfills endpoint data for schema versions ingested before this feature, with progress bar and REST endpoints (`POST /api/v1/admin/schemas/reindex-endpoints`, `GET …/status`).
 
+### Fixed
+- Navigating to a folder that contains only sub-folders (no direct document children) now renders a section index page instead of "Document not found."
+
 ## [0.19.3] 2026-04-25
 ### Fixed
 - Search reindex now succeeds for documents with `/` in their slug (e.g. `incidents/2025-12-13`): slugs are encoded to a valid Meilisearch document ID using base64 URL-safe encoding.

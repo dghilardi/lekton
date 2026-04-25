@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+
+## [0.20.0] 2026-04-25
 ### Added
 - MCP schema registry tools: `list_schemas`, `search_schemas`, `get_schema_detail`, `get_schema_content`, `search_schema_operations` — expose the schema registry to MCP clients with user-level access control.
 - Schema endpoint indexing: API operations (path, HTTP method, summary) are extracted from OpenAPI and AsyncAPI specs at ingest time and stored on `SchemaVersion`, enabling `search_schema_operations` without S3 round-trips.

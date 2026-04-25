@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+
+## [0.19.3] 2026-04-25
 ### Fixed
 - Search reindex now succeeds for documents with `/` in their slug (e.g. `incidents/2025-12-13`): slugs are encoded to a valid Meilisearch document ID using base64 URL-safe encoding.
 

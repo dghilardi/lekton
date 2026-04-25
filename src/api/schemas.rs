@@ -309,6 +309,8 @@ pub async fn process_schema_ingest(
         });
     }
 
+    let endpoints = extract_schema_endpoints(&request.schema_type, &request.content);
+
     if content_changed {
         ctx.storage
             .put_object(&s3_key, request.content.into_bytes())
@@ -328,6 +330,7 @@ pub async fn process_schema_ingest(
         content_hash: Some(new_content_hash),
         metadata_hash: Some(new_metadata_hash),
         is_archived: false,
+        endpoints,
     };
 
     if let Some(version) = versions.iter_mut().find(|v| v.version == request.version) {
@@ -613,6 +616,117 @@ async fn schema_visibility_from_request(
     }
 }
 
+/// Extracts API operations from a schema document for indexing.
+///
+/// Returns an empty list for JSON Schema or unrecognised formats.
+/// Parsing errors are silently ignored so a malformed spec never blocks ingest.
+#[cfg(feature = "ssr")]
+pub fn extract_schema_endpoints(
+    schema_type: &str,
+    content: &str,
+) -> Vec<crate::db::models::SchemaEndpoint> {
+    let value: serde_json::Value = if let Ok(v) = serde_json::from_str(content) {
+        v
+    } else if let Ok(v) = serde_yaml::from_str::<serde_json::Value>(content) {
+        v
+    } else {
+        return vec![];
+    };
+
+    match schema_type {
+        "openapi" => extract_openapi_endpoints(&value),
+        "asyncapi" => extract_asyncapi_endpoints(&value),
+        _ => vec![],
+    }
+}
+
+#[cfg(feature = "ssr")]
+fn extract_openapi_endpoints(spec: &serde_json::Value) -> Vec<crate::db::models::SchemaEndpoint> {
+    use crate::db::models::SchemaEndpoint;
+
+    let Some(paths) = spec.get("paths").and_then(|p| p.as_object()) else {
+        return vec![];
+    };
+
+    const METHODS: &[&str] = &["get", "post", "put", "delete", "patch", "options", "head"];
+
+    let mut endpoints = vec![];
+    for (path, path_item) in paths {
+        for method in METHODS {
+            if let Some(operation) = path_item.get(method) {
+                let summary = operation
+                    .get("summary")
+                    .and_then(|s| s.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string());
+                endpoints.push(SchemaEndpoint {
+                    method: method.to_uppercase(),
+                    path: path.clone(),
+                    summary,
+                });
+            }
+        }
+    }
+    endpoints
+}
+
+#[cfg(feature = "ssr")]
+fn extract_asyncapi_endpoints(spec: &serde_json::Value) -> Vec<crate::db::models::SchemaEndpoint> {
+    use crate::db::models::SchemaEndpoint;
+
+    let mut endpoints = vec![];
+
+    // AsyncAPI v2: channels → publish / subscribe
+    if let Some(channels) = spec.get("channels").and_then(|c| c.as_object()) {
+        for (channel, channel_item) in channels {
+            for action in &["publish", "subscribe"] {
+                if let Some(operation) = channel_item.get(action) {
+                    let summary = operation
+                        .get("summary")
+                        .and_then(|s| s.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string());
+                    endpoints.push(SchemaEndpoint {
+                        method: action.to_string(),
+                        path: channel.clone(),
+                        summary,
+                    });
+                }
+            }
+        }
+    }
+
+    // AsyncAPI v3: top-level operations with action + channel $ref
+    if let Some(operations) = spec.get("operations").and_then(|o| o.as_object()) {
+        for (op_name, operation) in operations {
+            let action = operation
+                .get("action")
+                .and_then(|a| a.as_str())
+                .unwrap_or("send")
+                .to_string();
+            let channel = operation
+                .get("channel")
+                .and_then(|c| c.get("$ref"))
+                .and_then(|r| r.as_str())
+                .and_then(|r| r.strip_prefix("#/channels/"))
+                .unwrap_or(op_name.as_str())
+                .to_string();
+            let summary = operation
+                .get("summary")
+                .and_then(|s| s.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+            endpoints.push(SchemaEndpoint {
+                method: action,
+                path: channel,
+                summary,
+            });
+        }
+    }
+
+    endpoints
+}
+
 /// Axum handler for `POST /api/v1/schemas`.
 #[cfg(feature = "ssr")]
 pub async fn ingest_schema_handler(
@@ -729,6 +843,68 @@ pub async fn get_schema_route_handler(
     .await?;
 
     Ok(content.into_response())
+}
+
+/// Axum handler for `POST /api/v1/admin/schemas/reindex-endpoints`.
+#[cfg(feature = "ssr")]
+pub async fn trigger_schema_endpoint_reindex_handler(
+    crate::auth::extractor::RequiredAuthUser(user): crate::auth::extractor::RequiredAuthUser,
+    axum::extract::State(state): axum::extract::State<crate::app::AppState>,
+) -> Result<(axum::http::StatusCode, axum::Json<serde_json::Value>), AppError> {
+    use std::sync::atomic::Ordering;
+
+    if !user.is_admin {
+        return Err(AppError::Forbidden("Admin access required".into()));
+    }
+
+    let reindex = &state.schema_endpoint_reindex_state;
+
+    if reindex
+        .is_running
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Ok((
+            axum::http::StatusCode::CONFLICT,
+            axum::Json(serde_json::json!({
+                "message": "Schema endpoint re-index is already in progress",
+                "progress": reindex.progress.load(Ordering::Relaxed),
+            })),
+        ));
+    }
+
+    let reindex_arc = state.schema_endpoint_reindex_state.clone();
+    let schema_repo = state.schema_repo.clone();
+    let storage = state.storage_client.clone();
+
+    tokio::spawn(async move {
+        crate::schema::reindex::run_schema_endpoint_reindex(reindex_arc, schema_repo, storage)
+            .await;
+    });
+
+    Ok((
+        axum::http::StatusCode::ACCEPTED,
+        axum::Json(serde_json::json!({"message": "Schema endpoint re-index started"})),
+    ))
+}
+
+/// Axum handler for `GET /api/v1/admin/schemas/reindex-endpoints/status`.
+#[cfg(feature = "ssr")]
+pub async fn schema_endpoint_reindex_status_handler(
+    crate::auth::extractor::RequiredAuthUser(user): crate::auth::extractor::RequiredAuthUser,
+    axum::extract::State(state): axum::extract::State<crate::app::AppState>,
+) -> Result<axum::Json<serde_json::Value>, AppError> {
+    use std::sync::atomic::Ordering;
+
+    if !user.is_admin {
+        return Err(AppError::Forbidden("Admin access required".into()));
+    }
+
+    let reindex = &state.schema_endpoint_reindex_state;
+    Ok(axum::Json(serde_json::json!({
+        "is_running": reindex.is_running.load(Ordering::Acquire),
+        "progress": reindex.progress.load(Ordering::Relaxed),
+    })))
 }
 
 #[cfg(test)]

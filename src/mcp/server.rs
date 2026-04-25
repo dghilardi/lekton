@@ -31,10 +31,11 @@ use crate::db::documentation_feedback_models::{
     DocumentationFeedback, DocumentationFeedbackKind, DocumentationFeedbackStatus,
 };
 use crate::db::documentation_feedback_repository::DocumentationFeedbackRepository;
-use crate::db::models::Document;
+use crate::db::models::{Document, Schema, SchemaVersion};
 use crate::db::prompt_models::{ContextCost, Prompt, PromptStatus, PromptVariable};
 use crate::db::prompt_repository::PromptRepository;
 use crate::db::repository::DocumentRepository;
+use crate::db::schema_repository::SchemaRepository;
 use crate::db::user_prompt_preference_repository::UserPromptPreferenceRepository;
 use crate::error::AppError;
 use crate::rag::embedding::EmbeddingService;
@@ -120,6 +121,54 @@ pub struct ProposeDocumentationImprovementParams {
     pub related_feedback_ids: Vec<String>,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ListSchemasParams {
+    /// Filter by schema type: "openapi", "asyncapi", or "jsonschema".
+    #[serde(default)]
+    pub schema_type: Option<String>,
+    /// Filter by tag (exact match).
+    #[serde(default)]
+    pub tag: Option<String>,
+    /// Filter by service owner (case-insensitive substring).
+    #[serde(default)]
+    pub service_owner: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SearchSchemasParams {
+    /// Query matched (case-insensitive) against schema name, service owner, and tags.
+    pub query: String,
+    /// Maximum number of results to return (default: 10, max: 50).
+    #[serde(default = "default_prompt_limit")]
+    pub limit: usize,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetSchemaDetailParams {
+    /// The schema name (e.g. "payment-service-api").
+    pub name: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetSchemaContentParams {
+    /// The schema name (e.g. "payment-service-api").
+    pub name: String,
+    /// The version string (e.g. "1.0.0").
+    pub version: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SearchSchemaOperationsParams {
+    /// Query matched (case-insensitive) against endpoint path and summary.
+    pub query: String,
+    /// Optional: restrict search to a specific schema name.
+    #[serde(default)]
+    pub schema_name: Option<String>,
+    /// Maximum number of results to return (default: 10, max: 50).
+    #[serde(default = "default_prompt_limit")]
+    pub limit: usize,
+}
+
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 struct StoredPromptBlob {
     slug: String,
@@ -150,6 +199,7 @@ const DOCS_RESOURCE_TEMPLATE: &str = "docs://{id}";
 #[derive(Clone)]
 pub struct LektonMcpServer {
     document_repo: Arc<dyn DocumentRepository>,
+    schema_repo: Arc<dyn SchemaRepository>,
     prompt_repo: Arc<dyn PromptRepository>,
     user_prompt_preference_repo: Arc<dyn UserPromptPreferenceRepository>,
     documentation_feedback_repo: Arc<dyn DocumentationFeedbackRepository>,
@@ -161,8 +211,10 @@ pub struct LektonMcpServer {
 }
 
 impl LektonMcpServer {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         document_repo: Arc<dyn DocumentRepository>,
+        schema_repo: Arc<dyn SchemaRepository>,
         prompt_repo: Arc<dyn PromptRepository>,
         user_prompt_preference_repo: Arc<dyn UserPromptPreferenceRepository>,
         documentation_feedback_repo: Arc<dyn DocumentationFeedbackRepository>,
@@ -172,6 +224,7 @@ impl LektonMcpServer {
     ) -> Self {
         Self {
             document_repo,
+            schema_repo,
             prompt_repo,
             user_prompt_preference_repo,
             documentation_feedback_repo,
@@ -275,6 +328,60 @@ fn validate_docs_resource_uris(uris: &[String]) -> Result<(), McpError> {
     Ok(())
 }
 
+fn can_read_schema_version(user_ctx: &UserContext, version: &SchemaVersion) -> bool {
+    if user_ctx.user.is_admin {
+        return true;
+    }
+    user_ctx.can_read(&version.access_level)
+}
+
+fn schema_version_summary(v: &SchemaVersion) -> serde_json::Value {
+    serde_json::json!({
+        "version": v.version,
+        "status": v.status,
+        "access_level": v.access_level,
+        "endpoints": v.endpoints.iter().map(|e| serde_json::json!({
+            "method": e.method,
+            "path": e.path,
+            "summary": e.summary,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn endpoint_matches_query(endpoint: &crate::db::models::SchemaEndpoint, query: &str) -> bool {
+    let q = query.to_lowercase();
+    endpoint.path.to_lowercase().contains(&q)
+        || endpoint
+            .summary
+            .as_deref()
+            .map(|s| s.to_lowercase().contains(&q))
+            .unwrap_or(false)
+}
+
+fn schema_list_entry(schema: &Schema, visible_versions: &[&SchemaVersion]) -> serde_json::Value {
+    let latest = visible_versions
+        .iter()
+        .find(|v| v.status != "deprecated")
+        .or_else(|| visible_versions.first())
+        .map(|v| v.version.clone());
+
+    serde_json::json!({
+        "name": schema.name,
+        "schema_type": schema.schema_type,
+        "service_owner": schema.service_owner,
+        "tags": schema.tags,
+        "latest_version": latest,
+        "version_count": visible_versions.len(),
+    })
+}
+
+fn schema_matches_query(schema: &Schema, query: &str) -> bool {
+    let q = query.to_lowercase();
+    schema.name.to_lowercase().contains(&q)
+        || schema.service_owner.to_lowercase().contains(&q)
+        || schema.tags.iter().any(|t| t.to_lowercase().contains(&q))
+}
+
 fn feedback_summary_entry(feedback: &DocumentationFeedback) -> serde_json::Value {
     serde_json::json!({
         "id": feedback.id,
@@ -360,6 +467,290 @@ fn select_context_prompts(
 
 #[tool_router]
 impl LektonMcpServer {
+    /// Lists all schemas visible to the authenticated user.
+    #[tool(
+        name = "list_schemas",
+        description = "Returns all schema registry entries visible to the authenticated user. Each entry includes name, type, service owner, tags, available version count, and latest version. Supports optional filtering by schema_type, tag, or service_owner."
+    )]
+    async fn list_schemas(
+        &self,
+        Parameters(params): Parameters<ListSchemasParams>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let user_ctx = user_context(&ctx)?;
+
+        let schemas = self.schema_repo.list_all().await.map_err(app_err)?;
+
+        let entries: Vec<serde_json::Value> = schemas
+            .iter()
+            .filter_map(|schema| {
+                if let Some(ref t) = params.schema_type {
+                    if &schema.schema_type != t {
+                        return None;
+                    }
+                }
+                if let Some(ref owner) = params.service_owner {
+                    if !schema
+                        .service_owner
+                        .to_lowercase()
+                        .contains(&owner.to_lowercase())
+                    {
+                        return None;
+                    }
+                }
+                if let Some(ref tag) = params.tag {
+                    if !schema.tags.iter().any(|t| t == tag) {
+                        return None;
+                    }
+                }
+
+                let visible: Vec<&SchemaVersion> = schema
+                    .versions
+                    .iter()
+                    .filter(|v| !v.is_archived && can_read_schema_version(&user_ctx, v))
+                    .collect();
+
+                if visible.is_empty() {
+                    return None;
+                }
+
+                Some(schema_list_entry(schema, &visible))
+            })
+            .collect();
+
+        let json = serde_json::to_string_pretty(&entries)
+            .map_err(|e| McpError::internal_error(format!("JSON error: {e}"), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    /// Searches schemas by name, service owner, or tag.
+    #[tool(
+        name = "search_schemas",
+        description = "Searches the schema registry by matching the query (case-insensitive) against schema name, service owner, and tags. Returns a ranked list of matching schemas visible to the authenticated user."
+    )]
+    async fn search_schemas(
+        &self,
+        Parameters(params): Parameters<SearchSchemasParams>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let user_ctx = user_context(&ctx)?;
+        let query = params.query.trim();
+        if query.is_empty() {
+            return Err(McpError::invalid_params("query cannot be empty", None));
+        }
+        let limit = params.limit.clamp(1, 50);
+
+        let schemas = self.schema_repo.list_all().await.map_err(app_err)?;
+
+        let entries: Vec<serde_json::Value> = schemas
+            .iter()
+            .filter(|schema| schema_matches_query(schema, query))
+            .filter_map(|schema| {
+                let visible: Vec<&SchemaVersion> = schema
+                    .versions
+                    .iter()
+                    .filter(|v| !v.is_archived && can_read_schema_version(&user_ctx, v))
+                    .collect();
+                if visible.is_empty() {
+                    return None;
+                }
+                Some(schema_list_entry(schema, &visible))
+            })
+            .take(limit)
+            .collect();
+
+        let json = serde_json::to_string_pretty(&entries)
+            .map_err(|e| McpError::internal_error(format!("JSON error: {e}"), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    /// Returns detailed metadata for a single schema including all visible versions.
+    #[tool(
+        name = "get_schema_detail",
+        description = "Returns full metadata for a schema by name, including all versions visible to the authenticated user with their status and access level. Use get_schema_content to fetch the actual schema file."
+    )]
+    async fn get_schema_detail(
+        &self,
+        Parameters(params): Parameters<GetSchemaDetailParams>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let user_ctx = user_context(&ctx)?;
+
+        let schema = self
+            .schema_repo
+            .find_by_name(&params.name)
+            .await
+            .map_err(app_err)?
+            .ok_or_else(|| {
+                McpError::invalid_params(format!("Schema '{}' not found", params.name), None)
+            })?;
+
+        let visible_versions: Vec<serde_json::Value> = schema
+            .versions
+            .iter()
+            .filter(|v| !v.is_archived && can_read_schema_version(&user_ctx, v))
+            .map(schema_version_summary)
+            .collect();
+
+        if visible_versions.is_empty() {
+            return Err(McpError::invalid_params(
+                format!("Schema '{}' not found", params.name),
+                None,
+            ));
+        }
+
+        let output = serde_json::json!({
+            "name": schema.name,
+            "schema_type": schema.schema_type,
+            "service_owner": schema.service_owner,
+            "tags": schema.tags,
+            "versions": visible_versions,
+        });
+
+        let json = serde_json::to_string_pretty(&output)
+            .map_err(|e| McpError::internal_error(format!("JSON error: {e}"), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    /// Returns the raw content of a specific schema version.
+    #[tool(
+        name = "get_schema_content",
+        description = "Fetches the raw OpenAPI/AsyncAPI/JSON Schema content for a specific schema version. Use get_schema_detail first to discover available versions."
+    )]
+    async fn get_schema_content(
+        &self,
+        Parameters(params): Parameters<GetSchemaContentParams>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let user_ctx = user_context(&ctx)?;
+
+        let schema = self
+            .schema_repo
+            .find_by_name(&params.name)
+            .await
+            .map_err(app_err)?
+            .ok_or_else(|| {
+                McpError::invalid_params(format!("Schema '{}' not found", params.name), None)
+            })?;
+
+        let version = schema
+            .versions
+            .iter()
+            .find(|v| v.version == params.version)
+            .ok_or_else(|| {
+                McpError::invalid_params(
+                    format!(
+                        "Version '{}' not found for schema '{}'",
+                        params.version, params.name
+                    ),
+                    None,
+                )
+            })?;
+
+        if version.is_archived || !can_read_schema_version(&user_ctx, version) {
+            return Err(McpError::invalid_params(
+                format!(
+                    "Version '{}' not found for schema '{}'",
+                    params.version, params.name
+                ),
+                None,
+            ));
+        }
+
+        let bytes = self
+            .storage_client
+            .get_object(&version.s3_key)
+            .await
+            .map_err(app_err)?
+            .ok_or_else(|| {
+                McpError::internal_error(
+                    format!(
+                        "Content not found for '{}'@'{}'",
+                        params.name, params.version
+                    ),
+                    None,
+                )
+            })?;
+
+        let content = String::from_utf8(bytes)
+            .map_err(|e| McpError::internal_error(format!("Invalid UTF-8 content: {e}"), None))?;
+
+        let mime = if version.s3_key.ends_with(".yaml") || version.s3_key.ends_with(".yml") {
+            "application/yaml"
+        } else {
+            "application/json"
+        };
+
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "# {name} @ {version}\nContent-Type: {mime}\n\n{content}",
+            name = params.name,
+            version = params.version,
+        ))]))
+    }
+
+    /// Searches API operations across all schemas by path or summary.
+    #[tool(
+        name = "search_schema_operations",
+        description = "Searches API operations (OpenAPI paths or AsyncAPI channels) across the schema registry. Matches the query against endpoint path and summary. Optionally restrict search to a specific schema. Returns schema name, version, method, path, and summary for each match."
+    )]
+    async fn search_schema_operations(
+        &self,
+        Parameters(params): Parameters<SearchSchemaOperationsParams>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let user_ctx = user_context(&ctx)?;
+        let query = params.query.trim();
+        if query.is_empty() {
+            return Err(McpError::invalid_params("query cannot be empty", None));
+        }
+        let limit = params.limit.clamp(1, 50);
+
+        let schemas = self.schema_repo.list_all().await.map_err(app_err)?;
+
+        let mut results: Vec<serde_json::Value> = vec![];
+
+        'outer: for schema in &schemas {
+            if let Some(ref name_filter) = params.schema_name {
+                if &schema.name != name_filter {
+                    continue;
+                }
+            }
+
+            for version in schema
+                .versions
+                .iter()
+                .filter(|v| !v.is_archived && can_read_schema_version(&user_ctx, v))
+            {
+                for endpoint in version
+                    .endpoints
+                    .iter()
+                    .filter(|e| endpoint_matches_query(e, query))
+                {
+                    results.push(serde_json::json!({
+                        "schema_name": schema.name,
+                        "schema_type": schema.schema_type,
+                        "service_owner": schema.service_owner,
+                        "version": version.version,
+                        "method": endpoint.method,
+                        "path": endpoint.path,
+                        "summary": endpoint.summary,
+                    }));
+                    if results.len() >= limit {
+                        break 'outer;
+                    }
+                }
+            }
+        }
+
+        let json = serde_json::to_string_pretty(&results)
+            .map_err(|e| McpError::internal_error(format!("JSON error: {e}"), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
     /// Returns the document tree visible to the authenticated user.
     #[tool(
         name = "get_index",
@@ -1085,7 +1476,13 @@ impl ServerHandler for LektonMcpServer {
              Full documentation is exposed as read-only MCP resources under docs://...\n\
              Prefer list_resources to discover available documents, read_resource to load the raw markdown, and search_documents when you need vector search to find the right docs:// URI.\n\
              Before creating documentation feedback, first use search_documentation_feedback to reduce duplicate reports.\n\
-             Native MCP prompts are also exposed for the effective user context prompt set."
+             Native MCP prompts are also exposed for the effective user context prompt set.\n\
+             Schema registry tools:\n\
+             - list_schemas: Browse the schema registry with optional filters (type, tag, service_owner)\n\
+             - search_schemas: Search schemas by name, service owner, or tag\n\
+             - get_schema_detail: Get full metadata, versions, and indexed endpoints for a schema\n\
+             - get_schema_content: Fetch raw OpenAPI/AsyncAPI/JSON Schema content for a specific version\n\
+             - search_schema_operations: Search API operations by path or summary across all schemas"
                 .to_string(),
         )
     }

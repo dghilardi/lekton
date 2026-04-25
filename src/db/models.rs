@@ -77,6 +77,18 @@ pub struct Schema {
     pub versions: Vec<SchemaVersion>,
 }
 
+/// An API operation extracted from a schema artifact (OpenAPI path/method or AsyncAPI channel/action).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaEndpoint {
+    /// HTTP method (GET, POST, …) or AsyncAPI action (publish, subscribe, send, receive).
+    pub method: String,
+    /// URL path (e.g. `/payments/{id}`) or AsyncAPI channel name.
+    pub path: String,
+    /// Short human-readable summary of the operation, if present in the spec.
+    #[serde(default)]
+    pub summary: Option<String>,
+}
+
 /// A single version of a schema artifact.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaVersion {
@@ -98,6 +110,9 @@ pub struct SchemaVersion {
     /// Whether this version has been archived by sync.
     #[serde(default)]
     pub is_archived: bool,
+    /// API operations extracted from the schema at ingest time.
+    #[serde(default)]
+    pub endpoints: Vec<SchemaEndpoint>,
 }
 
 fn default_public_access_level() -> String {

@@ -66,6 +66,7 @@ pub struct AppState {
     pub rag_service: Option<Arc<dyn crate::rag::service::RagService>>,
     pub reindex_state: Option<Arc<crate::rag::reindex::ReindexState>>,
     pub search_reindex_state: Option<Arc<crate::search::reindex::SearchReindexState>>,
+    pub schema_endpoint_reindex_state: Arc<crate::schema::reindex::SchemaEndpointReindexState>,
     pub chat_repo: Option<Arc<dyn crate::db::chat_repository::ChatRepository>>,
     pub chat_service: Option<Arc<crate::rag::chat::ChatService>>,
     pub feedback_repo: Option<Arc<dyn crate::db::feedback_repository::FeedbackRepository>>,
@@ -539,6 +540,53 @@ pub async fn trigger_search_reindex() -> Result<String, ServerFnError> {
     });
 
     Ok("Search re-index started".to_string())
+}
+
+/// Server function to get schema endpoint re-index status.
+#[server(GetSchemaEndpointReindexStatus, "/api")]
+pub async fn get_schema_endpoint_reindex_status() -> Result<(bool, u32), ServerFnError> {
+    use std::sync::atomic::Ordering;
+    let state = expect_context::<AppState>();
+    require_admin_user(&state).await?;
+    Ok((
+        state
+            .schema_endpoint_reindex_state
+            .is_running
+            .load(Ordering::Acquire),
+        state
+            .schema_endpoint_reindex_state
+            .progress
+            .load(Ordering::Relaxed),
+    ))
+}
+
+/// Server function to trigger a schema endpoint re-index (admin only).
+#[server(TriggerSchemaEndpointReindex, "/api")]
+pub async fn trigger_schema_endpoint_reindex() -> Result<String, ServerFnError> {
+    use std::sync::atomic::Ordering;
+    let state = expect_context::<AppState>();
+    require_admin_user(&state).await?;
+
+    if state
+        .schema_endpoint_reindex_state
+        .is_running
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Err(ServerFnError::new(
+            "Schema endpoint re-index is already in progress",
+        ));
+    }
+
+    let reindex = state.schema_endpoint_reindex_state.clone();
+    let schema_repo = state.schema_repo.clone();
+    let storage = state.storage_client.clone();
+
+    tokio::spawn(async move {
+        crate::schema::reindex::run_schema_endpoint_reindex(reindex, schema_repo, storage).await;
+    });
+
+    Ok("Schema endpoint re-index started".to_string())
 }
 
 /// Server function to log out the current user.

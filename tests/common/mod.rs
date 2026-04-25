@@ -205,6 +205,9 @@ impl TestEnv {
             feedback_repo: None,
             documentation_feedback_repo: documentation_feedback_repo.clone(),
             embedding_cache_repo: None,
+            schema_endpoint_reindex_state: Arc::new(
+                lekton::schema::reindex::SchemaEndpointReindexState::default(),
+            ),
         };
 
         // --- Build Router (API routes only, no Leptos SSR) ---
@@ -499,6 +502,9 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
         feedback_repo: None,
         documentation_feedback_repo: env.documentation_feedback_repo.clone(),
         embedding_cache_repo: None,
+        schema_endpoint_reindex_state: Arc::new(
+            lekton::schema::reindex::SchemaEndpointReindexState::default(),
+        ),
     };
 
     let router = Router::new()

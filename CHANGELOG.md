@@ -3,6 +3,10 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+### Added
+- MCP schema registry tools: `list_schemas`, `search_schemas`, `get_schema_detail`, `get_schema_content`, `search_schema_operations` — expose the schema registry to MCP clients with user-level access control.
+- Schema endpoint indexing: API operations (path, HTTP method, summary) are extracted from OpenAPI and AsyncAPI specs at ingest time and stored on `SchemaVersion`, enabling `search_schema_operations` without S3 round-trips.
+- Admin panel "Schema Endpoint Re-index" card: backfills endpoint data for schema versions ingested before this feature, with progress bar and REST endpoints (`POST /api/v1/admin/schemas/reindex-endpoints`, `GET …/status`).
 
 ## [0.19.3] 2026-04-25
 ### Fixed

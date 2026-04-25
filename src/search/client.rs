@@ -6,7 +6,9 @@ use crate::error::AppError;
 /// A document representation optimized for the search index.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchDocument {
-    /// Primary key — the document slug.
+    /// Primary key — slug with `/` replaced by `__` (Meilisearch requires alphanumeric/-/_).
+    pub id: String,
+    /// Document slug (original path, e.g. `incidents/2025-12-13`).
     pub slug: String,
     /// Human-readable title.
     pub title: String,
@@ -108,7 +110,7 @@ impl SearchService for MeilisearchService {
     async fn index_document(&self, doc: &SearchDocument) -> Result<(), AppError> {
         let _task: meilisearch_sdk::task_info::TaskInfo = self
             .index()
-            .add_documents(&[doc], Some("slug"))
+            .add_documents(&[doc], Some("id"))
             .await
             .map_err(|e| AppError::Internal(format!("Meilisearch index error: {e}")))?;
 
@@ -116,7 +118,8 @@ impl SearchService for MeilisearchService {
     }
 
     async fn delete_document(&self, slug: &str) -> Result<(), AppError> {
-        match self.index().delete_document(slug).await {
+        let id = slug_to_id(slug);
+        match self.index().delete_document(&id).await {
             Ok(_) => Ok(()),
             Err(e) if e.to_string().contains("404") => Ok(()),
             Err(e) => Err(AppError::Internal(format!("Meilisearch delete error: {e}"))),
@@ -197,6 +200,15 @@ impl SearchService for MeilisearchService {
     }
 }
 
+/// Convert a slug to a valid Meilisearch document ID.
+///
+/// Meilisearch only allows alphanumeric characters, hyphens, and underscores.
+/// Base64 URL-safe (no padding) encoding guarantees no collisions regardless of slug content.
+pub fn slug_to_id(slug: &str) -> String {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    URL_SAFE_NO_PAD.encode(slug.as_bytes())
+}
+
 /// Build a SearchDocument from a domain Document and its raw markdown content.
 pub fn build_search_document(
     doc: &crate::db::models::Document,
@@ -205,6 +217,7 @@ pub fn build_search_document(
     let preview = strip_markdown_for_preview(raw_content, 200);
 
     SearchDocument {
+        id: slug_to_id(&doc.slug),
         slug: doc.slug.clone(),
         title: doc.title.clone(),
         access_level: doc.access_level.clone(),

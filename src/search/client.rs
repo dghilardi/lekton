@@ -248,7 +248,10 @@ fn strip_markdown_for_preview(raw: &str, max_len: usize) -> String {
         }
     }
 
-    text.truncate(max_len);
+    if text.len() > max_len {
+        let boundary = text.floor_char_boundary(max_len);
+        text.truncate(boundary);
+    }
     text
 }
 

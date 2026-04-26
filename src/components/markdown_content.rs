@@ -6,7 +6,7 @@ use leptos::prelude::*;
 /// any `<pre class="mermaid">` elements emitted by the markdown renderer are processed.
 #[component]
 pub fn MarkdownContent(html: String) -> impl IntoView {
-    #[cfg(feature = "hydrate")]
+    #[cfg(all(feature = "hydrate", feature = "mermaid"))]
     {
         Effect::new(move |_| {
             let _ = js_sys::eval("window.renderMermaid && window.renderMermaid()");

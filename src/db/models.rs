@@ -410,6 +410,7 @@ mod tests {
                     content_hash: Some("sha256:v1".to_string()),
                     metadata_hash: Some("sha256:m1".to_string()),
                     is_archived: false,
+                    endpoints: vec![],
                 },
                 SchemaVersion {
                     version: "2.0.0".to_string(),
@@ -419,6 +420,7 @@ mod tests {
                     content_hash: Some("sha256:v2".to_string()),
                     metadata_hash: Some("sha256:m2".to_string()),
                     is_archived: false,
+                    endpoints: vec![],
                 },
             ],
         };

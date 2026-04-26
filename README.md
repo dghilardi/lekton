@@ -36,7 +36,7 @@ Lekton decouples content from code, allowing microservices to push their documen
 
 -   [Rust](https://rustup.rs/) (stable toolchain)
 -   [cargo-leptos](https://github.com/leptos-rs/cargo-leptos): `cargo install cargo-leptos --locked`
--   [Node.js](https://nodejs.org/) (for DaisyUI and Mermaid assets)
+-   [Node.js](https://nodejs.org/) — required for Mermaid diagram assets (`npm ci` before building). **If you only need to check the Rust backend** (no UI assets), you can skip Node.js by disabling the default `mermaid` feature: `cargo check --no-default-features --features ssr`.
 -   [Docker](https://www.docker.com/) & [Docker Compose](https://docs.docker.com/compose/)
 
 ### Quick Start with Docker Compose (Recommended)

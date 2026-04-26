@@ -480,7 +480,7 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
                     function renderAsyncApi(targetEl) {{
                         if (window.AsyncApiStandalone) {{
                             AsyncApiStandalone.render({{
-                                schema: {{ fromObject: JSON.parse(`{escaped_content}`) }},
+                                schema: `{escaped_content}`,
                                 config: {{ show: {{ sidebar: true }} }},
                             }}, targetEl);
                         }} else {{

@@ -316,6 +316,10 @@ fn ChatContent() -> impl IntoView {
                                             if content.is_empty() {
                                                 view! { <span class="loading loading-dots loading-sm opacity-50 py-1"></span> }.into_any()
                                             } else {
+                                                // Use inner_html directly instead of MarkdownContent while the message is
+                                                // streaming: a partially-received mermaid block would fail the mermaid
+                                                // parser. Mermaid rendering is triggered once the message commits via
+                                                // MarkdownContent in the history view above.
                                                 view! { <div inner_html=render_markdown(&content)></div> }.into_any()
                                             }
                                         }}

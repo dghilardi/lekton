@@ -62,6 +62,10 @@ body {
     color: oklch(var(--bc) / 0.85);
 }
 
+.prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 {
+    scroll-margin-top: calc(var(--lekton-header-height) + 1rem);
+}
+
 .prose h1, .prose h2, .prose h3, .prose h4 {
     color: oklch(var(--bc));
     letter-spacing: -0.025em;

@@ -8,6 +8,14 @@ use leptos::prelude::*;
 /// `data-processed` or `data-mermaid-queued`, so duplicate calls are harmless.
 #[component]
 pub fn MarkdownContent(html: String) -> impl IntoView {
+    #[cfg(feature = "hydrate")]
+    {
+        // Scroll to the hash anchor after the HTML is injected into the DOM.
+        Effect::new(move |_| {
+            let _ = js_sys::eval("let h=window.location.hash;if(h){let el=document.getElementById(h.slice(1));if(el)el.scrollIntoView({behavior:'smooth'})}");
+        });
+    }
+
     #[cfg(all(feature = "hydrate", feature = "mermaid"))]
     {
         // Effect reads no reactive source → runs exactly once on mount per component instance.

@@ -6,6 +6,20 @@ All notable changes to this project will be documented in this file.
 ### Added
 - Mermaid diagram rendering for Markdown documents and chat responses.
 
+### Fixed
+- Mermaid diagrams now re-render correctly when the user switches theme. The loader saves the original diagram source before mermaid replaces the element with SVG, and a `MutationObserver` on `data-theme` triggers a full re-initialize + re-render.
+
+### Security
+- Markdown renderer now sanitizes HTML via `ammonia` to prevent stored XSS from raw HTML in document sources and LLM chat responses.
+
+### Changed
+- Mermaid support is now opt-out via a `mermaid` Cargo feature (default-on). Disabling it removes the `npm ci` prerequisite, allowing backend-only `cargo check --features ssr` without Node.js installed.
+
+### Tests
+- RAG integration test: covers the full index_document → Qdrant vector search pipeline using a testcontainer and a deterministic in-process mock embedding service.
+- Added `QdrantVectorStore::new(url, collection)` public constructor to support direct instantiation in tests without a full `RagConfig`.
+- Playwright e2e specs for Mermaid rendering (`e2e/mermaid.spec.ts`) and chat page (`e2e/chat.spec.ts`).
+
 ## [0.20.0] 2026-04-25
 ### Added
 - MCP schema registry tools: `list_schemas`, `search_schemas`, `get_schema_detail`, `get_schema_content`, `search_schema_operations` — expose the schema registry to MCP clients with user-level access control.

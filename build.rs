@@ -16,13 +16,15 @@ fn main() {
         .write_all(leptos_tiptap_build::TIPTAP_JS.as_bytes())
         .unwrap();
 
-    // Re-run when npm dependencies change or when Mermaid is installed after a
-    // Rust-only build/check on a fresh checkout.
-    println!("cargo:rerun-if-changed=package-lock.json");
-    println!("cargo:rerun-if-changed=node_modules/mermaid/dist/mermaid.esm.min.mjs");
-    println!("cargo:rerun-if-changed=node_modules/mermaid/dist/chunks/mermaid.esm.min");
-
-    copy_mermaid(&root, &js_dir);
+    // Mermaid assets are only required when the `mermaid` feature is active.
+    // Skipping this when the feature is off allows backend-only `cargo check --features ssr`
+    // on a fresh checkout without running `npm ci` first.
+    if std::env::var("CARGO_FEATURE_MERMAID").is_ok() {
+        println!("cargo:rerun-if-changed=package-lock.json");
+        println!("cargo:rerun-if-changed=node_modules/mermaid/dist/mermaid.esm.min.mjs");
+        println!("cargo:rerun-if-changed=node_modules/mermaid/dist/chunks/mermaid.esm.min");
+        copy_mermaid(&root, &js_dir);
+    }
 }
 
 fn copy_mermaid(root: &std::path::Path, js_dir: &std::path::Path) {

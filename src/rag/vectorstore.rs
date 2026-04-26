@@ -94,17 +94,21 @@ pub struct QdrantVectorStore {
 }
 
 impl QdrantVectorStore {
-    pub fn from_rag_config(config: &RagConfig) -> Result<Self, AppError> {
-        if config.qdrant_url.is_empty() {
-            return Err(AppError::Internal("qdrant_url is required for RAG".into()));
-        }
-        let client = Qdrant::from_url(&config.qdrant_url)
+    pub fn new(url: &str, collection: impl Into<String>) -> Result<Self, AppError> {
+        let client = Qdrant::from_url(url)
             .build()
             .map_err(|e| AppError::Internal(format!("failed to build Qdrant client: {e}")))?;
         Ok(Self {
             client,
-            collection: config.qdrant_collection.clone(),
+            collection: collection.into(),
         })
+    }
+
+    pub fn from_rag_config(config: &RagConfig) -> Result<Self, AppError> {
+        if config.qdrant_url.is_empty() {
+            return Err(AppError::Internal("qdrant_url is required for RAG".into()));
+        }
+        Self::new(&config.qdrant_url, config.qdrant_collection.clone())
     }
 
     fn visibility_conditions(

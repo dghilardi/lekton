@@ -98,6 +98,17 @@ jobs:
       - name: Build application
         run: cargo leptos build --release
 
+      - name: Ensure mermaid assets are in site root
+        # build.rs copies mermaid from node_modules/ to public/js/, then cargo-leptos
+        # syncs public/ to target/site/. With rust-cache the sync may be skipped when
+        # cargo considers the build up-to-date. This step guarantees the files are
+        # present in the directory the server actually serves.
+        run: |
+          mkdir -p target/site/js/chunks/mermaid.esm.min
+          cp node_modules/mermaid/dist/mermaid.esm.min.mjs target/site/js/
+          find node_modules/mermaid/dist/chunks/mermaid.esm.min -name '*.mjs' \
+            -exec cp {} target/site/js/chunks/mermaid.esm.min/ \;
+
       - name: Run E2E tests
         run: npx playwright test
 

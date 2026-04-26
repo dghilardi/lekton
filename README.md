@@ -36,7 +36,7 @@ Lekton decouples content from code, allowing microservices to push their documen
 
 -   [Rust](https://rustup.rs/) (stable toolchain)
 -   [cargo-leptos](https://github.com/leptos-rs/cargo-leptos): `cargo install cargo-leptos --locked`
--   [Node.js](https://nodejs.org/) (for DaisyUI)
+-   [Node.js](https://nodejs.org/) (for DaisyUI and Mermaid assets)
 -   [Docker](https://www.docker.com/) & [Docker Compose](https://docs.docker.com/compose/)
 
 ### Quick Start with Docker Compose (Recommended)
@@ -48,8 +48,8 @@ The easiest way to run Lekton with all dependencies:
 git clone https://github.com/dghilardi/lekton.git
 cd lekton
 
-# Install Node dependencies (DaisyUI)
-npm install
+# Install Node dependencies (DaisyUI, Mermaid)
+npm ci
 
 # Start all services (MongoDB, Garage S3, and Lekton)
 docker-compose up
@@ -77,7 +77,7 @@ Use the setup script to automatically start dependencies and create your `.env` 
 ```
 
 This script will:
-1. Install Node.js dependencies (DaisyUI for Tailwind CSS)
+1. Install Node.js dependencies (DaisyUI for Tailwind CSS and Mermaid rendering)
 2. Start MongoDB and Garage S3 in Docker
 3. Initialize Garage (create bucket and API keys)
 4. Extract credentials automatically
@@ -132,8 +132,8 @@ If you prefer to set up manually:
 **1. Install Node.js dependencies**
 
 ```bash
-# Install DaisyUI and other frontend dependencies
-npm install
+# Install DaisyUI, Mermaid, and other frontend dependencies
+npm ci
 ```
 
 **2. Start dependencies only**
@@ -221,8 +221,11 @@ docker-compose down
 ### Troubleshooting
 
 **Problem: "Can't resolve 'daisyui'" or Tailwind CSS errors**
-- Run `npm install` to install Node.js dependencies
-- If that doesn't work, delete `node_modules` and `package-lock.json`, then run `npm install` again
+- Run `npm ci` to install Node.js dependencies
+- If that doesn't work, delete `node_modules`, then run `npm ci` again
+
+**Problem: "Mermaid assets are required but node_modules/mermaid is missing"**
+- Run `npm ci` before Cargo build, check, or test commands. The `just` recipes do this automatically.
 
 **Problem: "Failed to connect to MongoDB"**
 - Ensure MongoDB is running: `docker-compose ps mongodb`
@@ -277,6 +280,9 @@ just test-all
 #### Without `just`
 
 ```bash
+# Install Node dependencies required by build.rs
+npm ci
+
 # Unit tests
 cargo test --features ssr --lib
 

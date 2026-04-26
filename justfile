@@ -11,11 +11,11 @@ default:
 # ── Development ───────────────────────────────────────────────────────────────
 
 # Start dev server with hot-reload (loads .env automatically)
-dev:
+dev: npm-deps
     cargo leptos watch
 
 # Check compilation for both SSR and WASM targets
-check:
+check: npm-deps
     cargo check --features ssr
     cargo check --features hydrate
 
@@ -30,15 +30,15 @@ fmt-check:
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 # Run unit tests (fast, no Docker required)
-test:
+test: npm-deps
     cargo test --features ssr --lib
 
 # Run integration tests (requires Docker for MongoDB, MinIO, Meilisearch)
-test-integration:
+test-integration: npm-deps
     cargo test --features ssr --test '*' -- --test-threads=1
 
 # Run e2e tests — starts the server if it is not already running on :3000
-test-e2e *ARGS:
+test-e2e *ARGS: npm-deps
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -97,7 +97,7 @@ test-e2e *ARGS:
     LKN__AUTH__SERVICE_TOKEN=test-token npx playwright test {{ ARGS }}
 
 # Open the Playwright UI for interactive test debugging
-test-e2e-ui:
+test-e2e-ui: npm-deps
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -144,6 +144,14 @@ test-e2e-ui:
 test-all: test test-integration test-e2e
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
+
+# Install npm dependencies when generated web assets cannot be built yet
+npm-deps:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -d node_modules/mermaid ]; then
+        npm ci
+    fi
 
 # Show e2e server log (useful when test-e2e fails at startup)
 e2e-logs:

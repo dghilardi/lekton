@@ -27,20 +27,21 @@ test.describe('Mermaid diagrams', () => {
     await expect(page.locator('pre.mermaid')).toBeAttached();
   });
 
-  test('mermaid diagram remains visible after theme toggle', async ({ page }) => {
+  test('mermaid re-renders after theme toggle', async ({ page }) => {
     await page.goto('/docs/mermaid-test');
     await expect(page.locator('article h1', { hasText: 'Mermaid Test' })).toBeVisible({
       timeout: 30_000,
     });
 
     await waitForMermaidSvg(page);
-    await expect(page.locator('.mermaid svg').first()).toBeVisible();
 
-    // Toggle theme and verify the SVG is still present
+    // Toggle the theme — the MutationObserver in mermaid-loader.js will re-initialize
+    // mermaid and re-render all diagrams with the new theme.
     const themeToggle = page.locator('button[aria-label="Toggle theme"]');
     await themeToggle.click();
-    await page.waitForTimeout(500);
 
+    // Wait for re-render: SVG is briefly removed and re-inserted
+    await waitForMermaidSvg(page);
     await expect(page.locator('.mermaid svg').first()).toBeVisible();
   });
 

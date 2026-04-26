@@ -6,6 +6,9 @@ All notable changes to this project will be documented in this file.
 ### Added
 - Mermaid diagram rendering for Markdown documents and chat responses.
 
+### Fixed
+- Mermaid diagrams now re-render correctly when the user switches theme. The loader saves the original diagram source before mermaid replaces the element with SVG, and a `MutationObserver` on `data-theme` triggers a full re-initialize + re-render.
+
 ### Security
 - Markdown renderer now sanitizes HTML via `ammonia` to prevent stored XSS from raw HTML in document sources and LLM chat responses.
 

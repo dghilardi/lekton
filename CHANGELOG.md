@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 ### Tests
 - RAG integration test: covers the full index_document → Qdrant vector search pipeline using a testcontainer and a deterministic in-process mock embedding service.
 - Added `QdrantVectorStore::new(url, collection)` public constructor to support direct instantiation in tests without a full `RagConfig`.
+- Playwright e2e specs for Mermaid rendering (`e2e/mermaid.spec.ts`) and chat page (`e2e/chat.spec.ts`).
 
 ## [0.20.0] 2026-04-25
 ### Added

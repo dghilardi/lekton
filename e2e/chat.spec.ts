@@ -1,7 +1,9 @@
 import { test, expect } from '@playwright/test';
+import { loginAsDemo } from './helpers/auth';
 
 test.describe('Chat page', () => {
   test('page loads without errors', async ({ page }) => {
+    await loginAsDemo(page);
     await page.goto('/chat');
     await page.waitForLoadState('networkidle');
 
@@ -11,6 +13,7 @@ test.describe('Chat page', () => {
   });
 
   test('shows input area or unavailable notice', async ({ page }) => {
+    await loginAsDemo(page);
     await page.goto('/chat');
     await page.waitForLoadState('networkidle');
 

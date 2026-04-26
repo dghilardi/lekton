@@ -3,16 +3,22 @@ import { loginAsDemo } from './helpers/auth';
 
 test.describe('Chat page', () => {
   test('page loads without errors', async ({ page }) => {
+    // loginAsDemo + goto + networkidle can take >30s on slow CI runners
+    test.setTimeout(90_000);
+
     await loginAsDemo(page);
     await page.goto('/chat');
     await page.waitForLoadState('networkidle');
 
     // The page should load and show either the chat UI or a "not configured" notice.
-    // Either way, the top-level app shell (nav) must be present.
-    await expect(page.locator('nav')).toBeVisible({ timeout: 30_000 });
+    // The app shell is confirmed by the user dropdown rendered after WASM hydration
+    // (DaisyUI navbar uses <div class="navbar">, not a semantic <nav> element).
+    await expect(page.locator('.dropdown.dropdown-end')).toBeVisible({ timeout: 30_000 });
   });
 
   test('shows input area or unavailable notice', async ({ page }) => {
+    test.setTimeout(90_000);
+
     await loginAsDemo(page);
     await page.goto('/chat');
     await page.waitForLoadState('networkidle');

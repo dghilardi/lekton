@@ -12,6 +12,10 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - Mermaid support is now opt-out via a `mermaid` Cargo feature (default-on). Disabling it removes the `npm ci` prerequisite, allowing backend-only `cargo check --features ssr` without Node.js installed.
 
+### Tests
+- RAG integration test: covers the full index_document → Qdrant vector search pipeline using a testcontainer and a deterministic in-process mock embedding service.
+- Added `QdrantVectorStore::new(url, collection)` public constructor to support direct instantiation in tests without a full `RagConfig`.
+
 ## [0.20.0] 2026-04-25
 ### Added
 - MCP schema registry tools: `list_schemas`, `search_schemas`, `get_schema_detail`, `get_schema_content`, `search_schema_operations` — expose the schema registry to MCP clients with user-level access control.

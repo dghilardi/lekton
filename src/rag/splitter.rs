@@ -1,6 +1,8 @@
+use std::ops::Range;
+
 use pulldown_cmark::{Event, Options, Parser, Tag};
 use text_splitter::{ChunkConfig, MarkdownSplitter};
-use tiktoken_rs::cl100k_base;
+use tiktoken_rs::{cl100k_base, CoreBPE};
 
 /// Minimum section size in characters; sections smaller than this are merged forward
 /// into the next section to avoid producing tiny retrieval units.
@@ -173,6 +175,18 @@ fn merge_small_sections(sections: Vec<RawSection>, min_chars: usize) -> Vec<RawS
 
 // ── Code-fence / table atomicity ─────────────────────────────────────────────
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum ProtectedKind {
+    Code,
+    Table,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct ProtectedBlock {
+    kind: ProtectedKind,
+    range: Range<usize>,
+}
+
 fn markdown_options() -> Options {
     Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
@@ -182,19 +196,40 @@ fn markdown_options() -> Options {
         | Options::ENABLE_HEADING_ATTRIBUTES
 }
 
-/// Return byte ranges within `text` that must not be split: code blocks
-/// and Markdown tables recognized by the same GFM parser used for rendering.
-fn protected_ranges(text: &str) -> Vec<(usize, usize)> {
-    let mut ranges: Vec<(usize, usize)> = Parser::new_ext(text, markdown_options())
+fn protected_blocks(text: &str) -> Vec<ProtectedBlock> {
+    let mut blocks: Vec<ProtectedBlock> = Parser::new_ext(text, markdown_options())
         .into_offset_iter()
         .filter_map(|(event, range)| match event {
-            Event::Start(Tag::CodeBlock(_) | Tag::Table(_)) => Some((range.start, range.end)),
+            Event::Start(Tag::CodeBlock(_)) => Some(ProtectedBlock {
+                kind: ProtectedKind::Code,
+                range,
+            }),
+            Event::Start(Tag::Table(_)) => Some(ProtectedBlock {
+                kind: ProtectedKind::Table,
+                range,
+            }),
             _ => None,
         })
         .collect();
-    ranges.sort_unstable();
-    ranges.dedup();
-    ranges
+    blocks.sort_by_key(|block| block.range.start);
+    blocks.dedup();
+    blocks
+}
+
+/// Return byte ranges within `text` that must not be split: code blocks
+/// and Markdown tables recognized by the same GFM parser used for rendering.
+fn protected_ranges(text: &str) -> Vec<(usize, usize)> {
+    protected_blocks(text)
+        .into_iter()
+        .map(|block| (block.range.start, block.range.end))
+        .collect()
+}
+
+fn table_ranges(text: &str) -> Vec<Range<usize>> {
+    protected_blocks(text)
+        .into_iter()
+        .filter_map(|block| (block.kind == ProtectedKind::Table).then_some(block.range))
+        .collect()
 }
 
 /// Merge consecutive chunks whose split boundary falls inside a protected range.
@@ -220,6 +255,89 @@ fn merge_broken_blocks(
         result.push((offset, text));
     }
     result
+}
+
+struct TableLine<'a> {
+    offset: usize,
+    text: &'a str,
+}
+
+fn table_lines(table: &str) -> Vec<TableLine<'_>> {
+    let mut offset = 0usize;
+    table
+        .split_inclusive('\n')
+        .map(|line| {
+            let current = offset;
+            offset += line.len();
+            TableLine {
+                offset: current,
+                text: line,
+            }
+        })
+        .collect()
+}
+
+fn token_count(tokenizer: &CoreBPE, text: &str) -> usize {
+    tokenizer.encode_ordinary(text).len()
+}
+
+fn split_table_block(
+    table: &str,
+    base_offset: usize,
+    chunk_size_tokens: usize,
+    tokenizer: &CoreBPE,
+) -> Vec<(usize, String)> {
+    if token_count(tokenizer, table) <= chunk_size_tokens {
+        return vec![(base_offset, table.to_string())];
+    }
+
+    let lines = table_lines(table);
+    if lines.len() <= 2 {
+        return vec![(base_offset, table.to_string())];
+    }
+
+    let header = format!("{}{}", lines[0].text, lines[1].text);
+    let mut chunks: Vec<(usize, String)> = Vec::new();
+    let mut current = String::new();
+    let mut current_start: Option<usize> = None;
+
+    for row in &lines[2..] {
+        let row_offset = base_offset + row.offset;
+        if current_start.is_none() {
+            current = header.clone();
+            current.push_str(row.text);
+            current_start = Some(row_offset);
+            if token_count(tokenizer, &current) > chunk_size_tokens {
+                chunks.push((row_offset, std::mem::take(&mut current)));
+                current_start = None;
+            }
+            continue;
+        }
+
+        let mut candidate = current.clone();
+        candidate.push_str(row.text);
+        if token_count(tokenizer, &candidate) <= chunk_size_tokens {
+            current = candidate;
+        } else {
+            chunks.push((
+                current_start.expect("table row chunk must have a start"),
+                current,
+            ));
+            current = header.clone();
+            current.push_str(row.text);
+            current_start = Some(row_offset);
+            if token_count(tokenizer, &current) > chunk_size_tokens {
+                chunks.push((row_offset, std::mem::take(&mut current)));
+                current_start = None;
+            }
+        }
+    }
+
+    if let Some(start) = current_start {
+        chunks.push((start, current));
+    }
+
+    chunks
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -249,7 +367,7 @@ pub fn split_document(
     let tokenizer = cl100k_base().expect("cl100k_base tokenizer should always load");
     let splitter = MarkdownSplitter::new(
         ChunkConfig::new(chunk_size_tokens)
-            .with_sizer(tokenizer)
+            .with_sizer(tokenizer.clone())
             .with_overlap(chunk_overlap_tokens)
             .expect("chunk_overlap_tokens must be less than chunk_size_tokens"),
     );
@@ -263,13 +381,40 @@ pub fn split_document(
             .collect::<Vec<_>>()
             .join("-");
 
-        let protected = protected_ranges(&section.text);
-        let raw: Vec<(usize, String)> = splitter
-            .chunk_indices(&section.text)
-            .filter(|(_, t)| !t.trim().is_empty())
-            .map(|(off, t)| (off, t.to_string()))
-            .collect();
-        let safe = merge_broken_blocks(raw, &protected);
+        let split_regular = |segment: &str, base_offset: usize| -> Vec<(usize, String)> {
+            let protected = protected_ranges(segment);
+            let raw: Vec<(usize, String)> = splitter
+                .chunk_indices(segment)
+                .filter(|(_, t)| !t.trim().is_empty())
+                .map(|(off, t)| (off, t.to_string()))
+                .collect();
+            merge_broken_blocks(raw, &protected)
+                .into_iter()
+                .map(|(off, text)| (base_offset + off, text))
+                .collect()
+        };
+
+        let mut safe: Vec<(usize, String)> = Vec::new();
+        let mut cursor = 0usize;
+        for table_range in table_ranges(&section.text) {
+            if cursor < table_range.start {
+                safe.extend(split_regular(
+                    &section.text[cursor..table_range.start],
+                    cursor,
+                ));
+            }
+            safe.extend(split_table_block(
+                &section.text[table_range.clone()],
+                table_range.start,
+                chunk_size_tokens,
+                &tokenizer,
+            ));
+            cursor = table_range.end;
+        }
+        if cursor < section.text.len() {
+            safe.extend(split_regular(&section.text[cursor..], cursor));
+        }
+
         for (rel_offset, text) in safe {
             let abs_byte_offset = section.byte_offset + rel_offset;
             // Compute char_offset from two known-safe slices instead of
@@ -431,28 +576,87 @@ mod tests {
     }
 
     #[test]
-    fn large_table_is_not_split() {
-        // Table with many rows >> chunk_size_tokens should be one oversize chunk.
+    fn large_table_is_split_by_rows_with_repeated_header() {
         let header = "| Column A | Column B | Column C |\n| --- | --- | --- |\n";
         let rows: String = (0..60)
             .map(|i| format!("| val-{i} | data-{i} | info-{i} |\n"))
             .collect();
         let table = format!("{}{}", header, rows);
         let content = format!("# Section\n\nIntro.\n\n{}\nOutro.\n", table);
-        let chunks = split_document(&content, TOKENS, OVERLAP);
-        // Find the chunk(s) containing table rows and ensure the table is intact
+        let chunks = split_document(&content, 80, 0);
         let table_chunks: Vec<_> = chunks
             .iter()
             .filter(|c| c.text.contains("| Column A |"))
             .collect();
-        assert_eq!(
-            table_chunks.len(),
-            1,
-            "table header should appear in exactly one chunk"
-        );
         assert!(
-            table_chunks[0].text.contains("| val-59 |"),
-            "last table row must be in the same chunk as the header"
+            table_chunks.len() > 1,
+            "large table should be split into row-group chunks"
+        );
+        for chunk in &table_chunks {
+            assert!(chunk.text.contains("| Column A | Column B | Column C |"));
+            assert!(chunk.text.contains("| --- | --- | --- |"));
+        }
+        assert!(table_chunks[0].text.contains("| val-0 |"));
+        assert!(table_chunks.last().unwrap().text.contains("| val-59 |"));
+        assert_eq!(
+            table_chunks[0].byte_offset,
+            content.find("| val-0 |").unwrap(),
+            "synthetic table chunks should point at their first original data row"
+        );
+    }
+
+    #[test]
+    fn markdown_table_with_escaped_and_inline_code_pipes_stays_intact() {
+        let content = "# Section\n\n| Pattern | Meaning |\n| --- | --- |\n| `a|b` | escaped \\| pipe |\n\nAfter\n";
+        let chunks = split_document(content, TOKENS, OVERLAP);
+        let table_chunks: Vec<_> = chunks
+            .iter()
+            .filter(|c| c.text.contains("| Pattern | Meaning |"))
+            .collect();
+        assert_eq!(table_chunks.len(), 1);
+        assert!(table_chunks[0].text.contains("`a|b`"));
+        assert!(table_chunks[0].text.contains("escaped \\| pipe"));
+    }
+
+    #[test]
+    fn table_range_stops_before_blank_line_or_block_element() {
+        let blank = "A | B\n--- | ---\n1 | 2\n\nNot table\n";
+        let blank_ranges = protected_ranges(blank);
+        assert_eq!(blank_ranges.len(), 1);
+        assert_eq!(
+            &blank[blank_ranges[0].0..blank_ranges[0].1],
+            "A | B\n--- | ---\n1 | 2\n"
+        );
+
+        let block = "A | B\n--- | ---\n1 | 2\n> quote\n";
+        let block_ranges = protected_ranges(block);
+        assert_eq!(block_ranges.len(), 1);
+        assert_eq!(
+            &block[block_ranges[0].0..block_ranges[0].1],
+            "A | B\n--- | ---\n1 | 2\n"
+        );
+    }
+
+    #[test]
+    fn oversized_table_row_is_not_split() {
+        let long_cell = "long-cell ".repeat(120);
+        let content = format!(
+            "# Section\n\n| A | B |\n| --- | --- |\n| key | {} |\n",
+            long_cell
+        );
+        let chunks = split_document(&content, 40, 0);
+        let table_chunks: Vec<_> = chunks
+            .iter()
+            .filter(|c| c.text.contains("| A | B |"))
+            .collect();
+        assert_eq!(table_chunks.len(), 1);
+        assert!(table_chunks[0]
+            .text
+            .contains(&format!("| key | {} |", long_cell)));
+        assert_eq!(
+            table_chunks[0].byte_offset,
+            content.find("| key |").unwrap(),
+            "oversized row chunk should point at the original row"
         );
     }
 

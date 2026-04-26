@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+### Added
+- Mermaid diagram rendering for Markdown documents and chat responses.
 
 ## [0.20.0] 2026-04-25
 ### Added

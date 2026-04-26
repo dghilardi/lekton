@@ -1,3 +1,4 @@
+use pulldown_cmark::{Event, Options, Parser, Tag};
 use text_splitter::{ChunkConfig, MarkdownSplitter};
 use tiktoken_rs::cl100k_base;
 
@@ -172,42 +173,27 @@ fn merge_small_sections(sections: Vec<RawSection>, min_chars: usize) -> Vec<RawS
 
 // ── Code-fence / table atomicity ─────────────────────────────────────────────
 
-/// Return byte ranges within `text` that must not be split: fenced code blocks
-/// and Markdown tables (consecutive `|`-prefixed lines).
+fn markdown_options() -> Options {
+    Options::ENABLE_TABLES
+        | Options::ENABLE_FOOTNOTES
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_SMART_PUNCTUATION
+        | Options::ENABLE_HEADING_ATTRIBUTES
+}
+
+/// Return byte ranges within `text` that must not be split: code blocks
+/// and Markdown tables recognized by the same GFM parser used for rendering.
 fn protected_ranges(text: &str) -> Vec<(usize, usize)> {
-    let mut ranges: Vec<(usize, usize)> = Vec::new();
-    let mut in_fence = false;
-    let mut fence_start = 0usize;
-    let mut table_start: Option<usize> = None;
-    let mut offset = 0usize;
-
-    for line in text.split_inclusive('\n') {
-        let trimmed = line.trim();
-        if in_fence {
-            if trimmed.starts_with("```") {
-                ranges.push((fence_start, offset + line.len()));
-                in_fence = false;
-            }
-        } else {
-            if !trimmed.starts_with('|') {
-                if let Some(ts) = table_start.take() {
-                    ranges.push((ts, offset));
-                }
-            }
-            if trimmed.starts_with("```") {
-                fence_start = offset;
-                in_fence = true;
-            } else if trimmed.starts_with('|') && table_start.is_none() {
-                table_start = Some(offset);
-            }
-        }
-        offset += line.len();
-    }
-
-    if let Some(ts) = table_start {
-        ranges.push((ts, offset));
-    }
-
+    let mut ranges: Vec<(usize, usize)> = Parser::new_ext(text, markdown_options())
+        .into_offset_iter()
+        .filter_map(|(event, range)| match event {
+            Event::Start(Tag::CodeBlock(_) | Tag::Table(_)) => Some((range.start, range.end)),
+            _ => None,
+        })
+        .collect();
+    ranges.sort_unstable();
+    ranges.dedup();
     ranges
 }
 
@@ -489,6 +475,22 @@ mod tests {
                 .starts_with('|'),
             "second range should be the table"
         );
+    }
+
+    #[test]
+    fn protected_ranges_detects_gfm_table_without_outer_pipes() {
+        let text = "Before\n\nColumn A | Column B\n--- | ---\nvalue | data\n\nAfter\n";
+        let ranges = protected_ranges(text);
+        assert_eq!(ranges.len(), 1);
+        let table = &text[ranges[0].0..ranges[0].1];
+        assert_eq!(table, "Column A | Column B\n--- | ---\nvalue | data\n");
+    }
+
+    #[test]
+    fn protected_ranges_ignores_invalid_table_delimiter() {
+        let text = "Column A | Column B\nnot a delimiter\nvalue | data\n";
+        let ranges = protected_ranges(text);
+        assert!(ranges.is_empty());
     }
 
     #[test]

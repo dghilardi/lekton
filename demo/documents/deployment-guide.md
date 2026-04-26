@@ -40,6 +40,26 @@ docker compose ps
 
 ## Kubernetes Deployment
 
+### Topology
+
+```mermaid
+graph LR
+    Internet((Internet))
+    subgraph k8s["Kubernetes — namespace: lekton"]
+        Ingress["Ingress\nnginx"]
+        Lekton["lekton\n2 replicas"]
+        Mongo[("MongoDB\nStatefulSet")]
+        Garage[("S3 Garage\nStatefulSet")]
+        Meili[("Meilisearch\nStatefulSet")]
+    end
+
+    Internet -->|HTTPS :443| Ingress
+    Ingress --> Lekton
+    Lekton --> Mongo
+    Lekton --> Garage
+    Lekton --> Meili
+```
+
 ### Namespace Setup
 
 ```bash

@@ -27,12 +27,14 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
 
 # Cache dependencies
 COPY --from=planner /app/recipe.json recipe.json
+COPY package.json package-lock.json ./
+RUN npm ci
 RUN cargo chef cook --release --recipe-path recipe.json --features ssr && \
     cargo chef cook --release --recipe-path recipe.json --target wasm32-unknown-unknown --features hydrate
 
 # Copy source and build
 COPY . .
-RUN npm install
+RUN npm ci
 RUN cargo leptos build --release
 
 # =============================================================================

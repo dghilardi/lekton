@@ -1,6 +1,26 @@
+/// Middleware that sets `Content-Type: application/javascript` for `.mjs` files.
+/// tower-http's ServeDir does not recognise the `.mjs` extension in all versions
+/// of mime_guess, causing browsers to block ES module imports.
+#[cfg(feature = "ssr")]
+async fn mjs_content_type(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let is_mjs = request.uri().path().ends_with(".mjs");
+    let mut response = next.run(request).await;
+    if is_mjs {
+        response.headers_mut().insert(
+            axum::http::header::CONTENT_TYPE,
+            axum::http::HeaderValue::from_static("application/javascript"),
+        );
+    }
+    response
+}
+
 #[cfg(feature = "ssr")]
 #[tokio::main]
 async fn main() {
+    use axum::middleware;
     use axum::Router;
     use lekton::api;
     use lekton::app::App;
@@ -732,6 +752,7 @@ async fn main() {
         })
         // Static files (including custom.css)
         .fallback_service(ServeDir::new(&site_root))
+        .layer(middleware::from_fn(mjs_content_type))
         .layer(cors)
         .layer(tower_governor::GovernorLayer::new(governor_conf))
         .with_state(app_state);

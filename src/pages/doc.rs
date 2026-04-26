@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::get_doc_html;
 use crate::auth::refresh_client::with_auth_retry;
+use crate::components::MarkdownContent;
 
 /// Data returned for rendering a document page.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,7 +162,7 @@ pub fn DocPage() -> impl IntoView {
                                         </div>
                                     </Show>
                                     <article class="prose prose-lg max-w-none">
-                                        <div inner_html=data.html />
+                                        <MarkdownContent html=data.html />
                                     </article>
                                     // Last Updated footer
                                     <div class="divider mt-12"></div>

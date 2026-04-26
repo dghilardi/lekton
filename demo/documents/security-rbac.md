@@ -6,8 +6,14 @@ This document describes Lekton's security model, including Role-Based Access Con
 
 Lekton defines four hierarchical access levels:
 
-```
-Admin > Architect > Developer > Public
+```mermaid
+graph LR
+    Public["Public\nlevel 0"]
+    Developer["Developer\nlevel 1"]
+    Architect["Architect\nlevel 2"]
+    Admin["Admin\nlevel 3"]
+
+    Public --> Developer --> Architect --> Admin
 ```
 
 | Level        | Numeric | Description                                    |
@@ -21,9 +27,20 @@ Admin > Architect > Developer > Public
 
 Every document has an `access_level` field. When a user requests a document:
 
-1. The user's role is determined from their OIDC claims (or demo credentials)
-2. The document's `access_level` is compared against the user's role
-3. Access is granted if `user.access_level >= document.access_level`
+```mermaid
+flowchart TD
+    Req[HTTP Request] --> GetDoc[Fetch document]
+    GetDoc --> HasToken{Auth token\npresent?}
+    HasToken -->|OIDC token| MapGroup[Map OIDC group\nto access level]
+    HasToken -->|No token| DemoMode{Demo mode\nenabled?}
+    DemoMode -->|Yes| DemoLogin[Use demo credentials]
+    DemoMode -->|No| Reject401[401 Unauthorized]
+    MapGroup --> Compare
+    DemoLogin --> Compare
+    Compare{"user.level ≥\ndoc.level?"}
+    Compare -->|Yes| Allow[200 Document returned]
+    Compare -->|No| Reject403[403 Forbidden]
+```
 
 **Example:** A user with `Developer` access can view documents with `Public` or `Developer` access, but not `Architect` or `Admin` documents.
 

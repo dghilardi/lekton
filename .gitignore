@@ -4,6 +4,10 @@ target/
 # Node modules
 node_modules/
 
+# Generated JS assets (produced by build.rs from node_modules)
+public/js/mermaid.esm.min.mjs
+public/js/chunks/
+
 # Environment variables
 .env
 

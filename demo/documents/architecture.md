@@ -4,32 +4,28 @@ This document describes the high-level architecture of Lekton and the design dec
 
 ## System Diagram
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                       Client Browser                         │
-│                    (Leptos Hydration)                         │
-└──────────────────────┬───────────────────────────────────────┘
-                       │ HTTPS
-┌──────────────────────▼───────────────────────────────────────┐
-│                     Axum Server                               │
-│  ┌─────────────┐  ┌──────────────┐  ┌─────────────────────┐  │
-│  │ SSR Engine   │  │ REST API     │  │ Auth Middleware      │  │
-│  │ (Leptos)     │  │ /api/v1/*    │  │ (OIDC / Demo)       │  │
-│  └──────┬──────┘  └──────┬───────┘  └──────────┬──────────┘  │
-│         │                │                      │              │
-│  ┌──────▼────────────────▼──────────────────────▼──────────┐  │
-│  │                  Service Layer                           │  │
-│  │   DocumentRepository    StorageClient    SearchIndex     │  │
-│  └──────┬──────────────────┬─────────────────┬─────────────┘  │
-└─────────┼──────────────────┼─────────────────┼────────────────┘
-          │                  │                 │
-   ┌──────▼──────┐   ┌──────▼──────┐   ┌──────▼──────┐
-   │  MongoDB     │   │  S3 Storage │   │ Meilisearch  │
-   │  (metadata)  │   │  (content)  │   │  (search)    │
-   └─────────────┘   └─────────────┘   └──────────────┘
-```
+```mermaid
+graph TD
+    Browser[Client Browser]
+    subgraph server[Axum Server]
+        SSR[SSR Engine]
+        API[REST API /api/v1]
+        Auth[Auth Middleware]
+        SvcLayer[Service Layer]
+    end
+    MongoDB[(MongoDB)]
+    S3[(S3 Storage)]
+    Meili[(Meilisearch)]
 
-The diagram below illustrates the main components and their interactions:
+    Browser -->|HTTPS| SSR
+    Browser -->|HTTPS| API
+    SSR --> Auth
+    API --> Auth
+    Auth --> SvcLayer
+    SvcLayer -->|DocumentRepository| MongoDB
+    SvcLayer -->|StorageClient| S3
+    SvcLayer -->|SearchService| Meili
+```
 
 ![Architecture Diagram](/api/v1/assets/architecture/diagram.svg)
 
@@ -87,12 +83,23 @@ This means a typo fix in one service's docs doesn't trigger a full portal rebuil
 
 ## Data Flow: Document Ingestion
 
-1. **CI/CD** sends a `POST /api/v1/ingest` request with the document content
-2. **Auth Middleware** validates the service token
-3. **Storage Client** uploads the Markdown to S3 with a deterministic key
-4. **Document Repository** upserts metadata in MongoDB
-5. **Search Index** (Phase 2) re-indexes the document content
-6. **Response** confirms successful ingestion with the S3 key
+```mermaid
+sequenceDiagram
+    participant CI as CI/CD Pipeline
+    participant Lekton
+    participant S3 as S3 Storage
+    participant DB as MongoDB
+    participant Idx as Meilisearch
+
+    CI->>Lekton: POST /api/v1/ingest + service token
+    Lekton->>S3: Upload Markdown content
+    S3-->>Lekton: S3 key confirmed
+    Lekton->>DB: Upsert document metadata
+    DB-->>Lekton: OK
+    Lekton->>Idx: Re-index document
+    Idx-->>Lekton: OK
+    Lekton-->>CI: 200 OK + s3_key
+```
 
 ## Security Model
 

@@ -2,6 +2,7 @@ use leptos::prelude::StoredValue;
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::components::MarkdownContent;
 use crate::db::chat_models::SourceReference;
 use crate::rendering::markdown::render_markdown;
 
@@ -265,7 +266,7 @@ fn ChatContent() -> impl IntoView {
                                                 {if is_user {
                                                     view! { <div class="whitespace-pre-wrap">{msg.content.clone()}</div> }.into_any()
                                                 } else {
-                                                    view! { <div inner_html=render_markdown(&msg.content)></div> }.into_any()
+                                                    view! { <MarkdownContent html=render_markdown(&msg.content) /> }.into_any()
                                                 }}
                                             </div>
 

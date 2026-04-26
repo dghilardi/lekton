@@ -1,4 +1,4 @@
-use pulldown_cmark::{html, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{html, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use serde::{Deserialize, Serialize};
 
 /// Represents a heading in the document for table of contents.
@@ -26,11 +26,43 @@ pub fn render_markdown(raw: &str) -> String {
         | Options::ENABLE_HEADING_ATTRIBUTES;
 
     let parser = Parser::new_ext(raw, options);
+
+    let mut in_mermaid = false;
+    let transformed = parser.flat_map(|event| -> Vec<Event<'_>> {
+        if in_mermaid {
+            match event {
+                Event::End(TagEnd::CodeBlock) => {
+                    in_mermaid = false;
+                    vec![Event::Html("</pre>".into())]
+                }
+                Event::Text(text) => vec![Event::Html(escape_html(&text).into())],
+                _ => vec![],
+            }
+        } else {
+            match event {
+                Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(ref lang)))
+                    if lang.as_ref() == "mermaid" =>
+                {
+                    in_mermaid = true;
+                    vec![Event::Html("<pre class=\"mermaid\">".into())]
+                }
+                other => vec![other],
+            }
+        }
+    });
+
     let mut html_output = String::new();
-    html::push_html(&mut html_output, parser);
+    html::push_html(&mut html_output, transformed);
 
     // Post-process to add IDs to headings
     add_heading_ids_simple(&html_output)
+}
+
+fn escape_html(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 /// Simple post-processing to add IDs to heading tags.
@@ -342,6 +374,31 @@ Even more content.
         assert_eq!(headings.len(), 1);
         assert_eq!(headings[0].text, "Subtitle");
         assert_eq!(headings[0].level, 2);
+    }
+
+    #[test]
+    fn test_mermaid_block_rendered_as_pre() {
+        let input = "```mermaid\ngraph TD\nA --> B\n```";
+        let result = render_markdown(input);
+        assert!(result.contains("<pre class=\"mermaid\">"));
+        assert!(result.contains("graph TD"));
+        assert!(!result.contains("<code"));
+    }
+
+    #[test]
+    fn test_mermaid_html_escaped() {
+        let input = "```mermaid\ngraph TD\nA[\"<node>\"] --> B\n```";
+        let result = render_markdown(input);
+        assert!(result.contains("&lt;node&gt;"));
+        assert!(!result.contains("<node>"));
+    }
+
+    #[test]
+    fn test_non_mermaid_code_block_unchanged() {
+        let input = "```rust\nfn main() {}\n```";
+        let result = render_markdown(input);
+        assert!(result.contains("<code"));
+        assert!(!result.contains("class=\"mermaid\""));
     }
 
     #[test]

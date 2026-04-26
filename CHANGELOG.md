@@ -6,6 +6,9 @@ All notable changes to this project will be documented in this file.
 ### Added
 - Mermaid diagram rendering for Markdown documents and chat responses.
 
+### Security
+- Markdown renderer now sanitizes HTML via `ammonia` to prevent stored XSS from raw HTML in document sources and LLM chat responses.
+
 ## [0.20.0] 2026-04-25
 ### Added
 - MCP schema registry tools: `list_schemas`, `search_schemas`, `get_schema_detail`, `get_schema_content`, `search_schema_operations` — expose the schema registry to MCP clients with user-level access control.

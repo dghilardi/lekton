@@ -444,6 +444,49 @@ mod tests {
     const TOKENS: usize = 256;
     const OVERLAP: usize = 64;
 
+    fn table_chunks<'a>(chunks: &'a [SplitChunk], header: &str) -> Vec<&'a SplitChunk> {
+        chunks
+            .iter()
+            .filter(|chunk| chunk.text.contains(header))
+            .collect()
+    }
+
+    fn assert_each_table_chunk_has_header(chunks: &[&SplitChunk], header: &str, delimiter: &str) {
+        assert!(!chunks.is_empty(), "expected at least one table chunk");
+        for chunk in chunks {
+            assert!(
+                chunk.text.contains(header),
+                "table chunk is missing header: {}",
+                chunk.text
+            );
+            assert!(
+                chunk.text.contains(delimiter),
+                "table chunk is missing delimiter: {}",
+                chunk.text
+            );
+        }
+    }
+
+    fn assert_rows_once_in_order(chunks: &[&SplitChunk], rows: &[String]) {
+        let combined = chunks
+            .iter()
+            .map(|chunk| chunk.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut cursor = 0usize;
+        for row in rows {
+            assert_eq!(
+                combined.matches(row).count(),
+                1,
+                "row should appear exactly once: {row}"
+            );
+            let position = combined[cursor..]
+                .find(row)
+                .unwrap_or_else(|| panic!("row appears out of order or is missing: {row}"));
+            cursor += position + row.len();
+        }
+    }
+
     #[test]
     fn empty_content_returns_no_chunks() {
         assert!(split_document("", TOKENS, OVERLAP).is_empty());
@@ -577,25 +620,20 @@ mod tests {
 
     #[test]
     fn large_table_is_split_by_rows_with_repeated_header() {
-        let header = "| Column A | Column B | Column C |\n| --- | --- | --- |\n";
+        let header = "| Column A | Column B | Column C |";
+        let delimiter = "| --- | --- | --- |";
         let rows: String = (0..60)
             .map(|i| format!("| val-{i} | data-{i} | info-{i} |\n"))
             .collect();
-        let table = format!("{}{}", header, rows);
+        let table = format!("{header}\n{delimiter}\n{rows}");
         let content = format!("# Section\n\nIntro.\n\n{}\nOutro.\n", table);
         let chunks = split_document(&content, 80, 0);
-        let table_chunks: Vec<_> = chunks
-            .iter()
-            .filter(|c| c.text.contains("| Column A |"))
-            .collect();
+        let table_chunks = table_chunks(&chunks, header);
         assert!(
             table_chunks.len() > 1,
             "large table should be split into row-group chunks"
         );
-        for chunk in &table_chunks {
-            assert!(chunk.text.contains("| Column A | Column B | Column C |"));
-            assert!(chunk.text.contains("| --- | --- | --- |"));
-        }
+        assert_each_table_chunk_has_header(&table_chunks, header, delimiter);
         assert!(table_chunks[0].text.contains("| val-0 |"));
         assert!(table_chunks.last().unwrap().text.contains("| val-59 |"));
         assert_eq!(
@@ -606,13 +644,64 @@ mod tests {
     }
 
     #[test]
+    fn large_table_preserves_each_data_row_once_in_order() {
+        let header = "| Row | Description |";
+        let delimiter = "| --- | --- |";
+        let rows: Vec<String> = (0..36)
+            .map(|i| format!("| row-{i:02} | {} |\n", "detail ".repeat(5)))
+            .collect();
+        let table = format!("{header}\n{delimiter}\n{}", rows.concat());
+        let content = format!("# Section\n\n{}\n", table);
+        let chunks = split_document(&content, 70, 0);
+        let table_chunks = table_chunks(&chunks, header);
+
+        assert!(
+            table_chunks.len() > 1,
+            "test setup should force row-group splitting"
+        );
+        assert_each_table_chunk_has_header(&table_chunks, header, delimiter);
+        assert_rows_once_in_order(&table_chunks, &rows);
+    }
+
+    #[test]
+    fn small_table_is_isolated_from_surrounding_text() {
+        let header = "| Setting | Value |";
+        let delimiter = "| --- | --- |";
+        let content = format!(
+            "# Section\n\nIntro before.\n\n{header}\n{delimiter}\n| retries | 3 |\n\nOutro after.\n"
+        );
+        let chunks = split_document(&content, TOKENS, OVERLAP);
+        let table_chunks = table_chunks(&chunks, header);
+
+        assert_eq!(table_chunks.len(), 1);
+        assert_each_table_chunk_has_header(&table_chunks, header, delimiter);
+        assert!(table_chunks[0].text.contains("| retries | 3 |"));
+        assert!(!table_chunks[0].text.contains("Intro before."));
+        assert!(!table_chunks[0].text.contains("Outro after."));
+    }
+
+    #[test]
+    fn gfm_table_alignment_and_empty_cells_are_preserved() {
+        let header = "Name | Left | Center | Right | Empty";
+        let delimiter = ":--- | :--- | :---: | ---: | ---";
+        let content = format!(
+            "# Section\n\n{header}\n{delimiter}\nsvc | value | centered | right | \n\nAfter\n"
+        );
+        let chunks = split_document(&content, TOKENS, OVERLAP);
+        let table_chunks = table_chunks(&chunks, header);
+
+        assert_eq!(table_chunks.len(), 1);
+        assert_each_table_chunk_has_header(&table_chunks, header, delimiter);
+        assert!(table_chunks[0]
+            .text
+            .contains("svc | value | centered | right | "));
+    }
+
+    #[test]
     fn markdown_table_with_escaped_and_inline_code_pipes_stays_intact() {
         let content = "# Section\n\n| Pattern | Meaning |\n| --- | --- |\n| `a|b` | escaped \\| pipe |\n\nAfter\n";
         let chunks = split_document(content, TOKENS, OVERLAP);
-        let table_chunks: Vec<_> = chunks
-            .iter()
-            .filter(|c| c.text.contains("| Pattern | Meaning |"))
-            .collect();
+        let table_chunks = table_chunks(&chunks, "| Pattern | Meaning |");
         assert_eq!(table_chunks.len(), 1);
         assert!(table_chunks[0].text.contains("`a|b`"));
         assert!(table_chunks[0].text.contains("escaped \\| pipe"));
@@ -638,6 +727,27 @@ mod tests {
     }
 
     #[test]
+    fn table_range_stops_before_following_heading() {
+        let text = "A | B\n--- | ---\n1 | 2\n# Next section\n";
+        let ranges = protected_ranges(text);
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(&text[ranges[0].0..ranges[0].1], "A | B\n--- | ---\n1 | 2\n");
+    }
+
+    #[test]
+    fn table_inside_code_fence_is_not_detected_as_table() {
+        let text = "```\n| A | B |\n| --- | --- |\n| 1 | 2 |\n```\n";
+        let blocks = protected_blocks(text);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].kind, ProtectedKind::Code);
+        assert_eq!(
+            &text[blocks[0].range.clone()],
+            "```\n| A | B |\n| --- | --- |\n| 1 | 2 |\n```"
+        );
+        assert!(table_ranges(text).is_empty());
+    }
+
+    #[test]
     fn oversized_table_row_is_not_split() {
         let long_cell = "long-cell ".repeat(120);
         let content = format!(
@@ -645,10 +755,7 @@ mod tests {
             long_cell
         );
         let chunks = split_document(&content, 40, 0);
-        let table_chunks: Vec<_> = chunks
-            .iter()
-            .filter(|c| c.text.contains("| A | B |"))
-            .collect();
+        let table_chunks = table_chunks(&chunks, "| A | B |");
         assert_eq!(table_chunks.len(), 1);
         assert!(table_chunks[0]
             .text

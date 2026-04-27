@@ -1,0 +1,23 @@
+# Smaller chunks: 128 tokens with 32 overlap.
+#
+# Trades context (less surrounding text per chunk) for precision (smaller
+# chunks usually score better on narrow queries). Compare against baseline to
+# see whether your queries are mostly fact-extraction (smaller wins) or
+# reasoning/summarisation (larger wins).
+
+name        = "smaller-chunks"
+description = "Vector-only · chunk=128/32 · finer granularity"
+
+qdrant_url = "http://localhost:6334"
+
+embedding_url        = "http://localhost:11434/v1"
+embedding_model      = "nomic-embed-text"
+embedding_dimensions = 768
+embedding_api_key    = ""
+
+chunk_size_tokens    = 128
+chunk_overlap_tokens = 32
+
+expand_to_parent      = false
+hybrid_search_enabled = false
+reranker_url          = ""

@@ -1,0 +1,36 @@
+# Hybrid retrieval: dense vectors + Meilisearch full-text, fused with RRF.
+#
+# Adds a lexical signal on top of semantic search. Helps queries that mention
+# rare proper nouns, acronyms, or exact tokens that embeddings tend to blur
+# (e.g. CLI flag names, error codes, API endpoint paths).
+#
+# ⚠ Caveat: rag-bench only manages the Qdrant lifecycle. The Meilisearch
+# index is *not* reset or populated by the bench, so the lexical half of the
+# hybrid retrieval will only work if the configured Meilisearch already
+# contains the same corpus you put in `eval/docs/`. The simplest way is to
+# point this at a Meilisearch instance previously fed by the live Lekton
+# server (e.g. via `demo/load_demo.sh`). If Meilisearch is empty or out of
+# sync, the bench falls back to vector-only and emits a warning.
+
+name        = "hybrid-rrf"
+description = "Vector + Meilisearch RRF · chunk=256/64"
+
+qdrant_url = "http://localhost:6334"
+
+embedding_url        = "http://localhost:11434/v1"
+embedding_model      = "nomic-embed-text"
+embedding_dimensions = 768
+embedding_api_key    = ""
+
+chunk_size_tokens    = 256
+chunk_overlap_tokens = 64
+
+# ── Hybrid search ─────────────────────────────────────────────────────────────
+# Both flag *and* meilisearch_url must be set; the bench validates this at
+# startup so a misconfigured run fails fast.
+hybrid_search_enabled = true
+meilisearch_url       = "http://localhost:7700"
+meilisearch_api_key   = ""
+
+expand_to_parent = false
+reranker_url     = ""

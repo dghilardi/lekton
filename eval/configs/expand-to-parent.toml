@@ -1,0 +1,24 @@
+# Expand-to-parent: returns the full parent section instead of just the
+# matched chunk.
+#
+# Useful when chunks are tight (small chunk_size) and queries need the full
+# surrounding context to be useful for an LLM. Has no effect on the document
+# slug recall score, but changes the `chunk_text` content in the report (which
+# matters for `expected_text_fragments`-based scoring).
+
+name        = "expand-to-parent"
+description = "Vector-only · chunk=256/64 · expand to parent section"
+
+qdrant_url = "http://localhost:6334"
+
+embedding_url        = "http://localhost:11434/v1"
+embedding_model      = "nomic-embed-text"
+embedding_dimensions = 768
+embedding_api_key    = ""
+
+chunk_size_tokens    = 256
+chunk_overlap_tokens = 64
+
+expand_to_parent      = true
+hybrid_search_enabled = false
+reranker_url          = ""

@@ -8,6 +8,10 @@ All notable changes to this project will be documented in this file.
 - RAG Markdown chunking now detects GFM tables with the Markdown parser and splits oversized tables by row groups with repeated headers. Reindex RAG vectors after deployment.
 
 ### Added
+- `rag-bench` binary: multi-config RAG benchmark with automated document ingest. Reads `.toml` config files from `eval/configs/`, Markdown documents from `eval/docs/`, and a JSONL query set; for each config it creates an isolated Qdrant collection, ingests documents, runs queries, and produces per-config JSON reports plus a comparative Markdown report in `eval/reports/`.
+- `expected_text_fragments` field in eval query records: case-insensitive substring match on retrieved chunk text, as an alternative to `expected_doc_slugs` for paragraph-level precision testing.
+- `QdrantVectorStore::delete_collection()` method for clean-state benchmark lifecycle management.
+- Both eval binaries (`rag-eval`, `rag-bench`) now use `clap` for argument parsing with `--help` support.
 - Reranker now supports custom HTTP headers via `reranker_headers` config (env: `LKN__RAG__RERANKER_HEADERS__<NAME>`), enabling authenticated proxy scenarios.
 
 ### Fixed

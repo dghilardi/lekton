@@ -43,7 +43,7 @@ fn Breadcrumbs(slug: String) -> impl IntoView {
         .collect();
 
     view! {
-        <div class="breadcrumbs text-sm mb-4">
+        <div class="breadcrumbs text-sm">
             <ul>
                 <li>
                     <a href="/" class="hover:underline">"Docs"</a>
@@ -138,19 +138,24 @@ pub fn DocPage() -> impl IntoView {
                         view! {
                             <div class="flex gap-8 items-start">
                                 <div class="flex-1 min-w-0">
-                                    <Breadcrumbs slug=current_slug.clone() />
-                                    <div class="flex justify-between items-center mb-6">
-                                        <h1 class="text-3xl font-bold">{data.title}</h1>
+                                    // Breadcrumb row + edit button — single meta strip
+                                    <div class="flex items-center justify-between gap-4 mb-5">
+                                        <Breadcrumbs slug=current_slug.clone() />
                                         <Show when=can_edit>
                                             <a
                                                 href={let s = current_slug.clone(); move || format!("/edit/{}", s)}
-                                                class="btn btn-outline btn-sm"
+                                                class="btn btn-ghost btn-sm flex-shrink-0 gap-1.5 text-base-content/60 hover:text-primary"
                                             >
+                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                        d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z">
+                                                    </path>
+                                                </svg>
                                                 "Edit"
                                             </a>
                                         </Show>
                                     </div>
-                                    // Tags
+                                    // Tags — shown between breadcrumb and content
                                     <Show when=move || has_tags>
                                         <div class="flex flex-wrap gap-2 mb-6">
                                             {tags.iter().map(|tag| {
@@ -161,6 +166,7 @@ pub fn DocPage() -> impl IntoView {
                                             }).collect::<Vec<_>>()}
                                         </div>
                                     </Show>
+                                    // The markdown H1 serves as the page title — no separate h1 here
                                     <article class="prose prose-lg max-w-none">
                                         <MarkdownContent html=data.html />
                                     </article>

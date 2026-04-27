@@ -412,23 +412,24 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
                 "#
             );
 
-            // Using custom CSS to align Scalar's variables with DaisyUI's OKLCH format
+            // Align Scalar's design tokens with DaisyUI 5 OKLCH variables.
+            // --scalar-background-1 must be opaque so modal/overlay panels aren't transparent.
             let scalar_theme_css = r#"
                 .scalar-app, .scalar-api-reference {
-                    --scalar-color-1: oklch(var(--bc));
-                    --scalar-color-2: oklch(var(--bc) / 0.7);
-                    --scalar-color-3: oklch(var(--bc) / 0.5);
-                    --scalar-color-accent: oklch(var(--p));
-                    --scalar-background-1: transparent;
-                    --scalar-background-2: oklch(var(--b2) / 0.5);
-                    --scalar-background-3: oklch(var(--b3));
-                    --scalar-border-color: oklch(var(--b3) / 0.5);
+                    --scalar-color-1: var(--color-base-content);
+                    --scalar-color-2: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+                    --scalar-color-3: color-mix(in oklch, var(--color-base-content) 50%, transparent);
+                    --scalar-color-accent: var(--color-primary);
+                    --scalar-background-1: var(--color-base-100);
+                    --scalar-background-2: var(--color-base-200);
+                    --scalar-background-3: var(--color-base-300);
+                    --scalar-border-color: var(--color-base-300);
                     --scalar-font: var(--lekton-font-family);
                     --scalar-font-size: 0.875rem;
                 }
                 .scalar-app .scalar-card {
                     box-shadow: none;
-                    border: 1px solid oklch(var(--b3));
+                    border: 1px solid var(--color-base-300);
                     border-radius: 0.75rem;
                 }
             "#;

@@ -19,6 +19,7 @@ pub mod rag;
 pub mod rendering;
 pub mod schema;
 pub mod search;
+pub mod server;
 pub mod storage;
 #[cfg(test)]
 pub mod test_utils;

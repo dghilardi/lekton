@@ -260,6 +260,9 @@ pub struct RagConfig {
     pub reranker_model: String,
     /// API key for the reranker endpoint. Optional.
     pub reranker_api_key: String,
+    /// Extra HTTP headers for reranker requests. Same normalisation rules as LLM headers.
+    #[serde(default)]
+    pub reranker_headers: HashMap<String, String>,
 
     /// Default LLM configuration shared by all pipeline steps.
     pub llm: LlmConfig,

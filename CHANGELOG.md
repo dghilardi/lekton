@@ -7,6 +7,9 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - RAG Markdown chunking now detects GFM tables with the Markdown parser and splits oversized tables by row groups with repeated headers. Reindex RAG vectors after deployment.
 
+### Added
+- Reranker now supports custom HTTP headers via `reranker_headers` config (env: `LKN__RAG__RERANKER_HEADERS__<NAME>`), enabling authenticated proxy scenarios.
+
 ### Fixed
 - Doc page no longer shows duplicate title: removed standalone H1 header from `DocPage`; the markdown H1 serves as the only page title. Edit button moved inline with breadcrumbs.
 - OpenAPI viewer (Scalar) Configure/Share/Deploy panel background was transparent due to stale DaisyUI 4 CSS variable references (`--bc`, `--b2`, `--b3`). Updated to DaisyUI 5 variables (`--color-base-*`, `--color-primary`) and set `--scalar-background-1` to an opaque value, fixing content bleed-through on overlay panels.

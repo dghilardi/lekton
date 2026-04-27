@@ -108,6 +108,7 @@ mod tests {
             reranker_url: String::new(),
             reranker_model: String::new(),
             reranker_api_key: String::new(),
+            reranker_headers: std::collections::HashMap::new(),
             llm: LlmConfig {
                 url: String::new(),
                 api_key: String::new(),

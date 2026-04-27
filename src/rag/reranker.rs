@@ -71,6 +71,14 @@ impl CrossEncoderReranker {
             .expect("invalid reranker API key characters");
             headers.insert(reqwest::header::AUTHORIZATION, value);
         }
+        for (name, value) in &config.reranker_headers {
+            if let (Ok(header_name), Ok(header_value)) = (
+                reqwest::header::HeaderName::from_bytes(name.as_bytes()),
+                reqwest::header::HeaderValue::from_str(value),
+            ) {
+                headers.insert(header_name, header_value);
+            }
+        }
 
         let client = reqwest::Client::builder()
             .default_headers(headers)
@@ -168,6 +176,7 @@ mod tests {
             reranker_url: url.to_string(),
             reranker_model: String::new(),
             reranker_api_key: String::new(),
+            reranker_headers: std::collections::HashMap::new(),
             llm: LlmConfig {
                 url: String::new(),
                 api_key: String::new(),

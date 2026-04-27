@@ -3772,6 +3772,7 @@ dependencies = [
  "tiktoken-rs",
  "time",
  "tokio",
+ "toml 0.8.23",
  "tower 0.5.3",
  "tower-http",
  "tower_governor",

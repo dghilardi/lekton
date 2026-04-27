@@ -22,6 +22,11 @@ name = "rag-eval"
 path = "src/bin/rag_eval.rs"
 required-features = ["ssr"]
 
+[[bin]]
+name = "rag-bench"
+path = "src/bin/rag_bench.rs"
+required-features = ["ssr"]
+
  [dependencies]
 # Leptos ecosystem
 leptos = { version = "0.8" }
@@ -145,6 +150,9 @@ config = { version = "0.14", optional = true }
 # CLI argument parsing
 clap = { version = "4", features = ["derive"], optional = true }
 
+# TOML parsing (bench configs)
+toml = { version = "0.8", optional = true }
+
 [build-dependencies]
 leptos-tiptap-build = "0.2"
 
@@ -200,6 +208,7 @@ ssr = [
     "dep:rmcp",
     "dep:schemars",
     "dep:clap",
+    "dep:toml",
     "leptos/ssr",
     "leptos_meta/ssr",
     "leptos_router/ssr",

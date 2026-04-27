@@ -13,10 +13,13 @@
 # Field reference:
 #   id                  Optional. Defaults to "Q001", "Q002", ... when omitted.
 #   query               Required. The user-facing question to retrieve for.
-#   expected_doc_slugs  At least one expected document slug. Slug-level matching
-#                       is preferred because chunk ids change across reindexes.
-#   expected_chunk_ids  Optional. Match specific Qdrant point ids — only useful
-#                       when chunking has not changed since the eval was authored.
+#   expected_doc_slugs       Expected document slugs. Slug-level matching is
+#                            preferred because chunk ids change across reindexes.
+#   expected_chunk_ids       Optional. Match specific Qdrant point ids — only
+#                            useful when chunking has not changed since the eval
+#                            was authored.
+#   expected_text_fragments  Optional. Case-insensitive chunk_text substrings for
+#                            paragraph-level expectations.
 
 # ── Single-document, single-intent queries ───────────────────────────────────
 {"id": "Q01", "query": "How do I push my docs into Lekton from CI?", "expected_doc_slugs": ["getting-started"]}
@@ -33,3 +36,10 @@
 # ── Multi-document / multi-intent queries (exercise the analyzer) ────────────
 {"id": "Q11", "query": "How does service token authentication work and where is it configured?", "expected_doc_slugs": ["api-reference", "security-rbac"]}
 {"id": "Q12", "query": "Compare demo-mode authentication with OIDC for production", "expected_doc_slugs": ["security-rbac", "api-reference"]}
+
+# ── Paragraph-level expectations (expected_text_fragments) ───────────────────
+# These queries also assert that a specific phrase appears in at least one
+# retrieved chunk — a stricter test than slug-level recall. Useful to verify
+# that the *right* paragraph (not just the right document) gets retrieved.
+{"id": "Q13", "query": "What goes into the request body when ingesting from CI?", "expected_doc_slugs": ["getting-started"], "expected_text_fragments": ["service_token"]}
+{"id": "Q14", "query": "Which orchestrator does the deployment guide cover?", "expected_doc_slugs": ["deployment-guide"], "expected_text_fragments": ["Kubernetes"]}

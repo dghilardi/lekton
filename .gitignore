@@ -35,3 +35,6 @@ Thumbs.db
 
 /playwright-report
 /test-results
+
+# rag-bench output (regenerated on each run)
+/eval/reports/

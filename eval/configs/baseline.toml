@@ -1,0 +1,26 @@
+# Baseline: dense vector retrieval only.
+#
+# Default chunk sizing (256 tokens, 64 overlap), no reranker, no hybrid search.
+# Use this as the reference point against which other variants are compared.
+
+name        = "baseline"
+description = "Vector-only · chunk=256/64 · no reranker · no hybrid"
+
+# ── Vector store ──────────────────────────────────────────────────────────────
+qdrant_url = "http://localhost:6334"
+# qdrant_collection = "lekton_bench_baseline"   # auto-derived from `name` when omitted
+
+# ── Embedding ─────────────────────────────────────────────────────────────────
+embedding_url        = "http://localhost:11434/v1"
+embedding_model      = "nomic-embed-text"
+embedding_dimensions = 768
+embedding_api_key    = ""
+
+# ── Chunking ──────────────────────────────────────────────────────────────────
+chunk_size_tokens    = 256
+chunk_overlap_tokens = 64
+
+# ── Optional features (all disabled in baseline) ──────────────────────────────
+expand_to_parent      = false
+hybrid_search_enabled = false
+reranker_url          = ""

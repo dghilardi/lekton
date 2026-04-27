@@ -1,0 +1,22 @@
+# Larger chunks: 512 tokens with 128 overlap.
+#
+# More context per chunk, fewer chunks per document. Usually helps queries
+# that require synthesising several adjacent paragraphs, but can dilute the
+# embedding signal for narrow lookups.
+
+name        = "larger-chunks"
+description = "Vector-only · chunk=512/128 · richer context"
+
+qdrant_url = "http://localhost:6334"
+
+embedding_url        = "http://localhost:11434/v1"
+embedding_model      = "nomic-embed-text"
+embedding_dimensions = 768
+embedding_api_key    = ""
+
+chunk_size_tokens    = 512
+chunk_overlap_tokens = 128
+
+expand_to_parent      = false
+hybrid_search_enabled = false
+reranker_url          = ""

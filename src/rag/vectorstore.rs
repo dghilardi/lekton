@@ -135,6 +135,22 @@ impl QdrantVectorStore {
 
         Ok(conditions)
     }
+
+    /// Drop the entire collection, ignoring "not found" errors.
+    pub async fn delete_collection(&self) -> Result<(), AppError> {
+        let exists = self
+            .client
+            .collection_exists(&self.collection)
+            .await
+            .map_err(|e| AppError::Internal(format!("qdrant collection_exists: {e}")))?;
+        if exists {
+            self.client
+                .delete_collection(&self.collection)
+                .await
+                .map_err(|e| AppError::Internal(format!("qdrant delete_collection: {e}")))?;
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]

@@ -2,40 +2,73 @@
  * Lekton — Custom User Stylesheet
  * =================================
  *
- * This file is loaded at runtime and allows you to customize the look and feel
+ * This file is loaded at runtime and lets you customize the look and feel
  * of Lekton WITHOUT recompiling the application.
  *
  * HOW TO USE:
  * -----------
- * 1. Edit this file directly, OR
+ * 1. Edit this file directly in Admin → Custom CSS, OR
  * 2. Mount a Docker volume to /app/public/custom.css with your overrides.
  *
- * EXAMPLES:
- * ---------
+ * The file is loaded LAST, so every rule here overrides the defaults.
  *
- * Override the brand font:
+ * ═══════════════════════════════════════════════════════════════════
+ * SECTION 1 — Brand colors (DaisyUI 5 format)
+ * ═══════════════════════════════════════════════════════════════════
+ *
+ * Colors use the oklch() color space: oklch(lightness% chroma hue)
+ * See https://oklch.com to pick values interactively.
+ *
+ * Override the light theme:
+ *
+ *   :root, [data-theme="light"] {
+ *     --color-primary:          oklch(52% 0.22 250);   (blue)
+ *     --color-primary-content:  oklch(97% 0.01 250);
+ *     --color-base-100:         oklch(99% 0 0);        (pure white)
+ *     --color-base-200:         oklch(96% 0 0);
+ *     --color-base-300:         oklch(91% 0 0);
+ *     --color-base-content:     oklch(20% 0.01 260);
+ *   }
+ *
+ * Override the dark theme:
+ *
+ *   [data-theme="dark"] {
+ *     --color-primary:          oklch(72% 0.18 250);
+ *     --color-primary-content:  oklch(12% 0.02 250);
+ *     --color-base-100:         oklch(14% 0.01 230);
+ *     --color-base-200:         oklch(18% 0.012 230);
+ *     --color-base-300:         oklch(25% 0.015 230);
+ *     --color-base-content:     oklch(92% 0.005 248);
+ *   }
+ *
+ * ═══════════════════════════════════════════════════════════════════
+ * SECTION 2 — Typography
+ * ═══════════════════════════════════════════════════════════════════
+ *
+ * Override the UI font (must be loaded separately via @import or <link>):
+ *
  *   :root {
- *     --lekton-font-family: "Fira Code", monospace;
+ *     --lekton-font-family: "IBM Plex Sans", sans-serif;
+ *     --lekton-mono-font:   "IBM Plex Mono", monospace;
  *   }
  *
- * Override DaisyUI theme colors (see https://daisyui.com/docs/themes/):
- *   [data-theme="light"] {
- *     --p: 210 64% 31%;    (primary)
- *     --s: 210 40% 50%;    (secondary)
- *     --a: 15 80% 50%;     (accent)
- *   }
+ * ═══════════════════════════════════════════════════════════════════
+ * SECTION 3 — Layout dimensions
+ * ═══════════════════════════════════════════════════════════════════
  *
- * Override sidebar width:
  *   :root {
- *     --lekton-sidebar-width: 20rem;
+ *     --lekton-sidebar-width:     20rem;
+ *     --lekton-header-height:     4rem;
+ *     --lekton-content-max-width: 80rem;
  *   }
  *
- * Add custom utility classes:
- *   .my-custom-badge {
- *     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
- *     color: white;
- *     padding: 0.25rem 0.75rem;
- *     border-radius: 9999px;
- *   }
+ * ═══════════════════════════════════════════════════════════════════
+ * SECTION 4 — Logo theme switching
+ * ═══════════════════════════════════════════════════════════════════
+ *
+ * If you upload custom logos via the admin UI, these rules
+ * ensure only the right logo is shown for each theme.
+ *
  */
 
+/* — Your customizations below this line — */

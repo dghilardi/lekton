@@ -3732,6 +3732,7 @@ dependencies = [
  "base64 0.22.1",
  "bson",
  "chrono",
+ "clap",
  "config 0.14.1",
  "console_error_panic_hook",
  "cookie",

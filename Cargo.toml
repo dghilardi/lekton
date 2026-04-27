@@ -142,6 +142,9 @@ tower_governor = { version = "0.8", optional = true }
 # Configuration management
 config = { version = "0.14", optional = true }
 
+# CLI argument parsing
+clap = { version = "4", features = ["derive"], optional = true }
+
 [build-dependencies]
 leptos-tiptap-build = "0.2"
 
@@ -196,6 +199,7 @@ ssr = [
     "dep:tera",
     "dep:rmcp",
     "dep:schemars",
+    "dep:clap",
     "leptos/ssr",
     "leptos_meta/ssr",
     "leptos_router/ssr",

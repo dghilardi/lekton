@@ -69,6 +69,7 @@ impl DefaultRagService {
 
 #[async_trait]
 impl RagService for DefaultRagService {
+    #[tracing::instrument(skip(self, content, tags), fields(slug = %slug, access_level = %access_level))]
     async fn index_document(
         &self,
         slug: &str,

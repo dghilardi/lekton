@@ -112,31 +112,23 @@ async fn main() {
     let site_root = leptos_options.site_root.to_string();
 
     // Connect to MongoDB
-    let mongo_uri = config.database.uri.clone();
-
-    // Inject credentials into the URI if provided separately
+    // Inject credentials into the URI if provided separately.
+    // Using the `url` crate for correct percent-encoding and authority handling.
     let mongo_uri = match (&config.database.username, &config.database.password) {
         (Some(user), Some(pass)) if !user.is_empty() => {
-            let encoded_user = urlencoding::encode(user);
-            let encoded_pass = urlencoding::encode(pass);
-            // Insert credentials after the scheme (mongodb:// or mongodb+srv://)
-            if let Some(rest) = mongo_uri
-                .strip_prefix("mongodb+srv://")
-                .map(|r| ("mongodb+srv://", r))
-                .or_else(|| {
-                    mongo_uri
-                        .strip_prefix("mongodb://")
-                        .map(|r| ("mongodb://", r))
-                })
-            {
-                // Strip any existing credentials (user:pass@host → host)
-                let host_part = rest.1.find('@').map_or(rest.1, |i| &rest.1[i + 1..]);
-                format!("{}{}:{}@{}", rest.0, encoded_user, encoded_pass, host_part)
-            } else {
-                mongo_uri
+            match url::Url::parse(&config.database.uri) {
+                Ok(mut parsed) => {
+                    let _ = parsed.set_username(user);
+                    let _ = parsed.set_password(Some(pass));
+                    parsed.to_string()
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Could not parse MongoDB URI to inject credentials; using URI as-is");
+                    config.database.uri.clone()
+                }
             }
         }
-        _ => mongo_uri,
+        _ => config.database.uri.clone(),
     };
 
     let mongo_client = mongodb::Client::with_uri_str(&mongo_uri)

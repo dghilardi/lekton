@@ -4,6 +4,8 @@ pub mod assets;
 #[cfg(feature = "ssr")]
 pub mod auth;
 pub mod errors;
+#[cfg(feature = "ssr")]
+pub mod health;
 pub mod ingest;
 #[cfg(feature = "ssr")]
 pub mod pat;

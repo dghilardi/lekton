@@ -58,6 +58,13 @@ async fn main() {
     let config =
         lekton::config::AppConfig::load().expect("Failed to load application configuration");
 
+    if config.rag.is_enabled() {
+        config.rag.validate().expect("Invalid RAG configuration");
+        if config.rag.hybrid_search_enabled && config.search.url.is_empty() {
+            panic!("rag.hybrid_search_enabled = true requires search.url to be set");
+        }
+    }
+
     // Debug config loading
     println!(
         "[DEBUG] LKN__AUTH__DEMO_MODE env: {:?}",
@@ -456,6 +463,12 @@ async fn main() {
 
     let mut app = Router::new()
         .merge(upload_routes)
+        // Health endpoints
+        .route("/health", axum::routing::get(api::health::liveness_handler))
+        .route(
+            "/health/ready",
+            axum::routing::get(api::health::readiness_handler),
+        )
         // API routes
         .route(
             "/api/v1/ingest",

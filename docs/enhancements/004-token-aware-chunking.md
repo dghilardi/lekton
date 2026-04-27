@@ -21,7 +21,8 @@ Cheshire Cat uses LangChain's `RecursiveCharacterTextSplitter` with tiktoken, me
 - Chunk size is configurable via `rag.chunk_size_tokens` (default `256`).
 - Overlap is configurable via `rag.chunk_overlap_tokens` (default `64`).
 - Small adjacent sections are merged forward to avoid tiny retrieval units.
-- Fenced code blocks and Markdown tables are kept atomic; oversize blocks are emitted whole rather than torn apart.
+- Fenced code blocks are kept atomic; oversize code blocks are emitted whole rather than torn apart.
+- Markdown tables are detected with the GFM parser rather than line-prefix heuristics. Tables that fit the token budget stay atomic; oversized tables are split by row groups with the original header and delimiter repeated in every table chunk.
 - Each chunk carries structural metadata: `section_path`, `section_anchor`, `byte_offset`, `char_offset`, `chunk_index`.
 - Embeddings are generated from enriched text (`Document Title > Section Path\n\nChunk`), while prompt/UI display uses the clean chunk text.
 
@@ -59,7 +60,8 @@ Key properties:
 - H1/H2 headings define raw parent sections.
 - Very small adjacent sections are merged before token splitting.
 - Token overlap is implemented through `text-splitter`'s overlap support.
-- Protected ranges prevent splits inside fenced code blocks and tables.
+- Parser-derived protected ranges prevent splits inside code blocks and GFM tables, including tables without outer pipes and cells containing escaped or inline-code pipes.
+- Oversized tables bypass normal overlap splitting and are chunked only at row boundaries. Synthetic table chunks use the first original data row offset and repeat the table header for retrieval context.
 - Output is typed (`SplitChunk`) instead of plain `String`.
 
 ### 4. Ingestion and Retrieval Metadata
@@ -70,7 +72,7 @@ The structural metadata introduced by this enhancement is also consumed by later
 - optional parent-section expansion via `rag.expand_to_parent`
 
 ### 5. Reindex Consideration
-Changing chunk size, overlap, or chunk payload structure changes the vectors and metadata stored in Qdrant. After deployment, a full reindex (`POST /api/v1/admin/rag/reindex`) is required.
+Changing chunk size, overlap, table splitting policy, or chunk payload structure changes the vectors and metadata stored in Qdrant. After deployment, a full reindex (`POST /api/v1/admin/rag/reindex`) is required.
 
 ### 6. Update Tests
 `src/rag/splitter.rs` now includes tests covering:
@@ -78,6 +80,8 @@ Changing chunk size, overlap, or chunk payload structure changes the vectors and
 - stable chunk indexing
 - section path / anchor extraction
 - atomic fenced-code and table handling
+- GFM table detection without outer pipes, escaped pipes, inline-code pipes, invalid delimiters, and block/blank-line termination
+- oversized table row-group splitting with repeated headers
 - UTF-8-safe offset computation when merged sections contain multibyte characters
 
 ## Files to Modify

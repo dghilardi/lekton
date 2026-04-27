@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- RAG Markdown chunking now detects GFM tables with the Markdown parser and splits oversized tables by row groups with repeated headers. Reindex RAG vectors after deployment.
+
 ## [0.21.0] 2026-04-26
 ### Added
 - Mermaid diagram rendering for Markdown documents and chat responses.

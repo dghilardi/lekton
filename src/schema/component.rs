@@ -454,12 +454,60 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
                 .replace('`', "\\`")
                 .replace("${", "\\${");
 
+            // Injected after the CDN stylesheet loads so it always wins the cascade
             let script = format!(
                 r#"
                 (function() {{
                     const container = document.getElementById('asyncapi-viewer');
                     if (!container) return;
                     container.innerHTML = '';
+
+                    function injectTheme() {{
+                        if (document.getElementById('asyncapi-theme-override')) return;
+                        const style = document.createElement('style');
+                        style.id = 'asyncapi-theme-override';
+                        style.textContent = `
+                            #asyncapi-viewer .aui-root,
+                            #asyncapi-viewer .bg-white {{
+                                background-color: transparent !important;
+                                color: oklch(var(--bc)) !important;
+                            }}
+                            #asyncapi-viewer .bg-gray-200,
+                            #asyncapi-viewer .bg-gray-100,
+                            #asyncapi-viewer .bg-gray-50 {{
+                                background-color: oklch(var(--b2)) !important;
+                            }}
+                            #asyncapi-viewer .bg-gray-800,
+                            #asyncapi-viewer .bg-gray-900,
+                            #asyncapi-viewer pre {{
+                                background-color: oklch(var(--b3)) !important;
+                                color: oklch(var(--bc)) !important;
+                            }}
+                            #asyncapi-viewer .border,
+                            #asyncapi-viewer .border-gray-200,
+                            #asyncapi-viewer .border-gray-300 {{
+                                border-color: oklch(var(--b3)) !important;
+                            }}
+                            #asyncapi-viewer .text-gray-900,
+                            #asyncapi-viewer .text-gray-800,
+                            #asyncapi-viewer .text-gray-700,
+                            #asyncapi-viewer .text-gray-600 {{
+                                color: oklch(var(--bc)) !important;
+                            }}
+                            #asyncapi-viewer .text-gray-500,
+                            #asyncapi-viewer .text-gray-400 {{
+                                color: oklch(var(--bc) / 0.6) !important;
+                            }}
+                            #asyncapi-viewer .shadow,
+                            #asyncapi-viewer .shadow-md {{
+                                box-shadow: none !important;
+                            }}
+                            #asyncapi-viewer .burger-menu {{
+                                display: none !important;
+                            }}
+                        `;
+                        document.head.appendChild(style);
+                    }}
 
                     if (!window.AsyncApiStandalone) {{
                         const link = document.createElement('link');
@@ -470,10 +518,12 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
                         const script = document.createElement('script');
                         script.src = 'https://unpkg.com/@asyncapi/react-component@latest/browser/standalone/index.js';
                         script.onload = function() {{
+                            injectTheme();
                             renderAsyncApi(container);
                         }};
                         document.head.appendChild(script);
                     }} else {{
+                        injectTheme();
                         renderAsyncApi(container);
                     }}
 
@@ -495,7 +545,7 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
 
             view! {
                 <div>
-                    <div id="asyncapi-viewer" class="border border-base-300 rounded-lg min-h-[600px]">
+                    <div id="asyncapi-viewer" class="min-h-[600px]">
                         <div class="flex justify-center items-center py-12">
                             <span class="loading loading-spinner loading-lg"></span>
                             <span class="ml-3">"Loading AsyncAPI viewer..."</span>

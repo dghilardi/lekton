@@ -98,6 +98,23 @@ jobs:
       - name: Build application
         run: cargo leptos build --release
 
+      - name: Check WASM bundle size
+        run: |
+          WASM_FILE=$(find target/site/pkg -name '*.wasm' | head -1)
+          if [ -z "$WASM_FILE" ]; then
+            echo "ERROR: no .wasm file found in target/site/pkg"
+            exit 1
+          fi
+          SIZE_BYTES=$(stat -c%s "$WASM_FILE")
+          SIZE_KB=$((SIZE_BYTES / 1024))
+          THRESHOLD_KB=5120  # 5 MB — adjust down once baseline is established
+          echo "WASM bundle: $WASM_FILE — ${SIZE_KB} KB"
+          if [ "$SIZE_BYTES" -gt $((THRESHOLD_KB * 1024)) ]; then
+            echo "FAIL: WASM bundle (${SIZE_KB} KB) exceeds ${THRESHOLD_KB} KB threshold"
+            exit 1
+          fi
+          echo "OK: WASM bundle is within threshold (${SIZE_KB} KB / ${THRESHOLD_KB} KB)"
+
       - name: Ensure mermaid assets are in site root
         # build.rs copies mermaid from node_modules/ to public/js/, then cargo-leptos
         # syncs public/ to target/site/. With rust-cache the sync may be skipped when

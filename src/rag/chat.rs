@@ -216,6 +216,7 @@ impl ChatService {
     /// Stream a chat response as a series of [`ChatEvent`]s.
     ///
     /// Returns a stream that the caller can forward as SSE.
+    #[tracing::instrument(skip(self, user_ctx, user_message), fields(session_id = ?session_id))]
     pub async fn stream_response(
         &self,
         user_ctx: &UserContext,
@@ -503,6 +504,7 @@ impl ChatService {
     /// empty slice for headless / single-turn evaluation. `session_id` is used
     /// only as a tracing field so that retrieval logs can be correlated with a
     /// caller-defined identifier (a chat session id, an eval run id, etc.).
+    #[tracing::instrument(skip(self, user_ctx, user_message, history), fields(session_id = %session_id))]
     pub async fn retrieve_only(
         &self,
         user_ctx: &UserContext,

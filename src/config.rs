@@ -291,6 +291,24 @@ impl RagConfig {
     pub fn is_enabled(&self) -> bool {
         !self.qdrant_url.is_empty() && !self.embedding_url.is_empty()
     }
+
+    /// Validates numeric and cross-field constraints that `is_enabled` does not cover.
+    /// Call this after loading config when RAG is enabled.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.embedding_dimensions == 0 {
+            return Err("rag.embedding_dimensions must be > 0".into());
+        }
+        if self.chunk_size_tokens == 0 {
+            return Err("rag.chunk_size_tokens must be > 0".into());
+        }
+        if self.chunk_overlap_tokens >= self.chunk_size_tokens {
+            return Err(format!(
+                "rag.chunk_overlap_tokens ({}) must be < chunk_size_tokens ({})",
+                self.chunk_overlap_tokens, self.chunk_size_tokens
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Fully resolved LLM configuration for a single pipeline step, after merging

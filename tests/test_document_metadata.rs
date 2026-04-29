@@ -14,6 +14,7 @@ async fn document_stores_and_returns_tags() {
         .json(&serde_json::json!({
             "service_token": "test-token",
             "slug": slug,
+            "source_path": format!("docs/{}.md", slug),
             "title": "Tagged Document",
             "content": "# Tagged\n\nThis has tags.",
             "access_level": "public",
@@ -89,6 +90,7 @@ async fn document_tags_updated_on_reingest() {
         .json(&serde_json::json!({
             "service_token": "test-token",
             "slug": slug,
+            "source_path": format!("docs/{}.md", slug),
             "title": "Doc v1",
             "content": "# V1",
             "access_level": "public",
@@ -105,6 +107,7 @@ async fn document_tags_updated_on_reingest() {
         .json(&serde_json::json!({
             "service_token": "test-token",
             "slug": slug,
+            "source_path": format!("docs/{}.md", slug),
             "title": "Doc v2",
             "content": "# V2",
             "access_level": "public",

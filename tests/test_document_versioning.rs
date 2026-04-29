@@ -37,6 +37,7 @@ async fn ingest_unchanged_content_returns_not_changed() {
         .json(&serde_json::json!({
             "service_token": "test-token",
             "slug": slug,
+            "source_path": format!("docs/{}.md", slug),
             "title": "Doc",
             "content": "# Same content",
             "access_level": "public",
@@ -65,6 +66,7 @@ async fn ingest_changed_content_returns_changed() {
         .json(&serde_json::json!({
             "service_token": "test-token",
             "slug": slug,
+            "source_path": format!("docs/{}.md", slug),
             "title": "Doc",
             "content": "# Updated content",
             "access_level": "public",

@@ -66,6 +66,7 @@ async fn document_hierarchy_navigation() {
         .json(&serde_json::json!({
             "service_token": "test-token",
             "slug": child_b,
+            "source_path": format!("docs/{}.md", child_b),
             "title": "Child B",
             "content": "# Child B",
             "access_level": "public",
@@ -82,6 +83,7 @@ async fn document_hierarchy_navigation() {
         .json(&serde_json::json!({
             "service_token": "test-token",
             "slug": child_a,
+            "source_path": format!("docs/{}.md", child_a),
             "title": "Child A",
             "content": "# Child A",
             "access_level": "public",
@@ -133,6 +135,7 @@ async fn hidden_documents_excluded_from_listing() {
         .json(&serde_json::json!({
             "service_token": "test-token",
             "slug": hidden_slug,
+            "source_path": format!("docs/{}.md", hidden_slug),
             "title": "Hidden Doc",
             "content": "# Hidden",
             "access_level": "public",

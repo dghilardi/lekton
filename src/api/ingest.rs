@@ -111,6 +111,10 @@ pub async fn process_ingest(
             None => (vec![], vec![], None, 0, false, None),
         };
 
+    let source_path_changed = old_doc.as_ref().map_or(true, |d| {
+        d.source_path.as_deref() != Some(&request.source_path)
+    });
+
     let content_changed = old_hash.as_deref() != Some(&new_hash);
 
     // Determine effective metadata values
@@ -144,7 +148,7 @@ pub async fn process_ingest(
     });
 
     // If nothing changed, return early
-    if !content_changed && !metadata_changed {
+    if !content_changed && !metadata_changed && !source_path_changed {
         let s3_key = format!("docs/{}.md", request.slug.replace('/', "_"));
         return Ok(IngestResponse {
             message: "Document unchanged".to_string(),
@@ -222,6 +226,7 @@ pub async fn process_ingest(
         content_hash: Some(new_hash),
         metadata_hash: Some(new_metadata_hash),
         is_archived: false,
+        source_path: Some(request.source_path.clone()),
     };
 
     // 10. Build search document before ownership transfer
@@ -653,11 +658,24 @@ mod tests {
             }
             Ok(())
         }
+        async fn find_by_source_path(
+            &self,
+            source_path: &str,
+        ) -> Result<Option<Document>, AppError> {
+            Ok(self
+                .documents
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|d| d.source_path.as_deref() == Some(source_path))
+                .cloned())
+        }
     }
 
     fn make_request(token: &str, slug: &str) -> IngestRequest {
         IngestRequest {
             service_token: token.to_string(),
+            source_path: format!("{slug}.md"),
             slug: slug.to_string(),
             title: "Test Doc".to_string(),
             content: "# Hello\nWorld".to_string(),

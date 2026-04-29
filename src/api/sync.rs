@@ -7,14 +7,20 @@ use crate::search::client::SearchService;
 /// A single document entry in a sync request.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SyncDocumentEntry {
+    /// Relative path of the source file within the repository (e.g. `docs/guides/intro.md`).
+    /// Used as the stable document identity for migration lookup.
+    pub source_path: String,
+    /// Desired slug for the document (title-derived or explicit from front matter).
     pub slug: String,
     pub content_hash: String,
     /// Hash of front-matter metadata (title, access_level, …).
-    /// When present, the sync endpoint uses it alongside `content_hash` to
-    /// detect metadata-only changes.  Absent in requests from older CLI
-    /// versions — treated as "metadata unchanged" for backwards compatibility.
     #[serde(default)]
     pub metadata_hash: Option<String>,
+    /// Path-derived slug from the old CLI (e.g. `docs/guides/intro`). Sent when
+    /// `slug` differs from the path-based derivation so the server can locate
+    /// documents that were indexed before `source_path` was introduced.
+    #[serde(default)]
+    pub legacy_slug: Option<String>,
 }
 
 /// Request payload for `POST /api/v1/sync`.
@@ -22,7 +28,7 @@ pub struct SyncDocumentEntry {
 pub struct SyncRequest {
     /// Service authentication token (legacy or scoped).
     pub service_token: String,
-    /// The client's complete list of documents (slug + content hash).
+    /// The client's complete list of documents.
     pub documents: Vec<SyncDocumentEntry>,
     /// If `true`, documents in the server scope that are missing from the
     /// client list will be automatically archived.
@@ -30,14 +36,26 @@ pub struct SyncRequest {
     pub archive_missing: bool,
 }
 
+/// A single entry in the `to_upload` list returned by the sync endpoint.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct SyncUploadEntry {
+    /// Source file path (echoed from the request).
+    pub source_path: String,
+    /// The slug the client MUST use when calling the ingest endpoint.
+    ///
+    /// May differ from the requested slug when the server resolves a
+    /// migration case (document already stored under a legacy path-based slug).
+    pub actual_slug: String,
+}
+
 /// Response from a sync operation.
 #[derive(Debug, Serialize)]
 pub struct SyncResponse {
-    /// Slugs the client should upload (new or changed content).
-    pub to_upload: Vec<String>,
+    /// Documents the client should upload (new or changed).
+    pub to_upload: Vec<SyncUploadEntry>,
     /// Slugs that were (or should be) archived (present on server, missing from client).
     pub to_archive: Vec<String>,
-    /// Slugs with matching content hash (no action needed).
+    /// Source paths with no pending changes.
     pub unchanged: Vec<String>,
 }
 
@@ -66,77 +84,106 @@ pub async fn process_sync(
         }
     }
 
-    // 3. Fetch all server documents within the token's scopes
-    // Value: (content_hash, metadata_hash)
-    let mut server_docs: HashMap<String, (Option<String>, Option<String>)> = HashMap::new();
+    // 3. Fetch all server documents within the token's scopes.
+    // Value: (content_hash, metadata_hash, source_path)
+    let mut server_by_slug: HashMap<String, (Option<String>, Option<String>, Option<String>)> =
+        HashMap::new();
+    // source_path → slug index for migration lookup
+    let mut server_by_source_path: HashMap<String, String> = HashMap::new();
+
     for scope in &scopes {
-        if scope == "*" {
-            // Wildcard (legacy token): fetch all non-archived documents
-            let docs = repo.find_by_slug_prefix("").await?;
-            for doc in docs {
-                server_docs.insert(doc.slug, (doc.content_hash, doc.metadata_hash));
-            }
+        let docs = if scope == "*" {
+            repo.find_by_slug_prefix("").await?
         } else if let Some(prefix) = scope.strip_suffix("/*") {
-            // Prefix scope
-            let docs = repo.find_by_slug_prefix(prefix).await?;
-            for doc in docs {
-                server_docs.insert(doc.slug, (doc.content_hash, doc.metadata_hash));
-            }
+            repo.find_by_slug_prefix(prefix).await?
         } else {
-            // Exact scope — fetch by slug directly
-            if let Some(doc) = repo.find_by_slug(scope).await? {
-                if !doc.is_archived {
-                    server_docs.insert(doc.slug, (doc.content_hash, doc.metadata_hash));
-                }
+            match repo.find_by_slug(scope).await? {
+                Some(doc) if !doc.is_archived => vec![doc],
+                _ => vec![],
             }
+        };
+
+        for doc in docs {
+            if let Some(ref sp) = doc.source_path {
+                server_by_source_path.insert(sp.clone(), doc.slug.clone());
+            }
+            server_by_slug.insert(
+                doc.slug.clone(),
+                (doc.content_hash, doc.metadata_hash, doc.source_path),
+            );
         }
     }
 
-    // 4. Build client lookup
-    let client_docs: HashMap<&str, &str> = request
-        .documents
-        .iter()
-        .map(|e| (e.slug.as_str(), e.content_hash.as_str()))
-        .collect();
-
-    // 5. Compare
-    let mut to_upload = Vec::new();
+    // 4. Compare — resolve actual_slug for each client entry
+    let mut to_upload: Vec<SyncUploadEntry> = Vec::new();
     let mut unchanged = Vec::new();
     let mut to_archive = Vec::new();
 
-    // Check client docs against server
+    // Slugs in the server that have been "claimed" by a source_path match,
+    // so they are excluded from the archive check.
+    let mut claimed_slugs: std::collections::HashSet<String> = std::collections::HashSet::new();
+
     for entry in &request.documents {
-        match server_docs.get(&entry.slug) {
-            Some((server_content_hash, server_metadata_hash)) => {
+        // Resolve the canonical slug using the priority chain:
+        // 1. Lookup by source_path (stable identity after first sync)
+        // 2. Lookup by desired slug (exact match or first sync of an unchanged doc)
+        // 3. Lookup by legacy_slug (migration: doc was indexed with old path-based slug)
+        // 4. New document — use the desired slug
+        let actual_slug = if let Some(existing_slug) = server_by_source_path.get(&entry.source_path)
+        {
+            existing_slug.clone()
+        } else if server_by_slug.contains_key(&entry.slug) {
+            entry.slug.clone()
+        } else if let Some(ref legacy) = entry.legacy_slug {
+            if server_by_slug.contains_key(legacy.as_str()) {
+                legacy.clone()
+            } else {
+                entry.slug.clone()
+            }
+        } else {
+            entry.slug.clone()
+        };
+
+        claimed_slugs.insert(actual_slug.clone());
+
+        match server_by_slug.get(&actual_slug) {
+            Some((server_content_hash, server_metadata_hash, server_source_path)) => {
                 let content_ok =
                     server_content_hash.as_deref() == Some(entry.content_hash.as_str());
-                // Metadata comparison: only enforced when both sides provide a hash.
-                // If the client sends a metadata_hash but the server has None (old
-                // document), we treat it as changed so the metadata_hash gets stored.
                 let metadata_ok = match (
                     entry.metadata_hash.as_deref(),
                     server_metadata_hash.as_deref(),
                 ) {
                     (Some(c), Some(s)) => c == s,
-                    (Some(_), None) => false, // server has no metadata hash yet → upload to populate it
-                    (None, _) => true,        // old CLI without metadata_hash → assume unchanged
+                    (Some(_), None) => false,
+                    (None, _) => true,
                 };
-                if content_ok && metadata_ok {
-                    unchanged.push(entry.slug.clone());
+                // Force upload when source_path is not yet stored on the server,
+                // so the migration populates it in a single pass.
+                let source_path_ok =
+                    server_source_path.as_deref() == Some(entry.source_path.as_str());
+
+                if content_ok && metadata_ok && source_path_ok {
+                    unchanged.push(entry.source_path.clone());
                 } else {
-                    to_upload.push(entry.slug.clone());
+                    to_upload.push(SyncUploadEntry {
+                        source_path: entry.source_path.clone(),
+                        actual_slug,
+                    });
                 }
             }
-            _ => {
-                // Missing from server, or server has no content hash
-                to_upload.push(entry.slug.clone());
+            None => {
+                to_upload.push(SyncUploadEntry {
+                    source_path: entry.source_path.clone(),
+                    actual_slug,
+                });
             }
         }
     }
 
-    // Check server docs not in client list
-    for slug in server_docs.keys() {
-        if !client_docs.contains_key(slug.as_str()) {
+    // Server docs not claimed by any client entry are candidates for archiving.
+    for slug in server_by_slug.keys() {
+        if !claimed_slugs.contains(slug.as_str()) {
             to_archive.push(slug.clone());
         }
     }
@@ -154,7 +201,7 @@ pub async fn process_sync(
     }
 
     // Sort for deterministic output
-    to_upload.sort();
+    to_upload.sort_by(|a, b| a.source_path.cmp(&b.source_path));
     to_archive.sort();
     unchanged.sort();
 
@@ -362,6 +409,18 @@ mod tests {
             }
             Ok(())
         }
+        async fn find_by_source_path(
+            &self,
+            source_path: &str,
+        ) -> Result<Option<Document>, AppError> {
+            Ok(self
+                .documents
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|d| d.source_path.as_deref() == Some(source_path))
+                .cloned())
+        }
     }
 
     struct MockServiceTokenRepo;
@@ -432,6 +491,26 @@ mod tests {
             content_hash: Some(hash.to_string()),
             metadata_hash: None,
             is_archived: false,
+            source_path: Some(format!("{slug}.md")),
+        }
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────
+
+    fn entry(slug: &str, content_hash: &str) -> SyncDocumentEntry {
+        SyncDocumentEntry {
+            source_path: format!("{slug}.md"),
+            slug: slug.to_string(),
+            content_hash: content_hash.to_string(),
+            metadata_hash: None,
+            legacy_slug: None,
+        }
+    }
+
+    fn upload(source_path: &str, actual_slug: &str) -> SyncUploadEntry {
+        SyncUploadEntry {
+            source_path: source_path.to_string(),
+            actual_slug: actual_slug.to_string(),
         }
     }
 
@@ -439,22 +518,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_sync_identifies_uploads_for_new_docs() {
-        let repo = MockRepo::new(); // empty server
+        let repo = MockRepo::new();
         let token_repo = MockServiceTokenRepo;
         let request = SyncRequest {
             service_token: "legacy".to_string(),
-            documents: vec![SyncDocumentEntry {
-                slug: "docs/new".to_string(),
-                content_hash: "sha256:abc".to_string(),
-                metadata_hash: None,
-            }],
+            documents: vec![entry("docs/new", "sha256:abc")],
             archive_missing: false,
         };
 
         let result = process_sync(&repo, &token_repo, None, Some("legacy"), request)
             .await
             .unwrap();
-        assert_eq!(result.to_upload, vec!["docs/new"]);
+        assert_eq!(result.to_upload, vec![upload("docs/new.md", "docs/new")]);
         assert!(result.unchanged.is_empty());
         assert!(result.to_archive.is_empty());
     }
@@ -465,11 +540,7 @@ mod tests {
         let token_repo = MockServiceTokenRepo;
         let request = SyncRequest {
             service_token: "legacy".to_string(),
-            documents: vec![SyncDocumentEntry {
-                slug: "docs/a".to_string(),
-                content_hash: "sha256:abc".to_string(),
-                metadata_hash: None,
-            }],
+            documents: vec![entry("docs/a", "sha256:abc")],
             archive_missing: false,
         };
 
@@ -477,7 +548,7 @@ mod tests {
             .await
             .unwrap();
         assert!(result.to_upload.is_empty());
-        assert_eq!(result.unchanged, vec!["docs/a"]);
+        assert_eq!(result.unchanged, vec!["docs/a.md"]);
         assert!(result.to_archive.is_empty());
     }
 
@@ -487,18 +558,14 @@ mod tests {
         let token_repo = MockServiceTokenRepo;
         let request = SyncRequest {
             service_token: "legacy".to_string(),
-            documents: vec![SyncDocumentEntry {
-                slug: "docs/a".to_string(),
-                content_hash: "sha256:new".to_string(),
-                metadata_hash: None,
-            }],
+            documents: vec![entry("docs/a", "sha256:new")],
             archive_missing: false,
         };
 
         let result = process_sync(&repo, &token_repo, None, Some("legacy"), request)
             .await
             .unwrap();
-        assert_eq!(result.to_upload, vec!["docs/a"]);
+        assert_eq!(result.to_upload, vec![upload("docs/a.md", "docs/a")]);
         assert!(result.unchanged.is_empty());
     }
 
@@ -511,18 +578,14 @@ mod tests {
         let token_repo = MockServiceTokenRepo;
         let request = SyncRequest {
             service_token: "legacy".to_string(),
-            documents: vec![SyncDocumentEntry {
-                slug: "docs/a".to_string(),
-                content_hash: "sha256:abc".to_string(),
-                metadata_hash: None,
-            }],
+            documents: vec![entry("docs/a", "sha256:abc")],
             archive_missing: false,
         };
 
         let result = process_sync(&repo, &token_repo, None, Some("legacy"), request)
             .await
             .unwrap();
-        assert_eq!(result.unchanged, vec!["docs/a"]);
+        assert_eq!(result.unchanged, vec!["docs/a.md"]);
         assert_eq!(result.to_archive, vec!["docs/old"]);
     }
 
@@ -535,11 +598,7 @@ mod tests {
         let token_repo = MockServiceTokenRepo;
         let request = SyncRequest {
             service_token: "legacy".to_string(),
-            documents: vec![SyncDocumentEntry {
-                slug: "docs/a".to_string(),
-                content_hash: "sha256:abc".to_string(),
-                metadata_hash: None,
-            }],
+            documents: vec![entry("docs/a", "sha256:abc")],
             archive_missing: true,
         };
 
@@ -547,17 +606,14 @@ mod tests {
             .await
             .unwrap();
 
-        // Verify the old doc is now archived
         let doc = repo.find_by_slug("docs/old").await.unwrap().unwrap();
         assert!(doc.is_archived);
-        // And the kept doc is not
         let doc = repo.find_by_slug("docs/a").await.unwrap().unwrap();
         assert!(!doc.is_archived);
     }
 
     #[tokio::test]
     async fn test_sync_scope_validation() {
-        // Use a scoped token that only has access to "protocols/*"
         let scoped = ServiceToken {
             id: "st-1".to_string(),
             name: "test".to_string(),
@@ -627,15 +683,9 @@ mod tests {
 
         let repo = MockRepo::new();
         let token_repo = ScopedTokenRepo(scoped);
-
-        // Request with a slug outside the token's scope
         let request = SyncRequest {
             service_token: "scoped-tok".to_string(),
-            documents: vec![SyncDocumentEntry {
-                slug: "docs/outside".to_string(),
-                content_hash: "sha256:abc".to_string(),
-                metadata_hash: None,
-            }],
+            documents: vec![entry("docs/outside", "sha256:abc")],
             archive_missing: false,
         };
 
@@ -657,11 +707,7 @@ mod tests {
         let search = MockSearchService::new();
         let request = SyncRequest {
             service_token: "legacy".to_string(),
-            documents: vec![SyncDocumentEntry {
-                slug: "docs/a".to_string(),
-                content_hash: "sha256:abc".to_string(),
-                metadata_hash: None,
-            }],
+            documents: vec![entry("docs/a", "sha256:abc")],
             archive_missing: true,
         };
 
@@ -682,11 +728,7 @@ mod tests {
         let search = MockSearchService::new();
         let request = SyncRequest {
             service_token: "legacy".to_string(),
-            documents: vec![SyncDocumentEntry {
-                slug: "docs/a".to_string(),
-                content_hash: "sha256:abc".to_string(),
-                metadata_hash: None,
-            }],
+            documents: vec![entry("docs/a", "sha256:abc")],
             archive_missing: false,
         };
 
@@ -716,9 +758,11 @@ mod tests {
         let request = SyncRequest {
             service_token: "legacy".to_string(),
             documents: vec![SyncDocumentEntry {
+                source_path: "docs/a.md".to_string(),
                 slug: "docs/a".to_string(),
                 content_hash: "sha256:content".to_string(),
                 metadata_hash: Some("sha256:meta".to_string()),
+                legacy_slug: None,
             }],
             archive_missing: false,
         };
@@ -730,12 +774,11 @@ mod tests {
             result.to_upload.is_empty(),
             "should be unchanged when both hashes match"
         );
-        assert_eq!(result.unchanged, vec!["docs/a"]);
+        assert_eq!(result.unchanged, vec!["docs/a.md"]);
     }
 
     #[tokio::test]
     async fn test_sync_metadata_hash_mismatch_triggers_upload() {
-        // content hash matches, but metadata (e.g. access_level) changed
         let repo = MockRepo::with_docs(vec![make_doc_with_meta(
             "docs/a",
             "sha256:content",
@@ -745,9 +788,11 @@ mod tests {
         let request = SyncRequest {
             service_token: "legacy".to_string(),
             documents: vec![SyncDocumentEntry {
+                source_path: "docs/a.md".to_string(),
                 slug: "docs/a".to_string(),
                 content_hash: "sha256:content".to_string(),
                 metadata_hash: Some("sha256:new-meta".to_string()),
+                legacy_slug: None,
             }],
             archive_missing: false,
         };
@@ -757,7 +802,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             result.to_upload,
-            vec!["docs/a"],
+            vec![upload("docs/a.md", "docs/a")],
             "should upload when metadata hash differs"
         );
         assert!(result.unchanged.is_empty());
@@ -765,15 +810,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_sync_metadata_hash_absent_on_server_triggers_upload() {
-        // Server has no metadata_hash (old document) → force upload to populate it
         let repo = MockRepo::with_docs(vec![make_doc("docs/a", "sha256:content")]);
         let token_repo = MockServiceTokenRepo;
         let request = SyncRequest {
             service_token: "legacy".to_string(),
             documents: vec![SyncDocumentEntry {
+                source_path: "docs/a.md".to_string(),
                 slug: "docs/a".to_string(),
                 content_hash: "sha256:content".to_string(),
                 metadata_hash: Some("sha256:meta".to_string()),
+                legacy_slug: None,
             }],
             archive_missing: false,
         };
@@ -783,14 +829,13 @@ mod tests {
             .unwrap();
         assert_eq!(
             result.to_upload,
-            vec!["docs/a"],
+            vec![upload("docs/a.md", "docs/a")],
             "should upload when server has no metadata_hash"
         );
     }
 
     #[tokio::test]
     async fn test_sync_no_metadata_hash_from_client_is_backwards_compat() {
-        // Old CLI without metadata_hash → treat as unchanged if content matches
         let repo = MockRepo::with_docs(vec![make_doc_with_meta(
             "docs/a",
             "sha256:content",
@@ -799,11 +844,7 @@ mod tests {
         let token_repo = MockServiceTokenRepo;
         let request = SyncRequest {
             service_token: "legacy".to_string(),
-            documents: vec![SyncDocumentEntry {
-                slug: "docs/a".to_string(),
-                content_hash: "sha256:content".to_string(),
-                metadata_hash: None,
-            }],
+            documents: vec![entry("docs/a", "sha256:content")],
             archive_missing: false,
         };
 
@@ -814,6 +855,66 @@ mod tests {
             result.to_upload.is_empty(),
             "old CLI without metadata_hash should be treated as unchanged"
         );
-        assert_eq!(result.unchanged, vec!["docs/a"]);
+        assert_eq!(result.unchanged, vec!["docs/a.md"]);
+    }
+
+    #[tokio::test]
+    async fn test_sync_legacy_slug_migration() {
+        // Server has a doc indexed with path-based slug (no source_path).
+        // New CLI sends desired title-derived slug + legacy_slug for migration.
+        let mut old_doc = make_doc("docs/my-guide", "sha256:content");
+        old_doc.source_path = None; // simulate old document without source_path
+        let repo = MockRepo::with_docs(vec![old_doc]);
+        let token_repo = MockServiceTokenRepo;
+        let request = SyncRequest {
+            service_token: "legacy".to_string(),
+            documents: vec![SyncDocumentEntry {
+                source_path: "docs/my-guide.md".to_string(),
+                slug: "docs/my-cool-guide".to_string(), // title-derived
+                content_hash: "sha256:content".to_string(),
+                metadata_hash: None,
+                legacy_slug: Some("docs/my-guide".to_string()), // path-derived (old)
+            }],
+            archive_missing: false,
+        };
+
+        let result = process_sync(&repo, &token_repo, None, Some("legacy"), request)
+            .await
+            .unwrap();
+        // Server resolves via legacy_slug → actual_slug = "docs/my-guide" (preserve URL)
+        // source_path not yet set → force upload
+        assert_eq!(
+            result.to_upload,
+            vec![upload("docs/my-guide.md", "docs/my-guide")],
+            "migration should resolve to legacy slug and trigger upload to set source_path"
+        );
+        assert!(result.unchanged.is_empty());
+        // Old slug must NOT appear in to_archive (it was claimed)
+        assert!(result.to_archive.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_sync_source_path_lookup_after_migration() {
+        // After migration, doc has source_path set. Next sync should find it by source_path.
+        let repo = MockRepo::with_docs(vec![make_doc("docs/my-guide", "sha256:content")]);
+        let token_repo = MockServiceTokenRepo;
+        let request = SyncRequest {
+            service_token: "legacy".to_string(),
+            documents: vec![SyncDocumentEntry {
+                source_path: "docs/my-guide.md".to_string(),
+                slug: "docs/my-cool-guide".to_string(),
+                content_hash: "sha256:content".to_string(),
+                metadata_hash: None,
+                legacy_slug: Some("docs/my-guide".to_string()),
+            }],
+            archive_missing: false,
+        };
+
+        let result = process_sync(&repo, &token_repo, None, Some("legacy"), request)
+            .await
+            .unwrap();
+        // Found by source_path → actual_slug = "docs/my-guide", nothing changed
+        assert!(result.to_upload.is_empty());
+        assert_eq!(result.unchanged, vec!["docs/my-guide.md"]);
     }
 }

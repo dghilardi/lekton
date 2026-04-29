@@ -441,6 +441,7 @@ impl TestEnv {
             .json(&serde_json::json!({
                 "service_token": "test-token",
                 "slug": slug,
+                "source_path": format!("docs/{}.md", slug),
                 "title": title,
                 "content": content,
                 "access_level": access_level,

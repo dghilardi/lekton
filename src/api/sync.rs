@@ -70,6 +70,9 @@ pub async fn process_sync(
 ) -> Result<SyncResponse, AppError> {
     use std::collections::HashMap;
 
+    // (content_hash, metadata_hash, source_path)
+    type ServerDocInfo = (Option<String>, Option<String>, Option<String>);
+
     // 1. Validate the service token and determine scopes
     let scopes =
         validate_sync_token(service_token_repo, legacy_token, &request.service_token).await?;
@@ -86,8 +89,7 @@ pub async fn process_sync(
 
     // 3. Fetch all server documents within the token's scopes.
     // Value: (content_hash, metadata_hash, source_path)
-    let mut server_by_slug: HashMap<String, (Option<String>, Option<String>, Option<String>)> =
-        HashMap::new();
+    let mut server_by_slug: HashMap<String, ServerDocInfo> = HashMap::new();
     // source_path → slug index for migration lookup
     let mut server_by_source_path: HashMap<String, String> = HashMap::new();
 

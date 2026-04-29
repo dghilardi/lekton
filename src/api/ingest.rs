@@ -111,9 +111,9 @@ pub async fn process_ingest(
             None => (vec![], vec![], None, 0, false, None),
         };
 
-    let source_path_changed = old_doc.as_ref().map_or(true, |d| {
-        d.source_path.as_deref() != Some(&request.source_path)
-    });
+    let source_path_changed = old_doc
+        .as_ref()
+        .is_none_or(|d| d.source_path.as_deref() != Some(&request.source_path));
 
     let content_changed = old_hash.as_deref() != Some(&new_hash);
 

@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.0] 2026-04-30
+
 ### Changed
 - Document ingestion now accepts an optional `summary`, `lekton-sync` reads it from front matter with recommended-length warnings, and MCP resource descriptions prefer the summary when present.
 - MCP documentation resources now use the Lekton-specific `lekton://docs/...` URI scheme instead of the previous generic scheme.

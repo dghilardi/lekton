@@ -56,6 +56,12 @@ pub struct Document {
     /// navigation and search.
     #[serde(default)]
     pub is_archived: bool,
+    /// The relative path of the source file within the repository (e.g.,
+    /// `docs/guides/intro.md`). Used as a stable identity for the document
+    /// across slug renames. `None` for documents ingested before this field
+    /// was introduced.
+    #[serde(default)]
+    pub source_path: Option<String>,
 }
 
 /// Represents an API schema entry stored in MongoDB.
@@ -177,6 +183,11 @@ pub struct IngestRequest {
     /// Whether to hide from navigation (defaults to false).
     #[serde(default)]
     pub is_hidden: bool,
+    /// The relative path of the source file within the repository (e.g.,
+    /// `docs/guides/intro.md`). Required for stable slug tracking across
+    /// title changes. Used by the server to resolve the canonical slug for
+    /// a document when the desired slug would differ from the stored one.
+    pub source_path: String,
 }
 
 /// The response from a successful ingest operation.
@@ -221,6 +232,7 @@ mod tests {
             content_hash: Some("sha256:abc123".to_string()),
             metadata_hash: None,
             is_archived: false,
+            source_path: Some("engineering/deployment-guide.md".to_string()),
         };
 
         let json = serde_json::to_string(&doc).unwrap();
@@ -259,6 +271,7 @@ mod tests {
         assert_eq!(doc.order, 0);
         assert!(!doc.is_hidden);
         assert_eq!(doc.content_hash, None); // backward compat
+        assert_eq!(doc.source_path, None); // backward compat
     }
 
     #[test]
@@ -304,6 +317,7 @@ mod tests {
             content_hash: None,
             metadata_hash: None,
             is_archived: false,
+            source_path: None,
         };
 
         let json = serde_json::to_string(&doc).unwrap();
@@ -315,6 +329,7 @@ mod tests {
     fn test_ingest_request_deserialization() {
         let json = r###"{
             "service_token": "tok-123",
+            "source_path": "docs/hello.md",
             "slug": "docs/hello",
             "title": "Hello World",
             "content": "# Hello\nWorld",
@@ -325,6 +340,7 @@ mod tests {
 
         let req: IngestRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.slug, "docs/hello");
+        assert_eq!(req.source_path, "docs/hello.md");
         assert_eq!(req.access_level, "internal");
         assert!(!req.is_draft);
     }
@@ -333,6 +349,7 @@ mod tests {
     fn test_ingest_request_draft_flag() {
         let json = r###"{
             "service_token": "tok",
+            "source_path": "docs/wip.md",
             "slug": "docs/wip",
             "title": "WIP",
             "content": "draft content",
@@ -349,6 +366,7 @@ mod tests {
     fn test_ingest_request_defaults() {
         let json = r###"{
             "service_token": "tok-123",
+            "source_path": "docs/hello.md",
             "slug": "docs/hello",
             "title": "Hello",
             "content": "## Hello",

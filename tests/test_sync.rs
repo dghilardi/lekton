@@ -13,7 +13,7 @@ async fn sync_identifies_new_docs_to_upload() {
         .json(&serde_json::json!({
             "service_token": "test-token",
             "documents": [
-                { "slug": "docs/new", "content_hash": "sha256:abc" }
+                { "slug": "docs/new", "source_path": "docs/new.md", "content_hash": "sha256:abc" }
             ],
             "archive_missing": false
         }))
@@ -25,7 +25,8 @@ async fn sync_identifies_new_docs_to_upload() {
     let to_archive = body["to_archive"].as_array().unwrap();
 
     assert_eq!(to_upload.len(), 1);
-    assert_eq!(to_upload[0], "docs/new");
+    assert_eq!(to_upload[0]["source_path"], "docs/new.md");
+    assert_eq!(to_upload[0]["actual_slug"], "docs/new");
     assert!(unchanged.is_empty());
     assert!(to_archive.is_empty());
 }
@@ -48,7 +49,7 @@ async fn sync_identifies_unchanged_docs() {
         .json(&serde_json::json!({
             "service_token": "test-token",
             "documents": [
-                { "slug": slug, "content_hash": hash }
+                { "slug": slug, "source_path": format!("docs/{}.md", slug), "content_hash": hash }
             ],
             "archive_missing": false
         }))
@@ -73,7 +74,7 @@ async fn sync_identifies_changed_docs() {
         .json(&serde_json::json!({
             "service_token": "test-token",
             "documents": [
-                { "slug": slug, "content_hash": "sha256:different" }
+                { "slug": slug, "source_path": format!("docs/{}.md", slug), "content_hash": "sha256:different" }
             ],
             "archive_missing": false
         }))
@@ -106,7 +107,7 @@ async fn sync_identifies_docs_to_archive() {
         .json(&serde_json::json!({
             "service_token": "test-token",
             "documents": [
-                { "slug": slug_keep, "content_hash": hash }
+                { "slug": slug_keep, "source_path": format!("docs/{}.md", slug_keep), "content_hash": hash }
             ],
             "archive_missing": false
         }))
@@ -143,7 +144,7 @@ async fn sync_archive_missing_sets_flag() {
         .json(&serde_json::json!({
             "service_token": "test-token",
             "documents": [
-                { "slug": slug_keep, "content_hash": hash }
+                { "slug": slug_keep, "source_path": format!("docs/{}.md", slug_keep), "content_hash": hash }
             ],
             "archive_missing": true
         }))
@@ -179,7 +180,7 @@ async fn sync_with_scoped_token() {
         .json(&serde_json::json!({
             "service_token": raw,
             "documents": [
-                { "slug": slug, "content_hash": hash }
+                { "slug": slug, "source_path": format!("docs/{}.md", slug), "content_hash": hash }
             ],
             "archive_missing": false
         }))
@@ -203,7 +204,7 @@ async fn sync_rejects_out_of_scope_slug() {
         .json(&serde_json::json!({
             "service_token": raw,
             "documents": [
-                { "slug": "forbidden/doc", "content_hash": "sha256:abc" }
+                { "slug": "forbidden/doc", "source_path": "docs/forbidden/doc.md", "content_hash": "sha256:abc" }
             ],
             "archive_missing": false
         }))

@@ -134,6 +134,7 @@ pub async fn save_doc_content(
         content_hash: None,  // Editor saves don't compute content hash
         metadata_hash: None, // Populated on next lekton-sync run
         is_archived: false,
+        source_path: None, // Not known for editor-saved documents
     };
 
     let search_doc = state

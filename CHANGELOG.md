@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- `source_path` field on `Document` and `IngestRequest`: stable file-identity for each document (relative path within the repository, e.g. `docs/guide.md`). Enables slug stability across title renames and drives migration lookup for pre-existing documents.
+- `legacy_slug` field on `SyncDocumentEntry`: path-derived slug sent when the desired slug differs, allowing the server to locate documents indexed before `source_path` was introduced.
+- `SyncUploadEntry` in the sync response: each entry in `to_upload` now carries both `source_path` and `actual_slug`, so the CLI always uses the server-resolved canonical slug when calling the ingest endpoint.
+- `find_by_source_path` method on `DocumentRepository` for server-side source-path lookup.
+
+### Changed
+- `lekton-sync` CLI: slug derivation now follows the priority `front-matter slug → title-derived → path-derived`. Documents without an explicit `order` in front matter receive an implicit order based on alphabetical filename position within their parent group.
+- Sync response `to_upload` changed from `Vec<String>` (slugs) to `Vec<SyncUploadEntry>` — **breaking change** for clients using the sync API directly.
+- `IngestRequest.source_path` is now a required field.
+
 ## [0.22.1] 2026-04-28
 
 ## [0.22.0] 2026-04-27

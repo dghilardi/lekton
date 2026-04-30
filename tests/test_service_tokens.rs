@@ -252,6 +252,7 @@ async fn ingest_with_scoped_token_succeeds() {
         .json(&serde_json::json!({
             "service_token": raw,
             "slug": slug,
+            "source_path": format!("docs/{}.md", slug),
             "title": "Scoped Doc",
             "content": "# Scoped",
             "access_level": "public",
@@ -281,6 +282,7 @@ async fn ingest_with_scoped_token_rejects_out_of_scope() {
         .json(&serde_json::json!({
             "service_token": raw,
             "slug": "forbidden/doc",
+            "source_path": "docs/forbidden/doc.md",
             "title": "Out of scope",
             "content": "# Nope",
             "access_level": "public",
@@ -317,6 +319,7 @@ async fn ingest_with_inactive_token_rejected() {
         .json(&serde_json::json!({
             "service_token": raw,
             "slug": "any/doc",
+            "source_path": "docs/any/doc.md",
             "title": "Test",
             "content": "# Test",
             "access_level": "public",

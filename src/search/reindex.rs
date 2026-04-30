@@ -147,6 +147,9 @@ mod tests {
         async fn set_archived(&self, _: &str, _: bool) -> Result<(), AppError> {
             Ok(())
         }
+        async fn find_by_source_path(&self, _: &str) -> Result<Option<Document>, AppError> {
+            Ok(None)
+        }
     }
 
     #[derive(Default)]
@@ -225,6 +228,7 @@ mod tests {
             content_hash: None,
             metadata_hash: None,
             is_archived,
+            source_path: None,
         }
     }
 

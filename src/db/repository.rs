@@ -56,6 +56,11 @@ pub trait DocumentRepository: Send + Sync {
 
     /// Set the `is_archived` flag on a document.
     async fn set_archived(&self, slug: &str, archived: bool) -> Result<(), AppError>;
+
+    /// Find a document by its source file path (e.g. `docs/guides/intro.md`).
+    ///
+    /// Returns `None` for documents ingested before `source_path` was introduced.
+    async fn find_by_source_path(&self, source_path: &str) -> Result<Option<Document>, AppError>;
 }
 
 /// MongoDB implementation of the DocumentRepository.
@@ -257,6 +262,14 @@ impl DocumentRepository for MongoDocumentRepository {
             )
             .await?;
         Ok(())
+    }
+
+    async fn find_by_source_path(&self, source_path: &str) -> Result<Option<Document>, AppError> {
+        use mongodb::bson::doc;
+        Ok(self
+            .collection
+            .find_one(doc! { "source_path": source_path })
+            .await?)
     }
 }
 

@@ -52,6 +52,7 @@ async function ingestDocument(
     body: JSON.stringify({
       service_token: SERVICE_TOKEN,
       slug,
+      source_path: `docs/${slug}.md`,
       title,
       content,
       access_level: accessLevel,

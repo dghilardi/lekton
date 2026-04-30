@@ -46,6 +46,7 @@ async fn ingest_rejects_invalid_token() {
         .json(&serde_json::json!({
             "service_token": "wrong-token",
             "slug": "test-doc",
+            "source_path": "docs/test-doc.md",
             "title": "Test",
             "content": "content",
             "access_level": "public",
@@ -69,6 +70,7 @@ async fn ingest_rejects_empty_slug() {
         .json(&serde_json::json!({
             "service_token": "test-token",
             "slug": "",
+            "source_path": "docs/test-doc.md",
             "title": "Test",
             "content": "content",
             "access_level": "public",
@@ -92,6 +94,7 @@ async fn ingest_rejects_invalid_access_level() {
         .json(&serde_json::json!({
             "service_token": "test-token",
             "slug": "test-doc",
+            "source_path": "docs/test-doc.md",
             "title": "Test",
             "content": "content",
             "access_level": "superadmin",
@@ -142,6 +145,7 @@ async fn ingest_preserves_hierarchy_on_update() {
         .json(&serde_json::json!({
             "service_token": "test-token",
             "slug": slug,
+            "source_path": format!("docs/{}.md", slug),
             "title": "Child Doc",
             "content": "# Child",
             "access_level": "developer",

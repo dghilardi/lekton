@@ -186,14 +186,23 @@ struct SyncRequest {
 
 #[derive(Serialize)]
 struct SyncDocEntry {
+    source_path: String,
     slug: String,
     content_hash: String,
     metadata_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    legacy_slug: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SyncUploadEntry {
+    source_path: String,
+    actual_slug: String,
 }
 
 #[derive(Deserialize)]
 struct SyncResponse {
-    to_upload: Vec<String>,
+    to_upload: Vec<SyncUploadEntry>,
     to_archive: Vec<String>,
     unchanged: Vec<String>,
 }
@@ -244,6 +253,7 @@ struct SchemaSyncResponse {
 #[derive(Serialize)]
 struct IngestRequest {
     service_token: String,
+    source_path: String,
     slug: String,
     title: String,
     content: String,
@@ -348,15 +358,19 @@ struct AttachmentInfo {
 // ── Document scanning ─────────────────────────────────────────────────────────
 
 struct DocumentInfo {
+    /// Relative path of the source file from the repo root (e.g. `docs/guide.md`).
+    source_path: String,
+    /// Desired slug (title-derived or from front matter). Used for ingest if the
+    /// server does not resolve a different actual_slug via migration.
     slug: String,
+    /// Path-derived slug (old behavior). Sent as `legacy_slug` in the sync request
+    /// when it differs from `slug`, so the server can locate documents indexed
+    /// before `source_path` was introduced.
+    legacy_slug: Option<String>,
     title: String,
-    /// Original markdown body (local file refs intact)
     content: String,
-    /// Rewritten markdown body (local file refs replaced with server URLs).
-    /// Populated after attachment processing; initially same as `content`.
     rewritten_content: String,
     content_hash: String,
-    /// Hash of front-matter metadata fields, mirroring `ingest::compute_metadata_hash`.
     metadata_hash: String,
     access_level: String,
     service_owner: String,
@@ -364,7 +378,6 @@ struct DocumentInfo {
     parent_slug: Option<String>,
     order: i32,
     is_hidden: bool,
-    /// Attachments found in this document
     attachments: Vec<AttachmentInfo>,
 }
 
@@ -659,13 +672,63 @@ fn slug_from_path(file: &Path, root: &Path) -> String {
     without_ext.to_string_lossy().replace('\\', "/")
 }
 
-/// Scan all `.md` files under `root` and build a map of slug → DocumentInfo.
+/// Derive the source_path (relative file path with extension) from an absolute path.
+/// e.g., `<root>/docs/guides/intro.md` → `docs/guides/intro.md`
+fn source_path_from_file(file: &Path, root: &Path) -> String {
+    let relative = file.strip_prefix(root).unwrap_or(file);
+    relative.to_string_lossy().replace('\\', "/")
+}
+
+/// Normalise a title into a URL-safe slug segment.
+///
+/// Rules: lowercase, collapse any run of non-alphanumeric characters into a
+/// single `-`, strip leading/trailing `-`.
+///
+/// e.g., `"Guidelines & Best Practices!"` → `"guidelines-best-practices"`
+fn slug_from_title(title: &str) -> String {
+    let mut result = String::with_capacity(title.len());
+    let mut prev_sep = true; // start true so leading separators are dropped
+    for c in title.chars() {
+        if c.is_alphanumeric() {
+            result.extend(c.to_lowercase());
+            prev_sep = false;
+        } else if !prev_sep {
+            result.push('-');
+            prev_sep = true;
+        }
+    }
+    // Trim trailing separator that may have been added for a trailing non-alnum char
+    result.trim_end_matches('-').to_string()
+}
+
+/// Intermediate representation used during scanning before order assignment.
+struct ScannedDoc {
+    source_path: String,
+    slug: String,
+    legacy_slug: Option<String>,
+    title: String,
+    content: String,
+    rewritten_content: String,
+    content_hash: String,
+    metadata_hash: String,
+    access_level: String,
+    service_owner: String,
+    tags: Vec<String>,
+    parent_slug: Option<String>,
+    explicit_order: Option<i32>,
+    is_hidden: bool,
+    attachments: Vec<AttachmentInfo>,
+}
+
+/// Scan all `.md` files under `root` and build a map of source_path → DocumentInfo.
+///
 /// Files without `lekton-import: true` in their front matter are skipped.
-/// Also extracts local file references and builds attachment info.
+/// Documents without an explicit `order` in front matter receive an implicit order
+/// derived from alphabetical filename position within their parent group.
 fn scan_documents(root: &Path, config: &LektonConfig) -> Result<HashMap<String, DocumentInfo>> {
     let max_attachment_size_bytes =
         (config.max_attachment_size_mb.unwrap_or(10) as u64) * 1024 * 1024;
-    let mut docs = HashMap::new();
+    let mut scanned: Vec<ScannedDoc> = Vec::new();
 
     for entry in WalkDir::new(root)
         .follow_links(true)
@@ -682,27 +745,54 @@ fn scan_documents(root: &Path, config: &LektonConfig) -> Result<HashMap<String, 
 
         let (fm, body) = parse_front_matter(&source);
 
-        // Skip files not explicitly marked for import
         if !fm.lekton_import {
             continue;
         }
 
-        let derived_slug = slug_from_path(path, root);
-        let slug_raw = fm.slug.clone().unwrap_or_else(|| derived_slug.clone());
+        let source_path = source_path_from_file(path, root);
+        // Path-based slug (legacy behaviour, used as legacy_slug for migration)
+        let path_derived = slug_from_path(path, root);
+
+        // Slug priority: explicit front-matter slug > title-derived > path-derived
+        let slug_raw = if let Some(ref explicit) = fm.slug {
+            explicit.clone()
+        } else if let Some(ref title) = fm.title {
+            let title_slug = slug_from_title(title);
+            // Prepend the directory prefix so the slug stays within the same tree
+            if let Some((parent_dir, _)) = path_derived.rsplit_once('/') {
+                format!("{parent_dir}/{title_slug}")
+            } else {
+                title_slug
+            }
+        } else {
+            path_derived.clone()
+        };
+
+        // legacy_slug is the path-derived slug; only emitted when it differs from slug_raw
+        let legacy_slug_raw = fm.slug.clone().unwrap_or_else(|| path_derived.clone());
 
         let parsed_parent = if let Some(p) = fm.parent_slug {
             Some(p)
+        } else if let Some((parent, _)) = path_derived.rsplit_once('/') {
+            Some(parent.to_string())
         } else {
-            if let Some((parent, _)) = derived_slug.rsplit_once('/') {
-                Some(parent.to_string())
-            } else {
-                None
-            }
+            None
         };
 
         let slug = match &config.slug_prefix {
             Some(prefix) if !prefix.is_empty() => format!("{prefix}/{slug_raw}"),
-            _ => slug_raw,
+            _ => slug_raw.clone(),
+        };
+
+        let legacy_slug_full = match &config.slug_prefix {
+            Some(prefix) if !prefix.is_empty() => format!("{prefix}/{legacy_slug_raw}"),
+            _ => legacy_slug_raw.clone(),
+        };
+        // Only emit legacy_slug when it actually differs from the desired slug
+        let legacy_slug = if legacy_slug_full != slug {
+            Some(legacy_slug_full)
+        } else {
+            None
         };
 
         let parent_slug = match &config.slug_prefix {
@@ -713,7 +803,23 @@ fn scan_documents(root: &Path, config: &LektonConfig) -> Result<HashMap<String, 
             _ => parsed_parent,
         };
 
-        let title = fm.title.unwrap_or_else(|| slug.clone());
+        let title = fm.title.unwrap_or_else(|| {
+            // Fall back to humanised slug segment when no title in front matter
+            slug.rsplit_once('/')
+                .map(|(_, s)| s)
+                .unwrap_or(&slug)
+                .replace('-', " ")
+                .split_whitespace()
+                .map(|w| {
+                    let mut c = w.chars();
+                    match c.next() {
+                        None => String::new(),
+                        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        });
         let access_level = fm
             .access_level
             .or_else(|| config.default_access_level.clone())
@@ -723,45 +829,102 @@ fn scan_documents(root: &Path, config: &LektonConfig) -> Result<HashMap<String, 
             .or_else(|| config.default_service_owner.clone())
             .unwrap_or_default();
         let tags = fm.tags.unwrap_or_default();
-        let order = fm.order.unwrap_or(0);
         let is_hidden = fm.is_hidden.unwrap_or(false);
 
-        // Extract local file references and build attachments
         let md_file_dir = path.parent().unwrap_or(root);
         let local_refs = extract_local_file_refs(&body, md_file_dir);
         let attachments = resolve_attachments(&local_refs, &slug, max_attachment_size_bytes);
 
-        // Rewrite content: replace local paths with server asset URLs
         let rewritten_content = rewrite_content(&body, &attachments);
-        // Hash the rewritten content for consistent sync comparison
         let content_hash = compute_hash(&rewritten_content);
-        // Hash front-matter metadata so metadata-only changes trigger a re-upload
-        let metadata_hash = compute_metadata_hash(
-            &title,
-            &access_level,
-            &service_owner,
-            &tags,
-            parent_slug.as_deref(),
-            order,
-            is_hidden,
-        );
+        // metadata_hash is computed after order is known (see post-processing below)
 
+        scanned.push(ScannedDoc {
+            source_path,
+            slug,
+            legacy_slug,
+            title,
+            content: body,
+            rewritten_content,
+            content_hash,
+            metadata_hash: String::new(), // filled in below
+            access_level,
+            service_owner,
+            tags,
+            parent_slug,
+            explicit_order: fm.order,
+            is_hidden,
+            attachments,
+        });
+    }
+
+    // ── Assign implicit order based on alphabetical filename position ────────
+    // Group indices by parent_slug, sort each group by the filename component of
+    // source_path, then assign order = 0, 1, 2… to entries without explicit order.
+    {
+        use std::collections::HashMap as HMap;
+        let mut groups: HMap<Option<String>, Vec<usize>> = HMap::new();
+        for (i, doc) in scanned.iter().enumerate() {
+            groups.entry(doc.parent_slug.clone()).or_default().push(i);
+        }
+
+        for indices in groups.values() {
+            let mut sorted: Vec<usize> = indices.clone();
+            sorted.sort_by(|&a, &b| {
+                let fa = scanned[a]
+                    .source_path
+                    .rsplit_once('/')
+                    .map(|(_, f)| f)
+                    .unwrap_or(&scanned[a].source_path);
+                let fb = scanned[b]
+                    .source_path
+                    .rsplit_once('/')
+                    .map(|(_, f)| f)
+                    .unwrap_or(&scanned[b].source_path);
+                fa.cmp(fb)
+            });
+
+            let mut implicit = 0i32;
+            for &idx in &sorted {
+                if scanned[idx].explicit_order.is_none() {
+                    scanned[idx].explicit_order = Some(implicit);
+                }
+                implicit += 1;
+            }
+        }
+    }
+
+    // ── Compute metadata hashes now that order is final ──────────────────────
+    let mut docs: HashMap<String, DocumentInfo> = HashMap::new();
+    for mut doc in scanned {
+        let order = doc.explicit_order.unwrap_or(0);
+        doc.metadata_hash = compute_metadata_hash(
+            &doc.title,
+            &doc.access_level,
+            &doc.service_owner,
+            &doc.tags,
+            doc.parent_slug.as_deref(),
+            order,
+            doc.is_hidden,
+        );
         docs.insert(
-            slug.clone(),
+            doc.source_path.clone(),
             DocumentInfo {
-                slug,
-                title,
-                content: body,
-                rewritten_content,
-                content_hash,
-                metadata_hash,
-                access_level,
-                service_owner,
-                tags,
-                parent_slug,
+                source_path: doc.source_path,
+                slug: doc.slug,
+                legacy_slug: doc.legacy_slug,
+                title: doc.title,
+                content: doc.content,
+                rewritten_content: doc.rewritten_content,
+                content_hash: doc.content_hash,
+                metadata_hash: doc.metadata_hash,
+                access_level: doc.access_level,
+                service_owner: doc.service_owner,
+                tags: doc.tags,
+                parent_slug: doc.parent_slug,
                 order,
-                is_hidden,
-                attachments,
+                is_hidden: doc.is_hidden,
+                attachments: doc.attachments,
             },
         );
     }
@@ -1124,9 +1287,11 @@ async fn main() -> Result<()> {
         let sync_entries: Vec<SyncDocEntry> = docs
             .values()
             .map(|d| SyncDocEntry {
+                source_path: d.source_path.clone(),
                 slug: d.slug.clone(),
                 content_hash: d.content_hash.clone(),
                 metadata_hash: d.metadata_hash.clone(),
+                legacy_slug: d.legacy_slug.clone(),
             })
             .collect();
 
@@ -1153,7 +1318,7 @@ async fn main() -> Result<()> {
             .context("Failed to parse sync response")?;
 
         println!(
-            "Document sync result: {} to upload, {} unchanged, {} to archive",
+            "Documents: {} to upload, {} unchanged, {} to archive",
             result.to_upload.len(),
             result.unchanged.len(),
             result.to_archive.len(),
@@ -1303,8 +1468,8 @@ async fn main() -> Result<()> {
         }
         if !sync_result.to_upload.is_empty() {
             println!("\nWould upload documents:");
-            for slug in &sync_result.to_upload {
-                println!("  + {slug}");
+            for entry in &sync_result.to_upload {
+                println!("  + {} (slug: {})", entry.source_path, entry.actual_slug);
             }
         }
         if !prompt_sync_result.to_upload.is_empty() {
@@ -1339,8 +1504,8 @@ async fn main() -> Result<()> {
         }
         if !sync_result.unchanged.is_empty() && args.verbose {
             println!("\nUnchanged:");
-            for slug in &sync_result.unchanged {
-                println!("  = {slug}");
+            for source_path in &sync_result.unchanged {
+                println!("  = {source_path}");
             }
         }
         if !schema_sync_result.unchanged.is_empty() && args.verbose {
@@ -1476,19 +1641,26 @@ async fn main() -> Result<()> {
     let mut uploaded = 0usize;
     let mut errors = 0usize;
 
-    for slug in &sync_result.to_upload {
-        let Some(doc) = docs.get(slug) else {
-            eprintln!("Warning: server requested upload of unknown slug '{slug}', skipping");
+    for upload_entry in &sync_result.to_upload {
+        let Some(doc) = docs.get(&upload_entry.source_path) else {
+            eprintln!(
+                "Warning: server requested upload of unknown source_path '{}', skipping",
+                upload_entry.source_path
+            );
             continue;
         };
 
         if args.verbose {
-            eprintln!("Uploading: {slug}");
+            eprintln!(
+                "Uploading: {} (slug: {})",
+                upload_entry.source_path, upload_entry.actual_slug
+            );
         }
 
         let ingest_body = IngestRequest {
             service_token: token.clone(),
-            slug: doc.slug.clone(),
+            source_path: doc.source_path.clone(),
+            slug: upload_entry.actual_slug.clone(),
             title: doc.title.clone(),
             content: doc.rewritten_content.clone(),
             access_level: doc.access_level.clone(),
@@ -1519,19 +1691,25 @@ async fn main() -> Result<()> {
                     } else {
                         "metadata only"
                     };
-                    println!("  uploaded: {slug} ({note})");
+                    println!(
+                        "  uploaded: {} (slug: {}, {note})",
+                        upload_entry.source_path, upload_entry.actual_slug
+                    );
                 } else {
-                    println!("  uploaded: {slug}");
+                    println!("  uploaded: {}", upload_entry.source_path);
                 }
             }
             Ok(r) => {
                 let status = r.status();
                 let body = r.text().await.unwrap_or_default();
-                eprintln!("  error: {slug}: HTTP {status} — {body}");
+                eprintln!(
+                    "  error: {}: HTTP {status} — {body}",
+                    upload_entry.source_path
+                );
                 errors += 1;
             }
             Err(e) => {
-                eprintln!("  error: {slug}: {e}");
+                eprintln!("  error: {}: {e}", upload_entry.source_path);
                 errors += 1;
             }
         }

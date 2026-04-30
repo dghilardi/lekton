@@ -39,6 +39,15 @@ scopes = "openid profile email"
 # Allowed Host header values for the MCP Streamable HTTP endpoint (DNS rebinding protection).
 # Empty list disables the check (any host is accepted).
 allowed_hosts = ["localhost", "127.0.0.1", "::1"]
+# Keep MCP sessions across requests. Stateful sessions are in-memory and expire
+# after session_keep_alive_secs seconds of inactivity.
+stateful_mode = true
+# In stateless mode, return application/json directly instead of SSE-framed responses.
+json_response = false
+# Set to null to disable the inactivity timeout.
+session_keep_alive_secs = 300
+# Resume cache lifetime for completed request streams in stateful mode.
+completed_cache_ttl_secs = 60
 
 [rag]
 # Leave both empty to disable RAG entirely.

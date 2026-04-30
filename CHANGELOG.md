@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- MCP Streamable HTTP session settings for stateful/stateless mode, JSON responses, inactivity timeout, and completed-stream resume cache lifetime.
+
 ## [0.23.0] 2026-04-30
 
 ### Added

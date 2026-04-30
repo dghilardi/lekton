@@ -45,6 +45,7 @@ async fn main() {
     use leptos_axum::{generate_route_list, LeptosRoutes};
     use std::net::SocketAddr;
     use std::sync::Arc;
+    use std::time::Duration;
     use tower_http::services::ServeDir;
 
     // Install a default rustls CryptoProvider before any TLS connections are made.
@@ -662,7 +663,15 @@ async fn main() {
         } else {
             StreamableHttpServerConfig::default()
                 .with_allowed_hosts(config.mcp.allowed_hosts.clone())
-        };
+        }
+        .with_stateful_mode(config.mcp.stateful_mode)
+        .with_json_response(config.mcp.json_response);
+
+        let mut session_manager = LocalSessionManager::default();
+        session_manager.session_config.keep_alive =
+            config.mcp.session_keep_alive_secs.map(Duration::from_secs);
+        session_manager.session_config.completed_cache_ttl =
+            Duration::from_secs(config.mcp.completed_cache_ttl_secs);
 
         let mcp_service = StreamableHttpService::new(
             move || {
@@ -677,7 +686,7 @@ async fn main() {
                     vs.clone(),
                 ))
             },
-            LocalSessionManager::default().into(),
+            session_manager.into(),
             mcp_config,
         );
 
@@ -692,7 +701,13 @@ async fn main() {
 
         app = app.merge(mcp_router);
 
-        tracing::info!("MCP server mounted at POST /mcp (Streamable HTTP, PAT auth)");
+        tracing::info!(
+            stateful_mode = config.mcp.stateful_mode,
+            json_response = config.mcp.json_response,
+            session_keep_alive_secs = ?config.mcp.session_keep_alive_secs,
+            completed_cache_ttl_secs = config.mcp.completed_cache_ttl_secs,
+            "MCP server mounted at POST /mcp (Streamable HTTP, PAT auth)"
+        );
     } else {
         tracing::info!("MCP server not available — RAG not configured");
     }

@@ -134,6 +134,24 @@ pub struct McpConfig {
     /// Default: `["localhost", "127.0.0.1", "::1"]`.
     #[serde(default = "default_mcp_allowed_hosts")]
     pub allowed_hosts: Vec<String>,
+    /// Keep MCP Streamable HTTP sessions across requests.
+    ///
+    /// Stateful mode enables `Mcp-Session-Id` and SSE resume support, but
+    /// sessions are local to the current server process. Set to `false` for
+    /// stateless request/response behaviour that is more robust across server
+    /// restarts and non-sticky load balancers.
+    pub stateful_mode: bool,
+    /// Return direct JSON responses in stateless mode instead of SSE-framed
+    /// responses. Ignored when `stateful_mode = true`.
+    pub json_response: bool,
+    /// Inactivity timeout for stateful MCP sessions, in seconds.
+    ///
+    /// `null` disables the timeout. The rmcp default is 300 seconds.
+    pub session_keep_alive_secs: Option<u64>,
+    /// How long completed request streams can be resumed, in seconds.
+    ///
+    /// Only applies in stateful mode.
+    pub completed_cache_ttl_secs: u64,
 }
 
 fn default_mcp_allowed_hosts() -> Vec<String> {
@@ -459,6 +477,17 @@ mod tests {
         assert_eq!(config.storage.bucket, "testing-bucket");
         assert!(config.auth.demo_mode);
         assert_eq!(config.server.rate_limit_burst, 123);
+    }
+
+    #[test]
+    #[cfg(feature = "ssr")]
+    fn test_mcp_session_config_defaults() {
+        let config = super::AppConfig::load().expect("Failed to load config");
+
+        assert!(config.mcp.stateful_mode);
+        assert!(!config.mcp.json_response);
+        assert_eq!(config.mcp.session_keep_alive_secs, Some(300));
+        assert_eq!(config.mcp.completed_cache_ttl_secs, 60);
     }
 
     #[test]

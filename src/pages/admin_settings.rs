@@ -525,7 +525,7 @@ fn DocumentationFeedbackAdminPanel() -> impl IntoView {
                             <input
                                 type="text"
                                 class="input input-bordered h-12 focus:input-primary"
-                                placeholder="Search title, summary, docs:// URI, or proposal"
+                                placeholder="Search title, summary, lekton://docs/ URI, or proposal"
                                 prop:value=move || query.get()
                                 on:input=move |ev| {
                                     set_page.set(0);

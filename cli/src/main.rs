@@ -10,6 +10,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
+const SUMMARY_RECOMMENDED_MIN_CHARS: usize = 50;
+const SUMMARY_RECOMMENDED_MAX_CHARS: usize = 200;
+
 // ── CLI args ──────────────────────────────────────────────────────────────────
 
 #[derive(Parser)]
@@ -89,6 +92,7 @@ struct LektonConfig {
 struct FrontMatter {
     slug: Option<String>,
     title: Option<String>,
+    summary: Option<String>,
     #[serde(alias = "access-level", alias = "accessLevel")]
     access_level: Option<String>,
     #[serde(alias = "service-owner", alias = "serviceOwner")]
@@ -256,6 +260,7 @@ struct IngestRequest {
     source_path: String,
     slug: String,
     title: String,
+    summary: Option<String>,
     content: String,
     access_level: String,
     service_owner: String,
@@ -368,6 +373,7 @@ struct DocumentInfo {
     /// before `source_path` was introduced.
     legacy_slug: Option<String>,
     title: String,
+    summary: Option<String>,
     content: String,
     rewritten_content: String,
     content_hash: String,
@@ -423,10 +429,11 @@ fn compute_hash(content: &str) -> String {
 /// Compute a metadata hash that matches `ingest::compute_metadata_hash` on the server.
 ///
 /// Including front-matter fields in the hash lets the sync protocol detect
-/// metadata-only changes (e.g. `access_level`, `title`) without relying on
+/// metadata-only changes (e.g. `access_level`, `title`, `summary`) without relying on
 /// content byte differences.
 fn compute_metadata_hash(
     title: &str,
+    summary: Option<&str>,
     access_level: &str,
     service_owner: &str,
     tags: &[String],
@@ -437,7 +444,8 @@ fn compute_metadata_hash(
     let mut sorted_tags: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
     sorted_tags.sort_unstable();
     let canonical = format!(
-        "title={title}\naccess_level={}\nservice_owner={service_owner}\ntags={}\nparent_slug={}\norder={order}\nis_hidden={is_hidden}",
+        "title={title}\nsummary={}\naccess_level={}\nservice_owner={service_owner}\ntags={}\nparent_slug={}\norder={order}\nis_hidden={is_hidden}",
+        summary.unwrap_or(""),
         access_level.to_lowercase(),
         sorted_tags.join(","),
         parent_slug.unwrap_or(""),
@@ -701,12 +709,35 @@ fn slug_from_title(title: &str) -> String {
     result.trim_end_matches('-').to_string()
 }
 
+fn normalize_summary(summary: Option<String>) -> Option<String> {
+    summary
+        .map(|summary| summary.trim().to_string())
+        .filter(|summary| !summary.is_empty())
+}
+
+fn warn_about_summary(source_path: &str, summary: Option<&str>) {
+    match summary {
+        None => eprintln!(
+            "Warning: document '{source_path}' has no summary; recommended summary length is {SUMMARY_RECOMMENDED_MIN_CHARS}-{SUMMARY_RECOMMENDED_MAX_CHARS} characters"
+        ),
+        Some(summary) => {
+            let len = summary.chars().count();
+            if !(SUMMARY_RECOMMENDED_MIN_CHARS..=SUMMARY_RECOMMENDED_MAX_CHARS).contains(&len) {
+                eprintln!(
+                    "Warning: document '{source_path}' summary is {len} characters; recommended length is {SUMMARY_RECOMMENDED_MIN_CHARS}-{SUMMARY_RECOMMENDED_MAX_CHARS} characters"
+                );
+            }
+        }
+    }
+}
+
 /// Intermediate representation used during scanning before order assignment.
 struct ScannedDoc {
     source_path: String,
     slug: String,
     legacy_slug: Option<String>,
     title: String,
+    summary: Option<String>,
     content: String,
     rewritten_content: String,
     content_hash: String,
@@ -820,6 +851,8 @@ fn scan_documents(root: &Path, config: &LektonConfig) -> Result<HashMap<String, 
                 .collect::<Vec<_>>()
                 .join(" ")
         });
+        let summary = normalize_summary(fm.summary);
+        warn_about_summary(&source_path, summary.as_deref());
         let access_level = fm
             .access_level
             .or_else(|| config.default_access_level.clone())
@@ -844,6 +877,7 @@ fn scan_documents(root: &Path, config: &LektonConfig) -> Result<HashMap<String, 
             slug,
             legacy_slug,
             title,
+            summary,
             content: body,
             rewritten_content,
             content_hash,
@@ -900,6 +934,7 @@ fn scan_documents(root: &Path, config: &LektonConfig) -> Result<HashMap<String, 
         let order = doc.explicit_order.unwrap_or(0);
         doc.metadata_hash = compute_metadata_hash(
             &doc.title,
+            doc.summary.as_deref(),
             &doc.access_level,
             &doc.service_owner,
             &doc.tags,
@@ -914,6 +949,7 @@ fn scan_documents(root: &Path, config: &LektonConfig) -> Result<HashMap<String, 
                 slug: doc.slug,
                 legacy_slug: doc.legacy_slug,
                 title: doc.title,
+                summary: doc.summary,
                 content: doc.content,
                 rewritten_content: doc.rewritten_content,
                 content_hash: doc.content_hash,
@@ -1662,6 +1698,7 @@ async fn main() -> Result<()> {
             source_path: doc.source_path.clone(),
             slug: upload_entry.actual_slug.clone(),
             title: doc.title.clone(),
+            summary: doc.summary.clone(),
             content: doc.rewritten_content.clone(),
             access_level: doc.access_level.clone(),
             service_owner: doc.service_owner.clone(),
@@ -1947,8 +1984,12 @@ mod tests {
 
     #[test]
     fn parse_front_matter_accepts_camel_case_keys() {
-        let src = "---\naccessLevel: developer\nserviceOwner: platform\nparentSlug: docs\nisHidden: true\nlektonImport: true\n---\n# Body";
+        let src = "---\nsummary: Brief guide to the platform deployment workflow.\naccessLevel: developer\nserviceOwner: platform\nparentSlug: docs\nisHidden: true\nlektonImport: true\n---\n# Body";
         let (fm, _) = parse_front_matter(src);
+        assert_eq!(
+            fm.summary.as_deref(),
+            Some("Brief guide to the platform deployment workflow.")
+        );
         assert_eq!(fm.access_level.as_deref(), Some("developer"));
         assert_eq!(fm.service_owner.as_deref(), Some("platform"));
         assert_eq!(fm.parent_slug.as_deref(), Some("docs"));
@@ -1964,12 +2005,16 @@ mod tests {
         std::fs::File::create(&path)
             .unwrap()
             .write_all(
-                b"---\ntitle: Guide\naccessLevel: public\nserviceOwner: docs\nparentSlug: handbook\nisHidden: true\nlektonImport: true\n---\n# Guide body\n",
+                b"---\ntitle: Guide\nsummary: A concise guide for testing camel case front matter fields in document sync.\naccessLevel: public\nserviceOwner: docs\nparentSlug: handbook\nisHidden: true\nlektonImport: true\n---\n# Guide body\n",
             )
             .unwrap();
         let docs = scan_documents(dir.path(), &LektonConfig::default()).unwrap();
         assert_eq!(docs.len(), 1);
         let doc = docs.values().next().unwrap();
+        assert_eq!(
+            doc.summary.as_deref(),
+            Some("A concise guide for testing camel case front matter fields in document sync.")
+        );
         assert_eq!(doc.access_level, "public");
         assert_eq!(doc.service_owner, "docs");
         assert_eq!(doc.parent_slug.as_deref(), Some("handbook"));

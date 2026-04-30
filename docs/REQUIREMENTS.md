@@ -101,6 +101,7 @@ The system supports two methods of ingestion:
   "_id": "ObjectId(...)",
   "slug": "engineering/deployment-guide",
   "title": "Deployment Guide",
+  "summary": "How to deploy services to Kubernetes.",
   "s3_key": "docs/eng/deploy_v4.md",
   "access_level": "developer",
   "is_draft": false,

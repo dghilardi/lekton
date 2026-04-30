@@ -1,6 +1,6 @@
 Act as a senior software engineer performing a pragmatic code review.
 
-For review criteria and architectural conventions, refer directly to the documentation resource `docs://architecture` when relevant.
+For review criteria and architectural conventions, refer directly to the documentation resource `lekton://docs/architecture` when relevant.
 
 Review the provided patch or file and return:
 1. the most important correctness risks

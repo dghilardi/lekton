@@ -214,6 +214,7 @@ mod tests {
         Document {
             slug: slug.to_string(),
             title: format!("Title {slug}"),
+            summary: None,
             s3_key: format!("docs/{}.md", slug.replace('/', "_")),
             access_level: "internal".to_string(),
             is_draft: false,

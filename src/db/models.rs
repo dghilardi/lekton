@@ -10,6 +10,9 @@ pub struct Document {
     pub slug: String,
     /// Human-readable title.
     pub title: String,
+    /// Short human-readable summary used for resource discovery.
+    #[serde(default)]
+    pub summary: Option<String>,
     /// The S3 key where the markdown content is stored.
     pub s3_key: String,
     /// Access level name (references `AccessLevelEntity.name`, e.g. `"public"`, `"internal"`).
@@ -47,7 +50,7 @@ pub struct Document {
     pub content_hash: Option<String>,
     /// SHA-256 hash of the document's front-matter metadata (same format as
     /// `content_hash`).  Used by the sync protocol to detect metadata-only
-    /// changes (e.g. `access_level`, `title`) that don't alter the body text.
+    /// changes (e.g. `access_level`, `title`, `summary`) that don't alter the body text.
     /// `None` for documents ingested before metadata hashing was introduced.
     #[serde(default)]
     pub metadata_hash: Option<String>,
@@ -162,6 +165,9 @@ pub struct IngestRequest {
     pub slug: String,
     /// Human-readable title.
     pub title: String,
+    /// Optional short summary for resource discovery.
+    #[serde(default)]
+    pub summary: Option<String>,
     /// Raw Markdown content.
     pub content: String,
     /// Access level name (e.g. `"public"`, `"internal"`).
@@ -218,6 +224,7 @@ mod tests {
         let doc = Document {
             slug: "engineering/deployment-guide".to_string(),
             title: "Deployment Guide".to_string(),
+            summary: Some("How to deploy services to Kubernetes.".to_string()),
             s3_key: "docs/eng/deploy_v4.md".to_string(),
             access_level: "internal".to_string(),
             is_draft: false,
@@ -238,6 +245,10 @@ mod tests {
         let json = serde_json::to_string(&doc).unwrap();
         let deserialized: Document = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.slug, "engineering/deployment-guide");
+        assert_eq!(
+            deserialized.summary.as_deref(),
+            Some("How to deploy services to Kubernetes.")
+        );
         assert_eq!(deserialized.access_level, "internal");
         assert!(!deserialized.is_draft);
         assert_eq!(deserialized.tags.len(), 2);
@@ -271,6 +282,7 @@ mod tests {
         assert_eq!(doc.order, 0);
         assert!(!doc.is_hidden);
         assert_eq!(doc.content_hash, None); // backward compat
+        assert_eq!(doc.summary, None); // backward compat
         assert_eq!(doc.source_path, None); // backward compat
     }
 
@@ -303,6 +315,7 @@ mod tests {
         let doc = Document {
             slug: "engineering/wip".to_string(),
             title: "Work in Progress".to_string(),
+            summary: None,
             s3_key: "docs/wip.md".to_string(),
             access_level: "internal".to_string(),
             is_draft: true,
@@ -332,6 +345,7 @@ mod tests {
             "source_path": "docs/hello.md",
             "slug": "docs/hello",
             "title": "Hello World",
+            "summary": "Introduces the internal onboarding flow.",
             "content": "# Hello\nWorld",
             "access_level": "internal",
             "service_owner": "my-team",
@@ -340,6 +354,10 @@ mod tests {
 
         let req: IngestRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.slug, "docs/hello");
+        assert_eq!(
+            req.summary.as_deref(),
+            Some("Introduces the internal onboarding flow.")
+        );
         assert_eq!(req.source_path, "docs/hello.md");
         assert_eq!(req.access_level, "internal");
         assert!(!req.is_draft);
@@ -352,6 +370,7 @@ mod tests {
             "source_path": "docs/wip.md",
             "slug": "docs/wip",
             "title": "WIP",
+            "summary": null,
             "content": "draft content",
             "access_level": "internal",
             "service_owner": "team",
@@ -376,6 +395,7 @@ mod tests {
 
         let req: IngestRequest = serde_json::from_str(json).unwrap();
         assert!(req.tags.is_empty());
+        assert_eq!(req.summary, None);
         assert!(!req.is_draft);
         assert_eq!(req.order, 0);
     }

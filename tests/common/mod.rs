@@ -443,6 +443,7 @@ impl TestEnv {
                 "slug": slug,
                 "source_path": format!("docs/{}.md", slug),
                 "title": title,
+                "summary": format!("Test summary for {title} used by automated ingestion checks."),
                 "content": content,
                 "access_level": access_level,
                 "service_owner": "test-team",

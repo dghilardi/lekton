@@ -30,6 +30,35 @@ async fn document_stores_and_returns_tags() {
 }
 
 #[tokio::test]
+async fn document_stores_summary() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+
+    let slug = format!("summary-test-{}", uuid::Uuid::new_v4());
+    let summary = "Explains how the platform deployment checklist is prepared and reviewed.";
+
+    server
+        .post("/api/v1/ingest")
+        .json(&serde_json::json!({
+            "service_token": "test-token",
+            "slug": slug,
+            "source_path": format!("docs/{}.md", slug),
+            "title": "Summary Document",
+            "summary": summary,
+            "content": "# Summary\n\nThis has a summary.",
+            "access_level": "public",
+            "service_owner": "test-team",
+            "tags": ["docs"],
+            "order": 0,
+            "is_hidden": false
+        }))
+        .await;
+
+    let doc = env.repo.find_by_slug(&slug).await.unwrap().unwrap();
+    assert_eq!(doc.summary.as_deref(), Some(summary));
+}
+
+#[tokio::test]
 async fn document_has_last_updated_timestamp() {
     let env = common::TestEnv::start().await;
     let server = env.server();

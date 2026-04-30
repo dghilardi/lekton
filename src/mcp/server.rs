@@ -6,7 +6,7 @@
 //! - **`search_documents`** — semantic search via Qdrant vector store.
 //!
 //! Documentation is exposed primarily as native MCP resources under the
-//! `docs://` URI scheme, so clients can enumerate and read full documents
+//! `lekton://docs/` URI scheme, so clients can enumerate and read full documents
 //! directly without going through a read tool.
 //!
 //! Prompt tools exposed to MCP clients:
@@ -190,8 +190,8 @@ struct StoredPromptBlob {
     prompt_body: String,
 }
 
-const DOCS_URI_SCHEME: &str = "docs://";
-const DOCS_RESOURCE_TEMPLATE: &str = "docs://{id}";
+const DOCS_URI_SCHEME: &str = "lekton://docs/";
+const DOCS_RESOURCE_TEMPLATE: &str = "lekton://docs/{id}";
 
 // ── MCP Server ──────────────────────────────────────────────────────────────
 
@@ -754,7 +754,7 @@ impl LektonMcpServer {
     /// Returns the document tree visible to the authenticated user.
     #[tool(
         name = "get_index",
-        description = "Legacy helper that returns the tree of available documents with their slugs, titles, hierarchy, and docs:// resource URIs. Prefer list_resources for native MCP resource discovery."
+        description = "Legacy helper that returns the tree of available documents with their slugs, titles, hierarchy, and lekton://docs/ resource URIs. Prefer list_resources for native MCP resource discovery."
     )]
     async fn get_index(&self, ctx: RequestContext<RoleServer>) -> Result<CallToolResult, McpError> {
         let user_ctx = user_context(&ctx)?;
@@ -792,7 +792,7 @@ impl LektonMcpServer {
     /// Performs semantic search across documentation.
     #[tool(
         name = "search_documents",
-        description = "Searches documentation using semantic similarity. Returns relevant text fragments together with the corresponding docs:// resource URI to read the full document."
+        description = "Searches documentation using semantic similarity. Returns relevant text fragments together with the corresponding lekton://docs/ resource URI to read the full document."
     )]
     async fn search_documents(
         &self,
@@ -884,7 +884,7 @@ impl LektonMcpServer {
 
     #[tool(
         name = "report_missing_documentation",
-        description = "Creates a structured documentation-gap report when required guidance is missing after checking docs:// resources and search results."
+        description = "Creates a structured documentation-gap report when required guidance is missing after checking lekton://docs/ resources and search results."
     )]
     async fn report_missing_documentation(
         &self,
@@ -1371,9 +1371,8 @@ impl ServerHandler for LektonMcpServer {
             .into_iter()
             .filter(|doc| !doc.is_archived)
             .map(|doc| {
-                RawResource::new(document_resource_uri(&doc.slug), doc.slug.clone())
-                    .with_title(doc.title.clone())
-                    .with_description(format!(
+                let description = doc.summary.clone().unwrap_or_else(|| {
+                    format!(
                         "Markdown documentation for '{}' (access: {}, tags: {}).",
                         doc.slug,
                         doc.access_level,
@@ -1382,7 +1381,11 @@ impl ServerHandler for LektonMcpServer {
                         } else {
                             doc.tags.join(", ")
                         }
-                    ))
+                    )
+                });
+                RawResource::new(document_resource_uri(&doc.slug), doc.slug.clone())
+                    .with_title(doc.title.clone())
+                    .with_description(description)
                     .with_mime_type("text/markdown")
                     .no_annotation()
             })
@@ -1407,7 +1410,7 @@ impl ServerHandler for LektonMcpServer {
             )
             .with_title("Documentation Resource by Slug")
             .with_description(
-                "Use this template to read a specific documentation page once you know its slug/id from list_resources or search_documents. Example: docs://hr/ferie",
+                "Use this template to read a specific documentation page once you know its slug/id from list_resources or search_documents. Example: lekton://docs/hr/ferie",
             )
             .with_mime_type("text/markdown")
             .no_annotation()],
@@ -1464,17 +1467,17 @@ impl ServerHandler for LektonMcpServer {
         .with_protocol_version(ProtocolVersion::V_2025_03_26)
         .with_instructions(
             "Lekton documentation server. Available tools:\n\
-             - get_index: Legacy document-tree helper with docs:// URIs\n\
+             - get_index: Legacy document-tree helper with lekton://docs/ URIs\n\
              - search_documents: Semantic search across documentation fragments\n\
              - search_documentation_feedback: Search existing feedback before opening a new report\n\
-             - report_missing_documentation: Report a documentation gap after verifying docs:// resources and search results\n\
+             - report_missing_documentation: Report a documentation gap after verifying lekton://docs/ resources and search results\n\
              - propose_documentation_improvement: Suggest a concrete improvement to existing documentation\n\
              - list_prompts: Browse the prompt catalog\n\
              - get_prompt: Read a specific prompt\n\
              - search_prompts: Search prompt metadata\n\
              - get_context_prompts: Return the prompt set selected for the current user context\n\
-             Full documentation is exposed as read-only MCP resources under docs://...\n\
-             Prefer list_resources to discover available documents, read_resource to load the raw markdown, and search_documents when you need vector search to find the right docs:// URI.\n\
+             Full documentation is exposed as read-only MCP resources under lekton://docs/...\n\
+             Prefer list_resources to discover available documents, read_resource to load the raw markdown, and search_documents when you need vector search to find the right lekton://docs/ URI.\n\
              Before creating documentation feedback, first use search_documentation_feedback to reduce duplicate reports.\n\
              Native MCP prompts are also exposed for the effective user context prompt set.\n\
              Schema registry tools:\n\
@@ -1649,13 +1652,13 @@ mod tests {
     #[test]
     fn docs_resource_uri_round_trip_uses_slug() {
         let uri = document_resource_uri("hr/ferie");
-        assert_eq!(uri, "docs://hr/ferie");
+        assert_eq!(uri, "lekton://docs/hr/ferie");
         assert_eq!(slug_from_docs_uri(&uri).unwrap(), "hr/ferie");
     }
 
     #[test]
     fn docs_resource_uri_requires_docs_scheme_and_non_empty_slug() {
         assert!(slug_from_docs_uri("file://notes").is_err());
-        assert!(slug_from_docs_uri("docs://").is_err());
+        assert!(slug_from_docs_uri("lekton://docs/").is_err());
     }
 }

@@ -13,7 +13,7 @@ pub struct SyncDocumentEntry {
     /// Desired slug for the document (title-derived or explicit from front matter).
     pub slug: String,
     pub content_hash: String,
-    /// Hash of front-matter metadata (title, access_level, …).
+    /// Hash of front-matter metadata (title, summary, access_level, …).
     #[serde(default)]
     pub metadata_hash: Option<String>,
     /// Path-derived slug from the old CLI (e.g. `docs/guides/intro`). Sent when
@@ -479,6 +479,7 @@ mod tests {
         Document {
             slug: slug.to_string(),
             title: slug.to_string(),
+            summary: None,
             s3_key: format!("docs/{}.md", slug.replace('/', "_")),
             access_level: "internal".to_string(),
             is_draft: false,

@@ -39,6 +39,7 @@ async fn ingest_unchanged_content_returns_not_changed() {
             "slug": slug,
             "source_path": format!("docs/{}.md", slug),
             "title": "Doc",
+            "summary": format!("Test summary for Doc used by automated ingestion checks."),
             "content": "# Same content",
             "access_level": "public",
             "service_owner": "test-team",

@@ -89,16 +89,16 @@ pub async fn process_ingest(
     // Compute metadata hash (sent by CLI alongside content_hash; stored separately
     // so that metadata-only changes can be detected during sync without requiring
     // a full content re-upload).
-    let new_metadata_hash = compute_metadata_hash(
-        &request.title,
-        summary.as_deref(),
-        &access_level,
-        &request.service_owner,
-        &request.tags,
-        request.parent_slug.as_deref(),
-        request.order,
-        request.is_hidden,
-    );
+    let new_metadata_hash = compute_metadata_hash(MetadataHashInput {
+        title: &request.title,
+        summary: summary.as_deref(),
+        access_level: &access_level,
+        service_owner: &request.service_owner,
+        tags: &request.tags,
+        parent_slug: request.parent_slug.as_deref(),
+        order: request.order,
+        is_hidden: request.is_hidden,
+    });
 
     // 5. Extract internal links from content
     let links_out = extract_internal_links(&request.content);
@@ -301,6 +301,19 @@ pub async fn process_ingest(
     })
 }
 
+/// Input for [`compute_metadata_hash`].
+#[cfg(feature = "ssr")]
+pub(crate) struct MetadataHashInput<'a> {
+    pub title: &'a str,
+    pub summary: Option<&'a str>,
+    pub access_level: &'a str,
+    pub service_owner: &'a str,
+    pub tags: &'a [String],
+    pub parent_slug: Option<&'a str>,
+    pub order: u32,
+    pub is_hidden: bool,
+}
+
 /// Build a canonical string from document metadata and hash it.
 ///
 /// The canonical format is identical to what `lekton-sync` (the CLI) computes,
@@ -310,23 +323,19 @@ pub async fn process_ingest(
 /// tags (sorted), parent_slug, order, is_hidden.
 /// `is_draft` is intentionally excluded because the CLI does not expose it yet.
 #[cfg(feature = "ssr")]
-pub(crate) fn compute_metadata_hash(
-    title: &str,
-    summary: Option<&str>,
-    access_level: &str,
-    service_owner: &str,
-    tags: &[String],
-    parent_slug: Option<&str>,
-    order: u32,
-    is_hidden: bool,
-) -> String {
-    let mut sorted_tags: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
+pub(crate) fn compute_metadata_hash(input: MetadataHashInput<'_>) -> String {
+    let mut sorted_tags: Vec<&str> = input.tags.iter().map(|s| s.as_str()).collect();
     sorted_tags.sort_unstable();
     let canonical = format!(
-        "title={title}\nsummary={}\naccess_level={access_level}\nservice_owner={service_owner}\ntags={}\nparent_slug={}\norder={order}\nis_hidden={is_hidden}",
-        summary.unwrap_or(""),
+        "title={}\nsummary={}\naccess_level={}\nservice_owner={}\ntags={}\nparent_slug={}\norder={}\nis_hidden={}",
+        input.title,
+        input.summary.unwrap_or(""),
+        input.access_level,
+        input.service_owner,
         sorted_tags.join(","),
-        parent_slug.unwrap_or(""),
+        input.parent_slug.unwrap_or(""),
+        input.order,
+        input.is_hidden,
     );
     format!(
         "sha256:{}",

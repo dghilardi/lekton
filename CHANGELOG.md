@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- MCP documentation resources now use the Lekton-specific `lekton://docs/...` URI scheme instead of the previous generic scheme.
+
 ## [0.23.1] 2026-04-30
 
 ### Added

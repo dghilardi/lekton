@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.23.0] 2026-04-30
+
 ### Added
 - `source_path` field on `Document` and `IngestRequest`: stable file-identity for each document (relative path within the repository, e.g. `docs/guide.md`). Enables slug stability across title renames and drives migration lookup for pre-existing documents.
 - `legacy_slug` field on `SyncDocumentEntry`: path-derived slug sent when the desired slug differs, allowing the server to locate documents indexed before `source_path` was introduced.

@@ -296,6 +296,7 @@ mod tests {
         let doc = crate::db::models::Document {
             slug: "getting-started".to_string(),
             title: "Getting Started".to_string(),
+            summary: None,
             s3_key: "docs/getting-started.md".to_string(),
             access_level: "public".to_string(),
             is_draft: false,
@@ -328,6 +329,7 @@ mod tests {
         let doc = crate::db::models::Document {
             slug: "wip-doc".to_string(),
             title: "WIP".to_string(),
+            summary: None,
             s3_key: "docs/wip.md".to_string(),
             access_level: "internal".to_string(),
             is_draft: true,

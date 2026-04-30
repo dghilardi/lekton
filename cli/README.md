@@ -80,6 +80,7 @@ Each markdown file must have a YAML front matter block. Files without front matt
 ```markdown
 ---
 title: My Document
+summary: Short summary used in MCP resource discovery
 slug: optional/custom-slug        # defaults to file path relative to root
 access_level: public               # defaults to "public"
 service_owner: my-team             # optional
@@ -92,6 +93,20 @@ Document body...
 ```
 
 The slug is derived from the file path relative to the root directory (e.g. `docs/guides/intro.md` → `docs/guides/intro`), unless overridden by the `slug` field in the front matter.
+
+Supported document fields:
+
+| Field | Required | Description |
+|---|---|---|
+| `title` | No | Human-readable title. Defaults to a humanized slug segment. |
+| `summary` | No | Short summary used for MCP resource discovery. Recommended length: 50-200 characters. |
+| `slug` | No | Explicit document slug. Defaults to title-derived slug, then path-derived slug. |
+| `access_level` | No | Falls back to `default_access_level`, then `public`. |
+| `service_owner` | No | Falls back to `default_service_owner`, then empty. |
+| `tags` | No | Optional tags array. |
+| `parent_slug` | No | Optional explicit parent slug. Defaults to the parent path segment. |
+| `order` | No | Optional order within a section. Defaults to implicit filename order. |
+| `is_hidden` | No | Hide from navigation while keeping direct access. Defaults to `false`. |
 
 ## Prompt format
 

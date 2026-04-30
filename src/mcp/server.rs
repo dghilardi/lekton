@@ -1371,9 +1371,8 @@ impl ServerHandler for LektonMcpServer {
             .into_iter()
             .filter(|doc| !doc.is_archived)
             .map(|doc| {
-                RawResource::new(document_resource_uri(&doc.slug), doc.slug.clone())
-                    .with_title(doc.title.clone())
-                    .with_description(format!(
+                let description = doc.summary.clone().unwrap_or_else(|| {
+                    format!(
                         "Markdown documentation for '{}' (access: {}, tags: {}).",
                         doc.slug,
                         doc.access_level,
@@ -1382,7 +1381,11 @@ impl ServerHandler for LektonMcpServer {
                         } else {
                             doc.tags.join(", ")
                         }
-                    ))
+                    )
+                });
+                RawResource::new(document_resource_uri(&doc.slug), doc.slug.clone())
+                    .with_title(doc.title.clone())
+                    .with_description(description)
                     .with_mime_type("text/markdown")
                     .no_annotation()
             })

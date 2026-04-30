@@ -24,6 +24,11 @@ use crate::storage::client::StorageClient;
 #[cfg(feature = "ssr")]
 use chrono::Utc;
 
+#[cfg(feature = "ssr")]
+pub const SUMMARY_RECOMMENDED_MIN_CHARS: usize = 50;
+#[cfg(feature = "ssr")]
+pub const SUMMARY_RECOMMENDED_MAX_CHARS: usize = 200;
+
 /// Bundles the service references needed by [`process_ingest`].
 #[cfg(feature = "ssr")]
 pub struct IngestContext<'a> {
@@ -60,6 +65,8 @@ pub async fn process_ingest(
     if request.slug.starts_with('/') {
         return Err(AppError::BadRequest("Slug must not start with '/'".into()));
     }
+    let summary = normalize_summary(request.summary.as_deref());
+    warn_about_summary(&request.slug, summary.as_deref());
 
     // 3. Validate the access_level name exists in the registry.
     if request.access_level.trim().is_empty() {
@@ -84,6 +91,7 @@ pub async fn process_ingest(
     // a full content re-upload).
     let new_metadata_hash = compute_metadata_hash(
         &request.title,
+        summary.as_deref(),
         &access_level,
         &request.service_owner,
         &request.tags,
@@ -137,6 +145,7 @@ pub async fn process_ingest(
     // Check if metadata changed (compared to existing doc)
     let metadata_changed = old_doc.as_ref().is_none_or(|d| {
         d.title != request.title
+            || d.summary != summary
             || d.access_level != access_level
             || d.is_draft != request.is_draft
             || d.service_owner != request.service_owner
@@ -212,6 +221,7 @@ pub async fn process_ingest(
     let doc = Document {
         slug: request.slug.clone(),
         title: request.title,
+        summary,
         s3_key: s3_key.clone(),
         access_level,
         is_draft: request.is_draft,
@@ -296,12 +306,13 @@ pub async fn process_ingest(
 /// The canonical format is identical to what `lekton-sync` (the CLI) computes,
 /// so the server and client always agree on what "metadata unchanged" means.
 ///
-/// Fields included: title, access_level (already lowercase), service_owner,
+/// Fields included: title, summary, access_level (already lowercase), service_owner,
 /// tags (sorted), parent_slug, order, is_hidden.
 /// `is_draft` is intentionally excluded because the CLI does not expose it yet.
 #[cfg(feature = "ssr")]
 pub(crate) fn compute_metadata_hash(
     title: &str,
+    summary: Option<&str>,
     access_level: &str,
     service_owner: &str,
     tags: &[String],
@@ -312,7 +323,8 @@ pub(crate) fn compute_metadata_hash(
     let mut sorted_tags: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
     sorted_tags.sort_unstable();
     let canonical = format!(
-        "title={title}\naccess_level={access_level}\nservice_owner={service_owner}\ntags={}\nparent_slug={}\norder={order}\nis_hidden={is_hidden}",
+        "title={title}\nsummary={}\naccess_level={access_level}\nservice_owner={service_owner}\ntags={}\nparent_slug={}\norder={order}\nis_hidden={is_hidden}",
+        summary.unwrap_or(""),
         sorted_tags.join(","),
         parent_slug.unwrap_or(""),
     );
@@ -320,6 +332,38 @@ pub(crate) fn compute_metadata_hash(
         "sha256:{}",
         crate::auth::token_service::TokenService::hash_token(&canonical)
     )
+}
+
+#[cfg(feature = "ssr")]
+fn normalize_summary(summary: Option<&str>) -> Option<String> {
+    summary
+        .map(str::trim)
+        .filter(|summary| !summary.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+#[cfg(feature = "ssr")]
+fn warn_about_summary(slug: &str, summary: Option<&str>) {
+    match summary {
+        None => tracing::warn!(
+            slug,
+            min = SUMMARY_RECOMMENDED_MIN_CHARS,
+            max = SUMMARY_RECOMMENDED_MAX_CHARS,
+            "Ingesting document without summary"
+        ),
+        Some(summary) => {
+            let len = summary.chars().count();
+            if !(SUMMARY_RECOMMENDED_MIN_CHARS..=SUMMARY_RECOMMENDED_MAX_CHARS).contains(&len) {
+                tracing::warn!(
+                    slug,
+                    len,
+                    min = SUMMARY_RECOMMENDED_MIN_CHARS,
+                    max = SUMMARY_RECOMMENDED_MAX_CHARS,
+                    "Document summary length is outside the recommended range"
+                );
+            }
+        }
+    }
 }
 
 /// Validate the service token — either legacy global token or scoped token.
@@ -678,6 +722,7 @@ mod tests {
             source_path: format!("{slug}.md"),
             slug: slug.to_string(),
             title: "Test Doc".to_string(),
+            summary: Some("A test document used to exercise ingestion behavior.".to_string()),
             content: "# Hello\nWorld".to_string(),
             access_level: "internal".to_string(),
             is_draft: false,

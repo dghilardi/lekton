@@ -120,6 +120,7 @@ pub async fn save_doc_content(
     let doc = crate::db::models::Document {
         slug: slug.clone(),
         title,
+        summary: None,
         s3_key,
         access_level,
         is_draft,

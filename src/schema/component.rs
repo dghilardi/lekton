@@ -152,12 +152,40 @@ pub fn SchemaViewerPage() -> impl IntoView {
         set_selected_version.set(String::new());
     });
 
+    // Pre-fetch the default version's content as soon as schema detail arrives,
+    // in parallel with the user seeing the version selector.
+    let prefetch_resource = Resource::new(
+        move || name(),
+        |name| async move {
+            let detail = get_schema_detail(name.clone()).await?;
+            let default_ver = detail
+                .versions
+                .iter()
+                .rev()
+                .find(|v| v.status == "stable")
+                .or(detail.versions.last())
+                .map(|v| v.version.clone());
+            match default_ver {
+                Some(ver) => get_schema_content(name, ver.clone())
+                    .await
+                    .map(|c| Some((ver, c))),
+                None => Ok(None),
+            }
+        },
+    );
+
     // When schema loads, select the latest stable version by default
     let content_resource = Resource::new(
         move || (name(), selected_version.get()),
-        |(name, version)| async move {
+        move |(name, version)| async move {
             if version.is_empty() {
                 return Ok(None);
+            }
+            // Reuse the prefetched content when the auto-selected version matches.
+            if let Some(Ok(Some((prefetched_ver, prefetched_content)))) = prefetch_resource.get() {
+                if prefetched_ver == version {
+                    return Ok(Some(prefetched_content));
+                }
             }
             get_schema_content(name, version).await.map(Some)
         },

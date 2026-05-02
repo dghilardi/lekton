@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Performance
+- Added MongoDB indexes (via migrations 005-007) on `schemas.name`, `users.id`, `users.email`, `users.provider_sub+provider_type`, and `refresh_tokens.token_hash`, eliminating full collection scans on registry page loads and authenticated requests.
+- Schema list page now uses a projected query that excludes per-version endpoint arrays, reducing data transfer when loading the registry overview.
+- Schema version content fetch now uses `$elemMatch` projection to load only the requested version's minimal fields instead of the full schema document.
+
 ## [0.24.0] 2026-04-30
 
 ### Changed

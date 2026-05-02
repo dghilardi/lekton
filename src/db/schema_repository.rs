@@ -3,6 +3,14 @@ use async_trait::async_trait;
 use crate::db::models::{Schema, SchemaVersion};
 use crate::error::AppError;
 
+/// Minimal version info returned by `find_version_s3_key`.
+#[derive(Debug, Clone)]
+pub struct SchemaVersionRef {
+    pub s3_key: String,
+    pub access_level: String,
+    pub is_archived: bool,
+}
+
 /// Repository trait for schema operations.
 ///
 /// This trait allows mocking the database layer in tests.
@@ -38,6 +46,14 @@ pub trait SchemaRepository: Send + Sync {
 
     /// Delete a schema by name.
     async fn delete(&self, name: &str) -> Result<(), AppError>;
+
+    /// Fetch only the s3_key, access_level and is_archived flag for a specific
+    /// version, without loading the rest of the schema document.
+    async fn find_version_s3_key(
+        &self,
+        schema_name: &str,
+        version: &str,
+    ) -> Result<Option<SchemaVersionRef>, AppError>;
 }
 
 /// MongoDB implementation of the SchemaRepository.
@@ -212,6 +228,40 @@ impl SchemaRepository for MongoSchemaRepository {
         }
 
         Ok(())
+    }
+
+    async fn find_version_s3_key(
+        &self,
+        schema_name: &str,
+        version: &str,
+    ) -> Result<Option<SchemaVersionRef>, AppError> {
+        use mongodb::bson::doc;
+        use mongodb::options::FindOneOptions;
+        use serde::Deserialize;
+
+        #[derive(Deserialize)]
+        struct Projection {
+            #[serde(default)]
+            versions: Vec<SchemaVersion>,
+        }
+
+        let col = self.collection.clone_with_type::<Projection>();
+        let opts = FindOneOptions::builder()
+            .projection(doc! { "versions": { "$elemMatch": { "version": version } } })
+            .build();
+
+        let result = col
+            .find_one(doc! { "name": schema_name })
+            .with_options(opts)
+            .await?;
+
+        Ok(result.and_then(|r| {
+            r.versions.into_iter().next().map(|v| SchemaVersionRef {
+                s3_key: v.s3_key,
+                access_level: v.access_level,
+                is_archived: v.is_archived,
+            })
+        }))
     }
 }
 

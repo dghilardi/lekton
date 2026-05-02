@@ -8,6 +8,7 @@ import { test, expect, type Page } from '@playwright/test';
 async function waitForMermaidSvg(page: Page, timeout = 30_000): Promise<void> {
   await page.waitForFunction(
     () => document.querySelector('.mermaid svg') !== null,
+    undefined,
     { timeout },
   );
 }
@@ -16,9 +17,12 @@ test.describe('Mermaid diagrams', () => {
   test('renders mermaid code block as SVG', async ({ page }) => {
     test.setTimeout(90_000);
 
-    // Capture failed network requests so a 404 on the mermaid ESM bundle
-    // produces an informative error message instead of a silent timeout.
+    // Capture console errors and failed network requests for diagnostics.
+    const consoleErrors: string[] = [];
     const failedRequests: string[] = [];
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') consoleErrors.push(msg.text());
+    });
     page.on('requestfailed', (req) => {
       if (req.url().includes('mermaid')) failedRequests.push(`${req.failure()?.errorText} ${req.url()}`);
     });
@@ -34,10 +38,10 @@ test.describe('Mermaid diagrams', () => {
     });
 
     await waitForMermaidSvg(page).catch((err) => {
-      const detail = failedRequests.length
-        ? `\nFailed mermaid requests:\n  ${failedRequests.join('\n  ')}`
-        : '';
-      throw new Error(`${err.message}${detail}`);
+      const parts: string[] = [err.message];
+      if (failedRequests.length) parts.push(`Failed mermaid requests:\n  ${failedRequests.join('\n  ')}`);
+      if (consoleErrors.length) parts.push(`Browser console errors:\n  ${consoleErrors.join('\n  ')}`);
+      throw new Error(parts.join('\n'));
     });
 
     const svg = page.locator('.mermaid svg');

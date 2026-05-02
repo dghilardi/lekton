@@ -12,7 +12,8 @@
   function runPending(mermaid) {
     var nodes = pending.splice(0);
     if (nodes.length === 0) return;
-    mermaid.run({ nodes: nodes }).then(removeSpinners).catch(function () {
+    mermaid.run({ nodes: nodes }).then(removeSpinners).catch(function (err) {
+      console.error('[mermaid] render failed:', err);
       nodes.forEach(function (n) { n.removeAttribute('data-mermaid-queued'); });
       removeSpinners();
     });
@@ -29,7 +30,8 @@
       mermaidMod.initialize({ startOnLoad: false, theme: currentTheme() });
       state = 'ready';
       runPending(mermaidMod);
-    }).catch(function () {
+    }).catch(function (err) {
+      console.error('[mermaid] failed to load mermaid module:', err);
       state = 'idle';
       pending.forEach(function (n) { n.removeAttribute('data-mermaid-queued'); });
       pending.length = 0;
@@ -85,4 +87,29 @@
       }
     });
   }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+  // Safety net: render any pre.mermaid elements that are added to the DOM after this
+  // script runs (e.g. injected via Leptos inner_html during hydration).
+  new MutationObserver(function (mutations) {
+    var hasNewMermaid = false;
+    for (var i = 0; i < mutations.length; i++) {
+      var added = mutations[i].addedNodes;
+      for (var j = 0; j < added.length; j++) {
+        var node = added[j];
+        if (node.nodeType === 1) {
+          if (
+            (node.tagName === 'PRE' && node.classList.contains('mermaid')) ||
+            node.querySelector('pre.mermaid')
+          ) {
+            hasNewMermaid = true;
+            break;
+          }
+        }
+      }
+      if (hasNewMermaid) break;
+    }
+    if (hasNewMermaid) {
+      window.renderMermaid();
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true });
 })();

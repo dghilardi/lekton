@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Mermaid diagrams now render reliably in CI: `mermaid-loader.js` gains a MutationObserver that triggers rendering when `pre.mermaid` elements are injected into the DOM (e.g. after Leptos hydration applies `inner_html`), and render errors are now surfaced via `console.error` instead of silently swallowed.
+- E2E test `waitForMermaidSvg` now passes `{ timeout }` as the correct third argument to `page.waitForFunction` (was incorrectly passed as `arg`), so the 30 s timeout is enforced; browser console errors are also captured and included in failure output.
+
 ### Performance
 - Added MongoDB indexes (via migrations 005-007) on `schemas.name`, `users.id`, `users.email`, `users.provider_sub+provider_type`, and `refresh_tokens.token_hash`, eliminating full collection scans on registry page loads and authenticated requests.
 - Schema list page now uses a projected query that excludes per-version endpoint arrays, reducing data transfer when loading the registry overview.

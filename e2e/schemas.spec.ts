@@ -27,7 +27,8 @@ test.describe('Schema Registry', () => {
       await versionSelect.selectOption({ label: '1.0.0 (stable)' });
       await page.waitForTimeout(500);
     }
-    // Should display schema content (OpenAPI spec)
-    await expect(page.locator('text=User API').first()).toBeVisible();
+    // Should display schema content (OpenAPI spec).
+    // Allow extra time for the local Scalar bundle (3.8 MB) to load and render.
+    await expect(page.locator('text=User API').first()).toBeVisible({ timeout: 15_000 });
   });
 });

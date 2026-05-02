@@ -126,6 +126,16 @@ jobs:
           find node_modules/mermaid/dist/chunks/mermaid.esm.min -name '*.mjs' \
             -exec cp {} target/site/js/chunks/mermaid.esm.min/ \;
 
+      - name: Ensure schema viewer assets are in site root
+        # Same rationale as the mermaid step above: guarantee the Scalar and AsyncAPI
+        # bundles are in target/site/js/ even when the cargo build is fully cached.
+        run: |
+          mkdir -p target/site/js
+          cp node_modules/@scalar/api-reference/dist/browser/standalone.js target/site/js/scalar-standalone.js
+          cp node_modules/@scalar/api-reference/dist/style.css target/site/js/scalar-style.css
+          cp node_modules/@asyncapi/react-component/browser/standalone/index.js target/site/js/asyncapi-standalone.js
+          cp node_modules/@asyncapi/react-component/styles/default.min.css target/site/js/asyncapi-default.min.css
+
       - name: Run E2E tests
         run: npx playwright test
 

@@ -791,16 +791,24 @@ pub async fn get_schema_version_handler(
     axum::extract::State(state): axum::extract::State<crate::app::AppState>,
     crate::auth::extractor::OptionalAuthUser(user): crate::auth::extractor::OptionalAuthUser,
     axum::extract::Path((name, version)): axum::extract::Path<(String, String)>,
-) -> Result<String, AppError> {
+) -> Result<axum::response::Response, AppError> {
+    use axum::response::IntoResponse;
+
     let allowed_levels = schema_visibility_from_request(&state, user.as_ref()).await?;
-    process_get_schema_content(
+    let content = process_get_schema_content(
         state.schema_repo.as_ref(),
         state.storage_client.as_ref(),
         &name,
         &version,
         allowed_levels.as_deref(),
     )
-    .await
+    .await?;
+
+    Ok((
+        [(axum::http::header::CACHE_CONTROL, "private, max-age=3600")],
+        content,
+    )
+        .into_response())
 }
 
 /// Catch-all raw schema handler supporting schema names that contain `/`.
@@ -837,7 +845,11 @@ pub async fn get_schema_route_handler(
     )
     .await?;
 
-    Ok(content.into_response())
+    Ok((
+        [(axum::http::header::CACHE_CONTROL, "private, max-age=3600")],
+        content,
+    )
+        .into_response())
 }
 
 /// Axum handler for `POST /api/v1/admin/schemas/reindex-endpoints`.

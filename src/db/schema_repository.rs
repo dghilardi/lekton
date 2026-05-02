@@ -14,8 +14,12 @@ pub trait SchemaRepository: Send + Sync {
     /// Find a schema by its name.
     async fn find_by_name(&self, name: &str) -> Result<Option<Schema>, AppError>;
 
-    /// List all schemas.
+    /// List all schemas including full version data (endpoints, hashes).
     async fn list_all(&self) -> Result<Vec<Schema>, AppError>;
+
+    /// List all schemas without per-version endpoint data. Suitable for display
+    /// pages that don't need the (potentially large) endpoints arrays.
+    async fn list_summaries(&self) -> Result<Vec<Schema>, AppError>;
 
     /// List non-archived schemas whose name matches the provided exact or prefix scope.
     async fn find_by_name_prefix(&self, prefix: &str) -> Result<Vec<Schema>, AppError>;
@@ -76,6 +80,7 @@ impl SchemaRepository for MongoSchemaRepository {
     }
 
     async fn list_all(&self) -> Result<Vec<Schema>, AppError> {
+        use futures::TryStreamExt;
         use mongodb::bson::doc;
         use mongodb::options::FindOptions;
 
@@ -84,7 +89,26 @@ impl SchemaRepository for MongoSchemaRepository {
         let mut cursor = self.collection.find(doc! {}).with_options(options).await?;
 
         let mut schemas = Vec::new();
+        while let Some(schema) = cursor.try_next().await? {
+            schemas.push(schema);
+        }
+
+        Ok(schemas)
+    }
+
+    async fn list_summaries(&self) -> Result<Vec<Schema>, AppError> {
         use futures::TryStreamExt;
+        use mongodb::bson::doc;
+        use mongodb::options::FindOptions;
+
+        let options = FindOptions::builder()
+            .sort(doc! { "name": 1 })
+            .projection(doc! { "versions.endpoints": 0 })
+            .build();
+
+        let mut cursor = self.collection.find(doc! {}).with_options(options).await?;
+
+        let mut schemas = Vec::new();
         while let Some(schema) = cursor.try_next().await? {
             schemas.push(schema);
         }

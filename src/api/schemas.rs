@@ -491,7 +491,7 @@ pub async fn process_list_schemas(
     schema_repo: &dyn SchemaRepository,
     allowed_levels: Option<&[String]>,
 ) -> Result<Vec<SchemaListItem>, AppError> {
-    let schemas = schema_repo.list_all().await?;
+    let schemas = schema_repo.list_summaries().await?;
 
     Ok(schemas
         .into_iter()
@@ -1046,6 +1046,22 @@ mod tests {
 
         async fn list_all(&self) -> Result<Vec<Schema>, AppError> {
             Ok(self.schemas.lock().unwrap().clone())
+        }
+
+        async fn list_summaries(&self) -> Result<Vec<Schema>, AppError> {
+            Ok(self
+                .schemas
+                .lock()
+                .unwrap()
+                .iter()
+                .cloned()
+                .map(|mut s| {
+                    for v in s.versions.iter_mut() {
+                        v.endpoints = vec![];
+                    }
+                    s
+                })
+                .collect())
         }
 
         async fn find_by_name_prefix(&self, prefix: &str) -> Result<Vec<Schema>, AppError> {

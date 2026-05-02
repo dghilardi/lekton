@@ -154,6 +154,7 @@ pub fn SchemaViewerPage() -> impl IntoView {
 
     // Pre-fetch the default version's content as soon as schema detail arrives,
     // in parallel with the user seeing the version selector.
+    #[allow(clippy::redundant_closure)]
     let prefetch_resource = Resource::new(
         move || name(),
         |name| async move {

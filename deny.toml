@@ -20,6 +20,9 @@ ignore = [
     { id = "RUSTSEC-2026-0098", reason = "rustls-webpki 0.101: transitive via aws-sdk rustls 0.21, pinned by semver" },
     { id = "RUSTSEC-2026-0099", reason = "rustls-webpki 0.101: transitive via aws-sdk rustls 0.21, pinned by semver" },
     { id = "RUSTSEC-2026-0104", reason = "rustls-webpki 0.101: transitive via aws-sdk rustls 0.21, CRL panic, no upgrade path" },
+    # hickory-proto 0.25.x is pinned by mongodb 3.x; no compatible upgrade available
+    { id = "RUSTSEC-2026-0118", reason = "hickory-proto: transitive via mongodb, no compatible hickory-proto 0.26.x available yet" },
+    { id = "RUSTSEC-2026-0119", reason = "hickory-proto: transitive via mongodb, no compatible hickory-proto 0.26.x available yet" },
 ]
 
 # License policy

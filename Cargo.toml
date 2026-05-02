@@ -257,13 +257,13 @@ browserquery = "defaults"
 env = "DEV"
 
 # The features to use when compiling the bin target
-bin-features = ["ssr", "mermaid"]
+bin-features = ["ssr", "mermaid", "schema-viewers"]
 
 # If the --no-default-features flag should be used when compiling the bin target
 bin-default-features = false
 
 # The features to use when compiling the lib target
-lib-features = ["hydrate", "mermaid"]
+lib-features = ["hydrate", "mermaid", "schema-viewers"]
 
 # If the --no-default-features flag should be used when compiling the lib target
 lib-default-features = false

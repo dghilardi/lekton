@@ -25,6 +25,79 @@ fn main() {
         println!("cargo:rerun-if-changed=node_modules/mermaid/dist/chunks/mermaid.esm.min");
         copy_mermaid(&root, &js_dir);
     }
+
+    // Schema viewer assets (Scalar for OpenAPI, AsyncAPI React for AsyncAPI).
+    // Gated so backend-only builds without node_modules don't fail.
+    if std::env::var("CARGO_FEATURE_SCHEMA_VIEWERS").is_ok() {
+        println!(
+            "cargo:rerun-if-changed=node_modules/@scalar/api-reference/dist/browser/standalone.js"
+        );
+        println!("cargo:rerun-if-changed=node_modules/@scalar/api-reference/dist/style.css");
+        println!(
+            "cargo:rerun-if-changed=node_modules/@asyncapi/react-component/browser/standalone/index.js"
+        );
+        println!(
+            "cargo:rerun-if-changed=node_modules/@asyncapi/react-component/styles/default.min.css"
+        );
+        copy_scalar(&root, &js_dir);
+        copy_asyncapi(&root, &js_dir);
+    }
+}
+
+fn copy_scalar(root: &std::path::Path, js_dir: &std::path::Path) {
+    let scalar_dist = root
+        .join("node_modules")
+        .join("@scalar")
+        .join("api-reference")
+        .join("dist");
+
+    if !scalar_dist.exists() {
+        panic!(
+            "\n\n[build] Scalar assets are required but node_modules/@scalar/api-reference is missing.\n\
+             Run `npm ci` before building or testing Lekton.\n\n"
+        );
+    }
+
+    std::fs::copy(
+        scalar_dist.join("browser").join("standalone.js"),
+        js_dir.join("scalar-standalone.js"),
+    )
+    .expect("failed to copy scalar standalone.js");
+
+    std::fs::copy(
+        scalar_dist.join("style.css"),
+        js_dir.join("scalar-style.css"),
+    )
+    .expect("failed to copy scalar style.css");
+}
+
+fn copy_asyncapi(root: &std::path::Path, js_dir: &std::path::Path) {
+    let asyncapi_pkg = root
+        .join("node_modules")
+        .join("@asyncapi")
+        .join("react-component");
+
+    if !asyncapi_pkg.exists() {
+        panic!(
+            "\n\n[build] AsyncAPI React assets are required but node_modules/@asyncapi/react-component is missing.\n\
+             Run `npm ci` before building or testing Lekton.\n\n"
+        );
+    }
+
+    std::fs::copy(
+        asyncapi_pkg
+            .join("browser")
+            .join("standalone")
+            .join("index.js"),
+        js_dir.join("asyncapi-standalone.js"),
+    )
+    .expect("failed to copy asyncapi standalone index.js");
+
+    std::fs::copy(
+        asyncapi_pkg.join("styles").join("default.min.css"),
+        js_dir.join("asyncapi-default.min.css"),
+    )
+    .expect("failed to copy asyncapi default.min.css");
 }
 
 fn copy_mermaid(root: &std::path::Path, js_dir: &std::path::Path) {

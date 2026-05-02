@@ -168,8 +168,9 @@ axum-test = "20"
 cookie = "0.18"
 
 [features]
-default = ["mermaid"]
+default = ["mermaid", "schema-viewers"]
 mermaid = []
+schema-viewers = []
 hydrate = [
     "leptos/hydrate",
     "dep:console_error_panic_hook",

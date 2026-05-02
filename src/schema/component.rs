@@ -374,11 +374,11 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
                     if (!window.Scalar) {{
                         const link = document.createElement('link');
                         link.rel = 'stylesheet';
-                        link.href = 'https://cdn.jsdelivr.net/npm/@scalar/api-reference@latest/dist/style.min.css';
+                        link.href = '/js/scalar-style.css';
                         document.head.appendChild(link);
 
                         const script = document.createElement('script');
-                        script.src = 'https://cdn.jsdelivr.net/npm/@scalar/api-reference@latest/dist/browser/standalone.min.js';
+                        script.src = '/js/scalar-standalone.js';
                         script.onload = function() {{
                             renderScalar(el);
                         }};
@@ -513,11 +513,11 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
                     if (!window.AsyncApiStandalone) {{
                         const link = document.createElement('link');
                         link.rel = 'stylesheet';
-                        link.href = 'https://unpkg.com/@asyncapi/react-component@latest/styles/default.min.css';
+                        link.href = '/js/asyncapi-default.min.css';
                         document.head.appendChild(link);
 
                         const script = document.createElement('script');
-                        script.src = 'https://unpkg.com/@asyncapi/react-component@latest/browser/standalone/index.js';
+                        script.src = '/js/asyncapi-standalone.js';
                         script.onload = function() {{
                             injectTheme();
                             renderAsyncApi(container);

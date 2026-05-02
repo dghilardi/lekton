@@ -29,6 +29,21 @@ mod inner {
                 "ghilardi.davide@gmail.com",
                 convert_string_dates_assets,
             )
+            .register(
+                "005_add_schemas_name_index",
+                "davide.ghilardi@comelit.it",
+                add_schemas_name_index,
+            )
+            .register(
+                "006_add_users_indexes",
+                "davide.ghilardi@comelit.it",
+                add_users_indexes,
+            )
+            .register(
+                "007_add_refresh_tokens_hash_index",
+                "davide.ghilardi@comelit.it",
+                add_refresh_tokens_hash_index,
+            )
     }
 
     /// Backfills `created_at` on AccessLevelEntity documents created before the
@@ -75,6 +90,71 @@ mod inner {
             .update_many(
                 bson::doc! { "uploaded_at": { "$type": "string" } },
                 vec![bson::doc! { "$set": { "uploaded_at": { "$toDate": "$uploaded_at" } } }],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Creates a unique index on `schemas.name` to speed up lookups by schema name.
+    async fn add_schemas_name_index(db: Database) -> Result<(), mongodb::error::Error> {
+        use mongodb::options::IndexOptions;
+        use mongodb::IndexModel;
+
+        db.collection::<bson::Document>("schemas")
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "name": 1 })
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Creates indexes on the `users` collection to speed up auth and access-level lookups.
+    async fn add_users_indexes(db: Database) -> Result<(), mongodb::error::Error> {
+        use mongodb::options::IndexOptions;
+        use mongodb::IndexModel;
+
+        let col = db.collection::<bson::Document>("users");
+
+        col.create_index(
+            IndexModel::builder()
+                .keys(bson::doc! { "id": 1 })
+                .options(IndexOptions::builder().unique(true).build())
+                .build(),
+        )
+        .await?;
+
+        col.create_index(
+            IndexModel::builder()
+                .keys(bson::doc! { "email": 1 })
+                .options(IndexOptions::builder().unique(true).build())
+                .build(),
+        )
+        .await?;
+
+        col.create_index(
+            IndexModel::builder()
+                .keys(bson::doc! { "provider_sub": 1, "provider_type": 1 })
+                .build(),
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    /// Creates an index on `refresh_tokens.token_hash` used on every authenticated request.
+    async fn add_refresh_tokens_hash_index(db: Database) -> Result<(), mongodb::error::Error> {
+        use mongodb::options::IndexOptions;
+        use mongodb::IndexModel;
+
+        db.collection::<bson::Document>("refresh_tokens")
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "token_hash": 1 })
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
             )
             .await?;
         Ok(())

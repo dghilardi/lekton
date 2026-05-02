@@ -526,7 +526,7 @@ pub async fn process_get_schema(
     name: &str,
     allowed_levels: Option<&[String]>,
 ) -> Result<SchemaDetail, AppError> {
-    let schema = schema_repo.find_by_name(name).await?;
+    let schema = schema_repo.find_by_name_summary(name).await?;
     let schema =
         schema.ok_or_else(|| AppError::NotFound(format!("Schema '{}' not found", name)))?;
 
@@ -1037,6 +1037,22 @@ mod tests {
                 .iter()
                 .find(|s| s.name == name)
                 .cloned())
+        }
+
+        async fn find_by_name_summary(&self, name: &str) -> Result<Option<Schema>, AppError> {
+            Ok(self
+                .schemas
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|s| s.name == name)
+                .cloned()
+                .map(|mut s| {
+                    for v in s.versions.iter_mut() {
+                        v.endpoints = vec![];
+                    }
+                    s
+                }))
         }
 
         async fn list_all(&self) -> Result<Vec<Schema>, AppError> {

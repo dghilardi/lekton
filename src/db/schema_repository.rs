@@ -22,6 +22,10 @@ pub trait SchemaRepository: Send + Sync {
     /// Find a schema by its name.
     async fn find_by_name(&self, name: &str) -> Result<Option<Schema>, AppError>;
 
+    /// Find a schema by name without loading per-version endpoint arrays.
+    /// Use this when only metadata and version info are needed (e.g. detail page header).
+    async fn find_by_name_summary(&self, name: &str) -> Result<Option<Schema>, AppError>;
+
     /// List all schemas including full version data (endpoints, hashes).
     async fn list_all(&self) -> Result<Vec<Schema>, AppError>;
 
@@ -93,6 +97,21 @@ impl SchemaRepository for MongoSchemaRepository {
         use mongodb::bson::doc;
 
         Ok(self.collection.find_one(doc! { "name": name }).await?)
+    }
+
+    async fn find_by_name_summary(&self, name: &str) -> Result<Option<Schema>, AppError> {
+        use mongodb::bson::doc;
+        use mongodb::options::FindOneOptions;
+
+        let options = FindOneOptions::builder()
+            .projection(doc! { "versions.endpoints": 0 })
+            .build();
+
+        Ok(self
+            .collection
+            .find_one(doc! { "name": name })
+            .with_options(options)
+            .await?)
     }
 
     async fn list_all(&self) -> Result<Vec<Schema>, AppError> {

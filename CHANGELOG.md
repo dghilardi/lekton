@@ -8,6 +8,10 @@ All notable changes to this project will be documented in this file.
 - Added MongoDB indexes (via migrations 005-007) on `schemas.name`, `users.id`, `users.email`, `users.provider_sub+provider_type`, and `refresh_tokens.token_hash`, eliminating full collection scans on registry page loads and authenticated requests.
 - Schema list page now uses a projected query that excludes per-version endpoint arrays, reducing data transfer when loading the registry overview.
 - Schema version content fetch now uses `$elemMatch` projection to load only the requested version's minimal fields instead of the full schema document.
+- Schema viewer JS libraries (Scalar for OpenAPI, AsyncAPI React for AsyncAPI) are now bundled locally via npm and served from `/js/` instead of loaded from CDN at runtime, eliminating the 1–2 s first-render delay and removing the external network dependency.
+- Schema detail page pre-fetches the default version's content in parallel with schema metadata, removing the sequential wait between the two calls.
+- Schema detail handler now uses a projected MongoDB query (`find_by_name_summary`) that excludes endpoint arrays, reducing unnecessary data transfer for detail page loads.
+- Schema content REST endpoints now emit `Cache-Control: private, max-age=3600` headers; version content is immutable so repeat fetches are served from browser cache.
 
 ## [0.24.0] 2026-04-30
 

@@ -1,6 +1,6 @@
 use tiktoken_rs::CoreBPE;
 
-use super::splitter_blocks::mermaid_source_from_fence;
+use super::splitter_blocks::{mermaid_source_from_fence, MermaidDiagramType};
 
 #[derive(Debug, Clone)]
 struct MermaidLine {
@@ -10,6 +10,7 @@ struct MermaidLine {
 
 #[derive(Debug, Clone)]
 struct ParsedMermaidBlock {
+    diagram_type: MermaidDiagramType,
     preamble: Vec<MermaidLine>,
     declaration: MermaidLine,
     body: Vec<MermaidLine>,
@@ -78,9 +79,12 @@ fn parse_mermaid_block(block: &str) -> Option<ParsedMermaidBlock> {
         }
     }
 
+    let declaration = declaration?;
+    let diagram_type = MermaidDiagramType::from_declaration(&declaration.text);
     Some(ParsedMermaidBlock {
+        diagram_type,
         preamble,
-        declaration: declaration?,
+        declaration,
         body,
     })
 }
@@ -105,21 +109,91 @@ fn build_chunk(parsed: &ParsedMermaidBlock, body: &[MermaidLine]) -> String {
     chunk
 }
 
+fn is_relational_diagram(diagram_type: &MermaidDiagramType) -> bool {
+    matches!(
+        diagram_type,
+        MermaidDiagramType::Flowchart
+            | MermaidDiagramType::Graph
+            | MermaidDiagramType::StateDiagram
+            | MermaidDiagramType::RequirementDiagram
+            | MermaidDiagramType::Architecture
+            | MermaidDiagramType::Block
+            | MermaidDiagramType::C4
+    )
+}
+
+fn starts_relational_container(line: &str) -> bool {
+    let trimmed = line.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    lower.starts_with("subgraph ")
+        || lower.ends_with('{')
+        || lower.starts_with("group ")
+        || lower.starts_with("boundary(")
+        || lower.starts_with("system_boundary(")
+        || lower.starts_with("enterprise_boundary(")
+        || lower.starts_with("container_boundary(")
+}
+
+fn ends_relational_container(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed == "end" || trimmed == "}" || trimmed == ");"
+}
+
+fn line_units(lines: &[MermaidLine]) -> Vec<Vec<MermaidLine>> {
+    lines.iter().cloned().map(|line| vec![line]).collect()
+}
+
+fn relational_units(lines: &[MermaidLine]) -> Vec<Vec<MermaidLine>> {
+    let mut units = Vec::new();
+    let mut current: Vec<MermaidLine> = Vec::new();
+    let mut depth = 0usize;
+
+    for line in lines {
+        let starts = starts_relational_container(&line.text);
+        let ends = ends_relational_container(&line.text);
+        current.push(line.clone());
+        if starts {
+            depth += 1;
+        }
+        if ends && depth > 0 {
+            depth -= 1;
+        }
+        if depth == 0 {
+            units.push(std::mem::take(&mut current));
+        }
+    }
+
+    if !current.is_empty() {
+        units.push(current);
+    }
+
+    units
+}
+
+fn body_units(parsed: &ParsedMermaidBlock) -> Option<Vec<Vec<MermaidLine>>> {
+    if parsed.body.is_empty() {
+        return None;
+    }
+    if is_relational_diagram(&parsed.diagram_type) {
+        Some(relational_units(&parsed.body))
+    } else {
+        Some(line_units(&parsed.body))
+    }
+}
+
 fn grouped_body_chunks(
     parsed: &ParsedMermaidBlock,
     chunk_size_tokens: usize,
     tokenizer: &CoreBPE,
 ) -> Option<Vec<Vec<MermaidLine>>> {
-    if parsed.body.is_empty() {
-        return None;
-    }
+    let units = body_units(parsed)?;
 
     let mut groups: Vec<Vec<MermaidLine>> = Vec::new();
     let mut current: Vec<MermaidLine> = Vec::new();
 
-    for line in &parsed.body {
+    for unit in units {
         let mut candidate = current.clone();
-        candidate.push(line.clone());
+        candidate.extend(unit.clone());
         let candidate_text = build_chunk(parsed, &candidate);
         if token_count(tokenizer, &candidate_text) <= chunk_size_tokens {
             current = candidate;
@@ -129,7 +203,7 @@ fn grouped_body_chunks(
         if !current.is_empty() {
             groups.push(std::mem::take(&mut current));
         }
-        current.push(line.clone());
+        current = unit;
         let single_text = build_chunk(parsed, &current);
         if token_count(tokenizer, &single_text) > chunk_size_tokens {
             groups.push(std::mem::take(&mut current));
@@ -194,6 +268,26 @@ mod tests {
         body
     }
 
+    fn relational_fixture(declaration: &str) -> String {
+        let mut body = format!("```mermaid\n{declaration}\n");
+        for i in 0..48 {
+            match declaration {
+                "stateDiagram-v2" => body.push_str(&format!("S{i} --> S{}: next\n", i + 1)),
+                "requirementDiagram" => body.push_str(&format!(
+                    "functionalRequirement req{i} {{\n  id: {i}\n  text: requirement {i}\n  risk: low\n  verifymethod: test\n}}\n"
+                )),
+                "architecture-beta" => {
+                    body.push_str(&format!("service svc{i}(server)[Service {i}]\n"))
+                }
+                "block-beta" => body.push_str(&format!("B{i}[Block {i}]\n")),
+                "C4Context" => body.push_str(&format!("Person(p{i}, \"User {i}\")\n")),
+                _ => body.push_str(&format!("A{i}[Step {i}] --> A{}\n", i + 1)),
+            }
+        }
+        body.push_str("```\n");
+        body
+    }
+
     #[test]
     fn small_mermaid_block_returns_original_text() {
         let block = "```mermaid\nflowchart TD\nA --> B\n```\n";
@@ -240,5 +334,54 @@ mod tests {
                 "offset should point at the first original body line"
             );
         }
+    }
+
+    #[test]
+    fn relational_mermaid_types_split_large_blocks() {
+        for declaration in [
+            "flowchart TD",
+            "graph TD",
+            "stateDiagram-v2",
+            "requirementDiagram",
+            "architecture-beta",
+            "block-beta",
+            "C4Context",
+        ] {
+            let block = relational_fixture(declaration);
+            let chunks = split_mermaid_block(&block, 0, 80, &tokenizer());
+
+            assert!(
+                chunks.len() > 1,
+                "{declaration} should split into multiple chunks"
+            );
+            for (_, chunk) in chunks {
+                assert!(chunk.contains(declaration));
+                assert!(chunk.starts_with("```mermaid\n"));
+                assert!(chunk.ends_with("```\n"));
+            }
+        }
+    }
+
+    #[test]
+    fn relational_subgraph_is_not_split_across_chunks() {
+        let mut block = String::from("```mermaid\nflowchart TD\nsubgraph Cluster\n");
+        for i in 0..30 {
+            block.push_str(&format!("A{i} --> A{}\n", i + 1));
+        }
+        block.push_str("end\nOutside --> Done\n```\n");
+
+        let chunks = split_mermaid_block(&block, 0, 60, &tokenizer());
+        assert!(chunks.len() > 1);
+        let subgraph_chunk = chunks
+            .iter()
+            .map(|(_, chunk)| chunk)
+            .find(|chunk| chunk.contains("subgraph Cluster"))
+            .expect("expected a chunk containing the subgraph");
+        assert!(subgraph_chunk.contains("end\n"));
+        assert!(!chunks
+            .iter()
+            .skip_while(|(_, chunk)| !chunk.contains("subgraph Cluster"))
+            .skip(1)
+            .any(|(_, chunk)| chunk.contains("A0 --> A1")));
     }
 }

@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.1] 2026-05-03
+
 ### Fixed
 - Mermaid diagrams now render reliably in CI: `mermaid-loader.js` gains a MutationObserver that triggers rendering when `pre.mermaid` elements are injected into the DOM (e.g. after Leptos hydration applies `inner_html`), and render errors are now surfaced via `console.error` instead of silently swallowed.
 - E2E test `waitForMermaidSvg` now passes `{ timeout }` as the correct third argument to `page.waitForFunction` (was incorrectly passed as `arg`), so the 30 s timeout is enforced; browser console errors are also captured and included in failure output.

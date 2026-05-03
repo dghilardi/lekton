@@ -13,6 +13,7 @@ struct ParsedMermaidBlock {
     diagram_type: MermaidDiagramType,
     preamble: Vec<MermaidLine>,
     declaration: MermaidLine,
+    context: Vec<MermaidLine>,
     body: Vec<MermaidLine>,
 }
 
@@ -85,6 +86,7 @@ fn parse_mermaid_block(block: &str) -> Option<ParsedMermaidBlock> {
         diagram_type,
         preamble,
         declaration,
+        context: Vec::new(),
         body,
     })
 }
@@ -102,6 +104,9 @@ fn build_chunk(parsed: &ParsedMermaidBlock, body: &[MermaidLine]) -> String {
         push_line(&mut chunk, &line.text);
     }
     push_line(&mut chunk, &parsed.declaration.text);
+    for line in &parsed.context {
+        push_line(&mut chunk, &line.text);
+    }
     for line in body {
         push_line(&mut chunk, &line.text);
     }
@@ -129,6 +134,47 @@ fn is_schema_diagram(diagram_type: &MermaidDiagramType) -> bool {
             | MermaidDiagramType::ErDiagram
             | MermaidDiagramType::GitGraph
     )
+}
+
+fn is_timeline_diagram(diagram_type: &MermaidDiagramType) -> bool {
+    matches!(
+        diagram_type,
+        MermaidDiagramType::SequenceDiagram
+            | MermaidDiagramType::Zenuml
+            | MermaidDiagramType::Journey
+            | MermaidDiagramType::Gantt
+            | MermaidDiagramType::Timeline
+            | MermaidDiagramType::Kanban
+    )
+}
+
+fn is_sequence_context(line: &str) -> bool {
+    let lower = line.trim().to_ascii_lowercase();
+    lower.starts_with("participant ")
+        || lower.starts_with("actor ")
+        || lower == "autonumber"
+        || lower.starts_with("autonumber ")
+}
+
+fn apply_timeline_context(parsed: &mut ParsedMermaidBlock) {
+    if !matches!(
+        parsed.diagram_type,
+        MermaidDiagramType::SequenceDiagram | MermaidDiagramType::Zenuml
+    ) {
+        return;
+    }
+
+    let mut context = Vec::new();
+    let mut body = Vec::new();
+    for line in std::mem::take(&mut parsed.body) {
+        if is_sequence_context(&line.text) {
+            context.push(line);
+        } else {
+            body.push(line);
+        }
+    }
+    parsed.context = context;
+    parsed.body = body;
 }
 
 fn starts_relational_container(line: &str) -> bool {
@@ -235,6 +281,78 @@ fn schema_units(parsed: &ParsedMermaidBlock) -> Vec<Vec<MermaidLine>> {
     }
 }
 
+fn starts_interaction_block(line: &str) -> bool {
+    let lower = line.trim().to_ascii_lowercase();
+    lower.starts_with("alt ")
+        || lower.starts_with("opt ")
+        || lower.starts_with("loop ")
+        || lower.starts_with("par ")
+        || lower.starts_with("critical ")
+        || lower.starts_with("break ")
+        || lower.starts_with("rect ")
+        || lower.starts_with("box ")
+}
+
+fn interaction_units(lines: &[MermaidLine]) -> Vec<Vec<MermaidLine>> {
+    let mut units = Vec::new();
+    let mut current: Vec<MermaidLine> = Vec::new();
+    let mut depth = 0usize;
+
+    for line in lines {
+        let starts = starts_interaction_block(&line.text);
+        let ends = line.text.trim() == "end";
+        current.push(line.clone());
+        if starts {
+            depth += 1;
+        }
+        if ends && depth > 0 {
+            depth -= 1;
+        }
+        if depth == 0 {
+            units.push(std::mem::take(&mut current));
+        }
+    }
+
+    if !current.is_empty() {
+        units.push(current);
+    }
+
+    units
+}
+
+fn section_units(lines: &[MermaidLine]) -> Vec<Vec<MermaidLine>> {
+    let mut units = Vec::new();
+    let mut current: Vec<MermaidLine> = Vec::new();
+
+    for line in lines {
+        let lower = line.text.trim().to_ascii_lowercase();
+        let starts_section = lower.starts_with("section ") || lower.ends_with(':');
+        if starts_section && !current.is_empty() {
+            units.push(std::mem::take(&mut current));
+        }
+        current.push(line.clone());
+    }
+
+    if !current.is_empty() {
+        units.push(current);
+    }
+
+    units
+}
+
+fn timeline_units(parsed: &ParsedMermaidBlock) -> Vec<Vec<MermaidLine>> {
+    match parsed.diagram_type {
+        MermaidDiagramType::SequenceDiagram | MermaidDiagramType::Zenuml => {
+            interaction_units(&parsed.body)
+        }
+        MermaidDiagramType::Journey
+        | MermaidDiagramType::Gantt
+        | MermaidDiagramType::Timeline
+        | MermaidDiagramType::Kanban => section_units(&parsed.body),
+        _ => line_units(&parsed.body),
+    }
+}
+
 fn body_units(parsed: &ParsedMermaidBlock) -> Option<Vec<Vec<MermaidLine>>> {
     if parsed.body.is_empty() {
         return None;
@@ -243,6 +361,8 @@ fn body_units(parsed: &ParsedMermaidBlock) -> Option<Vec<Vec<MermaidLine>>> {
         Some(relational_units(&parsed.body))
     } else if is_schema_diagram(&parsed.diagram_type) {
         Some(schema_units(parsed))
+    } else if is_timeline_diagram(&parsed.diagram_type) {
+        Some(timeline_units(parsed))
     } else {
         Some(line_units(&parsed.body))
     }
@@ -294,9 +414,10 @@ pub(in crate::rag) fn split_mermaid_block(
         return vec![(base_offset, block.to_string())];
     }
 
-    let Some(parsed) = parse_mermaid_block(block) else {
+    let Some(mut parsed) = parse_mermaid_block(block) else {
         return vec![(base_offset, block.to_string())];
     };
+    apply_timeline_context(&mut parsed);
     let Some(groups) = grouped_body_chunks(&parsed, chunk_size_tokens, tokenizer) else {
         return vec![(base_offset, block.to_string())];
     };
@@ -372,6 +493,55 @@ mod tests {
                 )),
                 _ => {}
             }
+        }
+        body.push_str("```\n");
+        body
+    }
+
+    fn timeline_fixture(declaration: &str) -> String {
+        let mut body = format!("```mermaid\n{declaration}\n");
+        match declaration {
+            "sequenceDiagram" => {
+                body.push_str("participant A\nparticipant B\nautonumber\n");
+                for i in 0..54 {
+                    body.push_str(&format!("A->>B: message {i}\n"));
+                }
+            }
+            "zenuml" => {
+                body.push_str("participant A\nparticipant B\n");
+                for i in 0..54 {
+                    body.push_str(&format!("A.method{i}()\n"));
+                }
+            }
+            "journey" => {
+                for section in 0..12 {
+                    body.push_str(&format!("section Phase {section}\n"));
+                    body.push_str(&format!("Task {section}: 5: User\n"));
+                    body.push_str(&format!("Review {section}: 3: User\n"));
+                }
+            }
+            "gantt" => {
+                body.push_str("dateFormat  YYYY-MM-DD\n");
+                for section in 0..12 {
+                    body.push_str(&format!("section Phase {section}\n"));
+                    body.push_str(&format!(
+                        "Task {section} :done, t{section}, 2026-01-01, 2d\n"
+                    ));
+                }
+            }
+            "timeline" => {
+                for section in 0..12 {
+                    body.push_str(&format!("section Phase {section}\n"));
+                    body.push_str(&format!("2026-01-{section:02} : Event {section}\n"));
+                }
+            }
+            "kanban" => {
+                for section in 0..12 {
+                    body.push_str(&format!("section Lane {section}\n"));
+                    body.push_str(&format!("Task {section}\n"));
+                }
+            }
+            _ => {}
         }
         body.push_str("```\n");
         body
@@ -510,5 +680,64 @@ mod tests {
         assert!(class_chunk.contains("+field0"));
         assert!(class_chunk.contains("+field29"));
         assert!(class_chunk.contains("}\n"));
+    }
+
+    #[test]
+    fn timeline_mermaid_types_split_large_blocks() {
+        for declaration in [
+            "sequenceDiagram",
+            "zenuml",
+            "journey",
+            "gantt",
+            "timeline",
+            "kanban",
+        ] {
+            let block = timeline_fixture(declaration);
+            let chunks = split_mermaid_block(&block, 0, 90, &tokenizer());
+
+            assert!(
+                chunks.len() > 1,
+                "{declaration} should split into multiple chunks"
+            );
+            for (_, chunk) in chunks {
+                assert!(chunk.contains(declaration));
+                assert!(chunk.starts_with("```mermaid\n"));
+                assert!(chunk.ends_with("```\n"));
+            }
+        }
+    }
+
+    #[test]
+    fn sequence_participants_are_repeated_in_each_chunk() {
+        let block = timeline_fixture("sequenceDiagram");
+        let chunks = split_mermaid_block(&block, 0, 80, &tokenizer());
+
+        assert!(chunks.len() > 1);
+        for (_, chunk) in chunks {
+            assert!(chunk.contains("participant A"));
+            assert!(chunk.contains("participant B"));
+            assert!(chunk.contains("autonumber"));
+        }
+    }
+
+    #[test]
+    fn sequence_alt_block_is_not_split_across_chunks() {
+        let mut block = String::from(
+            "```mermaid\nsequenceDiagram\nparticipant A\nparticipant B\nalt success\n",
+        );
+        for i in 0..30 {
+            block.push_str(&format!("A->>B: success {i}\n"));
+        }
+        block.push_str("else failure\nA->>B: failed\nend\nA->>B: after\n```\n");
+
+        let chunks = split_mermaid_block(&block, 0, 70, &tokenizer());
+        assert!(chunks.len() > 1);
+        let alt_chunk = chunks
+            .iter()
+            .map(|(_, chunk)| chunk)
+            .find(|chunk| chunk.contains("alt success"))
+            .expect("expected a chunk containing the alt block");
+        assert!(alt_chunk.contains("else failure"));
+        assert!(alt_chunk.contains("end\n"));
     }
 }

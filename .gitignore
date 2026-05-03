@@ -7,6 +7,10 @@ node_modules/
 # Generated JS assets (produced by build.rs from node_modules)
 public/js/mermaid.esm.min.mjs
 public/js/chunks/
+public/js/scalar-standalone.js
+public/js/scalar-style.css
+public/js/asyncapi-standalone.js
+public/js/asyncapi-default.min.css
 
 # Environment variables
 .env

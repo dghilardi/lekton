@@ -3,6 +3,14 @@ use async_trait::async_trait;
 use crate::db::models::{Schema, SchemaVersion};
 use crate::error::AppError;
 
+/// Minimal version info returned by `find_version_s3_key`.
+#[derive(Debug, Clone)]
+pub struct SchemaVersionRef {
+    pub s3_key: String,
+    pub access_level: String,
+    pub is_archived: bool,
+}
+
 /// Repository trait for schema operations.
 ///
 /// This trait allows mocking the database layer in tests.
@@ -14,8 +22,16 @@ pub trait SchemaRepository: Send + Sync {
     /// Find a schema by its name.
     async fn find_by_name(&self, name: &str) -> Result<Option<Schema>, AppError>;
 
-    /// List all schemas.
+    /// Find a schema by name without loading per-version endpoint arrays.
+    /// Use this when only metadata and version info are needed (e.g. detail page header).
+    async fn find_by_name_summary(&self, name: &str) -> Result<Option<Schema>, AppError>;
+
+    /// List all schemas including full version data (endpoints, hashes).
     async fn list_all(&self) -> Result<Vec<Schema>, AppError>;
+
+    /// List all schemas without per-version endpoint data. Suitable for display
+    /// pages that don't need the (potentially large) endpoints arrays.
+    async fn list_summaries(&self) -> Result<Vec<Schema>, AppError>;
 
     /// List non-archived schemas whose name matches the provided exact or prefix scope.
     async fn find_by_name_prefix(&self, prefix: &str) -> Result<Vec<Schema>, AppError>;
@@ -34,6 +50,14 @@ pub trait SchemaRepository: Send + Sync {
 
     /// Delete a schema by name.
     async fn delete(&self, name: &str) -> Result<(), AppError>;
+
+    /// Fetch only the s3_key, access_level and is_archived flag for a specific
+    /// version, without loading the rest of the schema document.
+    async fn find_version_s3_key(
+        &self,
+        schema_name: &str,
+        version: &str,
+    ) -> Result<Option<SchemaVersionRef>, AppError>;
 }
 
 /// MongoDB implementation of the SchemaRepository.
@@ -75,7 +99,23 @@ impl SchemaRepository for MongoSchemaRepository {
         Ok(self.collection.find_one(doc! { "name": name }).await?)
     }
 
+    async fn find_by_name_summary(&self, name: &str) -> Result<Option<Schema>, AppError> {
+        use mongodb::bson::doc;
+        use mongodb::options::FindOneOptions;
+
+        let options = FindOneOptions::builder()
+            .projection(doc! { "versions.endpoints": 0 })
+            .build();
+
+        Ok(self
+            .collection
+            .find_one(doc! { "name": name })
+            .with_options(options)
+            .await?)
+    }
+
     async fn list_all(&self) -> Result<Vec<Schema>, AppError> {
+        use futures::TryStreamExt;
         use mongodb::bson::doc;
         use mongodb::options::FindOptions;
 
@@ -84,7 +124,26 @@ impl SchemaRepository for MongoSchemaRepository {
         let mut cursor = self.collection.find(doc! {}).with_options(options).await?;
 
         let mut schemas = Vec::new();
+        while let Some(schema) = cursor.try_next().await? {
+            schemas.push(schema);
+        }
+
+        Ok(schemas)
+    }
+
+    async fn list_summaries(&self) -> Result<Vec<Schema>, AppError> {
         use futures::TryStreamExt;
+        use mongodb::bson::doc;
+        use mongodb::options::FindOptions;
+
+        let options = FindOptions::builder()
+            .sort(doc! { "name": 1 })
+            .projection(doc! { "versions.endpoints": 0 })
+            .build();
+
+        let mut cursor = self.collection.find(doc! {}).with_options(options).await?;
+
+        let mut schemas = Vec::new();
         while let Some(schema) = cursor.try_next().await? {
             schemas.push(schema);
         }
@@ -188,6 +247,40 @@ impl SchemaRepository for MongoSchemaRepository {
         }
 
         Ok(())
+    }
+
+    async fn find_version_s3_key(
+        &self,
+        schema_name: &str,
+        version: &str,
+    ) -> Result<Option<SchemaVersionRef>, AppError> {
+        use mongodb::bson::doc;
+        use mongodb::options::FindOneOptions;
+        use serde::Deserialize;
+
+        #[derive(Deserialize)]
+        struct Projection {
+            #[serde(default)]
+            versions: Vec<SchemaVersion>,
+        }
+
+        let col = self.collection.clone_with_type::<Projection>();
+        let opts = FindOneOptions::builder()
+            .projection(doc! { "versions": { "$elemMatch": { "version": version } } })
+            .build();
+
+        let result = col
+            .find_one(doc! { "name": schema_name })
+            .with_options(opts)
+            .await?;
+
+        Ok(result.and_then(|r| {
+            r.versions.into_iter().next().map(|v| SchemaVersionRef {
+                s3_key: v.s3_key,
+                access_level: v.access_level,
+                is_archived: v.is_archived,
+            })
+        }))
     }
 }
 

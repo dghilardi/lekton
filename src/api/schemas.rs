@@ -491,7 +491,7 @@ pub async fn process_list_schemas(
     schema_repo: &dyn SchemaRepository,
     allowed_levels: Option<&[String]>,
 ) -> Result<Vec<SchemaListItem>, AppError> {
-    let schemas = schema_repo.list_all().await?;
+    let schemas = schema_repo.list_summaries().await?;
 
     Ok(schemas
         .into_iter()
@@ -526,7 +526,7 @@ pub async fn process_get_schema(
     name: &str,
     allowed_levels: Option<&[String]>,
 ) -> Result<SchemaDetail, AppError> {
-    let schema = schema_repo.find_by_name(name).await?;
+    let schema = schema_repo.find_by_name_summary(name).await?;
     let schema =
         schema.ok_or_else(|| AppError::NotFound(format!("Schema '{}' not found", name)))?;
 
@@ -561,15 +561,10 @@ pub async fn process_get_schema_content(
     version: &str,
     allowed_levels: Option<&[String]>,
 ) -> Result<String, AppError> {
-    let schema = schema_repo.find_by_name(name).await?;
-    let schema =
-        schema.ok_or_else(|| AppError::NotFound(format!("Schema '{}' not found", name)))?;
-
-    let ver = schema
-        .versions
-        .iter()
-        .find(|v| v.version == version && !v.is_archived)
-        .filter(|v| schema_level_visible(&v.access_level, allowed_levels))
+    let ver = schema_repo
+        .find_version_s3_key(name, version)
+        .await?
+        .filter(|v| !v.is_archived && schema_level_visible(&v.access_level, allowed_levels))
         .ok_or_else(|| {
             AppError::NotFound(format!(
                 "Version '{}' not found for schema '{}'",
@@ -796,16 +791,24 @@ pub async fn get_schema_version_handler(
     axum::extract::State(state): axum::extract::State<crate::app::AppState>,
     crate::auth::extractor::OptionalAuthUser(user): crate::auth::extractor::OptionalAuthUser,
     axum::extract::Path((name, version)): axum::extract::Path<(String, String)>,
-) -> Result<String, AppError> {
+) -> Result<axum::response::Response, AppError> {
+    use axum::response::IntoResponse;
+
     let allowed_levels = schema_visibility_from_request(&state, user.as_ref()).await?;
-    process_get_schema_content(
+    let content = process_get_schema_content(
         state.schema_repo.as_ref(),
         state.storage_client.as_ref(),
         &name,
         &version,
         allowed_levels.as_deref(),
     )
-    .await
+    .await?;
+
+    Ok((
+        [(axum::http::header::CACHE_CONTROL, "private, max-age=3600")],
+        content,
+    )
+        .into_response())
 }
 
 /// Catch-all raw schema handler supporting schema names that contain `/`.
@@ -842,7 +845,11 @@ pub async fn get_schema_route_handler(
     )
     .await?;
 
-    Ok(content.into_response())
+    Ok((
+        [(axum::http::header::CACHE_CONTROL, "private, max-age=3600")],
+        content,
+    )
+        .into_response())
 }
 
 /// Axum handler for `POST /api/v1/admin/schemas/reindex-endpoints`.
@@ -1044,8 +1051,40 @@ mod tests {
                 .cloned())
         }
 
+        async fn find_by_name_summary(&self, name: &str) -> Result<Option<Schema>, AppError> {
+            Ok(self
+                .schemas
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|s| s.name == name)
+                .cloned()
+                .map(|mut s| {
+                    for v in s.versions.iter_mut() {
+                        v.endpoints = vec![];
+                    }
+                    s
+                }))
+        }
+
         async fn list_all(&self) -> Result<Vec<Schema>, AppError> {
             Ok(self.schemas.lock().unwrap().clone())
+        }
+
+        async fn list_summaries(&self) -> Result<Vec<Schema>, AppError> {
+            Ok(self
+                .schemas
+                .lock()
+                .unwrap()
+                .iter()
+                .cloned()
+                .map(|mut s| {
+                    for v in s.versions.iter_mut() {
+                        v.endpoints = vec![];
+                    }
+                    s
+                })
+                .collect())
         }
 
         async fn find_by_name_prefix(&self, prefix: &str) -> Result<Vec<Schema>, AppError> {
@@ -1111,6 +1150,26 @@ mod tests {
                 return Err(AppError::NotFound(format!("Schema '{}' not found", name)));
             }
             Ok(())
+        }
+
+        async fn find_version_s3_key(
+            &self,
+            schema_name: &str,
+            version: &str,
+        ) -> Result<Option<crate::db::schema_repository::SchemaVersionRef>, AppError> {
+            use crate::db::schema_repository::SchemaVersionRef;
+            Ok(self
+                .schemas
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|s| s.name == schema_name)
+                .and_then(|s| s.versions.iter().find(|v| v.version == version))
+                .map(|v| SchemaVersionRef {
+                    s3_key: v.s3_key.clone(),
+                    access_level: v.access_level.clone(),
+                    is_archived: v.is_archived,
+                }))
         }
     }
 

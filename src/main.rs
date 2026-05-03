@@ -17,6 +17,36 @@ async fn mjs_content_type(
     response
 }
 
+/// Middleware that sets `Cache-Control` headers for static JS/CSS assets under `/js/`.
+/// Assets requested with a `?v=` version query get a 1-year immutable cache.
+/// Assets without a version query get a 1-hour cache (safe without fingerprinting).
+#[cfg(feature = "ssr")]
+async fn static_cache_headers(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let path = request.uri().path().to_owned();
+    let has_version = request.uri().query().is_some_and(|q| q.contains("v="));
+
+    let is_js_asset = path.starts_with("/js/")
+        && (path.ends_with(".js") || path.ends_with(".mjs") || path.ends_with(".css"));
+
+    let mut response = next.run(request).await;
+
+    if is_js_asset {
+        let cache_header = if has_version {
+            axum::http::HeaderValue::from_static("public, max-age=31536000, immutable")
+        } else {
+            axum::http::HeaderValue::from_static("public, max-age=3600")
+        };
+        response
+            .headers_mut()
+            .insert(axum::http::header::CACHE_CONTROL, cache_header);
+    }
+
+    response
+}
+
 #[cfg(feature = "ssr")]
 #[tokio::main]
 async fn main() {
@@ -111,6 +141,9 @@ async fn main() {
     let leptos_options = conf.leptos_options;
     let addr = leptos_options.site_addr;
     let site_root = leptos_options.site_root.to_string();
+
+    // Compute asset fingerprints for cache-busting versioned URLs.
+    lekton::static_assets::init(&site_root);
 
     // Connect to MongoDB
     // Inject credentials into the URI if provided separately.
@@ -772,6 +805,7 @@ async fn main() {
         })
         // Static files (including custom.css)
         .fallback_service(ServeDir::new(&site_root))
+        .layer(middleware::from_fn(static_cache_headers))
         .layer(middleware::from_fn(mjs_content_type))
         .layer(cors)
         .layer(tower_governor::GovernorLayer::new(governor_conf))

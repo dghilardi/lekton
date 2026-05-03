@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Mermaid diagrams now render reliably in CI: `mermaid-loader.js` gains a MutationObserver that triggers rendering when `pre.mermaid` elements are injected into the DOM (e.g. after Leptos hydration applies `inner_html`), and render errors are now surfaced via `console.error` instead of silently swallowed.
+- E2E test `waitForMermaidSvg` now passes `{ timeout }` as the correct third argument to `page.waitForFunction` (was incorrectly passed as `arg`), so the 30 s timeout is enforced; browser console errors are also captured and included in failure output.
+
+### Performance
+- Added MongoDB indexes (via migrations 005-007) on `schemas.name`, `users.id`, `users.email`, `users.provider_sub+provider_type`, and `refresh_tokens.token_hash`, eliminating full collection scans on registry page loads and authenticated requests.
+- Schema list page now uses a projected query that excludes per-version endpoint arrays, reducing data transfer when loading the registry overview.
+- Schema version content fetch now uses `$elemMatch` projection to load only the requested version's minimal fields instead of the full schema document.
+- Schema viewer JS libraries (Scalar for OpenAPI, AsyncAPI React for AsyncAPI) are now bundled locally via npm and served from `/js/` instead of loaded from CDN at runtime, eliminating the 1–2 s first-render delay and removing the external network dependency.
+- Schema detail page pre-fetches the default version's content in parallel with schema metadata, removing the sequential wait between the two calls.
+- Schema detail handler now uses a projected MongoDB query (`find_by_name_summary`) that excludes endpoint arrays, reducing unnecessary data transfer for detail page loads.
+- Schema content REST endpoints now emit `Cache-Control: private, max-age=3600` headers; version content is immutable so repeat fetches are served from browser cache.
+- Static JS/CSS assets under `/js/` are now served with `Cache-Control: public, max-age=31536000, immutable` when requested with a `?v=` fingerprint query parameter (1-hour fallback without it); fingerprints are derived from file modification times at startup.
+- Scalar and AsyncAPI viewer bundles now use versioned URLs (`?v=<mtime>`) in the injected script tags, matching the cache policy and avoiding redundant revalidation on repeat visits.
+- Added `<link rel="preload">` hints for Scalar/AsyncAPI JS and CSS resources so the browser starts fetching them while the page HTML is still parsing.
+
 ## [0.24.0] 2026-04-30
 
 ### Changed

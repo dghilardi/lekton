@@ -148,6 +148,29 @@ fn is_timeline_diagram(diagram_type: &MermaidDiagramType) -> bool {
     )
 }
 
+fn is_hierarchical_diagram(diagram_type: &MermaidDiagramType) -> bool {
+    matches!(
+        diagram_type,
+        MermaidDiagramType::Mindmap
+            | MermaidDiagramType::Treemap
+            | MermaidDiagramType::Ishikawa
+            | MermaidDiagramType::TreeView
+    )
+}
+
+fn is_chart_diagram(diagram_type: &MermaidDiagramType) -> bool {
+    matches!(
+        diagram_type,
+        MermaidDiagramType::Packet
+            | MermaidDiagramType::Pie
+            | MermaidDiagramType::QuadrantChart
+            | MermaidDiagramType::Sankey
+            | MermaidDiagramType::XyChart
+            | MermaidDiagramType::Radar
+            | MermaidDiagramType::Venn
+    )
+}
+
 fn is_sequence_context(line: &str) -> bool {
     let lower = line.trim().to_ascii_lowercase();
     lower.starts_with("participant ")
@@ -175,6 +198,114 @@ fn apply_timeline_context(parsed: &mut ParsedMermaidBlock) {
     }
     parsed.context = context;
     parsed.body = body;
+}
+
+fn apply_hierarchy_context(parsed: &mut ParsedMermaidBlock) {
+    if !is_hierarchical_diagram(&parsed.diagram_type) {
+        return;
+    }
+
+    let mut context = Vec::new();
+    let mut body = Vec::new();
+    let mut root_taken = false;
+    for line in std::mem::take(&mut parsed.body) {
+        if !root_taken && !line.text.trim().is_empty() {
+            context.push(line);
+            root_taken = true;
+        } else {
+            body.push(line);
+        }
+    }
+    parsed.context.extend(context);
+    parsed.body = body;
+}
+
+fn is_chart_context(line: &str) -> bool {
+    let lower = line.trim().to_ascii_lowercase();
+    lower.starts_with("title ")
+        || lower.starts_with("x-axis")
+        || lower.starts_with("y-axis")
+        || lower.starts_with("quadrant-")
+}
+
+fn apply_chart_context(parsed: &mut ParsedMermaidBlock) {
+    if !matches!(
+        parsed.diagram_type,
+        MermaidDiagramType::XyChart | MermaidDiagramType::QuadrantChart | MermaidDiagramType::Radar
+    ) {
+        return;
+    }
+
+    let mut context = Vec::new();
+    let mut body = Vec::new();
+    for line in std::mem::take(&mut parsed.body) {
+        if is_chart_context(&line.text) {
+            context.push(line);
+        } else {
+            body.push(line);
+        }
+    }
+    parsed.context.extend(context);
+    parsed.body = body;
+}
+
+fn apply_gantt_context(parsed: &mut ParsedMermaidBlock) {
+    if !matches!(parsed.diagram_type, MermaidDiagramType::Gantt) {
+        return;
+    }
+
+    let mut context = Vec::new();
+    let mut body = Vec::new();
+    let mut seen_section = false;
+    for line in std::mem::take(&mut parsed.body) {
+        let is_section = line
+            .text
+            .trim()
+            .to_ascii_lowercase()
+            .starts_with("section ");
+        if !seen_section && !is_section {
+            context.push(line);
+        } else {
+            seen_section = true;
+            body.push(line);
+        }
+    }
+    parsed.context.extend(context);
+    parsed.body = body;
+}
+
+fn is_c4_relation(line: &str) -> bool {
+    let lower = line.trim().to_ascii_lowercase();
+    lower.starts_with("rel(")
+        || lower.starts_with("rel_")
+        || lower.starts_with("birel(")
+        || lower.starts_with("birel_")
+}
+
+fn apply_c4_context(parsed: &mut ParsedMermaidBlock) {
+    if !matches!(parsed.diagram_type, MermaidDiagramType::C4) {
+        return;
+    }
+
+    let mut context = Vec::new();
+    let mut body = Vec::new();
+    for line in std::mem::take(&mut parsed.body) {
+        if is_c4_relation(&line.text) {
+            body.push(line);
+        } else {
+            context.push(line);
+        }
+    }
+    parsed.context.extend(context);
+    parsed.body = body;
+}
+
+fn apply_strategy_context(parsed: &mut ParsedMermaidBlock) {
+    apply_timeline_context(parsed);
+    apply_hierarchy_context(parsed);
+    apply_chart_context(parsed);
+    apply_gantt_context(parsed);
+    apply_c4_context(parsed);
 }
 
 fn starts_relational_container(line: &str) -> bool {
@@ -353,6 +484,42 @@ fn timeline_units(parsed: &ParsedMermaidBlock) -> Vec<Vec<MermaidLine>> {
     }
 }
 
+fn indentation(line: &str) -> usize {
+    line.chars()
+        .take_while(|c| *c == ' ' || *c == '\t')
+        .map(|c| if c == '\t' { 4 } else { 1 })
+        .sum()
+}
+
+fn hierarchy_units(lines: &[MermaidLine]) -> Vec<Vec<MermaidLine>> {
+    let group_indent = lines
+        .iter()
+        .filter(|line| !line.text.trim().is_empty())
+        .map(|line| indentation(&line.text))
+        .min()
+        .unwrap_or(0);
+    let mut units = Vec::new();
+    let mut current: Vec<MermaidLine> = Vec::new();
+
+    for line in lines {
+        let starts_group = !line.text.trim().is_empty() && indentation(&line.text) <= group_indent;
+        if starts_group && !current.is_empty() {
+            units.push(std::mem::take(&mut current));
+        }
+        current.push(line.clone());
+    }
+
+    if !current.is_empty() {
+        units.push(current);
+    }
+
+    units
+}
+
+fn chart_units(lines: &[MermaidLine]) -> Vec<Vec<MermaidLine>> {
+    line_units(lines)
+}
+
 fn body_units(parsed: &ParsedMermaidBlock) -> Option<Vec<Vec<MermaidLine>>> {
     if parsed.body.is_empty() {
         return None;
@@ -363,6 +530,12 @@ fn body_units(parsed: &ParsedMermaidBlock) -> Option<Vec<Vec<MermaidLine>>> {
         Some(schema_units(parsed))
     } else if is_timeline_diagram(&parsed.diagram_type) {
         Some(timeline_units(parsed))
+    } else if is_hierarchical_diagram(&parsed.diagram_type) {
+        Some(hierarchy_units(&parsed.body))
+    } else if is_chart_diagram(&parsed.diagram_type) {
+        Some(chart_units(&parsed.body))
+    } else if matches!(parsed.diagram_type, MermaidDiagramType::Unknown(_)) {
+        None
     } else {
         Some(line_units(&parsed.body))
     }
@@ -417,7 +590,7 @@ pub(in crate::rag) fn split_mermaid_block(
     let Some(mut parsed) = parse_mermaid_block(block) else {
         return vec![(base_offset, block.to_string())];
     };
-    apply_timeline_context(&mut parsed);
+    apply_strategy_context(&mut parsed);
     let Some(groups) = grouped_body_chunks(&parsed, chunk_size_tokens, tokenizer) else {
         return vec![(base_offset, block.to_string())];
     };
@@ -468,7 +641,9 @@ mod tests {
                     body.push_str(&format!("service svc{i}(server)[Service {i}]\n"))
                 }
                 "block-beta" => body.push_str(&format!("B{i}[Block {i}]\n")),
-                "C4Context" => body.push_str(&format!("Person(p{i}, \"User {i}\")\n")),
+                "C4Context" => body.push_str(&format!(
+                    "Person(p{i}, \"User {i}\")\nSystem(s{i}, \"System {i}\")\nRel(p{i}, s{i}, \"uses\")\n"
+                )),
                 _ => body.push_str(&format!("A{i}[Step {i}] --> A{}\n", i + 1)),
             }
         }
@@ -539,6 +714,65 @@ mod tests {
                 for section in 0..12 {
                     body.push_str(&format!("section Lane {section}\n"));
                     body.push_str(&format!("Task {section}\n"));
+                }
+            }
+            _ => {}
+        }
+        body.push_str("```\n");
+        body
+    }
+
+    fn hierarchy_or_chart_fixture(declaration: &str) -> String {
+        let mut body = format!("```mermaid\n{declaration}\n");
+        match declaration {
+            "mindmap" => {
+                body.push_str("  root((Root))\n");
+                for i in 0..36 {
+                    body.push_str(&format!("    Branch {i}\n      Leaf {i}\n"));
+                }
+            }
+            "treemap-beta" | "ishikawa" | "treeView" => {
+                body.push_str("  Root\n");
+                for i in 0..36 {
+                    body.push_str(&format!("    Branch {i}\n      Leaf {i}\n"));
+                }
+            }
+            "packet-beta" => {
+                for i in 0..54 {
+                    body.push_str(&format!("{i}: field_{i}\n"));
+                }
+            }
+            "pie title Usage" => {
+                for i in 0..54 {
+                    body.push_str(&format!("\"Slice {i}\" : {i}\n"));
+                }
+            }
+            "quadrantChart" => {
+                body.push_str("x-axis Low --> High\ny-axis Low --> High\nquadrant-1 Plan\n");
+                for i in 0..54 {
+                    body.push_str(&format!("Point {i}: [{}, {}]\n", i % 10, (i + 3) % 10));
+                }
+            }
+            "sankey-beta" => {
+                for i in 0..54 {
+                    body.push_str(&format!("source{i},target{i},{}\n", i + 1));
+                }
+            }
+            "xychart-beta" => {
+                body.push_str("title \"Trend\"\nx-axis [a, b, c]\ny-axis \"Value\" 0 --> 100\n");
+                for i in 0..54 {
+                    body.push_str(&format!("line [{i}, {}, {}]\n", i + 1, i + 2));
+                }
+            }
+            "radar-beta" => {
+                body.push_str("title Skills\n");
+                for i in 0..54 {
+                    body.push_str(&format!("\"Metric {i}\" : {}\n", i % 10));
+                }
+            }
+            "venn" => {
+                for i in 0..54 {
+                    body.push_str(&format!("A{i}: {}\n", i + 1));
                 }
             }
             _ => {}
@@ -739,5 +973,95 @@ mod tests {
             .expect("expected a chunk containing the alt block");
         assert!(alt_chunk.contains("else failure"));
         assert!(alt_chunk.contains("end\n"));
+    }
+
+    #[test]
+    fn hierarchical_and_chart_mermaid_types_split_large_blocks() {
+        for declaration in [
+            "mindmap",
+            "treemap-beta",
+            "ishikawa",
+            "treeView",
+            "packet-beta",
+            "pie title Usage",
+            "quadrantChart",
+            "sankey-beta",
+            "xychart-beta",
+            "radar-beta",
+            "venn",
+        ] {
+            let block = hierarchy_or_chart_fixture(declaration);
+            let chunks = split_mermaid_block(&block, 0, 90, &tokenizer());
+
+            assert!(
+                chunks.len() > 1,
+                "{declaration} should split into multiple chunks"
+            );
+            for (_, chunk) in chunks {
+                assert!(chunk.contains(declaration));
+                assert!(chunk.starts_with("```mermaid\n"));
+                assert!(chunk.ends_with("```\n"));
+            }
+        }
+    }
+
+    #[test]
+    fn mindmap_root_is_repeated_in_each_chunk() {
+        let block = hierarchy_or_chart_fixture("mindmap");
+        let chunks = split_mermaid_block(&block, 0, 70, &tokenizer());
+
+        assert!(chunks.len() > 1);
+        for (_, chunk) in chunks {
+            assert!(chunk.contains("root((Root))"));
+        }
+    }
+
+    #[test]
+    fn xychart_axes_are_repeated_in_each_chunk() {
+        let block = hierarchy_or_chart_fixture("xychart-beta");
+        let chunks = split_mermaid_block(&block, 0, 70, &tokenizer());
+
+        assert!(chunks.len() > 1);
+        for (_, chunk) in chunks {
+            assert!(chunk.contains("title \"Trend\""));
+            assert!(chunk.contains("x-axis [a, b, c]"));
+            assert!(chunk.contains("y-axis \"Value\" 0 --> 100"));
+        }
+    }
+
+    #[test]
+    fn unknown_mermaid_type_stays_atomic_when_oversized() {
+        let mut block = String::from("```mermaid\nexperimentalDiagram\n");
+        for i in 0..80 {
+            block.push_str(&format!("statement {i}\n"));
+        }
+        block.push_str("```\n");
+
+        let chunks = split_mermaid_block(&block, 0, 60, &tokenizer());
+        assert_eq!(chunks, vec![(0, block)]);
+    }
+
+    #[test]
+    fn gantt_config_is_repeated_in_each_chunk() {
+        let block = timeline_fixture("gantt");
+        let chunks = split_mermaid_block(&block, 0, 70, &tokenizer());
+
+        assert!(chunks.len() > 1);
+        for (_, chunk) in chunks {
+            assert!(chunk.contains("dateFormat  YYYY-MM-DD"));
+        }
+    }
+
+    #[test]
+    fn c4_definition_context_is_repeated_for_relation_chunks() {
+        let block = relational_fixture("C4Context");
+        let chunks = split_mermaid_block(&block, 0, 100, &tokenizer());
+
+        assert!(chunks.len() > 1);
+        for (_, chunk) in chunks {
+            assert!(chunk.contains("Person(p0, \"User 0\")"));
+            assert!(chunk.contains("System(s0, \"System 0\")"));
+            assert!(chunk.contains("Rel("));
+        }
     }
 }

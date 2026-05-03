@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use leptos_meta::Link;
 
 use crate::api::schemas::{SchemaDetail, SchemaListItem, SchemaVersionInfo};
 
@@ -383,12 +384,31 @@ fn VersionStatusBar(versions: Vec<SchemaVersionInfo>) -> impl IntoView {
 fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
     match schema_type.as_str() {
         "openapi" => {
-            // Render OpenAPI spec using Scalar's CDN-based viewer
-            // We embed the spec content as a JSON script tag and load Scalar's API reference
             let escaped_content = content
                 .replace('\\', "\\\\")
                 .replace('`', "\\`")
                 .replace("${", "\\${");
+
+            let scalar_js = {
+                #[cfg(feature = "ssr")]
+                {
+                    crate::static_assets::versioned_url("/js/scalar-standalone.js")
+                }
+                #[cfg(not(feature = "ssr"))]
+                {
+                    "/js/scalar-standalone.js".to_string()
+                }
+            };
+            let scalar_css = {
+                #[cfg(feature = "ssr")]
+                {
+                    crate::static_assets::versioned_url("/js/scalar-style.css")
+                }
+                #[cfg(not(feature = "ssr"))]
+                {
+                    "/js/scalar-style.css".to_string()
+                }
+            };
 
             let script = format!(
                 r#"
@@ -403,11 +423,11 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
                     if (!window.Scalar) {{
                         const link = document.createElement('link');
                         link.rel = 'stylesheet';
-                        link.href = '/js/scalar-style.css';
+                        link.href = '{scalar_css}';
                         document.head.appendChild(link);
 
                         const script = document.createElement('script');
-                        script.src = '/js/scalar-standalone.js';
+                        script.src = '{scalar_js}';
                         script.onload = function() {{
                             renderScalar(el);
                         }};
@@ -465,6 +485,8 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
 
             view! {
                 <div>
+                    <Link rel="preload" href={scalar_js} attr:r#as="script" />
+                    <Link rel="preload" href={scalar_css} attr:r#as="style" />
                     <style>{scalar_theme_css}</style>
                     <div id="scalar-api-reference" class="scalar-app min-h-[600px]">
                         <div class="flex justify-center items-center py-12">
@@ -478,13 +500,33 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
             .into_any()
         }
         "asyncapi" => {
-            // Render AsyncAPI spec using AsyncAPI React component
             let escaped_content = content
                 .replace('\\', "\\\\")
                 .replace('`', "\\`")
                 .replace("${", "\\${");
 
-            // Injected after the CDN stylesheet loads so it always wins the cascade
+            let asyncapi_js = {
+                #[cfg(feature = "ssr")]
+                {
+                    crate::static_assets::versioned_url("/js/asyncapi-standalone.js")
+                }
+                #[cfg(not(feature = "ssr"))]
+                {
+                    "/js/asyncapi-standalone.js".to_string()
+                }
+            };
+            let asyncapi_css = {
+                #[cfg(feature = "ssr")]
+                {
+                    crate::static_assets::versioned_url("/js/asyncapi-default.min.css")
+                }
+                #[cfg(not(feature = "ssr"))]
+                {
+                    "/js/asyncapi-default.min.css".to_string()
+                }
+            };
+
+            // Injected after the stylesheet loads so it always wins the cascade
             let script = format!(
                 r#"
                 (function() {{
@@ -542,11 +584,11 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
                     if (!window.AsyncApiStandalone) {{
                         const link = document.createElement('link');
                         link.rel = 'stylesheet';
-                        link.href = '/js/asyncapi-default.min.css';
+                        link.href = '{asyncapi_css}';
                         document.head.appendChild(link);
 
                         const script = document.createElement('script');
-                        script.src = '/js/asyncapi-standalone.js';
+                        script.src = '{asyncapi_js}';
                         script.onload = function() {{
                             injectTheme();
                             renderAsyncApi(container);
@@ -575,6 +617,8 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
 
             view! {
                 <div>
+                    <Link rel="preload" href={asyncapi_js} attr:r#as="script" />
+                    <Link rel="preload" href={asyncapi_css} attr:r#as="style" />
                     <div id="asyncapi-viewer" class="min-h-[600px]">
                         <div class="flex justify-center items-center py-12">
                             <span class="loading loading-spinner loading-lg"></span>

@@ -16,6 +16,9 @@ All notable changes to this project will be documented in this file.
 - Schema detail page pre-fetches the default version's content in parallel with schema metadata, removing the sequential wait between the two calls.
 - Schema detail handler now uses a projected MongoDB query (`find_by_name_summary`) that excludes endpoint arrays, reducing unnecessary data transfer for detail page loads.
 - Schema content REST endpoints now emit `Cache-Control: private, max-age=3600` headers; version content is immutable so repeat fetches are served from browser cache.
+- Static JS/CSS assets under `/js/` are now served with `Cache-Control: public, max-age=31536000, immutable` when requested with a `?v=` fingerprint query parameter (1-hour fallback without it); fingerprints are derived from file modification times at startup.
+- Scalar and AsyncAPI viewer bundles now use versioned URLs (`?v=<mtime>`) in the injected script tags, matching the cache policy and avoiding redundant revalidation on repeat visits.
+- Added `<link rel="preload">` hints for Scalar/AsyncAPI JS and CSS resources so the browser starts fetching them while the page HTML is still parsing.
 
 ## [0.24.0] 2026-04-30
 

@@ -1,6 +1,7 @@
 use super::splitter_blocks::{
     markdown_blocks, merge_broken_blocks, protected_ranges, MarkdownBlockKind,
 };
+use super::splitter_mermaid::split_mermaid_block;
 use super::splitter_sections::{merge_small_sections, split_into_sections, MIN_SECTION_CHARS};
 use super::splitter_table::split_table_block;
 use text_splitter::{ChunkConfig, MarkdownSplitter};
@@ -119,9 +120,11 @@ pub fn split_document(
                     &tokenizer,
                 )),
                 MarkdownBlockKind::Mermaid => {
-                    safe.push((
+                    safe.extend(split_mermaid_block(
+                        &section.text[block.range.clone()],
                         block.range.start,
-                        section.text[block.range.clone()].to_string(),
+                        chunk_size_tokens,
+                        &tokenizer,
                     ));
                 }
                 MarkdownBlockKind::Code => {}
@@ -574,7 +577,7 @@ mod tests {
     }
 
     #[test]
-    fn mermaid_fixtures_are_currently_kept_atomic() {
+    fn mermaid_fixtures_are_split_or_kept_with_valid_fences() {
         for (name, declaration) in MERMAID_FIXTURE_TYPES {
             for size in [
                 MermaidFixtureSize::Small,
@@ -585,16 +588,17 @@ mod tests {
                 let chunks = split_document(&content, 80, 0);
                 let mermaid_chunks = mermaid_fenced_chunks(&chunks);
 
-                assert_eq!(
-                    mermaid_chunks.len(),
-                    1,
-                    "{name} {size:?} should currently produce one Mermaid chunk"
-                );
                 assert!(
-                    mermaid_chunks[0].text.contains(declaration),
-                    "{name} {size:?} chunk should contain its declaration"
+                    !mermaid_chunks.is_empty(),
+                    "{name} {size:?} should produce at least one Mermaid chunk"
                 );
-                assert_mermaid_fence_balanced(mermaid_chunks[0]);
+                for chunk in mermaid_chunks {
+                    assert!(
+                        chunk.text.contains(declaration),
+                        "{name} {size:?} chunk should contain its declaration"
+                    );
+                    assert_mermaid_fence_balanced(chunk);
+                }
             }
         }
     }

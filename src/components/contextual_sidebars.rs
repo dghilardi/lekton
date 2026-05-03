@@ -97,7 +97,7 @@ fn SchemaTreeItem(node: SchemaTreeNode, #[prop(optional)] level: u32) -> impl In
         let href = format!("/schemas/{}", full_name);
         view! {
             <li>
-                <details open=is_in_active_branch()>
+                <details open=is_in_active_branch>
                     <summary class="hover:bg-base-200/50 transition-colors font-medium text-base-content/80 text-sm hover:text-base-content">
                         <span class="truncate">{title.clone()}</span>
                     </summary>

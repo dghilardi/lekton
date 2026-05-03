@@ -23,6 +23,7 @@ Cheshire Cat uses LangChain's `RecursiveCharacterTextSplitter` with tiktoken, me
 - Small adjacent sections are merged forward to avoid tiny retrieval units.
 - Fenced code blocks are kept atomic; oversize code blocks are emitted whole rather than torn apart.
 - Markdown tables are detected with the GFM parser rather than line-prefix heuristics. Tables that fit the token budget stay atomic; oversized tables are split by row groups with the original header and delimiter repeated in every table chunk.
+- Mermaid code fences are detected as diagram blocks. Small diagrams stay atomic; oversized diagrams are split by diagram family while repeating the Mermaid declaration and required context so each produced chunk remains a valid Mermaid fence.
 - Each chunk carries structural metadata: `section_path`, `section_anchor`, `byte_offset`, `char_offset`, `chunk_index`.
 - Embeddings are generated from enriched text (`Document Title > Section Path\n\nChunk`), while prompt/UI display uses the clean chunk text.
 
@@ -62,6 +63,8 @@ Key properties:
 - Token overlap is implemented through `text-splitter`'s overlap support.
 - Parser-derived protected ranges prevent splits inside code blocks and GFM tables, including tables without outer pipes and cells containing escaped or inline-code pipes.
 - Oversized tables bypass normal overlap splitting and are chunked only at row boundaries. Synthetic table chunks use the first original data row offset and repeat the table header for retrieval context.
+- Oversized Mermaid diagrams bypass plain token splitting and use a Mermaid-aware splitter:
+  relational diagrams preserve containers such as `subgraph ... end`; schema diagrams keep class/entity blocks atomic; interaction/time diagrams preserve participants, sections, and `alt/loop/par` blocks; hierarchical and chart diagrams repeat root or axis context where needed.
 - Output is typed (`SplitChunk`) instead of plain `String`.
 
 ### 4. Ingestion and Retrieval Metadata
@@ -72,7 +75,7 @@ The structural metadata introduced by this enhancement is also consumed by later
 - optional parent-section expansion via `rag.expand_to_parent`
 
 ### 5. Reindex Consideration
-Changing chunk size, overlap, table splitting policy, or chunk payload structure changes the vectors and metadata stored in Qdrant. After deployment, a full reindex (`POST /api/v1/admin/rag/reindex`) is required.
+Changing chunk size, overlap, table splitting policy, Mermaid splitting policy, or chunk payload structure changes the vectors and metadata stored in Qdrant. After deployment, a full reindex (`POST /api/v1/admin/rag/reindex`) is required.
 
 ### 6. Update Tests
 `src/rag/splitter.rs` now includes tests covering:
@@ -82,6 +85,7 @@ Changing chunk size, overlap, table splitting policy, or chunk payload structure
 - atomic fenced-code and table handling
 - GFM table detection without outer pipes, escaped pipes, inline-code pipes, invalid delimiters, and block/blank-line termination
 - oversized table row-group splitting with repeated headers
+- Mermaid fixture coverage for supported diagram families across small, medium, and large inputs, including valid fences, repeated declarations/context, stable offsets, and structural blocks that must not be torn apart
 - UTF-8-safe offset computation when merged sections contain multibyte characters
 
 ## Files to Modify
@@ -91,6 +95,7 @@ Changing chunk size, overlap, table splitting policy, or chunk payload structure
 | `src/config.rs` | Add `chunk_size_tokens` and `chunk_overlap_tokens` to `RagConfig` |
 | `config/default.toml` | Add default values |
 | `src/rag/splitter.rs` | Replace char-based splitting with typed, heading-aware token splitting |
+| `src/rag/splitter_mermaid.rs` | Split oversized Mermaid diagrams by family while preserving valid fenced chunks |
 | `src/rag/service.rs` | Pass token config to `split_document` and enrich embedding text |
 | `src/rag/vectorstore.rs` | Persist structural metadata in chunk payload |
 

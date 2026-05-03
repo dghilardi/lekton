@@ -462,4 +462,109 @@ mod tests {
         assert_eq!(anchor_from_heading("API (v2)"), "api-v2");
         assert_eq!(anchor_from_heading("C++ Guide"), "c-guide");
     }
+
+    #[derive(Debug, Clone, Copy)]
+    enum MermaidFixtureSize {
+        Small,
+        Medium,
+        Large,
+    }
+
+    impl MermaidFixtureSize {
+        fn filler_lines(self) -> usize {
+            match self {
+                Self::Small => 2,
+                Self::Medium => 24,
+                Self::Large => 120,
+            }
+        }
+    }
+
+    const MERMAID_FIXTURE_TYPES: &[(&str, &str)] = &[
+        ("flowchart", "flowchart TD"),
+        ("graph", "graph TD"),
+        ("sequenceDiagram", "sequenceDiagram"),
+        ("classDiagram", "classDiagram"),
+        ("stateDiagram", "stateDiagram-v2"),
+        ("erDiagram", "erDiagram"),
+        ("journey", "journey"),
+        ("gantt", "gantt"),
+        ("pie", "pie title Usage"),
+        ("quadrantChart", "quadrantChart"),
+        ("requirementDiagram", "requirementDiagram"),
+        ("gitGraph", "gitGraph"),
+        ("C4", "C4Context"),
+        ("mindmap", "mindmap"),
+        ("timeline", "timeline"),
+        ("zenuml", "zenuml"),
+        ("sankey", "sankey-beta"),
+        ("xychart", "xychart-beta"),
+        ("block", "block-beta"),
+        ("packet", "packet-beta"),
+        ("kanban", "kanban"),
+        ("architecture", "architecture-beta"),
+        ("radar", "radar-beta"),
+        ("treemap", "treemap-beta"),
+        ("venn", "venn"),
+        ("ishikawa", "ishikawa"),
+        ("treeView", "treeView"),
+    ];
+
+    fn mermaid_fixture(declaration: &str, size: MermaidFixtureSize) -> String {
+        let mut body = String::new();
+        body.push_str(declaration);
+        body.push('\n');
+        body.push_str("%% Mermaid splitter fixture\n");
+        for i in 0..size.filler_lines() {
+            body.push_str(&format!("%% fixture-line-{i}\n"));
+        }
+        format!("# Diagram\n\n```mermaid\n{body}```\n")
+    }
+
+    fn mermaid_fenced_chunks(chunks: &[SplitChunk]) -> Vec<&SplitChunk> {
+        chunks
+            .iter()
+            .filter(|chunk| chunk.text.contains("```mermaid"))
+            .collect()
+    }
+
+    fn assert_mermaid_fence_balanced(chunk: &SplitChunk) {
+        let open_count = chunk.text.matches("```mermaid").count();
+        let close_count = chunk
+            .text
+            .split('\n')
+            .filter(|line| line.trim() == "```")
+            .count();
+        assert_eq!(
+            open_count, close_count,
+            "Mermaid fence should be balanced in chunk: {}",
+            chunk.text
+        );
+    }
+
+    #[test]
+    fn mermaid_fixtures_are_currently_kept_atomic() {
+        for (name, declaration) in MERMAID_FIXTURE_TYPES {
+            for size in [
+                MermaidFixtureSize::Small,
+                MermaidFixtureSize::Medium,
+                MermaidFixtureSize::Large,
+            ] {
+                let content = mermaid_fixture(declaration, size);
+                let chunks = split_document(&content, 80, 0);
+                let mermaid_chunks = mermaid_fenced_chunks(&chunks);
+
+                assert_eq!(
+                    mermaid_chunks.len(),
+                    1,
+                    "{name} {size:?} should currently produce one Mermaid chunk"
+                );
+                assert!(
+                    mermaid_chunks[0].text.contains(declaration),
+                    "{name} {size:?} chunk should contain its declaration"
+                );
+                assert_mermaid_fence_balanced(mermaid_chunks[0]);
+            }
+        }
+    }
 }

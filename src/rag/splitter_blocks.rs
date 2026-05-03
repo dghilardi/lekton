@@ -105,6 +105,7 @@ fn is_mermaid_info_string(info: &str) -> bool {
         .is_some_and(|lang| lang.eq_ignore_ascii_case("mermaid"))
 }
 
+#[cfg(test)]
 fn is_directive_or_comment(line: &str) -> bool {
     line.trim().starts_with("%%")
 }
@@ -124,6 +125,7 @@ pub(in crate::rag) fn mermaid_source_from_fence(block: &str) -> Option<&str> {
         .or_else(|| source.strip_suffix("```"))
 }
 
+#[cfg(test)]
 pub(in crate::rag) fn mermaid_diagram_type(block: &str) -> Option<MermaidDiagramType> {
     let source = mermaid_source_from_fence(block)?;
     let mut in_frontmatter = false;
@@ -189,6 +191,7 @@ pub(in crate::rag) fn protected_ranges(text: &str) -> Vec<(usize, usize)> {
         .collect()
 }
 
+#[cfg(test)]
 pub(in crate::rag) fn table_ranges(text: &str) -> Vec<Range<usize>> {
     markdown_blocks(text)
         .into_iter()

@@ -1,4 +1,6 @@
-use super::splitter_blocks::{merge_broken_blocks, protected_ranges, table_ranges};
+use super::splitter_blocks::{
+    markdown_blocks, merge_broken_blocks, protected_ranges, MarkdownBlockKind,
+};
 use super::splitter_sections::{merge_small_sections, split_into_sections, MIN_SECTION_CHARS};
 use super::splitter_table::split_table_block;
 use text_splitter::{ChunkConfig, MarkdownSplitter};
@@ -94,22 +96,37 @@ pub fn split_document(
                 .collect()
         };
 
+        let special_blocks = markdown_blocks(&section.text).into_iter().filter(|block| {
+            matches!(
+                block.kind,
+                MarkdownBlockKind::Table | MarkdownBlockKind::Mermaid
+            )
+        });
         let mut safe: Vec<(usize, String)> = Vec::new();
         let mut cursor = 0usize;
-        for table_range in table_ranges(&section.text) {
-            if cursor < table_range.start {
+        for block in special_blocks {
+            if cursor < block.range.start {
                 safe.extend(split_regular(
-                    &section.text[cursor..table_range.start],
+                    &section.text[cursor..block.range.start],
                     cursor,
                 ));
             }
-            safe.extend(split_table_block(
-                &section.text[table_range.clone()],
-                table_range.start,
-                chunk_size_tokens,
-                &tokenizer,
-            ));
-            cursor = table_range.end;
+            match block.kind {
+                MarkdownBlockKind::Table => safe.extend(split_table_block(
+                    &section.text[block.range.clone()],
+                    block.range.start,
+                    chunk_size_tokens,
+                    &tokenizer,
+                )),
+                MarkdownBlockKind::Mermaid => {
+                    safe.push((
+                        block.range.start,
+                        section.text[block.range.clone()].to_string(),
+                    ));
+                }
+                MarkdownBlockKind::Code => {}
+            }
+            cursor = block.range.end;
         }
         if cursor < section.text.len() {
             safe.extend(split_regular(&section.text[cursor..], cursor));
@@ -378,6 +395,20 @@ mod tests {
         assert!(table_chunks[0].text.contains("| retries | 3 |"));
         assert!(!table_chunks[0].text.contains("Intro before."));
         assert!(!table_chunks[0].text.contains("Outro after."));
+    }
+
+    #[test]
+    fn small_mermaid_block_is_isolated_from_surrounding_text() {
+        let content =
+            "# Section\n\nIntro before.\n\n```mermaid\nflowchart TD\nA --> B\n```\n\nOutro after.\n";
+        let chunks = split_document(content, TOKENS, OVERLAP);
+        let mermaid_chunks = mermaid_fenced_chunks(&chunks);
+
+        assert_eq!(mermaid_chunks.len(), 1);
+        assert!(mermaid_chunks[0].text.contains("flowchart TD"));
+        assert!(!mermaid_chunks[0].text.contains("Intro before."));
+        assert!(!mermaid_chunks[0].text.contains("Outro after."));
+        assert_mermaid_fence_balanced(mermaid_chunks[0]);
     }
 
     #[test]

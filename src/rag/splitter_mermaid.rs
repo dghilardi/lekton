@@ -122,6 +122,15 @@ fn is_relational_diagram(diagram_type: &MermaidDiagramType) -> bool {
     )
 }
 
+fn is_schema_diagram(diagram_type: &MermaidDiagramType) -> bool {
+    matches!(
+        diagram_type,
+        MermaidDiagramType::ClassDiagram
+            | MermaidDiagramType::ErDiagram
+            | MermaidDiagramType::GitGraph
+    )
+}
+
 fn starts_relational_container(line: &str) -> bool {
     let trimmed = line.trim();
     let lower = trimmed.to_ascii_lowercase();
@@ -170,12 +179,70 @@ fn relational_units(lines: &[MermaidLine]) -> Vec<Vec<MermaidLine>> {
     units
 }
 
+fn brace_units(lines: &[MermaidLine]) -> Vec<Vec<MermaidLine>> {
+    let mut units = Vec::new();
+    let mut current: Vec<MermaidLine> = Vec::new();
+    let mut depth = 0usize;
+
+    for line in lines {
+        let trimmed = line.text.trim();
+        current.push(line.clone());
+        if trimmed.ends_with('{') {
+            depth += 1;
+        }
+        if trimmed == "}" && depth > 0 {
+            depth -= 1;
+        }
+        if depth == 0 {
+            units.push(std::mem::take(&mut current));
+        }
+    }
+
+    if !current.is_empty() {
+        units.push(current);
+    }
+
+    units
+}
+
+fn git_graph_units(lines: &[MermaidLine]) -> Vec<Vec<MermaidLine>> {
+    let mut units = Vec::new();
+    let mut current: Vec<MermaidLine> = Vec::new();
+
+    for line in lines {
+        let lower = line.text.trim().to_ascii_lowercase();
+        let starts_group = lower.starts_with("branch ")
+            || lower.starts_with("checkout ")
+            || lower.starts_with("merge ");
+        if starts_group && !current.is_empty() {
+            units.push(std::mem::take(&mut current));
+        }
+        current.push(line.clone());
+    }
+
+    if !current.is_empty() {
+        units.push(current);
+    }
+
+    units
+}
+
+fn schema_units(parsed: &ParsedMermaidBlock) -> Vec<Vec<MermaidLine>> {
+    if matches!(parsed.diagram_type, MermaidDiagramType::GitGraph) {
+        git_graph_units(&parsed.body)
+    } else {
+        brace_units(&parsed.body)
+    }
+}
+
 fn body_units(parsed: &ParsedMermaidBlock) -> Option<Vec<Vec<MermaidLine>>> {
     if parsed.body.is_empty() {
         return None;
     }
     if is_relational_diagram(&parsed.diagram_type) {
         Some(relational_units(&parsed.body))
+    } else if is_schema_diagram(&parsed.diagram_type) {
+        Some(schema_units(parsed))
     } else {
         Some(line_units(&parsed.body))
     }
@@ -288,6 +355,28 @@ mod tests {
         body
     }
 
+    fn schema_fixture(declaration: &str) -> String {
+        let mut body = format!("```mermaid\n{declaration}\n");
+        for i in 0..36 {
+            match declaration {
+                "classDiagram" => body.push_str(&format!(
+                    "class Service{i} {{\n  +String name{i}\n  +run{i}()\n}}\nService{i} --> Service{}\n",
+                    i + 1
+                )),
+                "erDiagram" => body.push_str(&format!(
+                    "ENTITY{i} {{\n  string id\n  string value{i}\n}}\nENTITY{i} ||--o{{ ENTITY{} : links\n",
+                    i + 1
+                )),
+                "gitGraph" => body.push_str(&format!(
+                    "branch feature{i}\ncheckout feature{i}\ncommit id: \"f{i}-1\"\ncommit id: \"f{i}-2\"\ncheckout main\nmerge feature{i}\n"
+                )),
+                _ => {}
+            }
+        }
+        body.push_str("```\n");
+        body
+    }
+
     #[test]
     fn small_mermaid_block_returns_original_text() {
         let block = "```mermaid\nflowchart TD\nA --> B\n```\n";
@@ -383,5 +472,43 @@ mod tests {
             .skip_while(|(_, chunk)| !chunk.contains("subgraph Cluster"))
             .skip(1)
             .any(|(_, chunk)| chunk.contains("A0 --> A1")));
+    }
+
+    #[test]
+    fn schema_mermaid_types_split_large_blocks() {
+        for declaration in ["classDiagram", "erDiagram", "gitGraph"] {
+            let block = schema_fixture(declaration);
+            let chunks = split_mermaid_block(&block, 0, 110, &tokenizer());
+
+            assert!(
+                chunks.len() > 1,
+                "{declaration} should split into multiple chunks"
+            );
+            for (_, chunk) in chunks {
+                assert!(chunk.contains(declaration));
+                assert!(chunk.starts_with("```mermaid\n"));
+                assert!(chunk.ends_with("```\n"));
+            }
+        }
+    }
+
+    #[test]
+    fn class_block_is_not_split_across_chunks() {
+        let mut block = String::from("```mermaid\nclassDiagram\nclass BigService {\n");
+        for i in 0..30 {
+            block.push_str(&format!("  +field{i}: String\n"));
+        }
+        block.push_str("}\nBigService --> OtherService\n```\n");
+
+        let chunks = split_mermaid_block(&block, 0, 70, &tokenizer());
+        assert!(chunks.len() > 1);
+        let class_chunk = chunks
+            .iter()
+            .map(|(_, chunk)| chunk)
+            .find(|chunk| chunk.contains("class BigService"))
+            .expect("expected a chunk containing the class block");
+        assert!(class_chunk.contains("+field0"));
+        assert!(class_chunk.contains("+field29"));
+        assert!(class_chunk.contains("}\n"));
     }
 }

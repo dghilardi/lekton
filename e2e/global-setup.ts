@@ -169,6 +169,32 @@ export default async function globalSetup() {
     paths: {},
   }), 'beta');
 
+  await ingestSchema(
+    'event-api',
+    'asyncapi',
+    '1.0.0',
+    JSON.stringify({
+      asyncapi: '2.6.0',
+      info: { title: 'Event API', version: '1.0.0', description: 'Internal event bus API.' },
+      channels: {
+        'user/created': {
+          publish: {
+            summary: 'User created event',
+            message: {
+              payload: {
+                type: 'object',
+                properties: {
+                  userId: { type: 'string' },
+                  email: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+      },
+    }),
+  );
+
   // Wait for all Meilisearch tasks (indexing + attribute configuration) to complete.
   // configure_index() submits tasks asynchronously; if we search before they complete,
   // the access_level filter fails with "attribute is not filterable".

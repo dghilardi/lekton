@@ -354,7 +354,7 @@ fn VersionSelector(
 /// Status bar showing all versions with their status.
 #[component]
 fn VersionStatusBar(versions: Vec<SchemaVersionInfo>) -> impl IntoView {
-    if versions.len() <= 1 {
+    if versions.is_empty() {
         return view! { <div></div> }.into_any();
     }
 

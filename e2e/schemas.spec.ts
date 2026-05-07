@@ -68,8 +68,10 @@ test.describe('AsyncAPI viewer', () => {
     }
     // Wait for the AsyncAPI viewer container to receive rendered content.
     // The loading spinner is replaced once AsyncApiStandalone.render() completes.
+    // Use toContainText instead of a nested toBeVisible because the AsyncAPI
+    // viewer may render the title inside a CSS-clipped or overflow-hidden section.
     const viewer = page.locator('#asyncapi-viewer');
     await expect(viewer).toBeVisible({ timeout: 15_000 });
-    await expect(viewer.locator('text=Event API').first()).toBeVisible({ timeout: 20_000 });
+    await expect(viewer).toContainText('Event API', { timeout: 20_000 });
   });
 });

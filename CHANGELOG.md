@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- `justfile` `npm-deps` recipe now compares `package-lock.json` modification time against `node_modules/.package-lock.json` instead of checking for a single sentinel directory (`node_modules/mermaid`). This ensures `npm ci` is re-run whenever the lock file changes, preventing missing bundles (Scalar, AsyncAPI) after new npm dependencies are added.
+
+### Tests
+- Added e2e tests verifying that `scalar-standalone.js` and `asyncapi-standalone.js` are served with HTTP 200 and a JavaScript content-type, catching regressions where the build step did not copy the bundles to `public/js/`.
+- Added e2e tests for the AsyncAPI viewer: schema appears in the registry list, detail page shows the version, and `AsyncApiStandalone.render()` produces visible spec content (seeded `event-api` schema with title "Event API").
+
 ### Added
 - RAG chunking is now Mermaid-aware: Mermaid code fences are detected as diagram blocks and oversized diagrams are split into valid Mermaid fenced chunks by diagram family, with repeated declarations/context and structural guards for containers, schema blocks, interaction blocks, hierarchies, and chart axes. Reindex RAG vectors after deployment.
 

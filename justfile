@@ -149,7 +149,7 @@ test-all: test test-integration test-e2e
 npm-deps:
     #!/usr/bin/env bash
     set -euo pipefail
-    if [ ! -d node_modules/mermaid ]; then
+    if [ ! -d node_modules ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then
         npm ci
     fi
 

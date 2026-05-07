@@ -32,3 +32,44 @@ test.describe('Schema Registry', () => {
     await expect(page.locator('text=User API').first()).toBeVisible({ timeout: 15_000 });
   });
 });
+
+test.describe('Schema viewer static assets', () => {
+  test('scalar bundle is served', async ({ request }) => {
+    const resp = await request.get('/js/scalar-standalone.js');
+    expect(resp.status()).toBe(200);
+    expect(resp.headers()['content-type']).toMatch(/javascript/);
+  });
+
+  test('asyncapi bundle is served', async ({ request }) => {
+    const resp = await request.get('/js/asyncapi-standalone.js');
+    expect(resp.status()).toBe(200);
+    expect(resp.headers()['content-type']).toMatch(/javascript/);
+  });
+});
+
+test.describe('AsyncAPI viewer', () => {
+  test('asyncapi schema appears in schema list', async ({ page }) => {
+    await page.goto('/schemas');
+    await page.waitForLoadState('networkidle');
+    await expect(page.locator('text=event-api').first()).toBeVisible({ timeout: 15_000 });
+  });
+
+  test('asyncapi schema detail page shows version', async ({ page }) => {
+    await page.goto('/schemas/event-api');
+    await expect(page.locator('text=v1.0.0').first()).toBeVisible({ timeout: 15_000 });
+  });
+
+  test('asyncapi viewer renders spec content', async ({ page }) => {
+    await page.goto('/schemas/event-api');
+    // Wait for version selector and select the only version
+    const versionSelect = page.locator('select');
+    if (await versionSelect.isVisible({ timeout: 15_000 })) {
+      await versionSelect.selectOption({ label: '1.0.0 (stable)' });
+    }
+    // Wait for the AsyncAPI viewer container to receive rendered content.
+    // The loading spinner is replaced once AsyncApiStandalone.render() completes.
+    const viewer = page.locator('#asyncapi-viewer');
+    await expect(viewer).toBeVisible({ timeout: 15_000 });
+    await expect(viewer.locator('text=Event API').first()).toBeVisible({ timeout: 20_000 });
+  });
+});

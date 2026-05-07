@@ -1,4 +1,7 @@
-use super::splitter_blocks::{merge_broken_blocks, protected_ranges, table_ranges};
+use super::splitter_blocks::{
+    markdown_blocks, merge_broken_blocks, protected_ranges, MarkdownBlockKind,
+};
+use super::splitter_mermaid::split_mermaid_block;
 use super::splitter_sections::{merge_small_sections, split_into_sections, MIN_SECTION_CHARS};
 use super::splitter_table::split_table_block;
 use text_splitter::{ChunkConfig, MarkdownSplitter};
@@ -94,22 +97,39 @@ pub fn split_document(
                 .collect()
         };
 
+        let special_blocks = markdown_blocks(&section.text).into_iter().filter(|block| {
+            matches!(
+                block.kind,
+                MarkdownBlockKind::Table | MarkdownBlockKind::Mermaid
+            )
+        });
         let mut safe: Vec<(usize, String)> = Vec::new();
         let mut cursor = 0usize;
-        for table_range in table_ranges(&section.text) {
-            if cursor < table_range.start {
+        for block in special_blocks {
+            if cursor < block.range.start {
                 safe.extend(split_regular(
-                    &section.text[cursor..table_range.start],
+                    &section.text[cursor..block.range.start],
                     cursor,
                 ));
             }
-            safe.extend(split_table_block(
-                &section.text[table_range.clone()],
-                table_range.start,
-                chunk_size_tokens,
-                &tokenizer,
-            ));
-            cursor = table_range.end;
+            match block.kind {
+                MarkdownBlockKind::Table => safe.extend(split_table_block(
+                    &section.text[block.range.clone()],
+                    block.range.start,
+                    chunk_size_tokens,
+                    &tokenizer,
+                )),
+                MarkdownBlockKind::Mermaid => {
+                    safe.extend(split_mermaid_block(
+                        &section.text[block.range.clone()],
+                        block.range.start,
+                        chunk_size_tokens,
+                        &tokenizer,
+                    ));
+                }
+                MarkdownBlockKind::Code => {}
+            }
+            cursor = block.range.end;
         }
         if cursor < section.text.len() {
             safe.extend(split_regular(&section.text[cursor..], cursor));
@@ -381,6 +401,20 @@ mod tests {
     }
 
     #[test]
+    fn small_mermaid_block_is_isolated_from_surrounding_text() {
+        let content =
+            "# Section\n\nIntro before.\n\n```mermaid\nflowchart TD\nA --> B\n```\n\nOutro after.\n";
+        let chunks = split_document(content, TOKENS, OVERLAP);
+        let mermaid_chunks = mermaid_fenced_chunks(&chunks);
+
+        assert_eq!(mermaid_chunks.len(), 1);
+        assert!(mermaid_chunks[0].text.contains("flowchart TD"));
+        assert!(!mermaid_chunks[0].text.contains("Intro before."));
+        assert!(!mermaid_chunks[0].text.contains("Outro after."));
+        assert_mermaid_fence_balanced(mermaid_chunks[0]);
+    }
+
+    #[test]
     fn gfm_table_alignment_and_empty_cells_are_preserved() {
         let header = "Name | Left | Center | Right | Empty";
         let delimiter = ":--- | :--- | :---: | ---: | ---";
@@ -461,5 +495,111 @@ mod tests {
     fn anchor_from_heading_strips_special_chars() {
         assert_eq!(anchor_from_heading("API (v2)"), "api-v2");
         assert_eq!(anchor_from_heading("C++ Guide"), "c-guide");
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum MermaidFixtureSize {
+        Small,
+        Medium,
+        Large,
+    }
+
+    impl MermaidFixtureSize {
+        fn filler_lines(self) -> usize {
+            match self {
+                Self::Small => 2,
+                Self::Medium => 24,
+                Self::Large => 120,
+            }
+        }
+    }
+
+    const MERMAID_FIXTURE_TYPES: &[(&str, &str)] = &[
+        ("flowchart", "flowchart TD"),
+        ("graph", "graph TD"),
+        ("sequenceDiagram", "sequenceDiagram"),
+        ("classDiagram", "classDiagram"),
+        ("stateDiagram", "stateDiagram-v2"),
+        ("erDiagram", "erDiagram"),
+        ("journey", "journey"),
+        ("gantt", "gantt"),
+        ("pie", "pie title Usage"),
+        ("quadrantChart", "quadrantChart"),
+        ("requirementDiagram", "requirementDiagram"),
+        ("gitGraph", "gitGraph"),
+        ("C4", "C4Context"),
+        ("mindmap", "mindmap"),
+        ("timeline", "timeline"),
+        ("zenuml", "zenuml"),
+        ("sankey", "sankey-beta"),
+        ("xychart", "xychart-beta"),
+        ("block", "block-beta"),
+        ("packet", "packet-beta"),
+        ("kanban", "kanban"),
+        ("architecture", "architecture-beta"),
+        ("radar", "radar-beta"),
+        ("treemap", "treemap-beta"),
+        ("venn", "venn"),
+        ("ishikawa", "ishikawa"),
+        ("treeView", "treeView"),
+    ];
+
+    fn mermaid_fixture(declaration: &str, size: MermaidFixtureSize) -> String {
+        let mut body = String::new();
+        body.push_str(declaration);
+        body.push('\n');
+        body.push_str("%% Mermaid splitter fixture\n");
+        for i in 0..size.filler_lines() {
+            body.push_str(&format!("%% fixture-line-{i}\n"));
+        }
+        format!("# Diagram\n\n```mermaid\n{body}```\n")
+    }
+
+    fn mermaid_fenced_chunks(chunks: &[SplitChunk]) -> Vec<&SplitChunk> {
+        chunks
+            .iter()
+            .filter(|chunk| chunk.text.contains("```mermaid"))
+            .collect()
+    }
+
+    fn assert_mermaid_fence_balanced(chunk: &SplitChunk) {
+        let open_count = chunk.text.matches("```mermaid").count();
+        let close_count = chunk
+            .text
+            .split('\n')
+            .filter(|line| line.trim() == "```")
+            .count();
+        assert_eq!(
+            open_count, close_count,
+            "Mermaid fence should be balanced in chunk: {}",
+            chunk.text
+        );
+    }
+
+    #[test]
+    fn mermaid_fixtures_are_split_or_kept_with_valid_fences() {
+        for (name, declaration) in MERMAID_FIXTURE_TYPES {
+            for size in [
+                MermaidFixtureSize::Small,
+                MermaidFixtureSize::Medium,
+                MermaidFixtureSize::Large,
+            ] {
+                let content = mermaid_fixture(declaration, size);
+                let chunks = split_document(&content, 80, 0);
+                let mermaid_chunks = mermaid_fenced_chunks(&chunks);
+
+                assert!(
+                    !mermaid_chunks.is_empty(),
+                    "{name} {size:?} should produce at least one Mermaid chunk"
+                );
+                for chunk in mermaid_chunks {
+                    assert!(
+                        chunk.text.contains(declaration),
+                        "{name} {size:?} chunk should contain its declaration"
+                    );
+                    assert_mermaid_fence_balanced(chunk);
+                }
+            }
+        }
     }
 }

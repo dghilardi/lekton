@@ -27,6 +27,8 @@ pub mod splitter;
 #[cfg(feature = "ssr")]
 mod splitter_blocks;
 #[cfg(feature = "ssr")]
+mod splitter_mermaid;
+#[cfg(feature = "ssr")]
 mod splitter_sections;
 #[cfg(feature = "ssr")]
 mod splitter_table;

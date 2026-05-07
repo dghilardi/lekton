@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- RAG chunking is now Mermaid-aware: Mermaid code fences are detected as diagram blocks and oversized diagrams are split into valid Mermaid fenced chunks by diagram family, with repeated declarations/context and structural guards for containers, schema blocks, interaction blocks, hierarchies, and chart axes. Reindex RAG vectors after deployment.
+
 ## [0.24.1] 2026-05-03
 
 ### Fixed

@@ -129,7 +129,11 @@ impl ServiceTokenRepository for MongoServiceTokenRepository {
             .sort(doc! { "created_at": -1 })
             .build();
 
-        let mut cursor = self.collection.find(doc! {}).with_options(options).await?;
+        let mut cursor = self
+            .collection
+            .find(doc! { "token_type": "service" })
+            .with_options(options)
+            .await?;
         let mut tokens = Vec::new();
         while let Some(token) = cursor.try_next().await? {
             tokens.push(token);

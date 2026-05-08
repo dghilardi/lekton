@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.2] 2026-05-08
+
 ### Fixed
 - `justfile` `npm-deps` recipe now compares `package-lock.json` modification time against `node_modules/.package-lock.json` instead of checking for a single sentinel directory (`node_modules/mermaid`). This ensures `npm ci` is re-run whenever the lock file changes, preventing missing bundles (Scalar, AsyncAPI) after new npm dependencies are added.
 

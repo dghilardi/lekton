@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.4] 2026-05-09
+
 ### Fixed
 - Default `cargo check` no longer compiles browser-only splash animation code without the `hydrate` feature.
 

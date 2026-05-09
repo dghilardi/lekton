@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - Portal layout now hides the contextual sidebar on routes that do not use it, keeps navbar search resilient when custom fonts widen navigation labels, refreshes section landing cards in documentation, and makes the admin Custom CSS editor more usable with shared theme/layout token guidance.
 - `example.custom.css` and custom CSS active-item selectors updated to use `a[aria-current="page"]` for compatibility with the new active-state mechanism.
+- Documentation cleanup: removed outdated `docs/ACTION_PLAN.md` (superseded by CHANGELOG), updated `ENH-005` status to Implemented, added Phase 6 deferred note to `IMPLEMENTATION_ROADMAP.md`, fixed stale `docs/ADRs/` reference in `AGENTS.md`.
 
 ## [0.24.2] 2026-05-08
 

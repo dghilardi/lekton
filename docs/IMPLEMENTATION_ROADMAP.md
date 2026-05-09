@@ -63,6 +63,8 @@ Fulfill the core differentiator of Lekton: robust RBAC and a seamless authoring 
 
 ## Phase 6: Nextra Migration & Decommissioning
 
+> **Status: Deferred** — Lekton has achieved full functional parity with Nextra and is production-ready as a standalone portal. This phase covers the one-time migration from an existing Nextra installation and is only relevant when cutting over from a previous Nextra-based deployment.
+
 *   [ ] **Migration Tooling:** Write a one-off script to parse the current Nextra markdown structure, extract frontmatter, and ingest it into Lekton via the `POST /api/v1/ingest` endpoint.
 *   [ ] **Beta Rollout:** Run Lekton in parallel with Nextra for a testing period.
 *   [ ] **Decommission Nextra:** Sunsetting the legacy portal once full parity and stability are confirmed.

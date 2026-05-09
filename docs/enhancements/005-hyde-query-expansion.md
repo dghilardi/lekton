@@ -1,7 +1,7 @@
 # ENH-005: HyDE Query Expansion
 
 ## Status
-Proposed
+Implemented
 
 ## Summary
 Add an optional Hypothetical Document Embedding (HyDE) step to the retrieval pipeline. Before vector search, the LLM generates a hypothetical answer to the user's question, and that answer is embedded instead of (or alongside) the raw query. This significantly improves retrieval recall for short, ambiguous, or keyword-sparse queries.

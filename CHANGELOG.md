@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+
+## [0.24.3] 2026-05-09
 ### Fixed
 - Docs sidebar no longer shows empty on leaf document pages (e.g. `/docs/getting-started`): falls back to showing all top-level navigation items when the current page has no section children.
 - Sidebar active-item highlighting now uses `aria-current="page"` set reactively via `use_location()` in all sidebar components (docs, admin, schemas), replacing a broken CSS selector that matched all items instead of only the active one.

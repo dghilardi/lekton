@@ -33,6 +33,12 @@ pub struct IsDemoMode(pub Signal<bool>);
 #[derive(Clone, Copy)]
 pub struct IsRagEnabled(pub Signal<bool>);
 
+/// Newtype wrapper for the layout-ready signal, used as Leptos context.
+/// Becomes `true` once the entrance animation should start: immediately for
+/// anonymous users (no session cookie), after token validation for authenticated ones.
+#[derive(Clone, Copy)]
+pub struct LayoutReady(pub Signal<bool>);
+
 #[cfg(feature = "ssr")]
 impl axum::extract::FromRef<AppState> for crate::auth::extractor::DemoMode {
     fn from_ref(state: &AppState) -> Self {
@@ -164,13 +170,56 @@ pub fn App() -> impl IntoView {
     let is_rag_enabled: Signal<bool> =
         Signal::derive(move || rag_resource.get().and_then(|res| res.ok()).unwrap_or(false));
 
+    // Cheap SSR-side cookie check — serialised into the HTML, no extra round-trip.
+    let session_resource = Resource::new(|| (), |_| has_session_cookie());
+
+    // Auth check is done once user_resource yields any value (Ok or Err).
+    let user_ready = Signal::derive(move || user_resource.get().is_some());
+
+    // layout_ready drives the entrance animation classes.
+    // Updated via Effect so session_resource is only read in a tracked reactive
+    // context (Effect), avoiding the hydration-mode warning from Signal::derive.
+    let layout_ready = RwSignal::new(false);
+    Effect::new(move || {
+        match session_resource.get() {
+            None => {}                                                // still loading — keep waiting
+            Some(Ok(false)) | Some(Err(_)) => layout_ready.set(true), // no session
+            Some(Ok(true)) => {
+                if user_ready.get() {
+                    // session — wait for auth
+                    layout_ready.set(true);
+                }
+            }
+        }
+    });
+
     provide_context(current_user);
     provide_context(IsDemoMode(is_demo_mode));
     provide_context(IsRagEnabled(is_rag_enabled));
+    provide_context(LayoutReady(layout_ready.into()));
     provide_context(crate::pages::chat::ChatContext::new());
 
     view! {
         <Title text="Lekton — Internal Developer Portal" />
+
+        // Splash screen: covers the layout while the access token is validated.
+        // Suspense bounds the session_resource.get() read to avoid the hydration
+        // warning. fallback=|| () is never shown because the resource resolves
+        // during SSR and is immediately available on hydration.
+        <Suspense fallback=|| ()>
+            {move || {
+                let has_sess = session_resource.get().and_then(|r| r.ok()).unwrap_or(false);
+                view! {
+                    <div class=move || match (has_sess, user_ready.get()) {
+                        (false, _)    => "lekton-splash lekton-splash-inactive",
+                        (true, false) => "lekton-splash",
+                        (true, true)  => "lekton-splash lekton-splash-closing",
+                    }>
+                        <span class="loading loading-spinner loading-xl text-primary"></span>
+                    </div>
+                }
+            }}
+        </Suspense>
 
         <Router>
             <Layout>

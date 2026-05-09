@@ -53,6 +53,17 @@ pub async fn get_is_rag_enabled() -> Result<bool, ServerFnError> {
     Ok(state.rag_service.is_some() && state.chat_service.is_some())
 }
 
+/// Lightweight SSR-side cookie presence check — no token validation, no DB call.
+/// Used to decide whether to show the entrance splash screen: if the session
+/// cookie is absent the user is anonymous and the layout can render immediately.
+#[server(HasSessionCookie, "/api")]
+pub async fn has_session_cookie() -> Result<bool, ServerFnError> {
+    use crate::auth::extractor::LOGGED_IN_COOKIE;
+    use axum_extra::extract::CookieJar;
+    let jar: CookieJar = leptos_axum::extract().await?;
+    Ok(jar.get(LOGGED_IN_COOKIE).is_some())
+}
+
 #[server(LogoutUser, "/api")]
 pub async fn logout_user() -> Result<(), ServerFnError> {
     use leptos_axum::ResponseOptions;

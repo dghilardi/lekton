@@ -285,6 +285,9 @@ pub fn TopNavbarLinks() -> impl IntoView {
 #[component]
 pub fn Layout(children: Children) -> impl IntoView {
     let (search_modal_open, set_search_modal_open) = signal(false);
+    let layout_ready = use_context::<crate::app::LayoutReady>()
+        .map(|s| s.0)
+        .unwrap_or(Signal::derive(|| true));
     let location = leptos_router::hooks::use_location();
     let path = Memo::new(move |_| location.pathname.get());
     let has_context_sidebar = Memo::new(move |_| {
@@ -311,7 +314,10 @@ pub fn Layout(children: Children) -> impl IntoView {
 
         <div class="min-h-screen bg-base-100/50">
             // Navbar
-            <header class="bg-base-100/80 backdrop-blur-md fixed top-0 inset-x-0 z-50 border-b border-base-200 px-4 h-16 flex items-center gap-2 shadow-sm">
+            <header class=move || format!(
+                "bg-base-100/80 backdrop-blur-md fixed top-0 inset-x-0 z-50 border-b border-base-200 px-4 h-16 flex items-center gap-2 shadow-sm{}",
+                if layout_ready.get() { " lekton-header-enter" } else { "" }
+            )>
                 // Left — shrinks only when space is truly exhausted
                 <div class="flex items-center gap-2 shrink-0">
                     <Show when=move || has_context_sidebar.get()>
@@ -368,10 +374,11 @@ pub fn Layout(children: Children) -> impl IntoView {
                 <input id="sidebar-drawer" type="checkbox" class="drawer-toggle" />
                 <div class="drawer-content lg:col-start-2 flex flex-col bg-base-100 min-w-0">
                     <div class=move || {
+                        let anim = if layout_ready.get() { " lekton-content-enter" } else { "" };
                         if is_chat_layout.get() {
-                            "w-full h-[calc(100vh-4rem)] flex flex-col overflow-hidden"
+                            format!("w-full h-[calc(100vh-4rem)] flex flex-col overflow-hidden{anim}")
                         } else {
-                            "w-full max-w-[var(--lekton-content-max-width)] mx-auto px-4 py-6 sm:px-6 lg:px-10 lg:py-10 min-h-[calc(100vh-4rem)]"
+                            format!("w-full max-w-[var(--lekton-content-max-width)] mx-auto px-4 py-6 sm:px-6 lg:px-10 lg:py-10 min-h-[calc(100vh-4rem)]{anim}")
                         }
                     }>
                         {children()}

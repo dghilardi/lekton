@@ -650,6 +650,55 @@ html[data-theme="dark"]  .lekton-logo-light { display: none !important; }
 :root:not([data-theme="dark"]) .lekton-logo-dark { display: none !important; }
 
 /* ════════════════════════════════════════════════════════════════
+ * Entrance animations
+ * ════════════════════════════════════════════════════════════════ */
+@keyframes lekton-slide-from-top {
+    from { transform: translateY(-110%); opacity: 0; }
+    to   { transform: translateY(0);     opacity: 1; }
+}
+
+@keyframes lekton-fade-up {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0);   }
+}
+
+.lekton-header-enter {
+    animation: lekton-slide-from-top 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.lekton-content-enter {
+    animation: lekton-fade-up 0.5s cubic-bezier(0.4, 0, 0.2, 1) 0.12s both;
+}
+
+/* Splash screen — shown while the access token is being validated.
+ * Uses a CSS visibility transition so the fade-out completes before
+ * the element stops intercepting events, with no JS timer needed. */
+.lekton-splash {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--color-base-100, oklch(1 0 0));
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transition: opacity 0.35s ease, visibility 0s 0s;
+}
+
+.lekton-splash-closing {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.35s ease, visibility 0s 0.35s;
+}
+
+.lekton-splash-inactive {
+    display: none;
+}
+
+/* ════════════════════════════════════════════════════════════════
  * Runtime customizability
  * ════════════════════════════════════════════════════════════════
  * Loaded LAST so user overrides take full precedence.

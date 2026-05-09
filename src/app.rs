@@ -170,23 +170,13 @@ pub fn App() -> impl IntoView {
     let is_rag_enabled: Signal<bool> =
         Signal::derive(move || rag_resource.get().and_then(|res| res.ok()).unwrap_or(false));
 
-    // Cheap SSR-side cookie check — serialised into the HTML, no extra round-trip.
-    let session_resource = Resource::new(|| (), |_| has_session_cookie());
-
-    // Auth check is done once user_resource yields any value (Ok or Err).
-    let user_ready = Signal::derive(move || user_resource.get().is_some());
-
-    // When layout entrance animations should start playing, add the 'lekton-play'
-    // class to <html>. For anonymous users this is done by the inline <head> script
-    // (before body renders, no WASM needed). For authenticated users it happens here
-    // after token validation completes.
+    // Add 'lekton-play' to <html> once the auth check completes. This unpauses
+    // the entrance animations and fades out the splash screen (CSS-driven).
+    // For anonymous users the inline <head> script already added it before body
+    // render — this Effect is a no-op for them. For authenticated users it fires
+    // when user_resource resolves (Ok or Err — either way the layout reveals).
     Effect::new(move || {
-        let ready = match session_resource.get() {
-            None => false,
-            Some(Ok(false)) | Some(Err(_)) => true,
-            Some(Ok(true)) => user_ready.get(),
-        };
-        if ready {
+        if user_resource.get().is_some() {
             #[cfg(not(feature = "ssr"))]
             if let Some(root) = web_sys::window()
                 .and_then(|w| w.document())
@@ -208,24 +198,14 @@ pub fn App() -> impl IntoView {
     view! {
         <Title text="Lekton — Internal Developer Portal" />
 
-        // Splash screen: covers the layout while the access token is validated.
-        // Suspense bounds the session_resource.get() read to avoid the hydration
-        // warning. fallback=|| () is never shown because the resource resolves
-        // during SSR and is immediately available on hydration.
-        <Suspense fallback=|| ()>
-            {move || {
-                let has_sess = session_resource.get().and_then(|r| r.ok()).unwrap_or(false);
-                view! {
-                    <div class=move || match (has_sess, user_ready.get()) {
-                        (false, _)    => "lekton-splash lekton-splash-inactive",
-                        (true, false) => "lekton-splash",
-                        (true, true)  => "lekton-splash lekton-splash-closing",
-                    }>
-                        <span class="loading loading-spinner loading-xl text-primary"></span>
-                    </div>
-                }
-            }}
-        </Suspense>
+        // Splash screen: visible by default in SSR HTML, hidden via CSS once
+        // 'lekton-play' is on <html>. For anonymous users the inline <head>
+        // script applies that class before the body renders, so the splash is
+        // effectively skipped. Authenticated users see it until the access
+        // token is validated.
+        <div class="lekton-splash">
+            <span class="loading loading-spinner loading-xl text-primary"></span>
+        </div>
 
         <Router>
             <Layout>

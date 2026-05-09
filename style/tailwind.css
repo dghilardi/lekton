@@ -701,15 +701,15 @@ html.lekton-play .lekton-content-enter {
     transition: opacity 0.35s ease, visibility 0s 0s;
 }
 
-.lekton-splash-closing {
+/* When lekton-play is set on <html> (anonymous: inline script, authenticated:
+ * Leptos Effect after token validation), the splash fades out. The visibility
+ * delay matches the opacity transition so it stops intercepting pointer events
+ * only after it is fully invisible. */
+html.lekton-play .lekton-splash {
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
     transition: opacity 0.35s ease, visibility 0s 0.35s;
-}
-
-.lekton-splash-inactive {
-    display: none;
 }
 
 /* ════════════════════════════════════════════════════════════════

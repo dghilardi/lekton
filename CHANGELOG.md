@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.5] 2026-05-09
+
 ### Fixed
 - Schema viewer pages now include the required Leptos meta head marker, avoid unsafe schema/sidebar resource reads during hydration, and load Scalar/AsyncAPI assets without dynamic `leptos_meta` head injection, preventing OpenAPI viewer panics from breaking site navigation.
 - Anonymous browser sessions no longer attempt `POST /auth/refresh` without the `lekton_logged_in` indicator cookie, avoiding spurious auth refresh errors in the console.

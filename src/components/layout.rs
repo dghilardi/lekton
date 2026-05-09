@@ -311,7 +311,7 @@ pub fn Layout(children: Children) -> impl IntoView {
 
         <div class="min-h-screen bg-base-100/50">
             // Navbar
-            <header class="bg-base-100/80 backdrop-blur-md fixed top-0 inset-x-0 z-50 border-b border-base-200 px-4 h-16 flex items-center gap-2 shadow-sm">
+            <header class="bg-base-100/80 backdrop-blur-md fixed top-0 inset-x-0 z-50 border-b border-base-200 px-4 h-16 flex items-center gap-2 shadow-sm lekton-header-enter">
                 // Left — shrinks only when space is truly exhausted
                 <div class="flex items-center gap-2 shrink-0">
                     <Show when=move || has_context_sidebar.get()>
@@ -369,9 +369,9 @@ pub fn Layout(children: Children) -> impl IntoView {
                 <div class="drawer-content lg:col-start-2 flex flex-col bg-base-100 min-w-0">
                     <div class=move || {
                         if is_chat_layout.get() {
-                            "w-full h-[calc(100vh-4rem)] flex flex-col overflow-hidden"
+                            "w-full h-[calc(100vh-4rem)] flex flex-col overflow-hidden lekton-content-enter"
                         } else {
-                            "w-full max-w-[var(--lekton-content-max-width)] mx-auto px-4 py-6 sm:px-6 lg:px-10 lg:py-10 min-h-[calc(100vh-4rem)]"
+                            "w-full max-w-[var(--lekton-content-max-width)] mx-auto px-4 py-6 sm:px-6 lg:px-10 lg:py-10 min-h-[calc(100vh-4rem)] lekton-content-enter"
                         }
                     }>
                         {children()}

@@ -1,0 +1,36 @@
+# Comelit Docs preproduction settings mirrored from:
+# /home/davide/development/infra/k8s/preproduction/deploy/webapp/comelit-docs/configmap.yml
+#
+# This is a rag-bench configuration, so it includes the retrieval-relevant
+# parameters from the Kubernetes ConfigMap. The live runtime collection is
+# "comelit-docs-qwen", but rag-bench drops its collection by default after each
+# run; keep this benchmark collection isolated unless you pass --keep-collections
+# intentionally.
+
+name        = "qwen-hybrid-reranker"
+description = "Qwen embeddings - hybrid + reranker"
+
+# Vector store
+qdrant_url = "http://localhost:6334"
+qdrant_collection = "lekton_bench_qwen"
+
+# Embedding
+embedding_url        = "http://localhost:11434/v1"
+embedding_model      = "qwen3-embedding:8b"
+embedding_dimensions = 4096
+embedding_api_key    = "ollama"
+
+# Chunking
+chunk_size_tokens    = 256
+chunk_overlap_tokens = 64
+
+# Retrieval features
+expand_to_parent      = false
+hybrid_search_enabled = false
+meilisearch_url       = "http://meilisearch.default.svc.cluster.local:7700"
+meilisearch_api_key   = ""
+
+# Reranker
+reranker_url     = ""
+reranker_model   = "reranker"
+reranker_api_key = ""

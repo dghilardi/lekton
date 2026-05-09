@@ -97,6 +97,12 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                 <script>
                     r#"(function(){var t=localStorage.getItem('lekton-theme');if(t==='dark'||t==='light'){document.documentElement.setAttribute('data-theme',t)}else{var d=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',d)}})()"#
                 </script>
+                // lekton_logged_in is NOT httpOnly so JS can read it.
+                // If absent the user is anonymous: play entrance animations immediately
+                // (before the body renders) so they fire from SSR HTML without WASM.
+                <script>
+                    r#"(function(){if(!/(?:^|;\s*)lekton_logged_in=/.test(document.cookie)){document.documentElement.classList.add('lekton-play')}})()"#
+                </script>
                 <AutoReload options=options.clone() />
                 <HydrationScripts options=options />
                 <Meta name="description" content="Lekton: A dynamic, high-performance Internal Developer Portal with RBAC and unified schema registry." />
@@ -164,6 +170,26 @@ pub fn App() -> impl IntoView {
     let is_rag_enabled: Signal<bool> =
         Signal::derive(move || rag_resource.get().and_then(|res| res.ok()).unwrap_or(false));
 
+    // Add 'lekton-play' to <html> once the auth check completes. This unpauses
+    // the entrance animations and fades out the splash screen (CSS-driven).
+    // For anonymous users the inline <head> script already added it before body
+    // render — this Effect is a no-op for them. For authenticated users it fires
+    // when user_resource resolves (Ok or Err — either way the layout reveals).
+    Effect::new(move || {
+        if user_resource.get().is_some() {
+            #[cfg(not(feature = "ssr"))]
+            if let Some(root) = web_sys::window()
+                .and_then(|w| w.document())
+                .and_then(|d| d.document_element())
+            {
+                let cls = root.class_name();
+                if !cls.contains("lekton-play") {
+                    root.set_class_name(&format!("{cls} lekton-play"));
+                }
+            }
+        }
+    });
+
     provide_context(current_user);
     provide_context(IsDemoMode(is_demo_mode));
     provide_context(IsRagEnabled(is_rag_enabled));
@@ -171,6 +197,15 @@ pub fn App() -> impl IntoView {
 
     view! {
         <Title text="Lekton — Internal Developer Portal" />
+
+        // Splash screen: visible by default in SSR HTML, hidden via CSS once
+        // 'lekton-play' is on <html>. For anonymous users the inline <head>
+        // script applies that class before the body renders, so the splash is
+        // effectively skipped. Authenticated users see it until the access
+        // token is validated.
+        <div class="lekton-splash">
+            <span class="loading loading-spinner loading-xl text-primary"></span>
+        </div>
 
         <Router>
             <Layout>

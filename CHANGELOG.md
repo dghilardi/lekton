@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Entrance animation on portal load: the navbar slides in from the top and page content fades up. For authenticated users (session cookie present) a full-screen spinner covers the layout while the access token is validated server-side; the animation starts once validation completes. Anonymous users see the animation immediately with full SSR content preserved.
+
 ## [0.24.3] 2026-05-09
 ### Fixed
 - Docs sidebar no longer shows empty on leaf document pages (e.g. `/docs/getting-started`): falls back to showing all top-level navigation items when the current page has no section children.

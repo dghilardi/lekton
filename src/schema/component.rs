@@ -1,7 +1,14 @@
 use leptos::prelude::*;
-use leptos_meta::Link;
 
 use crate::api::schemas::{SchemaDetail, SchemaListItem, SchemaVersionInfo};
+
+fn js_string_literal(value: &str) -> String {
+    serde_json::to_string(value)
+        .unwrap_or_else(|_| "\"\"".to_string())
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('&', "\\u0026")
+}
 
 /// Server function to list all schemas.
 #[server(ListSchemas, "/api")]
@@ -142,8 +149,7 @@ pub fn SchemaViewerPage() -> impl IntoView {
     let params = leptos_router::hooks::use_params_map();
     let name = move || params.read().get("name").unwrap_or_default();
 
-    #[allow(clippy::redundant_closure)]
-    let schema_resource = Resource::new(move || name(), |name| get_schema_detail(name));
+    let schema_resource = LocalResource::new(move || get_schema_detail(name()));
 
     let (selected_version, set_selected_version) = signal(String::new());
 
@@ -153,45 +159,17 @@ pub fn SchemaViewerPage() -> impl IntoView {
         set_selected_version.set(String::new());
     });
 
-    // Pre-fetch the default version's content as soon as schema detail arrives,
-    // in parallel with the user seeing the version selector.
-    #[allow(clippy::redundant_closure)]
-    let prefetch_resource = Resource::new(
-        move || name(),
-        |name| async move {
-            let detail = get_schema_detail(name.clone()).await?;
-            let default_ver = detail
-                .versions
-                .iter()
-                .rev()
-                .find(|v| v.status == "stable")
-                .or(detail.versions.last())
-                .map(|v| v.version.clone());
-            match default_ver {
-                Some(ver) => get_schema_content(name, ver.clone())
-                    .await
-                    .map(|c| Some((ver, c))),
-                None => Ok(None),
-            }
-        },
-    );
-
     // When schema loads, select the latest stable version by default
-    let content_resource = Resource::new(
-        move || (name(), selected_version.get()),
-        move |(name, version)| async move {
+    let content_resource = LocalResource::new(move || {
+        let name = name();
+        let version = selected_version.get();
+        async move {
             if version.is_empty() {
                 return Ok(None);
             }
-            // Reuse the prefetched content when the auto-selected version matches.
-            if let Some(Ok(Some((prefetched_ver, prefetched_content)))) = prefetch_resource.get() {
-                if prefetched_ver == version {
-                    return Ok(Some(prefetched_content));
-                }
-            }
             get_schema_content(name, version).await.map(Some)
-        },
-    );
+        }
+    });
 
     view! {
         <Suspense fallback=move || view! {
@@ -384,10 +362,7 @@ fn VersionStatusBar(versions: Vec<SchemaVersionInfo>) -> impl IntoView {
 fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
     match schema_type.as_str() {
         "openapi" => {
-            let escaped_content = content
-                .replace('\\', "\\\\")
-                .replace('`', "\\`")
-                .replace("${", "\\${");
+            let spec_content = js_string_literal(&content);
 
             let scalar_js = {
                 #[cfg(feature = "ssr")]
@@ -415,48 +390,70 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
                 (function() {{
                     const container = document.getElementById('scalar-api-reference');
                     if (!container) return;
+                    const specContent = {spec_content};
+                    if (container.__lektonScalarInstance && container.__lektonScalarInstance.destroy) {{
+                        container.__lektonScalarInstance.destroy();
+                    }}
                     container.innerHTML = '';
                     const el = document.createElement('div');
                     container.appendChild(el);
 
-                    // Load Scalar if not already loaded
-                    if (!window.Scalar) {{
-                        const link = document.createElement('link');
-                        link.rel = 'stylesheet';
-                        link.href = '{scalar_css}';
-                        document.head.appendChild(link);
+                    function escapeHtml(value) {{
+                        return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                    }}
 
+                    function loadStylesheetOnce(id, href) {{
+                        if (document.getElementById(id)) return;
+                        const link = document.createElement('link');
+                        link.id = id;
+                        link.rel = 'stylesheet';
+                        link.href = href;
+                        document.head.appendChild(link);
+                    }}
+
+                    function loadScriptOnce(src, isLoaded) {{
+                        if (isLoaded()) return Promise.resolve();
+                        window.__lektonScriptLoads = window.__lektonScriptLoads || {{}};
+                        if (window.__lektonScriptLoads[src]) return window.__lektonScriptLoads[src];
+
+                        window.__lektonScriptLoads[src] = new Promise(function(resolve, reject) {{
                         const script = document.createElement('script');
-                        script.src = '{scalar_js}';
-                        script.onload = function() {{
-                            renderScalar(el);
-                        }};
+                            script.src = src;
+                            script.onload = resolve;
+                            script.onerror = reject;
                         document.head.appendChild(script);
-                    }} else {{
-                        renderScalar(el);
+                        }});
+                        return window.__lektonScriptLoads[src];
                     }}
 
                     function renderScalar(targetEl) {{
                         if (window.Scalar && window.Scalar.createApiReference) {{
-                            window.Scalar.createApiReference(targetEl, {{
-                                spec: {{
-                                    content: `{escaped_content}`,
-                                }},
+                            container.__lektonScalarInstance = window.Scalar.createApiReference(targetEl, {{
+                                content: specContent,
                                 theme: 'none',
                                 showSidebar: false,
+                                withDefaultFonts: false,
                             }});
                         }} else if (window.ScalarApiReference) {{
                             window.ScalarApiReference(targetEl, {{
-                                spec: {{
-                                    content: `{escaped_content}`,
-                                }},
+                                content: specContent,
                             }});
                         }} else {{
                             targetEl.innerHTML = '<pre class="p-4 bg-base-200 rounded-lg overflow-auto text-sm"><code>' +
-                                `{escaped_content}`.replace(/</g, '&lt;').replace(/>/g, '&gt;') +
+                                escapeHtml(specContent) +
                                 '</code></pre>';
                         }}
                     }}
+
+                    loadStylesheetOnce('lekton-scalar-style', '{scalar_css}');
+                    loadScriptOnce('{scalar_js}', function() {{
+                        return !!(window.Scalar || window.ScalarApiReference);
+                    }})
+                        .then(function() {{ renderScalar(el); }})
+                        .catch(function(error) {{
+                            console.error('Failed to load Scalar API reference viewer', error);
+                            renderScalar(el);
+                        }});
                 }})();
                 "#
             );
@@ -485,8 +482,6 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
 
             view! {
                 <div>
-                    <Link rel="preload" href={scalar_js} attr:r#as="script" />
-                    <Link rel="preload" href={scalar_css} attr:r#as="style" />
                     <style>{scalar_theme_css}</style>
                     <div id="scalar-api-reference" class="scalar-app min-h-[600px]">
                         <div class="flex justify-center items-center py-12">
@@ -500,10 +495,7 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
             .into_any()
         }
         "asyncapi" => {
-            let escaped_content = content
-                .replace('\\', "\\\\")
-                .replace('`', "\\`")
-                .replace("${", "\\${");
+            let spec_content = js_string_literal(&content);
 
             let asyncapi_js = {
                 #[cfg(feature = "ssr")]
@@ -532,7 +524,36 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
                 (function() {{
                     const container = document.getElementById('asyncapi-viewer');
                     if (!container) return;
+                    const specContent = {spec_content};
                     container.innerHTML = '';
+
+                    function escapeHtml(value) {{
+                        return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                    }}
+
+                    function loadStylesheetOnce(id, href) {{
+                        if (document.getElementById(id)) return;
+                        const link = document.createElement('link');
+                        link.id = id;
+                        link.rel = 'stylesheet';
+                        link.href = href;
+                        document.head.appendChild(link);
+                    }}
+
+                    function loadScriptOnce(src, isLoaded) {{
+                        if (isLoaded()) return Promise.resolve();
+                        window.__lektonScriptLoads = window.__lektonScriptLoads || {{}};
+                        if (window.__lektonScriptLoads[src]) return window.__lektonScriptLoads[src];
+
+                        window.__lektonScriptLoads[src] = new Promise(function(resolve, reject) {{
+                            const script = document.createElement('script');
+                            script.src = src;
+                            script.onload = resolve;
+                            script.onerror = reject;
+                            document.head.appendChild(script);
+                        }});
+                        return window.__lektonScriptLoads[src];
+                    }}
 
                     function injectTheme() {{
                         if (document.getElementById('asyncapi-theme-override')) return;
@@ -542,33 +563,33 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
                             #asyncapi-viewer .aui-root,
                             #asyncapi-viewer .bg-white {{
                                 background-color: transparent !important;
-                                color: oklch(var(--bc)) !important;
+                                color: var(--color-base-content) !important;
                             }}
                             #asyncapi-viewer .bg-gray-200,
                             #asyncapi-viewer .bg-gray-100,
                             #asyncapi-viewer .bg-gray-50 {{
-                                background-color: oklch(var(--b2)) !important;
+                                background-color: var(--color-base-200) !important;
                             }}
                             #asyncapi-viewer .bg-gray-800,
                             #asyncapi-viewer .bg-gray-900,
                             #asyncapi-viewer pre {{
-                                background-color: oklch(var(--b3)) !important;
-                                color: oklch(var(--bc)) !important;
+                                background-color: var(--color-base-300) !important;
+                                color: var(--color-base-content) !important;
                             }}
                             #asyncapi-viewer .border,
                             #asyncapi-viewer .border-gray-200,
                             #asyncapi-viewer .border-gray-300 {{
-                                border-color: oklch(var(--b3)) !important;
+                                border-color: var(--color-base-300) !important;
                             }}
                             #asyncapi-viewer .text-gray-900,
                             #asyncapi-viewer .text-gray-800,
                             #asyncapi-viewer .text-gray-700,
                             #asyncapi-viewer .text-gray-600 {{
-                                color: oklch(var(--bc)) !important;
+                                color: var(--color-base-content) !important;
                             }}
                             #asyncapi-viewer .text-gray-500,
                             #asyncapi-viewer .text-gray-400 {{
-                                color: oklch(var(--bc) / 0.6) !important;
+                                color: color-mix(in oklch, var(--color-base-content) 60%, transparent) !important;
                             }}
                             #asyncapi-viewer .shadow,
                             #asyncapi-viewer .shadow-md {{
@@ -581,44 +602,38 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
                         document.head.appendChild(style);
                     }}
 
-                    if (!window.AsyncApiStandalone) {{
-                        const link = document.createElement('link');
-                        link.rel = 'stylesheet';
-                        link.href = '{asyncapi_css}';
-                        document.head.appendChild(link);
-
-                        const script = document.createElement('script');
-                        script.src = '{asyncapi_js}';
-                        script.onload = function() {{
-                            injectTheme();
-                            renderAsyncApi(container);
-                        }};
-                        document.head.appendChild(script);
-                    }} else {{
-                        injectTheme();
-                        renderAsyncApi(container);
-                    }}
-
                     function renderAsyncApi(targetEl) {{
                         if (window.AsyncApiStandalone) {{
                             AsyncApiStandalone.render({{
-                                schema: `{escaped_content}`,
+                                schema: specContent,
                                 config: {{ show: {{ sidebar: true }} }},
                             }}, targetEl);
                         }} else {{
                             targetEl.innerHTML = '<pre class="p-4 bg-base-200 rounded-lg overflow-auto text-sm"><code>' +
-                                `{escaped_content}`.replace(/</g, '&lt;').replace(/>/g, '&gt;') +
+                                escapeHtml(specContent) +
                                 '</code></pre>';
                         }}
                     }}
+
+                    loadStylesheetOnce('lekton-asyncapi-style', '{asyncapi_css}');
+                    loadScriptOnce('{asyncapi_js}', function() {{
+                        return !!window.AsyncApiStandalone;
+                    }})
+                        .then(function() {{
+                            injectTheme();
+                            renderAsyncApi(container);
+                        }})
+                        .catch(function(error) {{
+                            console.error('Failed to load AsyncAPI viewer', error);
+                            injectTheme();
+                            renderAsyncApi(container);
+                        }});
                 }})();
                 "#
             );
 
             view! {
                 <div>
-                    <Link rel="preload" href={asyncapi_js} attr:r#as="script" />
-                    <Link rel="preload" href={asyncapi_css} attr:r#as="style" />
                     <div id="asyncapi-viewer" class="min-h-[600px]">
                         <div class="flex justify-center items-center py-12">
                             <span class="loading loading-spinner loading-lg"></span>

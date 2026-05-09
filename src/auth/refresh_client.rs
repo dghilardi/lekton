@@ -196,7 +196,26 @@ mod inner {
     }
 
     fn should_attempt_bootstrap_refresh<T>(result: &Result<Option<T>, ServerFnError>) -> bool {
-        matches!(result, Ok(None)) || matches!(result, Err(err) if is_auth_error(err))
+        browser_has_logged_in_cookie()
+            && (matches!(result, Ok(None)) || matches!(result, Err(err) if is_auth_error(err)))
+    }
+
+    fn browser_has_logged_in_cookie() -> bool {
+        web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| {
+                js_sys::Reflect::get(
+                    document.as_ref(),
+                    &wasm_bindgen::JsValue::from_str("cookie"),
+                )
+                .ok()
+            })
+            .and_then(|cookie_value| cookie_value.as_string())
+            .is_some_and(|cookies| {
+                cookies
+                    .split(';')
+                    .any(|cookie| cookie.trim_start().starts_with("lekton_logged_in="))
+            })
     }
 }
 

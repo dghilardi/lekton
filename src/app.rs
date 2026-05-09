@@ -105,7 +105,8 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                 </script>
                 <AutoReload options=options.clone() />
                 <HydrationScripts options=options />
-                <Meta name="description" content="Lekton: A dynamic, high-performance Internal Developer Portal with RBAC and unified schema registry." />
+                <MetaTags />
+                <meta name="description" content="Lekton: A dynamic, high-performance Internal Developer Portal with RBAC and unified schema registry." />
                 <Stylesheet id="leptos" href="/pkg/lekton.css" />
                 <Link rel="stylesheet" href="/custom.css" />
                 <script type="module" src="/js/tiptap-bundle.min.js"></script>

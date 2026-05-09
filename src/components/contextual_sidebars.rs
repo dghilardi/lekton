@@ -157,13 +157,13 @@ pub fn DocsSidebar() -> impl IntoView {
 /// Shows a searchable list of all registered schemas.
 #[component]
 pub fn RegistrySidebar() -> impl IntoView {
-    let schemas_resource = Resource::new(|| (), |_| list_schemas());
+    let schemas_resource = LocalResource::new(list_schemas);
 
     view! {
         <ul class="flex flex-col gap-1 mt-6">
             <li class="menu-title text-xs font-semibold tracking-wider text-base-content/60 uppercase mb-1">"Schemas"</li>
-            <Suspense fallback=move || view! { <li><span class="loading loading-spinner loading-sm"></span></li> }>
-                {move || schemas_resource.get().map(|result| match result {
+            {move || {
+                schemas_resource.try_get().flatten().map(|result| match result {
                     Ok(schemas) => {
                         if schemas.is_empty() {
                             view! { <li class="px-3 py-2 text-xs italic opacity-50">"No schemas found"</li> }.into_any()
@@ -177,8 +177,9 @@ pub fn RegistrySidebar() -> impl IntoView {
                         }
                     }
                     Err(_) => view! { <li class="text-error italic text-xs px-3 py-2">"Error loading schemas"</li> }.into_any(),
-                })}
-            </Suspense>
+                })
+                .unwrap_or_else(|| view! { <li><span class="loading loading-spinner loading-sm"></span></li> }.into_any())
+            }}
         </ul>
     }
 }

@@ -166,14 +166,16 @@ h3 { font-weight: 600; }
 /* ─────────────────────────────────────────
    NAVBAR — Bianco su light / Navy su dark, bordo verde sottile
    ───────────────────────────────────────── */
-html[data-theme="light"] .navbar {
+html[data-theme="light"] header.fixed,
+html[data-theme="light"] header[class*="fixed"] {
   background-color: #ffffff;
   border-bottom: 2px solid #00BC70;
   box-shadow: 0 1px 4px rgba(28, 31, 43, 0.08);
   color: #1C1F2B;
 }
 
-html[data-theme="dark"] .navbar {
+html[data-theme="dark"] header.fixed,
+html[data-theme="dark"] header[class*="fixed"] {
   background-color: #1F2333;
   border-bottom: 2px solid #00BC70;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
@@ -229,11 +231,25 @@ html[data-theme="light"] aside .menu a:hover {
 }
 
 /* Active menu items */
-html[data-theme="light"] .drawer-side .menu a[data-active],
-html[data-theme="light"] aside .menu a[data-active] {
+html[data-theme="light"] .drawer-side .menu a[aria-current="page"],
+html[data-theme="light"] .drawer-side .menu a.active,
+html[data-theme="light"] aside .menu a[aria-current="page"],
+html[data-theme="light"] aside .menu a.active {
   background-color: rgba(0, 188, 112, 0.15) !important;
   color: #00BC70 !important;
   font-weight: 600;
+  border-left: none !important;
+  padding-left: 0.625rem !important;
+}
+
+html[data-theme="dark"] .drawer-side .menu a[aria-current="page"],
+html[data-theme="dark"] .drawer-side .menu a.active,
+html[data-theme="dark"] aside .menu a[aria-current="page"],
+html[data-theme="dark"] aside .menu a.active {
+  background-color: rgba(29, 217, 138, 0.12) !important;
+  color: #1dd98a !important;
+  border-left: none !important;
+  padding-left: 0.625rem !important;
 }
 
 /* Tree borders/lines inside navy sidebar */

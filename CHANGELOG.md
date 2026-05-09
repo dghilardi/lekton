@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Schema viewer pages now include the required Leptos meta head marker, avoid unsafe schema/sidebar resource reads during hydration, and load Scalar/AsyncAPI assets without dynamic `leptos_meta` head injection, preventing OpenAPI viewer panics from breaking site navigation.
+- Anonymous browser sessions no longer attempt `POST /auth/refresh` without the `lekton_logged_in` indicator cookie, avoiding spurious auth refresh errors in the console.
+- Sidebar active-item styling no longer adds the left border indicator, including the bundled Comelit custom CSS theme.
+
+### Tests
+- Added an OpenAPI schema e2e guard that fails on viewer HTTP errors, browser console/page errors, and broken hydrated navigation after rendering Scalar.
+
 ## [0.24.4] 2026-05-09
 
 ### Fixed

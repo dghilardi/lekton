@@ -31,6 +31,36 @@ test.describe('Schema Registry', () => {
     // Allow extra time for the local Scalar bundle (3.8 MB) to load and render.
     await expect(page.locator('text=User API').first()).toBeVisible({ timeout: 15_000 });
   });
+
+  test('openapi viewer does not emit HTTP errors, panic, or break hydrated navigation', async ({ page }) => {
+    const failures: string[] = [];
+    page.on('pageerror', error => failures.push(`pageerror: ${error.message}`));
+    page.on('console', message => {
+      if (message.type() === 'error') {
+        failures.push(`console error: ${message.text()}`);
+      }
+    });
+    page.on('response', response => {
+      const url = response.url();
+      if (response.status() >= 400 && !url.endsWith('/favicon.ico')) {
+        failures.push(`${response.status()}: ${url}`);
+      }
+    });
+
+    const response = await page.goto('/schemas/user-api');
+    expect(response?.status()).toBe(200);
+
+    await expect(page.locator('#scalar-api-reference')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('text=User API').first()).toBeVisible({ timeout: 20_000 });
+    await expect(page).toHaveURL(/\/schemas\/user-api(?:#.*)?$/);
+
+    await page.evaluate(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+    });
+    await expect(page.getByPlaceholder('Search documentation...')).toBeVisible({ timeout: 5_000 });
+
+    expect(failures).toEqual([]);
+  });
 });
 
 test.describe('Schema viewer static assets', () => {

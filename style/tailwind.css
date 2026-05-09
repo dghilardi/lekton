@@ -592,16 +592,13 @@ label > span:first-child {
  * ════════════════════════════════════════════════════════════════ */
 .menu li > a[aria-current="page"],
 .menu li > a.active {
-    border-left: 2px solid var(--color-primary) !important;
-    padding-left: calc(0.625rem - 2px) !important;
     background-color: color-mix(in oklch, var(--color-primary) 10%, transparent) !important;
     color: var(--color-primary) !important;
     font-weight: 600 !important;
 }
 
 .menu li > a:not([aria-current="page"]):not(.active) {
-    border-left: 2px solid transparent;
-    padding-left: calc(0.625rem - 2px) !important;
+    padding-left: 0.625rem !important;
 }
 
 /* ════════════════════════════════════════════════════════════════

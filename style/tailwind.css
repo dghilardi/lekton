@@ -662,12 +662,26 @@ html[data-theme="dark"]  .lekton-logo-light { display: none !important; }
     to   { opacity: 1; transform: translateY(0);   }
 }
 
+/* Paused by default so the element sits at the 'from' keyframe without
+ * playing. The 'html.lekton-play' class unpauses them: added immediately
+ * via an inline <head> script for anonymous users, and via a Leptos Effect
+ * after token validation for authenticated ones. */
 .lekton-header-enter {
     animation: lekton-slide-from-top 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation-play-state: paused;
+}
+
+html.lekton-play .lekton-header-enter {
+    animation-play-state: running;
 }
 
 .lekton-content-enter {
     animation: lekton-fade-up 0.5s cubic-bezier(0.4, 0, 0.2, 1) 0.12s both;
+    animation-play-state: paused;
+}
+
+html.lekton-play .lekton-content-enter {
+    animation-play-state: running;
 }
 
 /* Splash screen — shown while the access token is being validated.

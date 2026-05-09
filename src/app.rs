@@ -33,12 +33,6 @@ pub struct IsDemoMode(pub Signal<bool>);
 #[derive(Clone, Copy)]
 pub struct IsRagEnabled(pub Signal<bool>);
 
-/// Newtype wrapper for the layout-ready signal, used as Leptos context.
-/// Becomes `true` once the entrance animation should start: immediately for
-/// anonymous users (no session cookie), after token validation for authenticated ones.
-#[derive(Clone, Copy)]
-pub struct LayoutReady(pub Signal<bool>);
-
 #[cfg(feature = "ssr")]
 impl axum::extract::FromRef<AppState> for crate::auth::extractor::DemoMode {
     fn from_ref(state: &AppState) -> Self {
@@ -102,6 +96,12 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                 <meta name="viewport" content="width=device-width, initial-scale=1" />
                 <script>
                     r#"(function(){var t=localStorage.getItem('lekton-theme');if(t==='dark'||t==='light'){document.documentElement.setAttribute('data-theme',t)}else{var d=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',d)}})()"#
+                </script>
+                // lekton_logged_in is NOT httpOnly so JS can read it.
+                // If absent the user is anonymous: play entrance animations immediately
+                // (before the body renders) so they fire from SSR HTML without WASM.
+                <script>
+                    r#"(function(){if(!/(?:^|;\s*)lekton_logged_in=/.test(document.cookie)){document.documentElement.classList.add('lekton-play')}})()"#
                 </script>
                 <AutoReload options=options.clone() />
                 <HydrationScripts options=options />
@@ -176,18 +176,25 @@ pub fn App() -> impl IntoView {
     // Auth check is done once user_resource yields any value (Ok or Err).
     let user_ready = Signal::derive(move || user_resource.get().is_some());
 
-    // layout_ready drives the entrance animation classes.
-    // Updated via Effect so session_resource is only read in a tracked reactive
-    // context (Effect), avoiding the hydration-mode warning from Signal::derive.
-    let layout_ready = RwSignal::new(false);
+    // When layout entrance animations should start playing, add the 'lekton-play'
+    // class to <html>. For anonymous users this is done by the inline <head> script
+    // (before body renders, no WASM needed). For authenticated users it happens here
+    // after token validation completes.
     Effect::new(move || {
-        match session_resource.get() {
-            None => {}                                                // still loading — keep waiting
-            Some(Ok(false)) | Some(Err(_)) => layout_ready.set(true), // no session
-            Some(Ok(true)) => {
-                if user_ready.get() {
-                    // session — wait for auth
-                    layout_ready.set(true);
+        let ready = match session_resource.get() {
+            None => false,
+            Some(Ok(false)) | Some(Err(_)) => true,
+            Some(Ok(true)) => user_ready.get(),
+        };
+        if ready {
+            #[cfg(not(feature = "ssr"))]
+            if let Some(root) = web_sys::window()
+                .and_then(|w| w.document())
+                .and_then(|d| d.document_element())
+            {
+                let cls = root.class_name();
+                if !cls.contains("lekton-play") {
+                    root.set_class_name(&format!("{cls} lekton-play"));
                 }
             }
         }
@@ -196,7 +203,6 @@ pub fn App() -> impl IntoView {
     provide_context(current_user);
     provide_context(IsDemoMode(is_demo_mode));
     provide_context(IsRagEnabled(is_rag_enabled));
-    provide_context(LayoutReady(layout_ready.into()));
     provide_context(crate::pages::chat::ChatContext::new());
 
     view! {

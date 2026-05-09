@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Default `cargo check` no longer compiles browser-only splash animation code without the `hydrate` feature.
+
 ### Added
 - Entrance animation on portal load: the navbar slides in from the top and page content fades up. For authenticated users (session cookie present) a full-screen spinner covers the layout while the access token is validated server-side; the animation starts once validation completes. Anonymous users see the animation immediately with full SSR content preserved.
 

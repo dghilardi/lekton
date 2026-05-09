@@ -177,7 +177,7 @@ pub fn App() -> impl IntoView {
     // when user_resource resolves (Ok or Err — either way the layout reveals).
     Effect::new(move || {
         if user_resource.get().is_some() {
-            #[cfg(not(feature = "ssr"))]
+            #[cfg(feature = "hydrate")]
             if let Some(root) = web_sys::window()
                 .and_then(|w| w.document())
                 .and_then(|d| d.document_element())

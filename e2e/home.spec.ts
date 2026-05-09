@@ -11,6 +11,8 @@ test.describe('Home page', () => {
   });
 
   test('search button with Ctrl+K hint is visible', async ({ page }) => {
+    // 2xl breakpoint (1536px) is required for the full search bar with Ctrl+K hint
+    await page.setViewportSize({ width: 1600, height: 900 });
     await page.goto('/');
     await page.waitForLoadState('networkidle');
     // The search trigger button should be visible in the navbar

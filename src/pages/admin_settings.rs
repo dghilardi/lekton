@@ -1420,13 +1420,50 @@ fn CustomCssEditor() -> impl IntoView {
                 </div>
 
                 <div class="p-8 pt-0 flex flex-col gap-6">
-                    <div class="form-control">
-                        <textarea
-                            class="textarea textarea-bordered h-64 font-mono text-sm leading-relaxed focus:textarea-primary transition-all shadow-inner bg-base-200/20"
-                            placeholder={"/* Example:\n:root {\n  --p: 262 80% 50%;\n}\n*/"}
-                            prop:value=move || css.get()
-                            on:input=move |ev| set_css.set(event_target_value(&ev))
-                        ></textarea>
+                    <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_18rem] xl:items-start">
+                        <div class="form-control">
+                            <textarea
+                                class="textarea textarea-bordered min-h-[28rem] xl:min-h-[34rem] resize-y font-mono text-sm leading-7 focus:textarea-primary transition-all shadow-inner bg-base-200/20"
+                                placeholder={"/* Example:\n:root,\n[data-theme=\"light\"] {\n  --color-primary: #0f766e;\n  --lekton-content-max-width: 78rem;\n}\n\n[data-theme=\"dark\"] {\n  --color-primary: #2dd4bf;\n}\n\n.navbar {\n  border-bottom-color: color-mix(in oklab, var(--color-primary) 45%, transparent);\n}\n*/"}
+                                prop:value=move || css.get()
+                                on:input=move |ev| set_css.set(event_target_value(&ev))
+                            ></textarea>
+                        </div>
+
+                        <div class="space-y-4">
+                            <div class="rounded-2xl border border-base-200 bg-base-200/20 p-4">
+                                <p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/55">"Theme tokens"</p>
+                                <div class="mt-3 space-y-2 text-sm text-base-content/70">
+                                    <p><code>"--color-primary"</code> " / " <code>"--color-base-100"</code></p>
+                                    <p><code>"--color-base-content"</code> " / " <code>"--color-base-300"</code></p>
+                                    <p><code>"--radius-box"</code> " / " <code>"--radius-field"</code></p>
+                                </div>
+                            </div>
+
+                            <div class="rounded-2xl border border-base-200 bg-base-200/20 p-4">
+                                <p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/55">"Layout tokens"</p>
+                                <div class="mt-3 space-y-2 text-sm text-base-content/70">
+                                    <p><code>"--lekton-sidebar-width"</code></p>
+                                    <p><code>"--lekton-header-height"</code></p>
+                                    <p><code>"--lekton-content-max-width"</code></p>
+                                </div>
+                            </div>
+
+                            <div class="rounded-2xl border border-base-200 bg-base-200/20 p-4">
+                                <p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/55">"Recommended strategy"</p>
+                                <p class="mt-3 text-sm leading-6 text-base-content/70">
+                                    "Prefer overriding shared primitives like "
+                                    <code>"body"</code>
+                                    ", "
+                                    <code>".navbar"</code>
+                                    ", "
+                                    <code>".card"</code>
+                                    ", "
+                                    <code>".btn"</code>
+                                    " and the theme variables above, so custom branding stays consistent across docs, registry, and admin pages."
+                                </p>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">

@@ -107,10 +107,8 @@ fn SchemaTreeItem(node: SchemaTreeNode, #[prop(optional)] level: u32) -> impl In
                                 <li>
                                     <a
                                         href=href
-                                        class=move || format!(
-                                            "hover:bg-base-200/50 hover:text-primary transition-colors text-base-content/70 data-[active]:bg-primary/10 data-[active]:text-primary data-[active]:font-medium text-sm py-1.5 {}",
-                                            if is_active() { "text-primary font-medium bg-primary/10" } else { "" }
-                                        )
+                                        aria-current=move || if is_active() { Some("page") } else { None }
+                                        class="hover:bg-base-200/50 hover:text-primary transition-colors text-base-content/70 text-sm py-1.5"
                                     >
                                         {"Overview"}
                                     </a>
@@ -132,10 +130,8 @@ fn SchemaTreeItem(node: SchemaTreeNode, #[prop(optional)] level: u32) -> impl In
             <li>
                 <a
                     href=href
-                    class=move || format!(
-                        "hover:bg-base-200/50 hover:text-primary transition-colors text-base-content/70 data-[active]:bg-primary/10 data-[active]:text-primary data-[active]:font-medium text-sm py-1.5 {}",
-                        if is_active() { "text-primary font-medium bg-primary/10" } else { "" }
-                    )
+                    aria-current=move || if is_active() { Some("page") } else { None }
+                    class="hover:bg-base-200/50 hover:text-primary transition-colors text-base-content/70 text-sm py-1.5"
                 >
                     {title}
                 </a>
@@ -191,53 +187,55 @@ pub fn RegistrySidebar() -> impl IntoView {
 /// Shows navigation links to different admin sub-pages.
 #[component]
 pub fn AdminSidebar() -> impl IntoView {
+    let pathname = leptos_router::hooks::use_location().pathname;
+
     view! {
         <ul class="flex flex-col gap-1 mt-6">
             <li class="menu-title text-xs font-semibold tracking-wider text-base-content/60 uppercase mb-1">"Administration"</li>
             <li>
-                <a href="/admin/tokens" class="gap-3 group data-[active]:bg-primary/10 data-[active]:text-primary data-[active]:font-medium transition-colors">
+                <a href="/admin/tokens" aria-current=move || if pathname.get() == "/admin/tokens" { Some("page") } else { None } class="gap-3 group transition-colors">
                     <svg class="w-4 h-4 opacity-70" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path></svg>
                     "Service Tokens"
                 </a>
             </li>
             <li>
-                <a href="/admin/pats" class="gap-3 group data-[active]:bg-primary/10 data-[active]:text-primary data-[active]:font-medium transition-colors">
+                <a href="/admin/pats" aria-current=move || if pathname.get() == "/admin/pats" { Some("page") } else { None } class="gap-3 group transition-colors">
                     <svg class="w-4 h-4 opacity-70" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>
                     "Personal Tokens"
                 </a>
             </li>
             <li>
-                <a href="/admin/documentation-feedback" class="gap-3 group data-[active]:bg-primary/10 data-[active]:text-primary data-[active]:font-medium transition-colors">
+                <a href="/admin/documentation-feedback" aria-current=move || if pathname.get() == "/admin/documentation-feedback" { Some("page") } else { None } class="gap-3 group transition-colors">
                     <svg class="w-4 h-4 opacity-70" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path><path d="M8 10h8"></path><path d="M8 14h6"></path></svg>
                     "Documentation Feedback"
                 </a>
             </li>
             <li>
-                <a href="/admin/access-levels" class="gap-3 group data-[active]:bg-primary/10 data-[active]:text-primary data-[active]:font-medium transition-colors">
+                <a href="/admin/access-levels" aria-current=move || if pathname.get() == "/admin/access-levels" { Some("page") } else { None } class="gap-3 group transition-colors">
                     <svg class="w-4 h-4 opacity-70" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                     "Access Levels"
                 </a>
             </li>
             <li>
-                <a href="/admin/users" class="gap-3 group data-[active]:bg-primary/10 data-[active]:text-primary data-[active]:font-medium transition-colors">
+                <a href="/admin/users" aria-current=move || if pathname.get() == "/admin/users" { Some("page") } else { None } class="gap-3 group transition-colors">
                     <svg class="w-4 h-4 opacity-70" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                     "Users"
                 </a>
             </li>
             <li>
-                <a href="/admin/navigation" class="gap-3 group data-[active]:bg-primary/10 data-[active]:text-primary data-[active]:font-medium transition-colors">
+                <a href="/admin/navigation" aria-current=move || if pathname.get() == "/admin/navigation" { Some("page") } else { None } class="gap-3 group transition-colors">
                     <svg class="w-4 h-4 opacity-70" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 10h16M4 14h16M4 18h16"></path></svg>
                     "Nav Ordering"
                 </a>
             </li>
             <li>
-                <a href="/admin/css" class="gap-3 group data-[active]:bg-primary/10 data-[active]:text-primary data-[active]:font-medium transition-colors">
+                <a href="/admin/css" aria-current=move || if pathname.get() == "/admin/css" { Some("page") } else { None } class="gap-3 group transition-colors">
                     <svg class="w-4 h-4 opacity-70" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5Z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
                     "Custom CSS"
                 </a>
             </li>
             <li>
-                <a href="/admin/rag" class="gap-3 group data-[active]:bg-primary/10 data-[active]:text-primary data-[active]:font-medium transition-colors">
+                <a href="/admin/rag" aria-current=move || if pathname.get() == "/admin/rag" { Some("page") } else { None } class="gap-3 group transition-colors">
                     <svg class="w-4 h-4 opacity-70" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
                     "Indexes"
                 </a>

@@ -38,11 +38,16 @@ pub fn NavigationItem(item: NavItem, #[prop(optional)] level: u32) -> impl IntoV
             }.into_any()
         }
     } else {
+        let location = leptos_router::hooks::use_location();
+        let href = format!("/docs/{}", slug);
+        let href_for_check = href.clone();
+        let is_active = move || location.pathname.get() == href_for_check;
         view! {
             <li>
                 <a
-                    href=format!("/docs/{}", slug)
-                    class="hover:bg-base-200/50 hover:text-primary transition-colors text-base-content/70 data-[active]:bg-primary/10 data-[active]:text-primary data-[active]:font-medium text-sm py-1.5"
+                    href=href
+                    aria-current=move || if is_active() { Some("page") } else { None }
+                    class="hover:bg-base-200/50 hover:text-primary transition-colors text-base-content/70 text-sm py-1.5"
                 >
                     {item.title}
                 </a>
@@ -72,16 +77,18 @@ pub fn NavigationTree() -> impl IntoView {
                         } else {
                             String::new()
                         };
-                        // Root-level sections (docs, hackday, …) live in the
-                        // navbar only.  The sidebar shows the *children* of
-                        // whichever section is currently selected.
+                        // Root-level sections live in the navbar only.
+                        // The sidebar shows the *children* of the selected section.
+                        // If the current page is a leaf (no children) or unknown,
+                        // fall back to showing all top-level items.
                         let display_items = if current_root.is_empty() {
                             vec![]
                         } else {
-                            if let Some(root_item) = items.into_iter().find(|i| i.slug == current_root) {
-                                root_item.children
-                            } else {
-                                vec![]
+                            match items.iter().position(|i| i.slug == current_root) {
+                                Some(idx) if !items[idx].children.is_empty() => {
+                                    items[idx].children.clone()
+                                }
+                                _ => items,
                             }
                         };
                         view! {

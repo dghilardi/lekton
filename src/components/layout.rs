@@ -285,6 +285,16 @@ pub fn TopNavbarLinks() -> impl IntoView {
 #[component]
 pub fn Layout(children: Children) -> impl IntoView {
     let (search_modal_open, set_search_modal_open) = signal(false);
+    let location = leptos_router::hooks::use_location();
+    let path = Memo::new(move |_| location.pathname.get());
+    let has_context_sidebar = Memo::new(move |_| {
+        let path = path.get();
+        path.starts_with("/docs")
+            || path.starts_with("/schemas")
+            || path.starts_with("/chat")
+            || path.starts_with("/admin")
+    });
+    let is_chat_layout = Memo::new(move |_| path.get().starts_with("/chat"));
 
     use leptos::ev;
     window_event_listener(ev::keydown, move |ev| {
@@ -304,16 +314,18 @@ pub fn Layout(children: Children) -> impl IntoView {
             <header class="bg-base-100/80 backdrop-blur-md fixed top-0 inset-x-0 z-50 border-b border-base-200 px-4 h-16 flex items-center gap-2 shadow-sm">
                 // Left — shrinks only when space is truly exhausted
                 <div class="flex items-center gap-2 shrink-0">
-                    <label for="sidebar-drawer" class="btn btn-square btn-ghost drawer-button lg:hidden">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="inline-block w-5 h-5 stroke-current"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
-                    </label>
+                    <Show when=move || has_context_sidebar.get()>
+                        <label for="sidebar-drawer" class="btn btn-square btn-ghost drawer-button lg:hidden">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="inline-block w-5 h-5 stroke-current"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                        </label>
+                    </Show>
                     <BrandedLogo />
                     <div class="flex items-center gap-1 ml-2 pl-2 sm:ml-4 sm:pl-4 border-l border-base-300">
                         <TopNavbarLinks />
                     </div>
                 </div>
                 // Center — visible at md+, replaced by icon on smaller screens
-                <div class="hidden md:flex flex-1 min-w-0 items-center justify-center">
+                <div class="hidden 2xl:flex flex-1 min-w-0 items-center justify-center">
                     <div class="w-full max-w-md">
                         <button
                             class="btn btn-ghost bg-base-200/50 hover:bg-base-200 border border-base-300 hover:border-primary/30 w-full justify-between shadow-sm flex-nowrap h-11 min-h-[2.75rem] px-4 transition-all font-normal text-base-content/80 group/btn"
@@ -332,7 +344,7 @@ pub fn Layout(children: Children) -> impl IntoView {
                 // Right — never shrinks
                 <div class="flex items-center gap-2 flex-nowrap shrink-0">
                     // Search icon — shown when full search bar is hidden
-                    <button class="btn btn-circle btn-ghost md:hidden" on:click=move |_| set_search_modal_open.set(true)>
+                    <button class="btn btn-circle btn-ghost 2xl:hidden" on:click=move |_| set_search_modal_open.set(true)>
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                     </button>
                     // Theme toggle
@@ -346,15 +358,20 @@ pub fn Layout(children: Children) -> impl IntoView {
             <SearchModal is_open=search_modal_open set_is_open=set_search_modal_open />
 
             // Main content area with sidebar
-            <div class="drawer lg:drawer-open pt-16">
+            <div class=move || {
+                if has_context_sidebar.get() {
+                    "drawer lg:drawer-open pt-16"
+                } else {
+                    "drawer pt-16"
+                }
+            }>
                 <input id="sidebar-drawer" type="checkbox" class="drawer-toggle" />
                 <div class="drawer-content lg:col-start-2 flex flex-col bg-base-100 min-w-0">
                     <div class=move || {
-                        let path = leptos_router::hooks::use_location().pathname.get();
-                        if path.starts_with("/chat") {
+                        if is_chat_layout.get() {
                             "w-full h-[calc(100vh-4rem)] flex flex-col overflow-hidden"
                         } else {
-                            "w-full max-w-6xl mx-auto p-6 lg:p-10 min-h-[calc(100vh-4rem)]"
+                            "w-full max-w-[var(--lekton-content-max-width)] mx-auto px-4 py-6 sm:px-6 lg:px-10 lg:py-10 min-h-[calc(100vh-4rem)]"
                         }
                     }>
                         {children()}
@@ -362,27 +379,28 @@ pub fn Layout(children: Children) -> impl IntoView {
                 </div>
 
                 // Sidebar
-                <div class="drawer-side z-40">
-                    <label for="sidebar-drawer" aria-label="close sidebar" class="drawer-overlay"></label>
-                    <div class="menu bg-base-200 min-h-full h-[calc(100vh-4rem)] w-64 p-4 text-base-content border-r border-base-300 pt-6 overflow-y-auto block">
-                        {move || {
-                            let location = leptos_router::hooks::use_location();
-                            let path = location.pathname.get();
+                <Show when=move || has_context_sidebar.get()>
+                    <div class="drawer-side z-40">
+                        <label for="sidebar-drawer" aria-label="close sidebar" class="drawer-overlay"></label>
+                        <div class="menu bg-base-200 min-h-full h-[calc(100vh-4rem)] w-[var(--lekton-sidebar-width)] p-4 text-base-content border-r border-base-300 pt-6 overflow-y-auto block">
+                            {move || {
+                                let path = path.get();
 
-                            if path.starts_with("/docs") || path == "/" {
-                                view! { <DocsSidebar /> }.into_any()
-                            } else if path.starts_with("/schemas") {
-                                view! { <RegistrySidebar /> }.into_any()
-                            } else if path.starts_with("/chat") {
-                                view! { <ChatSidebar /> }.into_any()
-                            } else if path.starts_with("/admin") {
-                                view! { <AdminSidebar /> }.into_any()
-                            } else {
-                                view! { <span></span> }.into_any()
-                            }
-                        }}
+                                if path.starts_with("/docs") {
+                                    view! { <DocsSidebar /> }.into_any()
+                                } else if path.starts_with("/schemas") {
+                                    view! { <RegistrySidebar /> }.into_any()
+                                } else if path.starts_with("/chat") {
+                                    view! { <ChatSidebar /> }.into_any()
+                                } else if path.starts_with("/admin") {
+                                    view! { <AdminSidebar /> }.into_any()
+                                } else {
+                                    view! { <span></span> }.into_any()
+                                }
+                            }}
+                        </div>
                     </div>
-                </div>
+                </Show>
             </div>
         </div>
     }

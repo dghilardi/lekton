@@ -88,13 +88,31 @@ pub async fn get_doc_html(
                 .collect::<Vec<_>>()
                 .join(" ");
 
-            let mut html = String::from("<p class=\"text-base-content/70 pb-4 border-b border-base-200\">Select a document from this section to read.</p><div class=\"grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-6\">");
+            let mut html = String::from(
+                "<div class=\"not-prose space-y-6\">\
+                    <div class=\"flex items-start justify-between gap-4 border-b border-base-200 pb-4\">\
+                        <p class=\"max-w-2xl text-sm leading-6 text-base-content/70\">Select a document from this section to read.</p>\
+                    </div>\
+                    <div class=\"grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3\">",
+            );
             for (child_slug, child_title) in virtual_children {
                 html.push_str(&format!(
-                    "<a href=\"/docs/{child_slug}\" class=\"card bg-base-100 shadow-sm border border-base-200 hover:shadow-md transition-shadow hover:border-primary/30\"><div class=\"card-body p-5\"><h2 class=\"card-title text-lg flex items-center gap-2\"><svg class=\"w-5 h-5 text-primary opacity-80\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M3 7a2 2 0 012-2h4l2 2h6a2 2 0 012 2v7a2 2 0 01-2 2H5a2 2 0 01-2-2V7z\"></path></svg>{child_title}</h2></div></a>",
+                    "<a href=\"/docs/{child_slug}\" class=\"group card bg-base-100 shadow-sm border border-base-200 no-underline hover:-translate-y-0.5 hover:shadow-lg hover:border-primary/30\">\
+                        <div class=\"card-body gap-3 p-5\">\
+                            <div class=\"flex items-start gap-3\">\
+                                <div class=\"mt-0.5 rounded-lg bg-primary/10 p-2 text-primary\">\
+                                    <svg class=\"h-5 w-5\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M3 7a2 2 0 012-2h4l2 2h6a2 2 0 012 2v7a2 2 0 01-2 2H5a2 2 0 01-2-2V7z\"></path></svg>\
+                                </div>\
+                                <div class=\"min-w-0\">\
+                                    <p class=\"text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-base-content/45\">Section</p>\
+                                    <h2 class=\"mt-1 text-lg font-semibold leading-snug text-base-content transition-colors group-hover:text-primary\">{child_title}</h2>\
+                                </div>\
+                            </div>\
+                        </div>\
+                    </a>",
                 ));
             }
-            html.push_str("</div>");
+            html.push_str("</div></div>");
 
             return Ok(Some(crate::pages::DocPageData {
                 title,
@@ -120,14 +138,32 @@ pub async fn get_doc_html(
             .collect::<Vec<_>>()
             .join(" ");
 
-        let mut html = String::from("<p class=\"text-base-content/70 pb-4 border-b border-base-200\">Select a document from this section to read.</p><div class=\"grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-6\">");
+        let mut html = String::from(
+            "<div class=\"not-prose space-y-6\">\
+                <div class=\"flex items-start justify-between gap-4 border-b border-base-200 pb-4\">\
+                    <p class=\"max-w-2xl text-sm leading-6 text-base-content/70\">Select a document from this section to read.</p>\
+                </div>\
+                <div class=\"grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3\">",
+        );
         for child in children {
             html.push_str(&format!(
-                "<a href=\"/docs/{}\" class=\"card bg-base-100 shadow-sm border border-base-200 hover:shadow-md transition-shadow hover:border-primary/30\"><div class=\"card-body p-5\"><h2 class=\"card-title text-lg flex items-center gap-2\"><svg class=\"w-5 h-5 text-primary opacity-80\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\"></path></svg>{}</h2></div></a>",
+                "<a href=\"/docs/{}\" class=\"group card bg-base-100 shadow-sm border border-base-200 no-underline hover:-translate-y-0.5 hover:shadow-lg hover:border-primary/30\">\
+                    <div class=\"card-body gap-3 p-5\">\
+                        <div class=\"flex items-start gap-3\">\
+                            <div class=\"mt-0.5 rounded-lg bg-primary/10 p-2 text-primary\">\
+                                <svg class=\"h-5 w-5\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\"></path></svg>\
+                            </div>\
+                            <div class=\"min-w-0\">\
+                                <p class=\"text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-base-content/45\">Document</p>\
+                                <h2 class=\"mt-1 text-lg font-semibold leading-snug text-base-content transition-colors group-hover:text-primary\">{}</h2>\
+                            </div>\
+                        </div>\
+                    </div>\
+                </a>",
                 child.slug, child.title
             ));
         }
-        html.push_str("</div>");
+        html.push_str("</div></div>");
 
         return Ok(Some(crate::pages::DocPageData {
             title,

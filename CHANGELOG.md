@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+### Fixed
+- Docs sidebar no longer shows empty on leaf document pages (e.g. `/docs/getting-started`): falls back to showing all top-level navigation items when the current page has no section children.
+- Sidebar active-item highlighting now uses `aria-current="page"` set reactively via `use_location()` in all sidebar components (docs, admin, schemas), replacing a broken CSS selector that matched all items instead of only the active one.
+
+### Changed
+- Portal layout now hides the contextual sidebar on routes that do not use it, keeps navbar search resilient when custom fonts widen navigation labels, refreshes section landing cards in documentation, and makes the admin Custom CSS editor more usable with shared theme/layout token guidance.
+- `example.custom.css` and custom CSS active-item selectors updated to use `a[aria-current="page"]` for compatibility with the new active-state mechanism.
 
 ## [0.24.2] 2026-05-08
 

@@ -385,6 +385,31 @@ label > span:first-child {
     margin-bottom: 1.2em;
 }
 
+.prose .not-prose h1,
+.prose .not-prose h2,
+.prose .not-prose h3,
+.prose .not-prose h4,
+.prose .not-prose h5,
+.prose .not-prose h6 {
+    margin:       0;
+    padding:      0;
+    border:       0;
+    font-size:    inherit;
+    line-height:  inherit;
+    letter-spacing: inherit;
+    color:        inherit;
+}
+
+.prose .not-prose p {
+    margin: 0;
+}
+
+.prose .not-prose a {
+    color: inherit;
+    text-decoration: none;
+    font-weight: inherit;
+}
+
 .prose a {
     color:                     var(--color-primary);
     text-decoration:           underline;
@@ -563,15 +588,18 @@ label > span:first-child {
 
 /* ════════════════════════════════════════════════════════════════
  * Sidebar — left accent bar on active items
+ * Uses aria-current="page" set explicitly in each sidebar component.
  * ════════════════════════════════════════════════════════════════ */
-.menu li > a[class*="text-primary"],
-.menu li > a[class*="bg-primary"],
+.menu li > a[aria-current="page"],
 .menu li > a.active {
     border-left: 2px solid var(--color-primary) !important;
     padding-left: calc(0.625rem - 2px) !important;
+    background-color: color-mix(in oklch, var(--color-primary) 10%, transparent) !important;
+    color: var(--color-primary) !important;
+    font-weight: 600 !important;
 }
 
-.menu li > a:not([class*="text-primary"]):not([class*="bg-primary"]):not(.active) {
+.menu li > a:not([aria-current="page"]):not(.active) {
     border-left: 2px solid transparent;
     padding-left: calc(0.625rem - 2px) !important;
 }

@@ -417,11 +417,14 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
                         if (window.__lektonScriptLoads[src]) return window.__lektonScriptLoads[src];
 
                         window.__lektonScriptLoads[src] = new Promise(function(resolve, reject) {{
-                        const script = document.createElement('script');
+                            const script = document.createElement('script');
                             script.src = src;
                             script.onload = resolve;
-                            script.onerror = reject;
-                        document.head.appendChild(script);
+                            script.onerror = function(err) {{
+                                delete window.__lektonScriptLoads[src];
+                                reject(err);
+                            }};
+                            document.head.appendChild(script);
                         }});
                         return window.__lektonScriptLoads[src];
                     }}
@@ -549,7 +552,10 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
                             const script = document.createElement('script');
                             script.src = src;
                             script.onload = resolve;
-                            script.onerror = reject;
+                            script.onerror = function(err) {{
+                                delete window.__lektonScriptLoads[src];
+                                reject(err);
+                            }};
                             document.head.appendChild(script);
                         }});
                         return window.__lektonScriptLoads[src];

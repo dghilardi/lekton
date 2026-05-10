@@ -36,6 +36,13 @@ RUN cargo chef cook --release --recipe-path recipe.json --features ssr && \
 COPY . .
 RUN npm ci
 RUN cargo leptos build --release
+# Guarantee schema viewer JS bundles are in target/site/js/ even when cargo
+# considers the build up-to-date and skips the public/ -> target/site/ sync.
+RUN mkdir -p target/site/js && \
+    cp node_modules/@scalar/api-reference/dist/browser/standalone.js target/site/js/scalar-standalone.js && \
+    cp node_modules/@scalar/api-reference/dist/style.css target/site/js/scalar-style.css && \
+    cp node_modules/@asyncapi/react-component/browser/standalone/index.js target/site/js/asyncapi-standalone.js && \
+    cp node_modules/@asyncapi/react-component/styles/default.min.css target/site/js/asyncapi-default.min.css
 
 # =============================================================================
 # Stage 4: Runtime — minimal image with just the binary

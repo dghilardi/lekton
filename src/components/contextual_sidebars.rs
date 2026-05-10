@@ -2,6 +2,7 @@
 use crate::api::schemas::SchemaListItem;
 #[allow(unused_imports)]
 use crate::app::{get_navigation, NavItem};
+use crate::auth::refresh_client::with_auth_retry;
 use crate::pages::chat::ChatContext;
 use crate::schema::component::list_schemas;
 use leptos::prelude::*;
@@ -157,7 +158,7 @@ pub fn DocsSidebar() -> impl IntoView {
 /// Shows a searchable list of all registered schemas.
 #[component]
 pub fn RegistrySidebar() -> impl IntoView {
-    let schemas_resource = LocalResource::new(list_schemas);
+    let schemas_resource = LocalResource::new(|| with_auth_retry(list_schemas));
 
     view! {
         <ul class="flex flex-col gap-1 mt-6">

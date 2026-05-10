@@ -674,17 +674,48 @@ fn MessageFeedbackBar(
 
 // ── Client-side fetch helpers (hydrate only) ─────────────────────────────────
 
+/// Calls `make_req()`, and if the server responds with 401 attempts one token
+/// refresh before retrying.  On a failed refresh the browser is redirected to
+/// `/login`.
+#[cfg(feature = "hydrate")]
+async fn fetch_with_auth_retry<F, Fut>(make_req: F) -> Result<leptos::web_sys::Response, String>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Result<leptos::web_sys::Response, String>>,
+{
+    use crate::auth::refresh_client::try_refresh;
+
+    let resp = make_req().await?;
+    if resp.status() != 401 {
+        return Ok(resp);
+    }
+    match try_refresh().await {
+        Ok(()) => make_req().await,
+        Err(_) => {
+            if let Some(window) = web_sys::window() {
+                let _ = window.location().set_href("/login");
+            }
+            Err("Session expired".to_string())
+        }
+    }
+}
+
 #[cfg(feature = "hydrate")]
 pub async fn fetch_sessions() -> Result<Vec<SessionSummary>, String> {
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;
 
-    let window = leptos::web_sys::window().ok_or("no window")?;
-    let resp_value = JsFuture::from(window.fetch_with_str("/api/v1/rag/sessions"))
-        .await
-        .map_err(|e| format!("{e:?}"))?;
+    let resp = fetch_with_auth_retry(|| async {
+        let window = leptos::web_sys::window().ok_or_else(|| "no window".to_string())?;
+        let resp_value = JsFuture::from(window.fetch_with_str("/api/v1/rag/sessions"))
+            .await
+            .map_err(|e| format!("{e:?}"))?;
+        resp_value
+            .dyn_into::<leptos::web_sys::Response>()
+            .map_err(|_| "not a Response".to_string())
+    })
+    .await?;
 
-    let resp: leptos::web_sys::Response = resp_value.dyn_into().map_err(|_| "not a Response")?;
     if !resp.ok() {
         return Ok(Vec::new());
     }
@@ -702,14 +733,21 @@ pub async fn fetch_session_messages(session_id: &str) -> Result<Vec<UiMessage>, 
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;
 
-    let window = leptos::web_sys::window().ok_or("no window")?;
-    let resp_value = JsFuture::from(
-        window.fetch_with_str(&format!("/api/v1/rag/sessions/{session_id}/messages")),
-    )
-    .await
-    .map_err(|e| format!("{e:?}"))?;
+    let url = format!("/api/v1/rag/sessions/{session_id}/messages");
+    let resp = fetch_with_auth_retry(|| {
+        let url = url.clone();
+        async move {
+            let window = leptos::web_sys::window().ok_or_else(|| "no window".to_string())?;
+            let resp_value = JsFuture::from(window.fetch_with_str(&url))
+                .await
+                .map_err(|e| format!("{e:?}"))?;
+            resp_value
+                .dyn_into::<leptos::web_sys::Response>()
+                .map_err(|_| "not a Response".to_string())
+        }
+    })
+    .await?;
 
-    let resp: leptos::web_sys::Response = resp_value.dyn_into().map_err(|_| "not a Response")?;
     if !resp.ok() {
         return Err(format!("Failed to load messages: {}", resp.status()));
     }
@@ -742,18 +780,23 @@ pub async fn fetch_session_messages(session_id: &str) -> Result<Vec<UiMessage>, 
 pub async fn fetch_delete_session(session_id: &str) -> Result<(), String> {
     use wasm_bindgen_futures::JsFuture;
 
-    let window = leptos::web_sys::window().ok_or("no window")?;
-    let opts = leptos::web_sys::RequestInit::new();
-    opts.set_method("DELETE");
-    let request = leptos::web_sys::Request::new_with_str_and_init(
-        &format!("/api/v1/rag/sessions/{session_id}"),
-        &opts,
-    )
-    .map_err(|e| format!("{e:?}"))?;
-
-    JsFuture::from(window.fetch_with_request(&request))
-        .await
-        .map_err(|e| format!("{e:?}"))?;
+    let url = format!("/api/v1/rag/sessions/{session_id}");
+    fetch_with_auth_retry(|| {
+        let url = url.clone();
+        async move {
+            let window = leptos::web_sys::window().ok_or_else(|| "no window".to_string())?;
+            let opts = leptos::web_sys::RequestInit::new();
+            opts.set_method("DELETE");
+            let request = leptos::web_sys::Request::new_with_str_and_init(&url, &opts)
+                .map_err(|e| format!("{e:?}"))?;
+            JsFuture::from(window.fetch_with_request(&request))
+                .await
+                .map_err(|e| format!("{e:?}"))?
+                .dyn_into::<leptos::web_sys::Response>()
+                .map_err(|_| "not a Response".to_string())
+        }
+    })
+    .await?;
     Ok(())
 }
 
@@ -767,24 +810,31 @@ async fn fetch_submit_feedback(
     use wasm_bindgen_futures::JsFuture;
     use web_sys::{Headers, Request, RequestInit};
 
-    let window = web_sys::window().ok_or("no window")?;
-    let body = serde_json::json!({ "rating": rating, "comment": comment });
-    let opts = RequestInit::new();
-    opts.set_method("POST");
-    let headers = Headers::new().map_err(|e| format!("{e:?}"))?;
-    headers
-        .set("Content-Type", "application/json")
-        .map_err(|e| format!("{e:?}"))?;
-    opts.set_headers(&headers);
-    opts.set_body(&JsValue::from_str(&body.to_string()));
-    let request = Request::new_with_str_and_init(
-        &format!("/api/v1/rag/messages/{message_id}/feedback"),
-        &opts,
-    )
-    .map_err(|e| format!("{e:?}"))?;
-    JsFuture::from(window.fetch_with_request(&request))
-        .await
-        .map_err(|e| format!("{e:?}"))?;
+    let url = format!("/api/v1/rag/messages/{message_id}/feedback");
+    let body_str = serde_json::json!({ "rating": rating, "comment": comment }).to_string();
+    fetch_with_auth_retry(|| {
+        let url = url.clone();
+        let body_str = body_str.clone();
+        async move {
+            let window = web_sys::window().ok_or_else(|| "no window".to_string())?;
+            let opts = RequestInit::new();
+            opts.set_method("POST");
+            let headers = Headers::new().map_err(|e| format!("{e:?}"))?;
+            headers
+                .set("Content-Type", "application/json")
+                .map_err(|e| format!("{e:?}"))?;
+            opts.set_headers(&headers);
+            opts.set_body(&JsValue::from_str(&body_str));
+            let request =
+                Request::new_with_str_and_init(&url, &opts).map_err(|e| format!("{e:?}"))?;
+            JsFuture::from(window.fetch_with_request(&request))
+                .await
+                .map_err(|e| format!("{e:?}"))?
+                .dyn_into::<web_sys::Response>()
+                .map_err(|_| "not a Response".to_string())
+        }
+    })
+    .await?;
     Ok(())
 }
 
@@ -792,17 +842,23 @@ async fn fetch_submit_feedback(
 async fn fetch_delete_feedback(message_id: &str) -> Result<(), String> {
     use wasm_bindgen_futures::JsFuture;
 
-    let window = web_sys::window().ok_or("no window")?;
-    let opts = leptos::web_sys::RequestInit::new();
-    opts.set_method("DELETE");
-    let request = leptos::web_sys::Request::new_with_str_and_init(
-        &format!("/api/v1/rag/messages/{message_id}/feedback"),
-        &opts,
-    )
-    .map_err(|e| format!("{e:?}"))?;
-    JsFuture::from(window.fetch_with_request(&request))
-        .await
-        .map_err(|e| format!("{e:?}"))?;
+    let url = format!("/api/v1/rag/messages/{message_id}/feedback");
+    fetch_with_auth_retry(|| {
+        let url = url.clone();
+        async move {
+            let window = web_sys::window().ok_or_else(|| "no window".to_string())?;
+            let opts = leptos::web_sys::RequestInit::new();
+            opts.set_method("DELETE");
+            let request = leptos::web_sys::Request::new_with_str_and_init(&url, &opts)
+                .map_err(|e| format!("{e:?}"))?;
+            JsFuture::from(window.fetch_with_request(&request))
+                .await
+                .map_err(|e| format!("{e:?}"))?
+                .dyn_into::<leptos::web_sys::Response>()
+                .map_err(|_| "not a Response".to_string())
+        }
+    })
+    .await?;
     Ok(())
 }
 
@@ -824,29 +880,35 @@ pub async fn fetch_chat_stream(
         Headers, ReadableStreamDefaultReader, Request, RequestInit, Response, TextDecoder,
     };
 
-    let window = web_sys::window().ok_or("No window")?;
-
-    // Build request
-    let body = serde_json::json!({
+    // Build request body once; the closure will re-use it on retry.
+    let body_str = serde_json::json!({
         "session_id": session_id,
         "message": message,
-    });
-    let opts = RequestInit::new();
-    opts.set_method("POST");
-    let headers = Headers::new().map_err(|e| format!("{e:?}"))?;
-    headers
-        .set("Content-Type", "application/json")
-        .map_err(|e| format!("{e:?}"))?;
-    opts.set_headers(&headers);
-    opts.set_body(&JsValue::from_str(&body.to_string()));
+    })
+    .to_string();
 
-    let request =
-        Request::new_with_str_and_init("/api/v1/rag/chat", &opts).map_err(|e| format!("{e:?}"))?;
-
-    let resp_value = JsFuture::from(window.fetch_with_request(&request))
-        .await
-        .map_err(|e| format!("{e:?}"))?;
-    let resp: Response = resp_value.dyn_into().map_err(|_| "not a Response")?;
+    let resp = fetch_with_auth_retry(|| {
+        let body_str = body_str.clone();
+        async move {
+            let window = web_sys::window().ok_or_else(|| "No window".to_string())?;
+            let opts = RequestInit::new();
+            opts.set_method("POST");
+            let headers = Headers::new().map_err(|e| format!("{e:?}"))?;
+            headers
+                .set("Content-Type", "application/json")
+                .map_err(|e| format!("{e:?}"))?;
+            opts.set_headers(&headers);
+            opts.set_body(&JsValue::from_str(&body_str));
+            let request = Request::new_with_str_and_init("/api/v1/rag/chat", &opts)
+                .map_err(|e| format!("{e:?}"))?;
+            JsFuture::from(window.fetch_with_request(&request))
+                .await
+                .map_err(|e| format!("{e:?}"))?
+                .dyn_into::<Response>()
+                .map_err(|_| "not a Response".to_string())
+        }
+    })
+    .await?;
 
     if !resp.ok() {
         return Err(format!("Chat request failed: {}", resp.status()));

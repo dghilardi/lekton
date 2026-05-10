@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 
 use crate::api::schemas::{SchemaDetail, SchemaListItem, SchemaVersionInfo};
+use crate::auth::refresh_client::with_auth_retry;
 
 fn js_string_literal(value: &str) -> String {
     serde_json::to_string(value)
@@ -53,7 +54,7 @@ pub async fn get_schema_content(name: String, version: String) -> Result<String,
 /// Schema list page — shows all registered schemas.
 #[component]
 pub fn SchemaListPage() -> impl IntoView {
-    let schemas_resource = Resource::new(|| (), |_| list_schemas());
+    let schemas_resource = Resource::new(|| (), |_| with_auth_retry(list_schemas));
 
     view! {
         <div>
@@ -149,7 +150,10 @@ pub fn SchemaViewerPage() -> impl IntoView {
     let params = leptos_router::hooks::use_params_map();
     let name = move || params.read().get("name").unwrap_or_default();
 
-    let schema_resource = LocalResource::new(move || get_schema_detail(name()));
+    let schema_resource = LocalResource::new(move || {
+        let n = name();
+        with_auth_retry(move || get_schema_detail(n.clone()))
+    });
 
     let (selected_version, set_selected_version) = signal(String::new());
 
@@ -163,12 +167,16 @@ pub fn SchemaViewerPage() -> impl IntoView {
     let content_resource = LocalResource::new(move || {
         let name = name();
         let version = selected_version.get();
-        async move {
-            if version.is_empty() {
-                return Ok(None);
+        with_auth_retry(move || {
+            let n = name.clone();
+            let v = version.clone();
+            async move {
+                if v.is_empty() {
+                    return Ok(None);
+                }
+                get_schema_content(n, v).await.map(Some)
             }
-            get_schema_content(name, version).await.map(Some)
-        }
+        })
     });
 
     view! {

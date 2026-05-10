@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.7] 2026-05-10
+
 ### Fixed
 - Token expiry is now handled correctly in the schema registry and RAG chat: expired tokens trigger a silent refresh and retry instead of showing an error to the user.
 

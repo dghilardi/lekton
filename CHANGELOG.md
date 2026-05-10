@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.6] 2026-05-10
+
 ### Fixed
 - Schema viewer bundles (`scalar-standalone.js`, `asyncapi-standalone.js`) are now guaranteed to be present in the Docker image via an explicit copy step, preventing 404s when cargo considers the assets sync up-to-date.
 - `loadScriptOnce` no longer caches rejected promises: a failed viewer script load no longer causes all subsequent schema views to instantly show raw JSON instead of retrying.

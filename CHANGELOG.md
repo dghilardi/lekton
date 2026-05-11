@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.9] 2026-05-11
+
 ### Added
 - Vertex AI support for the embedding service: set `rag.embedding_vertex_project_id` (and optionally `rag.embedding_vertex_location`) to use GCP auth with automatic token refresh instead of a static `embedding_url`/`embedding_api_key`.
 

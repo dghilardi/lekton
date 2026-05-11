@@ -54,7 +54,7 @@ pub async fn get_schema_content(name: String, version: String) -> Result<String,
 /// Schema list page — shows all registered schemas.
 #[component]
 pub fn SchemaListPage() -> impl IntoView {
-    let schemas_resource = Resource::new(|| (), |_| with_auth_retry(list_schemas));
+    let schemas_resource = LocalResource::new(|| with_auth_retry(list_schemas));
 
     view! {
         <div>
@@ -69,7 +69,7 @@ pub fn SchemaListPage() -> impl IntoView {
                 </div>
             }>
                 {move || {
-                    schemas_resource.get().map(|result| match result {
+                    schemas_resource.try_get().flatten().map(|result| match result {
                         Ok(schemas) if schemas.is_empty() => {
                             view! {
                                 <div class="alert alert-info">

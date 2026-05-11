@@ -778,6 +778,7 @@ pub async fn fetch_session_messages(session_id: &str) -> Result<Vec<UiMessage>, 
 
 #[cfg(feature = "hydrate")]
 pub async fn fetch_delete_session(session_id: &str) -> Result<(), String> {
+    use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
 
     let url = format!("/api/v1/rag/sessions/{session_id}");
@@ -806,6 +807,7 @@ async fn fetch_submit_feedback(
     rating: &str,
     comment: Option<&str>,
 ) -> Result<(), String> {
+    use wasm_bindgen::JsCast;
     use wasm_bindgen::JsValue;
     use wasm_bindgen_futures::JsFuture;
     use web_sys::{Headers, Request, RequestInit};
@@ -840,6 +842,7 @@ async fn fetch_submit_feedback(
 
 #[cfg(feature = "hydrate")]
 async fn fetch_delete_feedback(message_id: &str) -> Result<(), String> {
+    use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
 
     let url = format!("/api/v1/rag/messages/{message_id}/feedback");

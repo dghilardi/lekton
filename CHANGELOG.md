@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.11] 2026-05-11
+
 ### Fixed
 - Vertex AI embedding calls now use the native text embeddings `:predict` API with provider batch limits and configured output dimensionality.
 

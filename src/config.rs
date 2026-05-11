@@ -255,6 +255,12 @@ pub struct RagConfig {
     /// Extra HTTP headers for embedding requests. Same normalisation rules as LLM headers.
     #[serde(default)]
     pub embedding_headers: HashMap<String, String>,
+    /// Vertex AI project ID for embedding. When set, `embedding_url`/`embedding_api_key` are ignored.
+    #[serde(default)]
+    pub embedding_vertex_project_id: String,
+    /// Vertex AI region for embedding. Defaults to `us-central1` when empty.
+    #[serde(default)]
+    pub embedding_vertex_location: String,
     /// When `true`, the original chunk text is stored alongside its embedding in the cache.
     #[serde(default)]
     pub embedding_cache_store_text: bool,
@@ -305,9 +311,10 @@ pub struct RagConfig {
 }
 
 impl RagConfig {
-    /// Returns `true` when RAG is fully configured (both Qdrant and embedding URLs set).
+    /// Returns `true` when RAG is fully configured (Qdrant + at least one embedding source).
     pub fn is_enabled(&self) -> bool {
-        !self.qdrant_url.is_empty() && !self.embedding_url.is_empty()
+        !self.qdrant_url.is_empty()
+            && (!self.embedding_url.is_empty() || !self.embedding_vertex_project_id.is_empty())
     }
 
     /// Validates numeric and cross-field constraints that `is_enabled` does not cover.

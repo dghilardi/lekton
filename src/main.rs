@@ -318,16 +318,14 @@ async fn main() {
         Option<Arc<dyn lekton::rag::vectorstore::VectorStore>>,
     ) = if config.rag.is_enabled() {
         use lekton::rag::cached_embedding::CachedEmbeddingService;
-        use lekton::rag::embedding::OpenAICompatibleEmbedding;
+        use lekton::rag::embedding::build_embedding_service;
         use lekton::rag::vectorstore::QdrantVectorStore;
 
         match (
-            OpenAICompatibleEmbedding::from_rag_config(&config.rag),
+            build_embedding_service(&config.rag).await,
             QdrantVectorStore::from_rag_config(&config.rag),
         ) {
             (Ok(raw_embedding), Ok(vectorstore)) => {
-                let raw_embedding: Arc<dyn lekton::rag::embedding::EmbeddingService> =
-                    Arc::new(raw_embedding);
                 let vectorstore: Arc<dyn lekton::rag::vectorstore::VectorStore> =
                     Arc::new(vectorstore);
 

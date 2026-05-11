@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::config::RagConfig;
 use crate::error::AppError;
 
-use super::embedding::{EmbeddingService, OpenAICompatibleEmbedding};
+use super::embedding::{build_embedding_service, EmbeddingService};
 use super::splitter::split_document;
 use super::vectorstore::{ChunkPayload, QdrantVectorStore, VectorPoint, VectorStore};
 
@@ -54,12 +54,12 @@ impl DefaultRagService {
         }
     }
 
-    /// Build from application config. Returns `Err` when required URLs are missing.
-    pub fn from_rag_config(config: &RagConfig) -> Result<Self, AppError> {
-        let embedding = OpenAICompatibleEmbedding::from_rag_config(config)?;
+    /// Build from application config. Returns `Err` when required config is missing.
+    pub async fn from_rag_config(config: &RagConfig) -> Result<Self, AppError> {
+        let embedding = build_embedding_service(config).await?;
         let vectorstore = QdrantVectorStore::from_rag_config(config)?;
         Ok(Self {
-            embedding: Arc::new(embedding),
+            embedding,
             vectorstore: Arc::new(vectorstore),
             chunk_size_tokens: config.chunk_size_tokens as usize,
             chunk_overlap_tokens: config.chunk_overlap_tokens as usize,
@@ -159,8 +159,8 @@ mod tests {
     use super::*;
     use crate::config::{ChatStepConfig, LlmConfig};
 
-    #[test]
-    fn from_rag_config_fails_when_not_configured() {
+    #[tokio::test]
+    async fn from_rag_config_fails_when_not_configured() {
         let config = RagConfig {
             qdrant_url: String::new(),
             qdrant_collection: "test".into(),
@@ -169,6 +169,8 @@ mod tests {
             embedding_dimensions: 768,
             embedding_api_key: String::new(),
             embedding_headers: std::collections::HashMap::new(),
+            embedding_vertex_project_id: String::new(),
+            embedding_vertex_location: String::new(),
             embedding_cache_store_text: false,
             embedding_cache_query: false,
             chunk_size_tokens: 256,
@@ -200,6 +202,6 @@ mod tests {
             hyde: None,
             rewriter: None,
         };
-        assert!(DefaultRagService::from_rag_config(&config).is_err());
+        assert!(DefaultRagService::from_rag_config(&config).await.is_err());
     }
 }

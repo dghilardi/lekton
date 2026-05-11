@@ -58,6 +58,7 @@ embedding_model = "nomic-embed-text"
 embedding_dimensions = 768
 embedding_api_key = ""
 # Vertex AI embedding: set project_id to use GCP auth instead of embedding_url/api_key.
+# Also set embedding_model to a Vertex text embedding model, e.g. gemini-embedding-001.
 embedding_vertex_project_id = ""
 embedding_vertex_location = ""
 

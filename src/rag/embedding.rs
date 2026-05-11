@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_openai::{
@@ -8,6 +7,7 @@ use async_openai::{
 };
 use async_trait::async_trait;
 use gcp_auth::TokenProvider;
+use serde::{Deserialize, Serialize};
 
 use crate::config::RagConfig;
 use crate::error::AppError;
@@ -96,9 +96,12 @@ impl EmbeddingService for OpenAICompatibleEmbedding {
 
 pub struct VertexAIEmbedding {
     auth_manager: Arc<dyn TokenProvider>,
+    client: reqwest::Client,
     project_id: String,
     location: String,
     model: String,
+    dimensions: u32,
+    endpoint_url: String,
 }
 
 impl VertexAIEmbedding {
@@ -115,9 +118,16 @@ impl VertexAIEmbedding {
         })?;
         Ok(Self {
             auth_manager,
+            client: reqwest::Client::new(),
             project_id: config.embedding_vertex_project_id.clone(),
-            location,
-            model: config.embedding_model.clone(),
+            location: location.clone(),
+            model: vertex_embedding_model_id(&config.embedding_model),
+            dimensions: config.embedding_dimensions,
+            endpoint_url: vertex_embedding_endpoint_url(
+                &config.embedding_vertex_project_id,
+                &location,
+                &config.embedding_model,
+            ),
         })
     }
 }
@@ -137,31 +147,148 @@ impl EmbeddingService for VertexAIEmbedding {
                 AppError::Internal(format!("failed to acquire Vertex AI embedding token: {e}"))
             })?;
 
-        let api_base = format!(
-            "https://{location}-aiplatform.googleapis.com/v1beta1/projects/{project_id}/locations/{location}/endpoints/openapi",
-            location = self.location,
-            project_id = self.project_id,
-        );
-        let client = build_oai_client(&api_base, token.as_str(), &HashMap::new())?;
+        let batch_size = vertex_embedding_batch_size(&self.model);
+        let mut vectors = Vec::with_capacity(texts.len());
 
-        let request = CreateEmbeddingRequest {
-            model: self.model.clone(),
-            input: EmbeddingInput::StringArray(texts.to_vec()),
-            encoding_format: None,
-            user: None,
-            dimensions: None,
-        };
+        for batch in texts.chunks(batch_size) {
+            let request = vertex_embedding_request(batch, self.dimensions);
+            let response = self
+                .client
+                .post(&self.endpoint_url)
+                .bearer_auth(token.as_str())
+                .json(&request)
+                .send()
+                .await
+                .map_err(|e| {
+                    AppError::Internal(format!(
+                        "Vertex AI embedding request failed for project '{}' in '{}': {e}",
+                        self.project_id, self.location
+                    ))
+                })?;
 
-        let response = client.embeddings().create(request).await.map_err(|e| {
-            AppError::Internal(format!(
-                "Vertex AI embedding request failed: {}",
-                format_llm_error(&e)
-            ))
-        })?;
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().await.unwrap_or_default();
+                return Err(AppError::Internal(format!(
+                    "Vertex AI embedding request failed for model '{}' with {status}: {body}",
+                    self.model
+                )));
+            }
 
-        let mut embeddings = response.data;
-        embeddings.sort_by_key(|e| e.index);
-        Ok(embeddings.into_iter().map(|e| e.embedding).collect())
+            let response: VertexEmbeddingResponse = response.json().await.map_err(|e| {
+                AppError::Internal(format!("Vertex AI embedding response parse error: {e}"))
+            })?;
+            let mut batch_vectors = response.into_vectors()?;
+            if batch_vectors.len() != batch.len() {
+                return Err(AppError::Internal(format!(
+                    "Vertex AI embedding returned {} vectors for {} inputs",
+                    batch_vectors.len(),
+                    batch.len()
+                )));
+            }
+            vectors.append(&mut batch_vectors);
+        }
+
+        Ok(vectors)
+    }
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+struct VertexEmbeddingRequest {
+    instances: Vec<VertexEmbeddingInstance>,
+    parameters: VertexEmbeddingParameters,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+struct VertexEmbeddingInstance {
+    content: String,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct VertexEmbeddingParameters {
+    auto_truncate: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_dimensionality: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct VertexEmbeddingResponse {
+    predictions: Vec<VertexEmbeddingPrediction>,
+}
+
+#[derive(Debug, Deserialize)]
+struct VertexEmbeddingPrediction {
+    embeddings: Option<VertexEmbeddingValues>,
+}
+
+#[derive(Debug, Deserialize)]
+struct VertexEmbeddingValues {
+    values: Vec<f32>,
+}
+
+impl VertexEmbeddingResponse {
+    fn into_vectors(self) -> Result<Vec<Vec<f32>>, AppError> {
+        self.predictions
+            .into_iter()
+            .enumerate()
+            .map(|(index, prediction)| {
+                prediction
+                    .embeddings
+                    .map(|embedding| embedding.values)
+                    .ok_or_else(|| {
+                        AppError::Internal(format!(
+                            "Vertex AI embedding response missing embeddings at index {index}"
+                        ))
+                    })
+            })
+            .collect()
+    }
+}
+
+fn vertex_embedding_request(texts: &[String], dimensions: u32) -> VertexEmbeddingRequest {
+    VertexEmbeddingRequest {
+        instances: texts
+            .iter()
+            .map(|content| VertexEmbeddingInstance {
+                content: content.clone(),
+            })
+            .collect(),
+        parameters: VertexEmbeddingParameters {
+            auto_truncate: true,
+            output_dimensionality: (dimensions > 0).then_some(dimensions),
+        },
+    }
+}
+
+fn vertex_embedding_endpoint_url(project_id: &str, location: &str, model: &str) -> String {
+    let host = if location == "global" {
+        "https://aiplatform.googleapis.com".to_string()
+    } else {
+        format!("https://{location}-aiplatform.googleapis.com")
+    };
+    let model = vertex_embedding_model_id(model);
+
+    format!(
+        "{host}/v1/projects/{project_id}/locations/{location}/publishers/google/models/{model}:predict"
+    )
+}
+
+fn vertex_embedding_model_id(model: &str) -> String {
+    let model = model.trim();
+    if let Some((_, model_id)) = model.rsplit_once("/models/") {
+        return model_id.to_string();
+    }
+
+    model.strip_prefix("google/").unwrap_or(model).to_string()
+}
+
+fn vertex_embedding_batch_size(model: &str) -> usize {
+    let model = vertex_embedding_model_id(model);
+    if model.starts_with("gemini-embedding-") {
+        1
+    } else {
+        5
     }
 }
 
@@ -184,7 +311,7 @@ pub async fn build_embedding_service(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{ChatStepConfig, LlmConfig, LlmStepConfig, RagConfig};
+    use crate::config::{ChatStepConfig, LlmConfig, RagConfig};
 
     fn make_config(embedding_url: &str) -> RagConfig {
         RagConfig {
@@ -250,5 +377,104 @@ mod tests {
             .embedding_headers
             .insert("x_producer".to_string(), "LEKTON".to_string());
         assert!(OpenAICompatibleEmbedding::from_rag_config(&config).is_ok());
+    }
+
+    #[test]
+    fn vertex_embedding_endpoint_uses_native_predict_api() {
+        let url =
+            vertex_embedding_endpoint_url("test-project", "europe-west1", "gemini-embedding-001");
+
+        assert_eq!(
+            url,
+            "https://europe-west1-aiplatform.googleapis.com/v1/projects/test-project/locations/europe-west1/publishers/google/models/gemini-embedding-001:predict"
+        );
+    }
+
+    #[test]
+    fn vertex_embedding_endpoint_uses_global_host_for_global_location() {
+        let url =
+            vertex_embedding_endpoint_url("test-project", "global", "google/gemini-embedding-001");
+
+        assert_eq!(
+            url,
+            "https://aiplatform.googleapis.com/v1/projects/test-project/locations/global/publishers/google/models/gemini-embedding-001:predict"
+        );
+    }
+
+    #[test]
+    fn vertex_embedding_model_id_accepts_openai_compatible_prefix() {
+        assert_eq!(
+            vertex_embedding_model_id("google/gemini-embedding-001"),
+            "gemini-embedding-001"
+        );
+        assert_eq!(
+            vertex_embedding_model_id("publishers/google/models/text-embedding-005"),
+            "text-embedding-005"
+        );
+    }
+
+    #[test]
+    fn vertex_embedding_request_uses_vertex_schema_and_dimensions() {
+        let request = vertex_embedding_request(&["hello".to_string(), "world".to_string()], 768);
+        let value = serde_json::to_value(request).expect("request should serialize");
+
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "instances": [
+                    { "content": "hello" },
+                    { "content": "world" }
+                ],
+                "parameters": {
+                    "autoTruncate": true,
+                    "outputDimensionality": 768
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn vertex_embedding_batch_size_respects_vertex_limits() {
+        assert_eq!(vertex_embedding_batch_size("gemini-embedding-001"), 1);
+        assert_eq!(
+            vertex_embedding_batch_size("google/gemini-embedding-001"),
+            1
+        );
+        assert_eq!(vertex_embedding_batch_size("text-embedding-005"), 5);
+    }
+
+    #[test]
+    fn vertex_embedding_response_extracts_vectors_in_provider_order() {
+        let response: VertexEmbeddingResponse = serde_json::from_value(serde_json::json!({
+            "predictions": [
+                { "embeddings": { "values": [1.0, 2.0] } },
+                { "embeddings": { "values": [3.0, 4.0] } }
+            ]
+        }))
+        .expect("response should parse");
+
+        assert_eq!(
+            response.into_vectors().expect("vectors should extract"),
+            vec![vec![1.0, 2.0], vec![3.0, 4.0]]
+        );
+    }
+
+    #[test]
+    fn vertex_embedding_response_rejects_missing_embeddings() {
+        let response: VertexEmbeddingResponse = serde_json::from_value(serde_json::json!({
+            "predictions": [
+                { "embeddings": { "values": [1.0, 2.0] } },
+                {}
+            ]
+        }))
+        .expect("response should parse");
+
+        let error = response
+            .into_vectors()
+            .expect_err("missing embeddings should fail");
+
+        assert!(error
+            .to_string()
+            .contains("Vertex AI embedding response missing embeddings at index 1"));
     }
 }

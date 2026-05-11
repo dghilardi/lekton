@@ -57,6 +57,9 @@ embedding_url = ""
 embedding_model = "nomic-embed-text"
 embedding_dimensions = 768
 embedding_api_key = ""
+# Vertex AI embedding: set project_id to use GCP auth instead of embedding_url/api_key.
+embedding_vertex_project_id = ""
+embedding_vertex_location = ""
 
 # Token-aware chunking (cl100k_base tokenizer).
 chunk_size_tokens = 256

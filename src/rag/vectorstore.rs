@@ -453,6 +453,8 @@ mod tests {
             embedding_dimensions: 768,
             embedding_api_key: String::new(),
             embedding_headers: std::collections::HashMap::new(),
+            embedding_vertex_project_id: String::new(),
+            embedding_vertex_location: String::new(),
             embedding_cache_store_text: false,
             embedding_cache_query: false,
             chunk_size_tokens: 256,

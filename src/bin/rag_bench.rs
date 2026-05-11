@@ -241,6 +241,8 @@ mod ssr {
                 embedding_dimensions: self.embedding_dimensions,
                 embedding_api_key: self.embedding_api_key.clone(),
                 embedding_headers: self.embedding_headers.clone(),
+                embedding_vertex_project_id: String::new(),
+                embedding_vertex_location: String::new(),
                 embedding_cache_store_text: false,
                 embedding_cache_query: false,
                 chunk_size_tokens: self.chunk_size_tokens,
@@ -393,6 +395,7 @@ mod ssr {
         // production metadata; this keeps recall numbers comparable across configs.
         eprintln!("[{}] ingesting {} documents…", bench.name, docs.len());
         let rag_service = DefaultRagService::from_rag_config(&rag_config)
+            .await
             .map_err(|e| format!("[{}] DefaultRagService init: {e}", bench.name))?;
 
         for doc in docs {

@@ -1,13 +1,20 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use async_openai::{
     config::OpenAIConfig,
     types::embeddings::{CreateEmbeddingRequest, EmbeddingInput},
     Client,
 };
 use async_trait::async_trait;
+use gcp_auth::TokenProvider;
 
 use crate::config::RagConfig;
 use crate::error::AppError;
 use crate::rag::{build_oai_client, client::format_llm_error};
+
+const DEFAULT_VERTEX_LOCATION: &str = "us-central1";
+const GCP_SCOPE_CLOUD_PLATFORM: &str = "https://www.googleapis.com/auth/cloud-platform";
 
 // ── Trait ─────────────────────────────────────────────────────────────────────
 
@@ -85,6 +92,95 @@ impl EmbeddingService for OpenAICompatibleEmbedding {
     }
 }
 
+// ── Vertex AI implementation ──────────────────────────────────────────────────
+
+pub struct VertexAIEmbedding {
+    auth_manager: Arc<dyn TokenProvider>,
+    project_id: String,
+    location: String,
+    model: String,
+}
+
+impl VertexAIEmbedding {
+    pub async fn from_rag_config(config: &RagConfig) -> Result<Self, AppError> {
+        let location = if config.embedding_vertex_location.is_empty() {
+            DEFAULT_VERTEX_LOCATION.to_string()
+        } else {
+            config.embedding_vertex_location.clone()
+        };
+        let auth_manager = gcp_auth::provider().await.map_err(|e| {
+            AppError::Internal(format!(
+                "failed to initialize Vertex AI auth for embedding: {e}"
+            ))
+        })?;
+        Ok(Self {
+            auth_manager,
+            project_id: config.embedding_vertex_project_id.clone(),
+            location,
+            model: config.embedding_model.clone(),
+        })
+    }
+}
+
+#[async_trait]
+impl EmbeddingService for VertexAIEmbedding {
+    async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, AppError> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let token = self
+            .auth_manager
+            .token(&[GCP_SCOPE_CLOUD_PLATFORM])
+            .await
+            .map_err(|e| {
+                AppError::Internal(format!("failed to acquire Vertex AI embedding token: {e}"))
+            })?;
+
+        let api_base = format!(
+            "https://{location}-aiplatform.googleapis.com/v1beta1/projects/{project_id}/locations/{location}/endpoints/openapi",
+            location = self.location,
+            project_id = self.project_id,
+        );
+        let client = build_oai_client(&api_base, token.as_str(), &HashMap::new())?;
+
+        let request = CreateEmbeddingRequest {
+            model: self.model.clone(),
+            input: EmbeddingInput::StringArray(texts.to_vec()),
+            encoding_format: None,
+            user: None,
+            dimensions: None,
+        };
+
+        let response = client.embeddings().create(request).await.map_err(|e| {
+            AppError::Internal(format!(
+                "Vertex AI embedding request failed: {}",
+                format_llm_error(&e)
+            ))
+        })?;
+
+        let mut embeddings = response.data;
+        embeddings.sort_by_key(|e| e.index);
+        Ok(embeddings.into_iter().map(|e| e.embedding).collect())
+    }
+}
+
+// ── Factory ───────────────────────────────────────────────────────────────────
+
+/// Build the appropriate [`EmbeddingService`] from config.
+/// Uses Vertex AI when `embedding_vertex_project_id` is set; otherwise OpenAI-compatible.
+pub async fn build_embedding_service(
+    config: &RagConfig,
+) -> Result<Arc<dyn EmbeddingService>, AppError> {
+    if !config.embedding_vertex_project_id.is_empty() {
+        Ok(Arc::new(VertexAIEmbedding::from_rag_config(config).await?))
+    } else {
+        Ok(Arc::new(OpenAICompatibleEmbedding::from_rag_config(
+            config,
+        )?))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,6 +195,8 @@ mod tests {
             embedding_dimensions: 768,
             embedding_api_key: String::new(),
             embedding_headers: std::collections::HashMap::new(),
+            embedding_vertex_project_id: String::new(),
+            embedding_vertex_location: String::new(),
             embedding_cache_store_text: false,
             embedding_cache_query: false,
             chunk_size_tokens: 256,

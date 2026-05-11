@@ -19,7 +19,7 @@ use crate::db::chat_models::{ChatMessage, ChatSession};
 use crate::db::chat_repository::ChatRepository;
 use crate::error::AppError;
 use crate::rag::chat::ChatService;
-use crate::rag::embedding::{EmbeddingService, OpenAICompatibleEmbedding};
+use crate::rag::embedding::{build_embedding_service, EmbeddingService};
 use crate::rag::reranker::{CrossEncoderReranker, Reranker};
 use crate::rag::vectorstore::{QdrantVectorStore, VectorSearchResult, VectorStore};
 use crate::search::client::{MeilisearchService, SearchService};
@@ -277,8 +277,7 @@ impl RagEvalContext {
             ));
         }
 
-        let embedding: Arc<dyn EmbeddingService> =
-            Arc::new(OpenAICompatibleEmbedding::from_rag_config(rag)?);
+        let embedding: Arc<dyn EmbeddingService> = build_embedding_service(rag).await?;
 
         let vectorstore: Arc<dyn VectorStore> = Arc::new(QdrantVectorStore::from_rag_config(rag)?);
 

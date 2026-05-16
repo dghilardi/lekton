@@ -12,6 +12,7 @@ async fn sync_identifies_new_docs_to_upload() {
         .post("/api/v1/sync")
         .json(&serde_json::json!({
             "service_token": "test-token",
+            "source_id": "test-source",
             "documents": [
                 { "slug": "docs/new", "source_path": "docs/new.md", "content_hash": "sha256:abc" }
             ],
@@ -48,6 +49,7 @@ async fn sync_identifies_unchanged_docs() {
         .post("/api/v1/sync")
         .json(&serde_json::json!({
             "service_token": "test-token",
+            "source_id": "test-source",
             "documents": [
                 { "slug": slug, "source_path": format!("docs/{}.md", slug), "content_hash": hash }
             ],
@@ -73,6 +75,7 @@ async fn sync_identifies_changed_docs() {
         .post("/api/v1/sync")
         .json(&serde_json::json!({
             "service_token": "test-token",
+            "source_id": "test-source",
             "documents": [
                 { "slug": slug, "source_path": format!("docs/{}.md", slug), "content_hash": "sha256:different" }
             ],
@@ -106,6 +109,7 @@ async fn sync_identifies_docs_to_archive() {
         .post("/api/v1/sync")
         .json(&serde_json::json!({
             "service_token": "test-token",
+            "source_id": "test-source",
             "documents": [
                 { "slug": slug_keep, "source_path": format!("docs/{}.md", slug_keep), "content_hash": hash }
             ],
@@ -143,6 +147,7 @@ async fn sync_archive_missing_sets_flag() {
         .post("/api/v1/sync")
         .json(&serde_json::json!({
             "service_token": "test-token",
+            "source_id": "test-source",
             "documents": [
                 { "slug": slug_keep, "source_path": format!("docs/{}.md", slug_keep), "content_hash": hash }
             ],
@@ -179,6 +184,7 @@ async fn sync_with_scoped_token() {
         .post("/api/v1/sync")
         .json(&serde_json::json!({
             "service_token": raw,
+            "source_id": "test-source",
             "documents": [
                 { "slug": slug, "source_path": format!("docs/{}.md", slug), "content_hash": hash }
             ],
@@ -203,6 +209,7 @@ async fn sync_rejects_out_of_scope_slug() {
         .post("/api/v1/sync")
         .json(&serde_json::json!({
             "service_token": raw,
+            "source_id": "test-source",
             "documents": [
                 { "slug": "forbidden/doc", "source_path": "docs/forbidden/doc.md", "content_hash": "sha256:abc" }
             ],
@@ -222,6 +229,7 @@ async fn sync_rejects_invalid_token() {
         .post("/api/v1/sync")
         .json(&serde_json::json!({
             "service_token": "invalid-token",
+            "source_id": "test-source",
             "documents": [],
             "archive_missing": false
         }))

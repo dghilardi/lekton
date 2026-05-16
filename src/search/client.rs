@@ -312,6 +312,7 @@ mod tests {
             metadata_hash: None,
             is_archived: false,
             source_path: None,
+            source_id: None,
         };
 
         let search_doc = build_search_document(&doc, "# Getting Started\n\nWelcome to Lekton.");
@@ -345,6 +346,7 @@ mod tests {
             metadata_hash: None,
             is_archived: false,
             source_path: None,
+            source_id: None,
         };
 
         let search_doc = build_search_document(&doc, "# WIP content");

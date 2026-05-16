@@ -98,6 +98,7 @@ pub async fn process_ingest(
         parent_slug: request.parent_slug.as_deref(),
         order: request.order,
         is_hidden: request.is_hidden,
+        source_id: &request.source_id,
     });
 
     // 5. Extract internal links from content
@@ -122,6 +123,10 @@ pub async fn process_ingest(
     let source_path_changed = old_doc
         .as_ref()
         .is_none_or(|d| d.source_path.as_deref() != Some(&request.source_path));
+
+    let source_id_changed = old_doc
+        .as_ref()
+        .is_none_or(|d| d.source_id.as_deref() != Some(&request.source_id));
 
     let content_changed = old_hash.as_deref() != Some(&new_hash);
 
@@ -157,7 +162,7 @@ pub async fn process_ingest(
     });
 
     // If nothing changed, return early
-    if !content_changed && !metadata_changed && !source_path_changed {
+    if !content_changed && !metadata_changed && !source_path_changed && !source_id_changed {
         let s3_key = format!("docs/{}.md", request.slug.replace('/', "_"));
         return Ok(IngestResponse {
             message: "Document unchanged".to_string(),
@@ -237,6 +242,7 @@ pub async fn process_ingest(
         metadata_hash: Some(new_metadata_hash),
         is_archived: false,
         source_path: Some(request.source_path.clone()),
+        source_id: Some(request.source_id.clone()),
     };
 
     // 10. Build search document before ownership transfer
@@ -312,6 +318,7 @@ pub(crate) struct MetadataHashInput<'a> {
     pub parent_slug: Option<&'a str>,
     pub order: u32,
     pub is_hidden: bool,
+    pub source_id: &'a str,
 }
 
 /// Build a canonical string from document metadata and hash it.
@@ -327,7 +334,7 @@ pub(crate) fn compute_metadata_hash(input: MetadataHashInput<'_>) -> String {
     let mut sorted_tags: Vec<&str> = input.tags.iter().map(|s| s.as_str()).collect();
     sorted_tags.sort_unstable();
     let canonical = format!(
-        "title={}\nsummary={}\naccess_level={}\nservice_owner={}\ntags={}\nparent_slug={}\norder={}\nis_hidden={}",
+        "title={}\nsummary={}\naccess_level={}\nservice_owner={}\ntags={}\nparent_slug={}\norder={}\nis_hidden={}\nsource_id={}",
         input.title,
         input.summary.unwrap_or(""),
         input.access_level,
@@ -336,6 +343,7 @@ pub(crate) fn compute_metadata_hash(input: MetadataHashInput<'_>) -> String {
         input.parent_slug.unwrap_or(""),
         input.order,
         input.is_hidden,
+        input.source_id,
     );
     format!(
         "sha256:{}",
@@ -723,12 +731,24 @@ mod tests {
                 .find(|d| d.source_path.as_deref() == Some(source_path))
                 .cloned())
         }
+
+        async fn find_all_by_source_id(&self, source_id: &str) -> Result<Vec<Document>, AppError> {
+            Ok(self
+                .documents
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|d| !d.is_archived && d.source_id.as_deref() == Some(source_id))
+                .cloned()
+                .collect())
+        }
     }
 
     fn make_request(token: &str, slug: &str) -> IngestRequest {
         IngestRequest {
             service_token: token.to_string(),
             source_path: format!("{slug}.md"),
+            source_id: "test-source-id".to_string(),
             slug: slug.to_string(),
             title: "Test Doc".to_string(),
             summary: Some("A test document used to exercise ingestion behavior.".to_string()),

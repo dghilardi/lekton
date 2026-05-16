@@ -196,7 +196,27 @@ pub async fn get_doc_html(
 
     let raw = String::from_utf8(content_bytes).map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    let html = render_markdown(&raw);
+    let base_html = render_markdown(&raw);
+
+    let html = if let Some(ref source_id) = doc.source_id {
+        use crate::rendering::link_transform::{
+            build_siblings_map, rewrite_links_in_html, LinkContext, TransformTarget,
+        };
+        let siblings_docs = state
+            .document_repo
+            .find_all_by_source_id(source_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        let siblings = build_siblings_map(&siblings_docs);
+        let ctx = LinkContext {
+            source_path: doc.source_path.as_deref(),
+            siblings: &siblings,
+        };
+        rewrite_links_in_html(&base_html, &ctx, TransformTarget::Web)
+    } else {
+        base_html
+    };
+
     let headings = extract_headings(&raw);
     let last_updated = doc.last_updated.format("%B %d, %Y").to_string();
 

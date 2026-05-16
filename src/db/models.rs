@@ -65,6 +65,13 @@ pub struct Document {
     /// was introduced.
     #[serde(default)]
     pub source_path: Option<String>,
+    /// Stable identifier for the import source (e.g., the `id` field from
+    /// `.lekton.yml`). Documents sharing the same `source_id` belong to the
+    /// same repository import and can resolve relative cross-links between each
+    /// other via `source_path`. `None` for documents ingested before this field
+    /// was introduced.
+    #[serde(default)]
+    pub source_id: Option<String>,
 }
 
 /// Represents an API schema entry stored in MongoDB.
@@ -194,6 +201,10 @@ pub struct IngestRequest {
     /// title changes. Used by the server to resolve the canonical slug for
     /// a document when the desired slug would differ from the stored one.
     pub source_path: String,
+    /// Stable identifier for the import source, taken from the `id` field in
+    /// `.lekton.yml`. Used together with `source_path` to resolve relative
+    /// cross-links between documents in the same repository.
+    pub source_id: String,
 }
 
 /// The response from a successful ingest operation.
@@ -240,6 +251,7 @@ mod tests {
             metadata_hash: None,
             is_archived: false,
             source_path: Some("engineering/deployment-guide.md".to_string()),
+            source_id: Some("test-source".to_string()),
         };
 
         let json = serde_json::to_string(&doc).unwrap();
@@ -331,6 +343,7 @@ mod tests {
             metadata_hash: None,
             is_archived: false,
             source_path: None,
+            source_id: None,
         };
 
         let json = serde_json::to_string(&doc).unwrap();
@@ -343,6 +356,7 @@ mod tests {
         let json = r###"{
             "service_token": "tok-123",
             "source_path": "docs/hello.md",
+            "source_id": "my-org/my-repo",
             "slug": "docs/hello",
             "title": "Hello World",
             "summary": "Introduces the internal onboarding flow.",
@@ -359,6 +373,7 @@ mod tests {
             Some("Introduces the internal onboarding flow.")
         );
         assert_eq!(req.source_path, "docs/hello.md");
+        assert_eq!(req.source_id, "my-org/my-repo");
         assert_eq!(req.access_level, "internal");
         assert!(!req.is_draft);
     }
@@ -368,6 +383,7 @@ mod tests {
         let json = r###"{
             "service_token": "tok",
             "source_path": "docs/wip.md",
+            "source_id": "my-org/my-repo",
             "slug": "docs/wip",
             "title": "WIP",
             "summary": null,
@@ -386,6 +402,7 @@ mod tests {
         let json = r###"{
             "service_token": "tok-123",
             "source_path": "docs/hello.md",
+            "source_id": "my-org/my-repo",
             "slug": "docs/hello",
             "title": "Hello",
             "content": "## Hello",

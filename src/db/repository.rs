@@ -61,6 +61,12 @@ pub trait DocumentRepository: Send + Sync {
     ///
     /// Returns `None` for documents ingested before `source_path` was introduced.
     async fn find_by_source_path(&self, source_path: &str) -> Result<Option<Document>, AppError>;
+
+    /// Return all non-archived documents belonging to the given import source.
+    ///
+    /// Used at render time to build a `source_path → slug` map for relative
+    /// link resolution. Returns an empty vec for unknown source ids.
+    async fn find_all_by_source_id(&self, source_id: &str) -> Result<Vec<Document>, AppError>;
 }
 
 /// MongoDB implementation of the DocumentRepository.
@@ -270,6 +276,26 @@ impl DocumentRepository for MongoDocumentRepository {
             .collection
             .find_one(doc! { "source_path": source_path })
             .await?)
+    }
+
+    async fn find_all_by_source_id(&self, source_id: &str) -> Result<Vec<Document>, AppError> {
+        use futures::TryStreamExt;
+        use mongodb::bson::doc;
+
+        let filter = doc! {
+            "source_id": source_id,
+            "$or": [
+                { "is_archived": { "$exists": false } },
+                { "is_archived": false }
+            ]
+        };
+
+        let mut cursor = self.collection.find(filter).await?;
+        let mut documents = Vec::new();
+        while let Some(document) = cursor.try_next().await? {
+            documents.push(document);
+        }
+        Ok(documents)
     }
 }
 

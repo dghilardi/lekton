@@ -150,6 +150,9 @@ mod tests {
         async fn find_by_source_path(&self, _: &str) -> Result<Option<Document>, AppError> {
             Ok(None)
         }
+        async fn find_all_by_source_id(&self, _: &str) -> Result<Vec<Document>, AppError> {
+            Ok(vec![])
+        }
     }
 
     #[derive(Default)]
@@ -230,6 +233,7 @@ mod tests {
             metadata_hash: None,
             is_archived,
             source_path: None,
+            source_id: None,
         }
     }
 

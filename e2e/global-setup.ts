@@ -53,6 +53,7 @@ async function ingestDocument(
       service_token: SERVICE_TOKEN,
       slug,
       source_path: `docs/${slug}.md`,
+      source_id: 'e2e-tests',
       title,
       content,
       access_level: accessLevel,

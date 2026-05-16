@@ -442,6 +442,7 @@ impl TestEnv {
                 "service_token": "test-token",
                 "slug": slug,
                 "source_path": format!("docs/{}.md", slug),
+                "source_id": "test-source",
                 "title": title,
                 "summary": format!("Test summary for {title} used by automated ingestion checks."),
                 "content": content,

@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.12] 2026-05-16
+
 ### Added
 - `source_id` field on `Document` (optional, backward-compatible) and `IngestRequest` (required): stable identifier for the import source, taken from the `id` field in `.lekton.yml`. Used to group documents from the same repository for relative link resolution.
 - `find_all_by_source_id` on `DocumentRepository`: returns all non-archived documents sharing a `source_id`, used to build the sibling map at render time.

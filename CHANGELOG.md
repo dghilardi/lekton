@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- `source_id` field on `Document` (optional, backward-compatible) and `IngestRequest` (required): stable identifier for the import source, taken from the `id` field in `.lekton.yml`. Used to group documents from the same repository for relative link resolution.
+- `find_all_by_source_id` on `DocumentRepository`: returns all non-archived documents sharing a `source_id`, used to build the sibling map at render time.
+- `src/rendering/link_transform.rs`: link transformation module with `transform_url`, `rewrite_links_in_html`, and `rewrite_links_in_markdown` — resolves relative (`./foo`, `../bar`), repo-absolute (`/path`), and `lekton://docs/` cross-repo links at render time for both the web UI and MCP resources.
+- lekton-sync now requires `id` in `.lekton.yml` and fails with a descriptive error if missing.
+
 ## [0.24.11] 2026-05-11
 
 ### Fixed

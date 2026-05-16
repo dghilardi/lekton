@@ -1446,7 +1446,26 @@ impl ServerHandler for LektonMcpServer {
             ));
         }
 
-        let markdown = self.load_document_markdown(&doc).await?;
+        let raw_markdown = self.load_document_markdown(&doc).await?;
+
+        let markdown = if let Some(ref source_id) = doc.source_id {
+            use crate::rendering::link_transform::{
+                build_siblings_map, rewrite_links_in_markdown, LinkContext, TransformTarget,
+            };
+            let siblings_docs = self
+                .document_repo
+                .find_all_by_source_id(source_id)
+                .await
+                .map_err(app_err)?;
+            let siblings = build_siblings_map(&siblings_docs);
+            let ctx = LinkContext {
+                source_path: doc.source_path.as_deref(),
+                siblings: &siblings,
+            };
+            rewrite_links_in_markdown(&raw_markdown, &ctx, TransformTarget::Mcp)
+        } else {
+            raw_markdown
+        };
 
         Ok(ReadResourceResult::new(vec![ResourceContents::text(
             markdown,

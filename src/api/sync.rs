@@ -423,6 +423,16 @@ mod tests {
                 .find(|d| d.source_path.as_deref() == Some(source_path))
                 .cloned())
         }
+        async fn find_all_by_source_id(&self, source_id: &str) -> Result<Vec<Document>, AppError> {
+            Ok(self
+                .documents
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|d| !d.is_archived && d.source_id.as_deref() == Some(source_id))
+                .cloned()
+                .collect())
+        }
     }
 
     struct MockServiceTokenRepo;
@@ -495,6 +505,7 @@ mod tests {
             metadata_hash: None,
             is_archived: false,
             source_path: Some(format!("{slug}.md")),
+            source_id: None,
         }
     }
 

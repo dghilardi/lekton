@@ -53,6 +53,11 @@ struct Args {
 /// `.lekton.yml` project-level configuration.
 #[derive(Deserialize, Default)]
 struct LektonConfig {
+    /// Stable identifier for this repository import, used by Lekton to resolve
+    /// relative cross-links between documents in the same source.
+    /// Required field — sync fails with a clear error if missing.
+    #[serde(default)]
+    id: Option<String>,
     /// Base URL of the Lekton server (can also be set via LEKTON_URL env var)
     url: Option<String>,
     /// Default access level applied when a document has no `access_level` in its front matter
@@ -258,6 +263,7 @@ struct SchemaSyncResponse {
 struct IngestRequest {
     service_token: String,
     source_path: String,
+    source_id: String,
     slug: String,
     title: String,
     summary: Option<String>,
@@ -1271,6 +1277,16 @@ async fn main() -> Result<()> {
         LektonConfig::default()
     };
 
+    // ── Require source_id ────────────────────────────────────────────────────
+    let source_id = config.id.clone().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Missing required 'id' field in .lekton.yml.\n\
+             Add a stable identifier for this repository import, e.g.:\n\n  \
+             id: my-org/my-repo\n\n\
+             This id is used by Lekton to resolve relative cross-links between documents."
+        )
+    })?;
+
     // ── Resolve URL and token ─────────────────────────────────────────────────
     let base_url = std::env::var("LEKTON_URL")
         .ok()
@@ -1696,6 +1712,7 @@ async fn main() -> Result<()> {
         let ingest_body = IngestRequest {
             service_token: token.clone(),
             source_path: doc.source_path.clone(),
+            source_id: source_id.clone(),
             slug: upload_entry.actual_slug.clone(),
             title: doc.title.clone(),
             summary: doc.summary.clone(),

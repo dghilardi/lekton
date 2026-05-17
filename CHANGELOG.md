@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.13] 2026-05-17
+
 ### Changed
 - Rate limiting now ignores static fallback assets, replenishes faster by default, and can use forwarded client IP headers from configured trusted proxies.
 - Auto-archiving during sync is now scoped to `source_id` instead of token permission scopes: only documents from the same source are candidates for archiving, so multiple sources can share overlapping token permissions without interfering with each other.

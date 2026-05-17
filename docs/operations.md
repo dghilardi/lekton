@@ -4,6 +4,31 @@ Runtime procedures for backup, recovery, token rotation, and dependency auditing
 
 ---
 
+## Reverse Proxy And Rate Limiting
+
+Lekton rate-limits dynamic routes, not static fallback assets. By default the limiter uses the peer IP, but it can read `X-Forwarded-For`, `X-Real-IP`, and `Forwarded` only when the direct peer matches `LKN__SERVER__RATE_LIMIT_TRUSTED_PROXIES`.
+
+For nginx on the same host, the default trusted proxies (`127.0.0.1/32,::1/128`) are enough. For container or load-balancer networks, set the proxy IP or CIDR explicitly:
+
+```bash
+LKN__SERVER__RATE_LIMIT_TRUSTED_PROXIES="10.0.0.0/8,172.16.0.0/12"
+LKN__SERVER__RATE_LIMIT_PER_SECOND=5
+LKN__SERVER__RATE_LIMIT_BURST=50
+```
+
+Recommended nginx forwarding headers:
+
+```nginx
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-Proto $scheme;
+proxy_set_header Host $host;
+```
+
+If multiple real users share the same public NAT IP, they still share the same IP quota; increase `rate_limit_per_second` and `rate_limit_burst` for that deployment profile.
+
+---
+
 ## MongoDB
 
 ### Backup

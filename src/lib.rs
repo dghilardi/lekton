@@ -16,6 +16,8 @@ pub mod jobs;
 pub mod mcp;
 pub mod pages;
 pub mod rag;
+#[cfg(feature = "ssr")]
+pub mod rate_limit;
 pub mod rendering;
 pub mod schema;
 pub mod search;

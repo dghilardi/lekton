@@ -34,8 +34,12 @@ pub struct AppConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct ServerConfig {
-    /// Maximum burst size for the rate limiter (requests per second replenishment = 1).
+    /// Maximum burst size for the rate limiter.
     pub rate_limit_burst: u32,
+    /// Number of tokens replenished by the rate limiter per second.
+    pub rate_limit_per_second: u64,
+    /// Comma-separated trusted reverse proxy IPs/CIDRs allowed to supply forwarded client IPs.
+    pub rate_limit_trusted_proxies: String,
     /// Comma-separated allowed CORS origins. Empty/unset means same-origin only.
     pub cors_allowed_origins: Option<String>,
     /// Allow non-HTTPS cookies (local dev over HTTP).
@@ -478,12 +482,22 @@ mod tests {
         std::env::set_var("LKN__STORAGE__BUCKET", "testing-bucket");
         std::env::set_var("LKN__AUTH__DEMO_MODE", "true");
         std::env::set_var("LKN__SERVER__RATE_LIMIT_BURST", "123");
+        std::env::set_var("LKN__SERVER__RATE_LIMIT_PER_SECOND", "7");
+        std::env::set_var(
+            "LKN__SERVER__RATE_LIMIT_TRUSTED_PROXIES",
+            "127.0.0.1,10.0.0.0/8",
+        );
 
         let config = super::AppConfig::load().expect("Failed to load config with env vars");
 
         assert_eq!(config.storage.bucket, "testing-bucket");
         assert!(config.auth.demo_mode);
         assert_eq!(config.server.rate_limit_burst, 123);
+        assert_eq!(config.server.rate_limit_per_second, 7);
+        assert_eq!(
+            config.server.rate_limit_trusted_proxies,
+            "127.0.0.1,10.0.0.0/8"
+        );
     }
 
     #[test]

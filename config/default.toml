@@ -8,6 +8,8 @@
 
 [server]
 rate_limit_burst = 50
+rate_limit_per_second = 5
+rate_limit_trusted_proxies = "127.0.0.1/32,::1/128"
 insecure_cookies = false
 log_filter = "lekton=info,tower_http=info"
 max_attachment_size_mb = 25

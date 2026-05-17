@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- Rate limiting now ignores static fallback assets, replenishes faster by default, and can use forwarded client IP headers from configured trusted proxies.
 - Auto-archiving during sync is now scoped to `source_id` instead of token permission scopes: only documents from the same source are candidates for archiving, so multiple sources can share overlapping token permissions without interfering with each other.
 - `SyncRequest` now requires a `source_id` field (matches the `.lekton.yml` `id`).
 - Ingest rejects writes to a document that is already owned by a different (non-archived) source, returning `403 Forbidden`.

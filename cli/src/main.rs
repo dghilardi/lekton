@@ -189,6 +189,7 @@ fn default_status() -> String {
 #[derive(Serialize)]
 struct SyncRequest {
     service_token: String,
+    source_id: String,
     documents: Vec<SyncDocEntry>,
     archive_missing: bool,
 }
@@ -1256,6 +1257,103 @@ async fn backoff_on_429(
     }
 }
 
+// ── Interactive helpers ───────────────────────────────────────────────────────
+
+fn is_interactive() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdin().is_terminal() && std::env::var("CI").is_err()
+}
+
+/// Try to detect a git remote URL from `root`.
+/// Prefers `origin`; falls back to the first listed remote.
+fn detect_git_remote(root: &std::path::Path) -> Option<String> {
+    let get_url = |remote: &str| -> Option<String> {
+        let out = std::process::Command::new("git")
+            .args(["remote", "get-url", remote])
+            .current_dir(root)
+            .output()
+            .ok()?;
+        if out.status.success() {
+            let url = String::from_utf8(out.stdout).ok()?.trim().to_string();
+            if !url.is_empty() {
+                Some(url)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+
+    if let Some(url) = get_url("origin") {
+        return Some(url);
+    }
+
+    // No origin — try the first available remote
+    let out = std::process::Command::new("git")
+        .arg("remote")
+        .current_dir(root)
+        .output()
+        .ok()?;
+    if out.status.success() {
+        let remotes = String::from_utf8(out.stdout).ok()?;
+        let first = remotes.lines().next()?.trim().to_string();
+        if !first.is_empty() {
+            return get_url(&first);
+        }
+    }
+    None
+}
+
+/// Prompt the user for a source ID and persist it to the config file.
+/// If `suggestion` is provided it is shown as the default (accepted on empty input).
+fn prompt_and_persist_source_id(
+    config_path: &std::path::Path,
+    suggestion: Option<&str>,
+) -> anyhow::Result<String> {
+    use std::io::Write;
+
+    eprintln!();
+    eprintln!("Warning: '.lekton.yml' is missing the required 'id' field.");
+    eprintln!();
+    eprintln!("This ID uniquely identifies this repository as a document source.");
+    eprintln!("It scopes auto-archiving so multiple repos can share the same token");
+    eprintln!("without interfering with each other.");
+    eprintln!();
+
+    match suggestion {
+        Some(s) => eprint!("Enter a source ID [{}]: ", s),
+        None => eprint!("Enter a source ID (e.g. \"my-org/my-repo\", \"user-service\"): "),
+    }
+    std::io::stderr().flush()?;
+
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let trimmed = input.trim();
+
+    let id = match (trimmed.is_empty(), suggestion) {
+        (true, Some(s)) => s.to_string(),
+        (true, None) => anyhow::bail!("Source ID cannot be empty."),
+        (false, _) => trimmed.to_string(),
+    };
+
+    // Prepend the id field to the existing config file content (preserves formatting).
+    let existing = if config_path.exists() {
+        std::fs::read_to_string(config_path)
+            .with_context(|| format!("Failed to read {}", config_path.display()))?
+    } else {
+        String::new()
+    };
+    let new_content = format!("id: {id}\n{existing}");
+    std::fs::write(config_path, &new_content)
+        .with_context(|| format!("Failed to write {}", config_path.display()))?;
+
+    eprintln!("Saved 'id: {id}' to {}", config_path.display());
+    eprintln!();
+
+    Ok(id)
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 #[tokio::main]
@@ -1278,14 +1376,19 @@ async fn main() -> Result<()> {
     };
 
     // ── Require source_id ────────────────────────────────────────────────────
-    let source_id = config.id.clone().ok_or_else(|| {
-        anyhow::anyhow!(
+    let source_id = match config.id.clone() {
+        Some(id) => id,
+        None if is_interactive() => {
+            let suggestion = detect_git_remote(&args.root);
+            prompt_and_persist_source_id(&config_path, suggestion.as_deref())?
+        }
+        None => anyhow::bail!(
             "Missing required 'id' field in .lekton.yml.\n\
              Add a stable identifier for this repository import, e.g.:\n\n  \
              id: my-org/my-repo\n\n\
-             This id is used by Lekton to resolve relative cross-links between documents."
-        )
-    })?;
+             This id is used by Lekton to scope auto-archiving and resolve cross-links."
+        ),
+    };
 
     // ── Resolve URL and token ─────────────────────────────────────────────────
     let base_url = std::env::var("LEKTON_URL")
@@ -1351,6 +1454,7 @@ async fn main() -> Result<()> {
             .post(&sync_url)
             .json(&SyncRequest {
                 service_token: token.clone(),
+                source_id: source_id.clone(),
                 documents: sync_entries,
                 archive_missing,
             })

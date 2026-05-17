@@ -120,6 +120,20 @@ pub async fn process_ingest(
             None => (vec![], vec![], None, 0, false, None),
         };
 
+    // Reject cross-source overwrites of non-archived documents.
+    if let Some(ref existing) = old_doc {
+        if !existing.is_archived {
+            if let Some(ref existing_source_id) = existing.source_id {
+                if existing_source_id != &request.source_id {
+                    return Err(AppError::Forbidden(format!(
+                        "Document '{}' belongs to source '{}' and cannot be overwritten by source '{}'",
+                        request.slug, existing_source_id, request.source_id
+                    )));
+                }
+            }
+        }
+    }
+
     let source_path_changed = old_doc
         .as_ref()
         .is_none_or(|d| d.source_path.as_deref() != Some(&request.source_path));
@@ -1250,6 +1264,51 @@ mod tests {
         assert_eq!(
             hash1, hash2,
             "metadata_hash must be stable when nothing changes"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ingest_cross_source_overwrite_is_rejected() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+
+        // First ingest: source-a claims docs/shared
+        let mut req_a = make_request("valid-token", "docs/shared");
+        req_a.source_id = "source-a".to_string();
+        process_ingest(&ctx, req_a).await.unwrap();
+
+        // Second ingest: source-b tries to overwrite docs/shared → must be rejected
+        let mut req_b = make_request("valid-token", "docs/shared");
+        req_b.source_id = "source-b".to_string();
+        let result = process_ingest(&ctx, req_b).await;
+        match result.unwrap_err() {
+            AppError::Forbidden(msg) => assert!(msg.contains("source-a")),
+            other => panic!("Expected Forbidden, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ingest_cross_source_allowed_after_archive() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+
+        // source-a creates docs/migrated, then it gets archived
+        let mut req_a = make_request("valid-token", "docs/migrated");
+        req_a.source_id = "source-a".to_string();
+        process_ingest(&ctx, req_a).await.unwrap();
+        repo.set_archived("docs/migrated", true).await.unwrap();
+
+        // source-b can now claim the slug (the document was archived by source-a)
+        let mut req_b = make_request("valid-token", "docs/migrated");
+        req_b.source_id = "source-b".to_string();
+        let result = process_ingest(&ctx, req_b).await;
+        assert!(
+            result.is_ok(),
+            "source-b should be able to claim an archived slug"
         );
     }
 }

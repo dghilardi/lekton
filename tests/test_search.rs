@@ -203,6 +203,7 @@ async fn search_excludes_archived_documents() {
         .post("/api/v1/sync")
         .json(&serde_json::json!({
             "service_token": "test-token",
+            "source_id": "test-source",
             "documents": [],
             "archive_missing": true
         }))

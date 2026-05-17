@@ -28,9 +28,12 @@ pub struct SyncDocumentEntry {
 pub struct SyncRequest {
     /// Service authentication token (legacy or scoped).
     pub service_token: String,
+    /// Stable identifier for the import source (from `.lekton.yml` `id` field).
+    /// Only documents from this source are considered when computing archives.
+    pub source_id: String,
     /// The client's complete list of documents.
     pub documents: Vec<SyncDocumentEntry>,
-    /// If `true`, documents in the server scope that are missing from the
+    /// If `true`, documents from this source that are missing from the
     /// client list will be automatically archived.
     #[serde(default)]
     pub archive_missing: bool,
@@ -87,33 +90,18 @@ pub async fn process_sync(
         }
     }
 
-    // 3. Fetch all server documents within the token's scopes.
-    // Value: (content_hash, metadata_hash, source_path)
+    // 3. Fetch all server documents for this source.
     let mut server_by_slug: HashMap<String, ServerDocInfo> = HashMap::new();
-    // source_path → slug index for migration lookup
     let mut server_by_source_path: HashMap<String, String> = HashMap::new();
 
-    for scope in &scopes {
-        let docs = if scope == "*" {
-            repo.find_by_slug_prefix("").await?
-        } else if let Some(prefix) = scope.strip_suffix("/*") {
-            repo.find_by_slug_prefix(prefix).await?
-        } else {
-            match repo.find_by_slug(scope).await? {
-                Some(doc) if !doc.is_archived => vec![doc],
-                _ => vec![],
-            }
-        };
-
-        for doc in docs {
-            if let Some(ref sp) = doc.source_path {
-                server_by_source_path.insert(sp.clone(), doc.slug.clone());
-            }
-            server_by_slug.insert(
-                doc.slug.clone(),
-                (doc.content_hash, doc.metadata_hash, doc.source_path),
-            );
+    for doc in repo.find_all_by_source_id(&request.source_id).await? {
+        if let Some(ref sp) = doc.source_path {
+            server_by_source_path.insert(sp.clone(), doc.slug.clone());
         }
+        server_by_slug.insert(
+            doc.slug.clone(),
+            (doc.content_hash, doc.metadata_hash, doc.source_path),
+        );
     }
 
     // 4. Compare — resolve actual_slug for each client entry
@@ -505,7 +493,7 @@ mod tests {
             metadata_hash: None,
             is_archived: false,
             source_path: Some(format!("{slug}.md")),
-            source_id: None,
+            source_id: Some("test-source".to_string()),
         }
     }
 
@@ -536,6 +524,7 @@ mod tests {
         let token_repo = MockServiceTokenRepo;
         let request = SyncRequest {
             service_token: "legacy".to_string(),
+            source_id: "test-source".to_string(),
             documents: vec![entry("docs/new", "sha256:abc")],
             archive_missing: false,
         };
@@ -554,6 +543,7 @@ mod tests {
         let token_repo = MockServiceTokenRepo;
         let request = SyncRequest {
             service_token: "legacy".to_string(),
+            source_id: "test-source".to_string(),
             documents: vec![entry("docs/a", "sha256:abc")],
             archive_missing: false,
         };
@@ -572,6 +562,7 @@ mod tests {
         let token_repo = MockServiceTokenRepo;
         let request = SyncRequest {
             service_token: "legacy".to_string(),
+            source_id: "test-source".to_string(),
             documents: vec![entry("docs/a", "sha256:new")],
             archive_missing: false,
         };
@@ -592,6 +583,7 @@ mod tests {
         let token_repo = MockServiceTokenRepo;
         let request = SyncRequest {
             service_token: "legacy".to_string(),
+            source_id: "test-source".to_string(),
             documents: vec![entry("docs/a", "sha256:abc")],
             archive_missing: false,
         };
@@ -612,6 +604,7 @@ mod tests {
         let token_repo = MockServiceTokenRepo;
         let request = SyncRequest {
             service_token: "legacy".to_string(),
+            source_id: "test-source".to_string(),
             documents: vec![entry("docs/a", "sha256:abc")],
             archive_missing: true,
         };
@@ -699,6 +692,7 @@ mod tests {
         let token_repo = ScopedTokenRepo(scoped);
         let request = SyncRequest {
             service_token: "scoped-tok".to_string(),
+            source_id: "test-source".to_string(),
             documents: vec![entry("docs/outside", "sha256:abc")],
             archive_missing: false,
         };
@@ -721,6 +715,7 @@ mod tests {
         let search = MockSearchService::new();
         let request = SyncRequest {
             service_token: "legacy".to_string(),
+            source_id: "test-source".to_string(),
             documents: vec![entry("docs/a", "sha256:abc")],
             archive_missing: true,
         };
@@ -742,6 +737,7 @@ mod tests {
         let search = MockSearchService::new();
         let request = SyncRequest {
             service_token: "legacy".to_string(),
+            source_id: "test-source".to_string(),
             documents: vec![entry("docs/a", "sha256:abc")],
             archive_missing: false,
         };
@@ -771,6 +767,7 @@ mod tests {
         let token_repo = MockServiceTokenRepo;
         let request = SyncRequest {
             service_token: "legacy".to_string(),
+            source_id: "test-source".to_string(),
             documents: vec![SyncDocumentEntry {
                 source_path: "docs/a.md".to_string(),
                 slug: "docs/a".to_string(),
@@ -801,6 +798,7 @@ mod tests {
         let token_repo = MockServiceTokenRepo;
         let request = SyncRequest {
             service_token: "legacy".to_string(),
+            source_id: "test-source".to_string(),
             documents: vec![SyncDocumentEntry {
                 source_path: "docs/a.md".to_string(),
                 slug: "docs/a".to_string(),
@@ -828,6 +826,7 @@ mod tests {
         let token_repo = MockServiceTokenRepo;
         let request = SyncRequest {
             service_token: "legacy".to_string(),
+            source_id: "test-source".to_string(),
             documents: vec![SyncDocumentEntry {
                 source_path: "docs/a.md".to_string(),
                 slug: "docs/a".to_string(),
@@ -858,6 +857,7 @@ mod tests {
         let token_repo = MockServiceTokenRepo;
         let request = SyncRequest {
             service_token: "legacy".to_string(),
+            source_id: "test-source".to_string(),
             documents: vec![entry("docs/a", "sha256:content")],
             archive_missing: false,
         };
@@ -882,6 +882,7 @@ mod tests {
         let token_repo = MockServiceTokenRepo;
         let request = SyncRequest {
             service_token: "legacy".to_string(),
+            source_id: "test-source".to_string(),
             documents: vec![SyncDocumentEntry {
                 source_path: "docs/my-guide.md".to_string(),
                 slug: "docs/my-cool-guide".to_string(), // title-derived
@@ -914,6 +915,7 @@ mod tests {
         let token_repo = MockServiceTokenRepo;
         let request = SyncRequest {
             service_token: "legacy".to_string(),
+            source_id: "test-source".to_string(),
             documents: vec![SyncDocumentEntry {
                 source_path: "docs/my-guide.md".to_string(),
                 slug: "docs/my-cool-guide".to_string(),
@@ -930,5 +932,37 @@ mod tests {
         // Found by source_path → actual_slug = "docs/my-guide", nothing changed
         assert!(result.to_upload.is_empty());
         assert_eq!(result.unchanged, vec!["docs/my-guide.md"]);
+    }
+
+    #[tokio::test]
+    async fn test_sync_does_not_archive_other_source_docs() {
+        // source-a owns docs/a and docs/b; source-b owns docs/c.
+        // Syncing source-a with only docs/a should archive docs/b but NOT docs/c.
+        let mut doc_a = make_doc("docs/a", "sha256:aaa");
+        doc_a.source_id = Some("source-a".to_string());
+        let mut doc_b = make_doc("docs/b", "sha256:bbb");
+        doc_b.source_id = Some("source-a".to_string());
+        let mut doc_c = make_doc("docs/c", "sha256:ccc");
+        doc_c.source_id = Some("source-b".to_string());
+
+        let repo = MockRepo::with_docs(vec![doc_a, doc_b, doc_c]);
+        let token_repo = MockServiceTokenRepo;
+        let request = SyncRequest {
+            service_token: "legacy".to_string(),
+            source_id: "source-a".to_string(),
+            documents: vec![entry("docs/a", "sha256:aaa")],
+            archive_missing: true,
+        };
+
+        process_sync(&repo, &token_repo, None, Some("legacy"), request)
+            .await
+            .unwrap();
+
+        // docs/b should be archived (source-a, not in sync)
+        let doc_b = repo.find_by_slug("docs/b").await.unwrap().unwrap();
+        assert!(doc_b.is_archived, "docs/b should be archived");
+        // docs/c must NOT be archived (belongs to source-b)
+        let doc_c = repo.find_by_slug("docs/c").await.unwrap().unwrap();
+        assert!(!doc_c.is_archived, "docs/c must not be archived");
     }
 }

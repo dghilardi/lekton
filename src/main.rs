@@ -743,12 +743,19 @@ async fn main() {
         tracing::info!("MCP server not available — RAG not configured");
     }
 
-    // Rate limiting: replenished at 1 per second, burst from config
+    // Rate limiting applies to explicit dynamic routes only; static fallback assets
+    // are mounted after `route_layer` so page loads do not consume API quota.
     let burst_size = config.server.rate_limit_burst;
+    let rate_limit_per_second = config.server.rate_limit_per_second;
+    let key_extractor = lekton::rate_limit::TrustedProxyIpKeyExtractor::from_config(
+        &config.server.rate_limit_trusted_proxies,
+    )
+    .expect("Invalid server.rate_limit_trusted_proxies");
     let governor_conf = Arc::new(
         tower_governor::governor::GovernorConfigBuilder::default()
-            .per_second(1)
+            .per_second(rate_limit_per_second)
             .burst_size(burst_size)
+            .key_extractor(key_extractor)
             .finish()
             .expect("Failed to build rate limiter configuration"),
     );
@@ -801,12 +808,12 @@ async fn main() {
             let options = app_state.leptos_options.clone();
             move || lekton::app::shell(options.clone())
         })
+        .route_layer(tower_governor::GovernorLayer::new(governor_conf))
         // Static files (including custom.css)
         .fallback_service(ServeDir::new(&site_root))
         .layer(middleware::from_fn(static_cache_headers))
         .layer(middleware::from_fn(mjs_content_type))
         .layer(cors)
-        .layer(tower_governor::GovernorLayer::new(governor_conf))
         .with_state(app_state);
 
     // Start the server

@@ -32,16 +32,16 @@
       // Copy button
       var btn = document.createElement('button');
       btn.className = 'code-copy-btn';
-      btn.setAttribute('aria-label', 'Copia codice');
-      btn.innerHTML = COPY_ICON + '<span>copia</span>';
+      btn.setAttribute('aria-label', 'Copy code');
+      btn.innerHTML = COPY_ICON + '<span>copy</span>';
 
       btn.addEventListener('click', function () {
         var text = code ? code.innerText : pre.innerText;
         navigator.clipboard.writeText(text).then(function () {
-          btn.innerHTML = CHECK_ICON + '<span>copiato</span>';
+          btn.innerHTML = CHECK_ICON + '<span>copied</span>';
           btn.classList.add('copied');
           setTimeout(function () {
-            btn.innerHTML = COPY_ICON + '<span>copia</span>';
+            btn.innerHTML = COPY_ICON + '<span>copy</span>';
             btn.classList.remove('copied');
           }, 2000);
         }).catch(function () {

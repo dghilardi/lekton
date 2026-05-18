@@ -23,6 +23,7 @@ ignore = [
     # hickory-proto 0.25.x is pinned by mongodb 3.x; no compatible upgrade available
     { id = "RUSTSEC-2026-0118", reason = "hickory-proto: transitive via mongodb, no compatible hickory-proto 0.26.x available yet" },
     { id = "RUSTSEC-2026-0119", reason = "hickory-proto: transitive via mongodb, no compatible hickory-proto 0.26.x available yet" },
+    { id = "RUSTSEC-2025-0141", reason = "bincode: transitive via syntect (used for syntax set serialization); governance issue, not a security vulnerability, no alternative in syntect" },
 ]
 
 # License policy

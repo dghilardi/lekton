@@ -537,6 +537,15 @@ fn extract_local_file_refs(markdown: &str, md_file_dir: &Path) -> Vec<LocalFileR
             continue;
         }
 
+        // Skip markdown files — they are inter-document links resolved server-side
+        // by link_transform.rs, not binary attachments to upload.
+        if raw_path.ends_with(".md")
+            || raw_path.ends_with(".mdx")
+            || raw_path.ends_with(".markdown")
+        {
+            continue;
+        }
+
         // Deduplicate by raw path
         if seen.contains_key(&raw_path) {
             continue;
@@ -2260,6 +2269,17 @@ mod tests {
         assert!(
             refs.is_empty(),
             "Should skip all external/absolute/anchor refs, got: {:?}",
+            refs
+        );
+    }
+
+    #[test]
+    fn extract_refs_skips_markdown_files() {
+        let md = "See [config](./020-configuration.md) and [guide](../other/guide.mdx).";
+        let refs = extract_local_file_refs(md, Path::new("/docs/section"));
+        assert!(
+            refs.is_empty(),
+            "Should skip .md/.mdx links (handled server-side), got: {:?}",
             refs
         );
     }

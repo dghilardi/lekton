@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- lekton-sync no longer treats relative links to `.md`/`.mdx`/`.markdown` files as binary attachments; those links are now left untouched for server-side resolution by `link_transform.rs`.
+
 ## [0.24.13] 2026-05-17
 
 ### Changed

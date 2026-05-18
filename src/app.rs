@@ -112,6 +112,7 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                 <script type="module" src="/js/tiptap-bundle.min.js"></script>
                 <script type="module" src="/js/tiptap.js"></script>
                 <script src="/js/mermaid-loader.js"></script>
+                <script src="/js/code-blocks.js"></script>
             </head>
             <body>
                 <App />

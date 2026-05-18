@@ -440,6 +440,7 @@ label > span:first-child {
 }
 
 .prose pre {
+    position:         relative;
     background-color: var(--color-base-200);
     border:           1px solid var(--color-base-300);
     border-radius:    0.6rem;
@@ -447,6 +448,7 @@ label > span:first-child {
     margin-top:       1.5em;
     margin-bottom:    1.5em;
     padding:          1.2em 1.5em;
+    padding-top:      2.2em;
     font-size:        0.85em;
     line-height:      1.75;
     box-shadow:       0 1px 3px 0 rgb(0 0 0 / 0.07),
@@ -463,6 +465,125 @@ label > span:first-child {
     color:       var(--color-base-content);
     font-size:   inherit;
     line-height: inherit;
+}
+
+/* Language badge */
+.code-lang-badge {
+    position:      absolute;
+    top:           0.45em;
+    left:          0.9em;
+    font-family:   var(--lekton-mono-font);
+    font-size:     0.72em;
+    line-height:   1;
+    color:         var(--color-base-content);
+    opacity:       0.45;
+    user-select:   none;
+    pointer-events: none;
+}
+
+/* Copy button */
+.code-copy-btn {
+    position:         absolute;
+    top:              0.4em;
+    right:            0.5em;
+    display:          flex;
+    align-items:      center;
+    gap:              0.3em;
+    padding:          0.25em 0.55em;
+    font-size:        0.72em;
+    font-family:      var(--lekton-mono-font);
+    background:       transparent;
+    border:           1px solid var(--color-base-300);
+    border-radius:    0.35rem;
+    color:            var(--color-base-content);
+    opacity:          0.5;
+    cursor:           pointer;
+    transition:       opacity 0.15s, background 0.15s;
+    line-height:      1;
+}
+
+.code-copy-btn:hover {
+    opacity:    1;
+    background: var(--color-base-300);
+}
+
+.code-copy-btn.copied {
+    opacity: 1;
+    color:   var(--color-success, #22c55e);
+    border-color: var(--color-success, #22c55e);
+}
+
+.code-copy-btn svg {
+    width:  14px;
+    height: 14px;
+    flex-shrink: 0;
+}
+
+/* ── Syntax token colors ─────────────────────────────────────────────── */
+/* Light theme */
+[data-theme="light"] .prose pre code .keyword,
+[data-theme="light"] .prose pre code .storage {
+    color: #cf222e;
+}
+[data-theme="light"] .prose pre code .string,
+[data-theme="light"] .prose pre code .string.quoted {
+    color: #0a3069;
+}
+[data-theme="light"] .prose pre code .comment {
+    color: #6e7781;
+    font-style: italic;
+}
+[data-theme="light"] .prose pre code .constant {
+    color: #0550ae;
+}
+[data-theme="light"] .prose pre code .entity.name.function,
+[data-theme="light"] .prose pre code .entity.name.method,
+[data-theme="light"] .prose pre code .support.function {
+    color: #8250df;
+}
+[data-theme="light"] .prose pre code .entity.name.type,
+[data-theme="light"] .prose pre code .entity.name.class,
+[data-theme="light"] .prose pre code .support.type {
+    color: #953800;
+}
+[data-theme="light"] .prose pre code .variable.parameter {
+    color: #953800;
+}
+[data-theme="light"] .prose pre code .punctuation.definition {
+    color: #cf222e;
+}
+
+/* Dark theme */
+[data-theme="dark"] .prose pre code .keyword,
+[data-theme="dark"] .prose pre code .storage {
+    color: #ff7b72;
+}
+[data-theme="dark"] .prose pre code .string,
+[data-theme="dark"] .prose pre code .string.quoted {
+    color: #a5d6ff;
+}
+[data-theme="dark"] .prose pre code .comment {
+    color: #8b949e;
+    font-style: italic;
+}
+[data-theme="dark"] .prose pre code .constant {
+    color: #79c0ff;
+}
+[data-theme="dark"] .prose pre code .entity.name.function,
+[data-theme="dark"] .prose pre code .entity.name.method,
+[data-theme="dark"] .prose pre code .support.function {
+    color: #d2a8ff;
+}
+[data-theme="dark"] .prose pre code .entity.name.type,
+[data-theme="dark"] .prose pre code .entity.name.class,
+[data-theme="dark"] .prose pre code .support.type {
+    color: #ffa657;
+}
+[data-theme="dark"] .prose pre code .variable.parameter {
+    color: #ffa657;
+}
+[data-theme="dark"] .prose pre code .punctuation.definition {
+    color: #ff7b72;
 }
 
 .prose ul {

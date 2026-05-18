@@ -55,6 +55,9 @@ pub fn render_markdown(raw: &str) -> String {
     let mut html_output = String::new();
     html::push_html(&mut html_output, transformed);
 
+    #[cfg(feature = "ssr")]
+    let html_output = apply_syntax_highlighting(&html_output);
+
     // Post-process to add IDs to headings, then sanitize to strip any raw HTML from the source
     sanitize_html(&add_heading_ids_simple(&html_output))
 }
@@ -67,8 +70,10 @@ pub fn render_markdown(raw: &str) -> String {
 /// - `<input>` with `type`/`disabled`/`checked` (GFM task list checkboxes)
 fn sanitize_html(html: &str) -> String {
     Builder::default()
-        .add_tag_attributes("pre", &["class"])
+        .add_tag_attributes("pre", &["class", "data-cb-init"])
         .add_tag_attributes("code", &["class"])
+        .add_tags(&["span"])
+        .add_tag_attributes("span", &["class"])
         .add_tag_attributes("h1", &["id"])
         .add_tag_attributes("h2", &["id"])
         .add_tag_attributes("h3", &["id"])
@@ -226,6 +231,100 @@ fn slugify(text: &str) -> String {
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join("-")
+}
+
+#[cfg(feature = "ssr")]
+fn decode_html_entities(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&#x27;", "'")
+}
+
+/// Post-process rendered HTML to apply server-side syntax highlighting to fenced code blocks.
+///
+/// Finds `<pre><code class="language-LANG">...</code></pre>` patterns,
+/// decodes HTML entities, runs syntect's `ClassedHTMLGenerator`, then re-emits
+/// the block with highlighted `<span class="...">` tokens.  Unknown languages
+/// are left untouched.
+#[cfg(feature = "ssr")]
+fn apply_syntax_highlighting(html: &str) -> String {
+    use std::sync::OnceLock;
+    use syntect::html::{ClassStyle, ClassedHTMLGenerator};
+    use syntect::parsing::SyntaxSet;
+    use syntect::util::LinesWithEndings;
+
+    static SS: OnceLock<SyntaxSet> = OnceLock::new();
+    let ss = SS.get_or_init(SyntaxSet::load_defaults_newlines);
+
+    const NEEDLE: &str = "<pre><code class=\"language-";
+
+    let mut result = String::with_capacity(html.len() + html.len() / 4);
+    let mut pos = 0;
+
+    while pos < html.len() {
+        match html[pos..].find(NEEDLE) {
+            None => {
+                result.push_str(&html[pos..]);
+                break;
+            }
+            Some(rel) => {
+                let abs = pos + rel;
+                result.push_str(&html[pos..abs]);
+
+                let after_needle = abs + NEEDLE.len();
+
+                // Extract language name (up to closing quote)
+                let Some(lang_end) = html[after_needle..].find('"') else {
+                    result.push_str(NEEDLE);
+                    pos = abs + NEEDLE.len();
+                    continue;
+                };
+                let lang = &html[after_needle..after_needle + lang_end];
+
+                // Content starts after `">`
+                let content_start = after_needle + lang_end + 2;
+                let Some(code_end_rel) = html[content_start..].find("</code></pre>") else {
+                    result.push_str(NEEDLE);
+                    pos = abs + NEEDLE.len();
+                    continue;
+                };
+                let content_end = content_start + code_end_rel;
+                let encoded = &html[content_start..content_end];
+                pos = content_end + "</code></pre>".len();
+
+                result.push_str("<pre><code class=\"language-");
+                result.push_str(lang);
+                result.push_str("\">");
+
+                let syntax = ss
+                    .find_syntax_by_token(lang)
+                    .or_else(|| ss.find_syntax_by_extension(lang));
+
+                match syntax {
+                    Some(syntax) => {
+                        let code = decode_html_entities(encoded);
+                        let mut gen = ClassedHTMLGenerator::new_with_class_style(
+                            syntax,
+                            ss,
+                            ClassStyle::Spaced,
+                        );
+                        for line in LinesWithEndings::from(&code) {
+                            let _ = gen.parse_html_for_line_which_includes_newline(line);
+                        }
+                        result.push_str(&gen.finalize());
+                    }
+                    None => result.push_str(encoded),
+                }
+
+                result.push_str("</code></pre>");
+            }
+        }
+    }
+
+    result
 }
 
 #[cfg(test)]

@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.15] 2026-05-19
+
 ### Added
 - Code blocks in documentation now include server-side syntax highlighting (via `syntect`), a copy button, and a language badge.
 

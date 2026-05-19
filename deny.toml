@@ -24,6 +24,7 @@ ignore = [
     { id = "RUSTSEC-2026-0118", reason = "hickory-proto: transitive via mongodb, no compatible hickory-proto 0.26.x available yet" },
     { id = "RUSTSEC-2026-0119", reason = "hickory-proto: transitive via mongodb, no compatible hickory-proto 0.26.x available yet" },
     { id = "RUSTSEC-2025-0141", reason = "bincode: transitive via syntect (used for syntax set serialization); governance issue, not a security vulnerability, no alternative in syntect" },
+    { id = "RUSTSEC-2026-0145", reason = "astral-tokio-tar: transitive via testcontainers (dev-dependency only); no production exposure, no upgrade path available" },
 ]
 
 # License policy

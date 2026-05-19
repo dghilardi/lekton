@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Ignore RUSTSEC-2026-0145 (`astral-tokio-tar` PAX header desynchronization) in `deny.toml`; transitive dev-dependency only via `testcontainers`, no production exposure.
+
 ## [0.24.15] 2026-05-19
 
 ### Added

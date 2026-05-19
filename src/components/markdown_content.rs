@@ -24,5 +24,12 @@ pub fn MarkdownContent(html: String) -> impl IntoView {
         });
     }
 
+    #[cfg(feature = "hydrate")]
+    {
+        Effect::new(move |_| {
+            let _ = js_sys::eval("window.initCodeBlocks && window.initCodeBlocks()");
+        });
+    }
+
     view! { <div inner_html=html /> }
 }

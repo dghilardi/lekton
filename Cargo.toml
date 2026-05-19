@@ -60,6 +60,7 @@ aws-config = { version = "1", optional = true }
 # Markdown rendering
 pulldown-cmark = { version = "0.13" }
 ammonia = "4"
+syntect = { version = "5", default-features = false, features = ["default-syntaxes", "html", "regex-fancy"], optional = true }
 
 # Search
 meilisearch-sdk = { version = "0.32", optional = true }
@@ -215,6 +216,7 @@ ssr = [
     "dep:schemars",
     "dep:clap",
     "dep:toml",
+    "dep:syntect",
     "leptos/ssr",
     "leptos_meta/ssr",
     "leptos_router/ssr",

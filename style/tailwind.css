@@ -520,69 +520,73 @@ label > span:first-child {
 }
 
 /* ── Syntax token colors ─────────────────────────────────────────────── */
+/* Syntect uses ClassStyle::SpacedPrefixed { prefix: "hl-" }, so every   */
+/* scope component is prefixed with "hl-" to avoid Tailwind class clashes */
+/* (e.g. `.block`, `.meta`, `.storage` are Tailwind utilities).           */
+
 /* Light theme */
-[data-theme="light"] .prose pre code .keyword,
-[data-theme="light"] .prose pre code .storage {
+[data-theme="light"] .prose pre code .hl-keyword,
+[data-theme="light"] .prose pre code .hl-storage {
     color: #cf222e;
 }
-[data-theme="light"] .prose pre code .string,
-[data-theme="light"] .prose pre code .string.quoted {
+[data-theme="light"] .prose pre code .hl-string,
+[data-theme="light"] .prose pre code .hl-string.hl-quoted {
     color: #0a3069;
 }
-[data-theme="light"] .prose pre code .comment {
+[data-theme="light"] .prose pre code .hl-comment {
     color: #6e7781;
     font-style: italic;
 }
-[data-theme="light"] .prose pre code .constant {
+[data-theme="light"] .prose pre code .hl-constant {
     color: #0550ae;
 }
-[data-theme="light"] .prose pre code .entity.name.function,
-[data-theme="light"] .prose pre code .entity.name.method,
-[data-theme="light"] .prose pre code .support.function {
+[data-theme="light"] .prose pre code .hl-entity.hl-name.hl-function,
+[data-theme="light"] .prose pre code .hl-entity.hl-name.hl-method,
+[data-theme="light"] .prose pre code .hl-support.hl-function {
     color: #8250df;
 }
-[data-theme="light"] .prose pre code .entity.name.type,
-[data-theme="light"] .prose pre code .entity.name.class,
-[data-theme="light"] .prose pre code .support.type {
+[data-theme="light"] .prose pre code .hl-entity.hl-name.hl-type,
+[data-theme="light"] .prose pre code .hl-entity.hl-name.hl-class,
+[data-theme="light"] .prose pre code .hl-support.hl-type {
     color: #953800;
 }
-[data-theme="light"] .prose pre code .variable.parameter {
+[data-theme="light"] .prose pre code .hl-variable.hl-parameter {
     color: #953800;
 }
-[data-theme="light"] .prose pre code .punctuation.definition {
+[data-theme="light"] .prose pre code .hl-punctuation.hl-definition {
     color: #cf222e;
 }
 
 /* Dark theme */
-[data-theme="dark"] .prose pre code .keyword,
-[data-theme="dark"] .prose pre code .storage {
+[data-theme="dark"] .prose pre code .hl-keyword,
+[data-theme="dark"] .prose pre code .hl-storage {
     color: #ff7b72;
 }
-[data-theme="dark"] .prose pre code .string,
-[data-theme="dark"] .prose pre code .string.quoted {
+[data-theme="dark"] .prose pre code .hl-string,
+[data-theme="dark"] .prose pre code .hl-string.hl-quoted {
     color: #a5d6ff;
 }
-[data-theme="dark"] .prose pre code .comment {
+[data-theme="dark"] .prose pre code .hl-comment {
     color: #8b949e;
     font-style: italic;
 }
-[data-theme="dark"] .prose pre code .constant {
+[data-theme="dark"] .prose pre code .hl-constant {
     color: #79c0ff;
 }
-[data-theme="dark"] .prose pre code .entity.name.function,
-[data-theme="dark"] .prose pre code .entity.name.method,
-[data-theme="dark"] .prose pre code .support.function {
+[data-theme="dark"] .prose pre code .hl-entity.hl-name.hl-function,
+[data-theme="dark"] .prose pre code .hl-entity.hl-name.hl-method,
+[data-theme="dark"] .prose pre code .hl-support.hl-function {
     color: #d2a8ff;
 }
-[data-theme="dark"] .prose pre code .entity.name.type,
-[data-theme="dark"] .prose pre code .entity.name.class,
-[data-theme="dark"] .prose pre code .support.type {
+[data-theme="dark"] .prose pre code .hl-entity.hl-name.hl-type,
+[data-theme="dark"] .prose pre code .hl-entity.hl-name.hl-class,
+[data-theme="dark"] .prose pre code .hl-support.hl-type {
     color: #ffa657;
 }
-[data-theme="dark"] .prose pre code .variable.parameter {
+[data-theme="dark"] .prose pre code .hl-variable.hl-parameter {
     color: #ffa657;
 }
-[data-theme="dark"] .prose pre code .punctuation.definition {
+[data-theme="dark"] .prose pre code .hl-punctuation.hl-definition {
     color: #ff7b72;
 }
 

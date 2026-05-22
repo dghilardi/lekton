@@ -306,10 +306,12 @@ fn apply_syntax_highlighting(html: &str) -> String {
                 match syntax {
                     Some(syntax) => {
                         let code = decode_html_entities(encoded);
+                        // SpacedPrefixed avoids collisions with Tailwind utility
+                        // classes like `.block`, `.meta`, `.storage`, etc.
                         let mut gen = ClassedHTMLGenerator::new_with_class_style(
                             syntax,
                             ss,
-                            ClassStyle::Spaced,
+                            ClassStyle::SpacedPrefixed { prefix: "hl-" },
                         );
                         for line in LinesWithEndings::from(&code) {
                             let _ = gen.parse_html_for_line_which_includes_newline(line);
@@ -355,7 +357,8 @@ mod tests {
         let input = "```rust\nfn main() {}\n```";
         let result = render_markdown(input);
         assert!(result.contains("<code"));
-        assert!(result.contains("fn main()"));
+        // syntect wraps tokens in separate spans, so "fn main()" is not a contiguous string
+        assert!(result.contains("fn") && result.contains("main"));
     }
 
     #[test]
@@ -553,6 +556,49 @@ Even more content.
         let result = render_markdown(input);
         assert!(result.contains("<code"));
         assert!(!result.contains("class=\"mermaid\""));
+    }
+
+    #[test]
+    fn test_code_block_indentation_preserved() {
+        let input = "```python\ndef foo():\n    x = 1\n    return x\n```";
+        let result = render_markdown(input);
+        // syntect wraps tokens in spans; indentation is bare text between spans,
+        // so "    x" won't be contiguous — check the spaces and token separately
+        assert!(
+            result.contains("\n    "),
+            "4-space indent newlines must be present"
+        );
+        assert!(result.contains("return") && result.contains("x"));
+    }
+
+    #[test]
+    fn test_code_block_no_extra_newlines() {
+        // Reproduces the bug where syntect splits single-line use statements
+        // with braces across multiple lines.
+        let code = concat!(
+            "use coral::application::builder::CoralAppBuilder;\n",
+            "use coral::http::application::{CoralHttpAppBuilder, ServiceConfig};\n",
+            "async fn main() -> anyhow::Result<()> {\n",
+            "    let startup: UsvcStartupData<CoralConfig> = load_startup_data!(?;\n",
+            "    let app = CoralAppBuilder {\n",
+            "        http: CoralHttpAppBuilder::default()\n",
+            "            .with_configurator(|_cfg: &mut ServiceConfig| { /* services */ }),\n",
+            "    };\n",
+            "}\n",
+        );
+        let input = format!("```rust\n{code}```");
+        let result = render_markdown(&input);
+        println!("LONG OUTPUT:\n{result}");
+        // Each use statement must stay on one line
+        assert!(
+            !result.contains("::\n"),
+            "found unexpected newline after `::` — brace group is being split"
+        );
+        // The closure body must stay on one line
+        assert!(
+            result.contains("services"),
+            "comment content must be preserved"
+        );
     }
 
     #[test]

@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - Ignore RUSTSEC-2026-0145 (`astral-tokio-tar` PAX header desynchronization) in `deny.toml`; transitive dev-dependency only via `testcontainers`, no production exposure.
+- Syntax highlighting: switched syntect from `ClassStyle::Spaced` to `ClassStyle::SpacedPrefixed { prefix: "hl-" }` to prevent Tailwind utility classes (`.block`, `.meta`, `.storage`, etc.) from accidentally applying `display: block` to highlight spans and breaking code layout. Updated token CSS selectors to use `hl-` prefix.
 
 ## [0.24.15] 2026-05-19
 

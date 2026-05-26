@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.18] 2026-05-26
+
 ### Fixed
 - RAG chat: conversation history was fetched before saving the current user message, so the `saturating_sub(1)` slice intended to exclude the current message was instead discarding the last assistant response. The LLM never saw its own previous answers, causing it to repeat itself every turn.
 

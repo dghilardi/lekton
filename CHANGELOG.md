@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- RAG chat: conversation history was fetched before saving the current user message, so the `saturating_sub(1)` slice intended to exclude the current message was instead discarding the last assistant response. The LLM never saw its own previous answers, causing it to repeat itself every turn.
+
+### Changed
+- RAG chat system prompt: instruct the model to answer only the specific question asked and skip context already covered in previous conversation turns, reducing repetition in multi-turn conversations.
+
 ## [0.24.17] 2026-05-22
 
 ## [0.24.16] 2026-05-19

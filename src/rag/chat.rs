@@ -313,8 +313,9 @@ impl ChatService {
             },
         ));
 
-        // Add history (skip the user message we just saved — it's the last one)
-        for msg in &history[..history.len().saturating_sub(1)] {
+        // history was fetched before the current user message was saved, so it
+        // contains only prior turns — include all of it.
+        for msg in &history {
             match msg.role.as_str() {
                 "user" => {
                     messages.push(ChatCompletionRequestMessage::User(

@@ -12,8 +12,8 @@ use crate::hash::{
 };
 use crate::models::{DocumentInfo, PromptInfo, ScannedDoc, SchemaInfo};
 use crate::slug::{
-    apply_prefix, normalize_summary, prompt_slug_from_path, schema_name_from_dir, slug_from_path,
-    slug_from_title, source_path_from_file, warn_about_summary,
+    apply_prefix, is_index_file, normalize_summary, prompt_slug_from_path, schema_name_from_dir,
+    slug_from_path, slug_from_title, source_path_from_file, warn_about_summary,
 };
 
 pub fn scan_documents(
@@ -52,6 +52,9 @@ pub fn scan_documents(
 
         let slug_raw = if let Some(ref explicit) = fm.slug {
             explicit.clone()
+        } else if is_index_file(path) {
+            // README.md / index.md always maps to the directory slug, ignoring the title
+            path_derived.clone()
         } else if let Some(ref title) = fm.title {
             let title_slug = slug_from_title(title);
             if let Some((parent_dir, _)) = path_derived.rsplit_once('/') {

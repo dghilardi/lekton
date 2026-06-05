@@ -4,11 +4,27 @@ pub const SUMMARY_RECOMMENDED_MIN_CHARS: usize = 50;
 pub const SUMMARY_RECOMMENDED_MAX_CHARS: usize = 200;
 
 /// Derive a slug from the file path relative to root (strips the `.md` extension).
+/// `index.md` and `README.md` map to their parent directory slug.
 /// e.g., `docs/guides/intro.md` → `docs/guides/intro`
+///       `docs/guides/index.md` → `docs/guides`
 pub fn slug_from_path(file: &Path, root: &Path) -> String {
     let relative = file.strip_prefix(root).unwrap_or(file);
+    if is_index_file(relative) {
+        return relative
+            .parent()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default();
+    }
     let without_ext = relative.with_extension("");
     without_ext.to_string_lossy().replace('\\', "/")
+}
+
+/// Returns true if the path filename is `index.md` or `README.md` (case-insensitive).
+pub fn is_index_file(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|f| f.to_str())
+        .map(|f| matches!(f.to_lowercase().as_str(), "readme.md" | "index.md"))
+        .unwrap_or(false)
 }
 
 /// Derive the source_path (relative file path with extension) from an absolute path.
@@ -96,10 +112,38 @@ mod tests {
     }
 
     #[test]
-    fn slug_from_path_root_file() {
+    fn slug_from_path_readme_at_root_maps_to_empty() {
         let root = Path::new("/repo");
-        let file = Path::new("/repo/readme.md");
-        assert_eq!(slug_from_path(file, root), "readme");
+        let file = Path::new("/repo/README.md");
+        assert_eq!(slug_from_path(file, root), "");
+    }
+
+    #[test]
+    fn slug_from_path_index_at_root_maps_to_empty() {
+        let root = Path::new("/repo");
+        let file = Path::new("/repo/index.md");
+        assert_eq!(slug_from_path(file, root), "");
+    }
+
+    #[test]
+    fn slug_from_path_readme_in_subdir_maps_to_dir() {
+        let root = Path::new("/repo");
+        let file = Path::new("/repo/docs/operations/README.md");
+        assert_eq!(slug_from_path(file, root), "docs/operations");
+    }
+
+    #[test]
+    fn slug_from_path_index_in_subdir_maps_to_dir() {
+        let root = Path::new("/repo");
+        let file = Path::new("/repo/docs/index.md");
+        assert_eq!(slug_from_path(file, root), "docs");
+    }
+
+    #[test]
+    fn slug_from_path_readme_case_insensitive() {
+        let root = Path::new("/repo");
+        let file = Path::new("/repo/docs/Readme.MD");
+        assert_eq!(slug_from_path(file, root), "docs");
     }
 
     #[test]

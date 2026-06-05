@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- `lekton-sync`: `README.md` and `index.md` files now correctly map to their parent directory slug (e.g. `docs/README.md` → `docs`), matching the documented behavior. Previously the slug was derived from the file name or title, ignoring the index-file convention.
+
 ### Changed
 - `lekton-sync`: split monolithic `main.rs` into focused modules (`config`, `models`, `api`, `hash`, `slug`, `front_matter`, `attachment`, `scan`, `http`); tests moved to their respective modules and new unit tests added for `slug_from_title`, `apply_prefix`, `normalize_summary`, and `compute_metadata_hash`.
 

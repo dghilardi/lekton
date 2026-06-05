@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- `lekton-sync`: split monolithic `main.rs` into focused modules (`config`, `models`, `api`, `hash`, `slug`, `front_matter`, `attachment`, `scan`, `http`); tests moved to their respective modules and new unit tests added for `slug_from_title`, `apply_prefix`, `normalize_summary`, and `compute_metadata_hash`.
+
 ## [0.24.20] 2026-06-05
 
 ### Fixed

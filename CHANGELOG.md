@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.20] 2026-06-05
+
 ### Fixed
 - `lekton-sync`: when a document has an explicit front-matter `slug` with fewer path segments than its filesystem path, and a `slug_prefix` is configured, `parent_slug` was incorrectly computed from the filesystem path instead of the effective slug. This caused `parent_slug` to equal the document's own slug (self-referential), making the document disappear from the navigation menu.
 

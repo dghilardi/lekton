@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- `lekton-sync`: `.md` files starting with a UTF-8 BOM (saved by Notepad and some other Windows editors) were silently skipped because the `---` front-matter delimiter was not found.
+
+### Changed
+- `lekton-sync --verbose`: log each skipped `.md` file with the reason it was excluded (e.g. missing `lekton-import: true`).
+
 ## [0.24.18] 2026-05-26
 
 ### Fixed

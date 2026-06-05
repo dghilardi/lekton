@@ -659,6 +659,8 @@ fn rewrite_content(content: &str, attachments: &[AttachmentInfo]) -> String {
 /// Strip YAML front matter from a markdown file and return (front_matter, body).
 /// The body is everything after the closing `---` delimiter.
 fn parse_front_matter(source: &str) -> (FrontMatter, String) {
+    // Strip UTF-8 BOM (U+FEFF) that some Windows editors prepend
+    let source = source.strip_prefix('\u{FEFF}').unwrap_or(source);
     // Support both Unix and Windows line endings for the opening delimiter
     let after_open = if source.starts_with("---\r\n") {
         &source[5..]
@@ -772,7 +774,11 @@ struct ScannedDoc {
 /// Files without `lekton-import: true` in their front matter are skipped.
 /// Documents without an explicit `order` in front matter receive an implicit order
 /// derived from alphabetical filename position within their parent group.
-fn scan_documents(root: &Path, config: &LektonConfig) -> Result<HashMap<String, DocumentInfo>> {
+fn scan_documents(
+    root: &Path,
+    config: &LektonConfig,
+    verbose: bool,
+) -> Result<HashMap<String, DocumentInfo>> {
     let max_attachment_size_bytes =
         (config.max_attachment_size_mb.unwrap_or(10) as u64) * 1024 * 1024;
     let mut scanned: Vec<ScannedDoc> = Vec::new();
@@ -793,6 +799,9 @@ fn scan_documents(root: &Path, config: &LektonConfig) -> Result<HashMap<String, 
         let (fm, body) = parse_front_matter(&source);
 
         if !fm.lekton_import {
+            if verbose {
+                eprintln!("Skipping {} (missing lekton-import: true)", path.display());
+            }
             continue;
         }
 
@@ -1424,7 +1433,7 @@ async fn main() -> Result<()> {
         eprintln!("Scanning {}", root.display());
     }
 
-    let docs = scan_documents(&root, &config)?;
+    let docs = scan_documents(&root, &config, args.verbose)?;
     let prompts = scan_prompts(&root, &config)?;
     let schemas = scan_schemas(&root, &config)?;
 
@@ -2094,6 +2103,39 @@ mod tests {
     }
 
     #[test]
+    fn parse_front_matter_windows_lekton_import() {
+        let src = "---\r\nlekton-import: true\r\ntitle: Win\r\n---\r\n# Body";
+        let (fm, _) = parse_front_matter(src);
+        assert!(
+            fm.lekton_import,
+            "lekton_import should be true with CRLF line endings"
+        );
+    }
+
+    #[test]
+    fn parse_front_matter_utf8_bom() {
+        // Some Windows editors (Notepad, etc.) prepend a UTF-8 BOM (U+FEFF)
+        let src = "\u{FEFF}---\nlekton-import: true\ntitle: BOM Doc\n---\n# Body";
+        let (fm, body) = parse_front_matter(src);
+        assert!(
+            fm.lekton_import,
+            "lekton_import should be true despite leading BOM"
+        );
+        assert_eq!(fm.title.as_deref(), Some("BOM Doc"));
+        assert_eq!(body, "# Body");
+    }
+
+    #[test]
+    fn parse_front_matter_utf8_bom_crlf() {
+        let src = "\u{FEFF}---\r\nlekton-import: true\r\ntitle: BOM CRLF\r\n---\r\n# Body";
+        let (fm, _) = parse_front_matter(src);
+        assert!(
+            fm.lekton_import,
+            "lekton_import should be true with BOM + CRLF"
+        );
+    }
+
+    #[test]
     fn parse_front_matter_missing() {
         let src = "# No front matter\n\nJust a doc.";
         let (fm, body) = parse_front_matter(src);
@@ -2138,7 +2180,7 @@ mod tests {
                 b"---\ntitle: Guide\nsummary: A concise guide for testing camel case front matter fields in document sync.\naccessLevel: public\nserviceOwner: docs\nparentSlug: handbook\nisHidden: true\nlektonImport: true\n---\n# Guide body\n",
             )
             .unwrap();
-        let docs = scan_documents(dir.path(), &LektonConfig::default()).unwrap();
+        let docs = scan_documents(dir.path(), &LektonConfig::default(), false).unwrap();
         assert_eq!(docs.len(), 1);
         let doc = docs.values().next().unwrap();
         assert_eq!(
@@ -2183,7 +2225,7 @@ mod tests {
             .unwrap()
             .write_all(b"# No front matter\n")
             .unwrap();
-        let docs = scan_documents(dir.path(), &LektonConfig::default()).unwrap();
+        let docs = scan_documents(dir.path(), &LektonConfig::default(), false).unwrap();
         assert!(docs.is_empty());
     }
 
@@ -2196,7 +2238,7 @@ mod tests {
             .unwrap()
             .write_all(b"---\ntitle: Guide\naccess_level: public\nlekton-import: true\n---\n# Guide body\n")
             .unwrap();
-        let docs = scan_documents(dir.path(), &LektonConfig::default()).unwrap();
+        let docs = scan_documents(dir.path(), &LektonConfig::default(), false).unwrap();
         assert_eq!(docs.len(), 1);
         let doc = docs.values().next().unwrap();
         assert_eq!(doc.title, "Guide");
@@ -2213,7 +2255,7 @@ mod tests {
             .unwrap()
             .write_all(b"---\ntitle: README\n---\n# Not for Lekton\n")
             .unwrap();
-        let docs = scan_documents(dir.path(), &LektonConfig::default()).unwrap();
+        let docs = scan_documents(dir.path(), &LektonConfig::default(), false).unwrap();
         assert!(docs.is_empty());
     }
 
@@ -2360,7 +2402,7 @@ mod tests {
             )
             .unwrap();
 
-        let docs = scan_documents(dir.path(), &LektonConfig::default()).unwrap();
+        let docs = scan_documents(dir.path(), &LektonConfig::default(), false).unwrap();
         assert_eq!(docs.len(), 1);
         let doc = docs.values().next().unwrap();
         assert_eq!(doc.attachments.len(), 1);

@@ -829,7 +829,7 @@ fn scan_documents(
 
         let parsed_parent = if let Some(p) = fm.parent_slug {
             Some(p)
-        } else if let Some((parent, _)) = path_derived.rsplit_once('/') {
+        } else if let Some((parent, _)) = slug_raw.rsplit_once('/') {
             Some(parent.to_string())
         } else {
             None
@@ -2257,6 +2257,43 @@ mod tests {
             .unwrap();
         let docs = scan_documents(dir.path(), &LektonConfig::default(), false).unwrap();
         assert!(docs.is_empty());
+    }
+
+    #[test]
+    fn scan_explicit_slug_with_prefix_does_not_self_reference_parent() {
+        // Regression: when front matter has an explicit slug shorter than path_derived,
+        // and a slug_prefix is set, parent_slug must not equal the document's own slug.
+        // e.g. file guidelines/guidelines_mcu.md + slug: guidelines + prefix micro/docs
+        //   → slug = "micro/docs/guidelines", parent_slug must be "micro/docs" (not "micro/docs/guidelines").
+        use std::fs;
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("guidelines");
+        fs::create_dir_all(&sub).unwrap();
+        let path = sub.join("guidelines_mcu.md");
+        fs::File::create(&path)
+            .unwrap()
+            .write_all(
+                b"---\ntitle: MCU Team Guidelines\nsummary: Guidelines for the MCU team covering build, branching, and coding standards.\nslug: guidelines\naccess_level: micro\nservice_owner: micro\nlekton-import: true\n---\n# MCU Guidelines\n",
+            )
+            .unwrap();
+
+        let config = LektonConfig {
+            slug_prefix: Some("micro/docs".to_string()),
+            ..LektonConfig::default()
+        };
+        let docs = scan_documents(dir.path(), &config, false).unwrap();
+        assert_eq!(docs.len(), 1);
+        let doc = docs.values().next().unwrap();
+        assert_eq!(doc.slug, "micro/docs/guidelines");
+        // parent_slug must NOT be the same as slug
+        assert_ne!(
+            doc.parent_slug.as_deref(),
+            Some("micro/docs/guidelines"),
+            "parent_slug must not equal slug (self-referential)"
+        );
+        // parent_slug should be the prefix root
+        assert_eq!(doc.parent_slug.as_deref(), Some("micro/docs"));
     }
 
     // ── Attachment extraction tests ───────────────────────────────────────────

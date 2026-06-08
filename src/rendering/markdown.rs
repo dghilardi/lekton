@@ -1,5 +1,7 @@
 use ammonia::Builder;
-use pulldown_cmark::{html, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{
+    html, BlockQuoteKind, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd,
+};
 use serde::{Deserialize, Serialize};
 
 /// Represents a heading in the document for table of contents.
@@ -24,7 +26,8 @@ pub fn render_markdown(raw: &str) -> String {
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TASKLISTS
         | Options::ENABLE_SMART_PUNCTUATION
-        | Options::ENABLE_HEADING_ATTRIBUTES;
+        | Options::ENABLE_HEADING_ATTRIBUTES
+        | Options::ENABLE_GFM;
 
     let parser = Parser::new_ext(raw, options);
 
@@ -46,6 +49,18 @@ pub fn render_markdown(raw: &str) -> String {
                 {
                     in_mermaid = true;
                     vec![Event::Html("<pre class=\"mermaid\">".into())]
+                }
+                Event::Start(Tag::BlockQuote(Some(kind))) => {
+                    let (class, title) = callout_meta(kind);
+                    vec![Event::Html(
+                        format!(
+                            "<blockquote class=\"{class}\"><p class=\"callout-title\">{title}</p>"
+                        )
+                        .into(),
+                    )]
+                }
+                Event::End(TagEnd::BlockQuote(Some(_))) => {
+                    vec![Event::Html("</blockquote>".into())]
                 }
                 other => vec![other],
             }
@@ -84,8 +99,20 @@ fn sanitize_html(html: &str) -> String {
         .add_tag_attributes("h6", &["id"])
         .add_tags(&["input"])
         .add_tag_attributes("input", &["type", "disabled", "checked"])
+        .add_tag_attributes("blockquote", &["class"])
+        .add_tag_attributes("p", &["class"])
         .clean(html)
         .to_string()
+}
+
+fn callout_meta(kind: BlockQuoteKind) -> (&'static str, &'static str) {
+    match kind {
+        BlockQuoteKind::Note => ("markdown-alert-note", "Note"),
+        BlockQuoteKind::Tip => ("markdown-alert-tip", "Tip"),
+        BlockQuoteKind::Important => ("markdown-alert-important", "Important"),
+        BlockQuoteKind::Warning => ("markdown-alert-warning", "Warning"),
+        BlockQuoteKind::Caution => ("markdown-alert-caution", "Caution"),
+    }
 }
 
 fn escape_html(s: &str) -> String {
@@ -623,6 +650,45 @@ Even more content.
             result.contains("services"),
             "comment content must be preserved"
         );
+    }
+
+    #[test]
+    fn test_callout_note() {
+        let input = "> [!NOTE]\n> Useful information.";
+        let result = render_markdown(input);
+        assert!(result.contains("markdown-alert-note"), "got: {result}");
+        assert!(result.contains("callout-title"), "got: {result}");
+        assert!(result.contains("Note"), "got: {result}");
+        assert!(result.contains("Useful information"), "got: {result}");
+    }
+
+    #[test]
+    fn test_callout_all_types() {
+        for (kind, class, title) in [
+            ("NOTE", "markdown-alert-note", "Note"),
+            ("TIP", "markdown-alert-tip", "Tip"),
+            ("IMPORTANT", "markdown-alert-important", "Important"),
+            ("WARNING", "markdown-alert-warning", "Warning"),
+            ("CAUTION", "markdown-alert-caution", "Caution"),
+        ] {
+            let input = format!("> [!{kind}]\n> Content.");
+            let result = render_markdown(&input);
+            assert!(
+                result.contains(class),
+                "{kind}: expected class {class}, got: {result}"
+            );
+            assert!(
+                result.contains(title),
+                "{kind}: expected title {title}, got: {result}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_regular_blockquote_unaffected() {
+        let result = render_markdown("> just a regular quote");
+        assert!(result.contains("<blockquote>"), "got: {result}");
+        assert!(!result.contains("markdown-alert"), "got: {result}");
     }
 
     #[test]

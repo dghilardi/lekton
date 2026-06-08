@@ -665,6 +665,50 @@ label > span:first-child {
     border-radius:    0 0.4rem 0.4rem 0;
 }
 
+/* GitHub-style callouts (> [!NOTE], > [!TIP], etc.) */
+.prose blockquote[class^="markdown-alert-"] {
+    color: inherit;
+    padding: 0.75em 1.25em;
+    margin: 1.6em 0;
+    border-radius: 0 0.4rem 0.4rem 0;
+}
+.prose blockquote[class^="markdown-alert-"] > p:first-child {
+    /* override prose paragraph margin for the title row */
+    margin-bottom: 0.5em;
+}
+.prose .callout-title {
+    font-weight: 600;
+    font-size:   0.9em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin: 0 0 0.5em;
+}
+.prose .markdown-alert-note {
+    border-left-color: var(--color-info);
+    background-color:  color-mix(in oklch, var(--color-info) 8%, transparent);
+}
+.prose .markdown-alert-note .callout-title { color: var(--color-info); }
+.prose .markdown-alert-tip {
+    border-left-color: var(--color-success);
+    background-color:  color-mix(in oklch, var(--color-success) 8%, transparent);
+}
+.prose .markdown-alert-tip .callout-title { color: var(--color-success); }
+.prose .markdown-alert-important {
+    border-left-color: var(--color-secondary);
+    background-color:  color-mix(in oklch, var(--color-secondary) 8%, transparent);
+}
+.prose .markdown-alert-important .callout-title { color: var(--color-secondary); }
+.prose .markdown-alert-warning {
+    border-left-color: var(--color-warning);
+    background-color:  color-mix(in oklch, var(--color-warning) 8%, transparent);
+}
+.prose .markdown-alert-warning .callout-title { color: var(--color-warning); }
+.prose .markdown-alert-caution {
+    border-left-color: var(--color-error);
+    background-color:  color-mix(in oklch, var(--color-error) 8%, transparent);
+}
+.prose .markdown-alert-caution .callout-title { color: var(--color-error); }
+
 .prose hr {
     border:     none;
     border-top: 1px solid var(--color-base-300);

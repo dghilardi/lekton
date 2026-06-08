@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Mermaid diagrams no longer fail to render in production: static asset staging is now unified in a single `scripts/stage-site-assets.sh` used by both the Docker and the e2e builds, so the served site root can no longer be missing the mermaid (or schema-viewer) bundles in production while passing in CI.
 - Ingest now rejects invalid `parent_slug` values server-side, including self-referential parents and malformed absolute or traversal-like parent paths, so bad hierarchy metadata from old or custom clients cannot corrupt navigation.
 
 ## [0.24.23] 2026-06-08

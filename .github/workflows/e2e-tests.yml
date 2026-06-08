@@ -121,26 +121,11 @@ jobs:
           fi
           echo "OK: WASM bundle is within threshold (${SIZE_KB} KB / ${THRESHOLD_KB} KB)"
 
-      - name: Ensure mermaid assets are in site root
-        # build.rs copies mermaid from node_modules/ to public/js/, then cargo-leptos
-        # syncs public/ to target/site/. With rust-cache the sync may be skipped when
-        # cargo considers the build up-to-date. This step guarantees the files are
-        # present in the directory the server actually serves.
-        run: |
-          mkdir -p target/site/js/chunks/mermaid.esm.min
-          cp node_modules/mermaid/dist/mermaid.esm.min.mjs target/site/js/
-          find node_modules/mermaid/dist/chunks/mermaid.esm.min -name '*.mjs' \
-            -exec cp {} target/site/js/chunks/mermaid.esm.min/ \;
-
-      - name: Ensure schema viewer assets are in site root
-        # Same rationale as the mermaid step above: guarantee the Scalar and AsyncAPI
-        # bundles are in target/site/js/ even when the cargo build is fully cached.
-        run: |
-          mkdir -p target/site/js
-          cp node_modules/@scalar/api-reference/dist/browser/standalone.js target/site/js/scalar-standalone.js
-          cp node_modules/@scalar/api-reference/dist/style.css target/site/js/scalar-style.css
-          cp node_modules/@asyncapi/react-component/browser/standalone/index.js target/site/js/asyncapi-standalone.js
-          cp node_modules/@asyncapi/react-component/styles/default.min.css target/site/js/asyncapi-default.min.css
+      - name: Stage static assets into site root
+        # Guarantee every served static asset is in target/site/js even when the
+        # cargo build is fully cached (the public/ -> target/site/ sync is skipped).
+        # Same script is used by the Dockerfile so e2e and production never drift.
+        run: bash scripts/stage-site-assets.sh
 
       - name: Run E2E tests
         run: npx playwright test

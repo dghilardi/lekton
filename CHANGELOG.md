@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.21] 2026-06-08
+
 ### Fixed
 - Archived documents are now consistently hidden from document listings/navigation after sync, and `archive_missing` now removes archived documents from both Meilisearch and the RAG index.
 - `lekton-sync`: `README.md` and `index.md` files now correctly map to their parent directory slug (e.g. `docs/README.md` → `docs`), matching the documented behavior. Previously the slug was derived from the file name or title, ignoring the index-file convention.

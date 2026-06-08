@@ -175,6 +175,9 @@ pub async fn get_doc_html(
     };
 
     let (allowed_levels, include_draft) = request_document_visibility(&state).await?;
+    if doc.is_archived {
+        return Ok(None);
+    }
     if !doc_is_accessible(
         &doc.access_level,
         doc.is_draft,

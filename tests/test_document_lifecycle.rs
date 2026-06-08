@@ -168,6 +168,62 @@ async fn hidden_documents_excluded_from_listing() {
 }
 
 #[tokio::test]
+async fn archived_documents_excluded_from_listing() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+
+    let keep_slug = format!("visible-archive-{}", uuid::Uuid::new_v4());
+    let archived_slug = format!("archived-listing-{}", uuid::Uuid::new_v4());
+
+    env.ingest(&server, &keep_slug, "Visible Doc", "# Visible", "public")
+        .await;
+    env.ingest(
+        &server,
+        &archived_slug,
+        "Archived Doc",
+        "# Archived",
+        "public",
+    )
+    .await;
+
+    let keep_hash = env
+        .repo
+        .find_by_slug(&keep_slug)
+        .await
+        .unwrap()
+        .unwrap()
+        .content_hash
+        .unwrap();
+
+    server
+        .post("/api/v1/sync")
+        .json(&serde_json::json!({
+            "service_token": "test-token",
+            "source_id": "test-source",
+            "documents": [
+                {
+                    "slug": keep_slug,
+                    "source_path": format!("docs/{}.md", keep_slug),
+                    "content_hash": keep_hash
+                }
+            ],
+            "archive_missing": true
+        }))
+        .await
+        .assert_status_ok();
+
+    let docs = env
+        .repo
+        .list_by_access_levels(Some(&["public".to_string()]), false)
+        .await
+        .unwrap();
+    let slugs: Vec<&str> = docs.iter().map(|d| d.slug.as_str()).collect();
+
+    assert!(slugs.contains(&keep_slug.as_str()));
+    assert!(!slugs.contains(&archived_slug.as_str()));
+}
+
+#[tokio::test]
 async fn backlink_graph_consistency() {
     let env = common::TestEnv::start().await;
     let server = env.server();

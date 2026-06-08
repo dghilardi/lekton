@@ -147,6 +147,13 @@ impl DocumentRepository for MongoDocumentRepository {
                     { "is_hidden": false }
                 ]
             },
+            // Exclude archived documents
+            doc! {
+                "$or": [
+                    { "is_archived": { "$exists": false } },
+                    { "is_archived": false }
+                ]
+            },
         ];
 
         if let Some(levels) = allowed_levels {

@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 ## [0.24.21] 2026-06-08
 
 ### Fixed
+- E2E/Publish CI no longer downloads the MinIO server binary at runtime; it now starts MinIO from a container to avoid external download failures during workflow startup.
 - E2E CI now uses the local npm `tailwindcss` CLI instead of relying on `cargo-leptos` to download the standalone Tailwind binary from GitHub Releases during the build.
 - CI dependency audit now ignores `RUSTSEC-2026-0173` for `proc-macro-error2`, which is still a transitive dependency of the current Leptos stack and has no stable upstream replacement path yet.
 - Archived documents are now consistently hidden from document listings/navigation after sync, and `archive_missing` now removes archived documents from both Meilisearch and the RAG index.

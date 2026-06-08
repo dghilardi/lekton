@@ -71,6 +71,11 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      - name: Expose local Tailwind CLI
+        run: |
+          echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
+          echo "TAILWINDCSS_BINARY=$PWD/node_modules/.bin/tailwindcss" >> "$GITHUB_ENV"
+
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 

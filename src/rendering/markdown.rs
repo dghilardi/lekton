@@ -67,11 +67,13 @@ pub fn render_markdown(raw: &str) -> String {
 /// Extends ammonia's default allowlist with:
 /// - `class` on `<pre>` and `<code>` (mermaid blocks and syntax highlighting)
 /// - `id` on headings (anchor navigation)
+/// - `id`/`name` on `<a>` (manual in-page anchor targets, e.g. `<a id="git_repo"></a>`)
 /// - `<input>` with `type`/`disabled`/`checked` (GFM task list checkboxes)
 fn sanitize_html(html: &str) -> String {
     Builder::default()
         .add_tag_attributes("pre", &["class", "data-cb-init"])
         .add_tag_attributes("code", &["class"])
+        .add_tag_attributes("a", &["id", "name"])
         .add_tags(&["span"])
         .add_tag_attributes("span", &["class"])
         .add_tag_attributes("h1", &["id"])
@@ -397,6 +399,28 @@ mod tests {
         // ammonia adds rel="noopener noreferrer" to external links
         assert!(result.contains("href=\"https://example.com\""));
         assert!(result.contains("Lekton"));
+    }
+
+    #[test]
+    fn test_manual_anchor_target_preserved() {
+        // Authors use empty anchors as in-page link targets; the id must survive
+        // sanitization so `[x](#git_repo)` links resolve.
+        let result = render_markdown("<a id=\"git_repo\"></a>\n\ntext");
+        assert!(
+            result.contains("id=\"git_repo\""),
+            "anchor id must be preserved, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_anchor_keeps_no_dangerous_attributes() {
+        // Allowing id/name on <a> must not let event handlers through.
+        let result = render_markdown("<a id=\"x\" onclick=\"alert(1)\">link</a>");
+        assert!(result.contains("id=\"x\""));
+        assert!(
+            !result.contains("onclick"),
+            "onclick must be stripped: {result}"
+        );
     }
 
     #[test]

@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ## [0.24.21] 2026-06-08
 
 ### Fixed
+- CI dependency audit now ignores `RUSTSEC-2026-0173` for `proc-macro-error2`, which is still a transitive dependency of the current Leptos stack and has no stable upstream replacement path yet.
 - Archived documents are now consistently hidden from document listings/navigation after sync, and `archive_missing` now removes archived documents from both Meilisearch and the RAG index.
 - `lekton-sync`: `README.md` and `index.md` files now correctly map to their parent directory slug (e.g. `docs/README.md` → `docs`), matching the documented behavior. Previously the slug was derived from the file name or title, ignoring the index-file convention.
 

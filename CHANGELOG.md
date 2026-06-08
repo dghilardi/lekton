@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Ingest now rejects invalid `parent_slug` values server-side, including self-referential parents and malformed absolute or traversal-like parent paths, so bad hierarchy metadata from old or custom clients cannot corrupt navigation.
+
 ## [0.24.23] 2026-06-08
 
 ## [0.24.22] 2026-06-08

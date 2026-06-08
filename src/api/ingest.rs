@@ -65,6 +65,12 @@ pub async fn process_ingest(
     if request.slug.starts_with('/') {
         return Err(AppError::BadRequest("Slug must not start with '/'".into()));
     }
+    let normalized_parent_slug = normalize_parent_slug(request.parent_slug.as_deref())?;
+    if normalized_parent_slug.as_deref() == Some(request.slug.as_str()) {
+        return Err(AppError::BadRequest(
+            "Parent slug must not equal document slug".into(),
+        ));
+    }
     let summary = normalize_summary(request.summary.as_deref());
     warn_about_summary(&request.slug, summary.as_deref());
 
@@ -95,7 +101,7 @@ pub async fn process_ingest(
         access_level: &access_level,
         service_owner: &request.service_owner,
         tags: &request.tags,
-        parent_slug: request.parent_slug.as_deref(),
+        parent_slug: normalized_parent_slug.as_deref(),
         order: request.order,
         is_hidden: request.is_hidden,
         source_id: &request.source_id,
@@ -145,8 +151,8 @@ pub async fn process_ingest(
     let content_changed = old_hash.as_deref() != Some(&new_hash);
 
     // Determine effective metadata values
-    let effective_parent_slug = if request.parent_slug.is_some() {
-        request.parent_slug.clone()
+    let effective_parent_slug = if normalized_parent_slug.is_some() {
+        normalized_parent_slug
     } else {
         old_parent_slug
     };
@@ -371,6 +377,34 @@ fn normalize_summary(summary: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|summary| !summary.is_empty())
         .map(ToOwned::to_owned)
+}
+
+#[cfg(feature = "ssr")]
+fn normalize_parent_slug(parent_slug: Option<&str>) -> Result<Option<String>, AppError> {
+    let Some(parent_slug) = parent_slug
+        .map(str::trim)
+        .filter(|parent| !parent.is_empty())
+    else {
+        return Ok(None);
+    };
+
+    if parent_slug.contains("..") {
+        return Err(AppError::BadRequest(
+            "Parent slug must not contain '..'".into(),
+        ));
+    }
+    if parent_slug.starts_with('/') {
+        return Err(AppError::BadRequest(
+            "Parent slug must not start with '/'".into(),
+        ));
+    }
+    if parent_slug.ends_with('/') {
+        return Err(AppError::BadRequest(
+            "Parent slug must not end with '/'".into(),
+        ));
+    }
+
+    Ok(Some(parent_slug.to_owned()))
 }
 
 #[cfg(feature = "ssr")]
@@ -1004,6 +1038,118 @@ mod tests {
         let request = make_request("valid-token", "/absolute/path");
         let result = process_ingest(&ctx, request).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_ingest_rejects_self_referential_parent_slug() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+
+        let mut request = make_request("valid-token", "docs/hello");
+        request.parent_slug = Some("docs/hello".to_string());
+
+        let result = process_ingest(&ctx, request).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::BadRequest(msg) => {
+                assert!(msg.contains("Parent slug must not equal document slug"))
+            }
+            other => panic!("Expected BadRequest error, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ingest_rejects_parent_slug_path_traversal() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+
+        let mut request = make_request("valid-token", "docs/hello");
+        request.parent_slug = Some("../parent".to_string());
+
+        let result = process_ingest(&ctx, request).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::BadRequest(msg) => {
+                assert!(msg.contains("Parent slug must not contain '..'"))
+            }
+            other => panic!("Expected BadRequest error, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ingest_rejects_absolute_parent_slug() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+
+        let mut request = make_request("valid-token", "docs/hello");
+        request.parent_slug = Some("/parent".to_string());
+
+        let result = process_ingest(&ctx, request).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::BadRequest(msg) => {
+                assert!(msg.contains("Parent slug must not start with '/'"))
+            }
+            other => panic!("Expected BadRequest error, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ingest_rejects_parent_slug_with_trailing_slash() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+
+        let mut request = make_request("valid-token", "docs/hello");
+        request.parent_slug = Some("parent/".to_string());
+
+        let result = process_ingest(&ctx, request).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::BadRequest(msg) => {
+                assert!(msg.contains("Parent slug must not end with '/'"))
+            }
+            other => panic!("Expected BadRequest error, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ingest_trims_parent_slug() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+
+        let mut request = make_request("valid-token", "docs/hello");
+        request.parent_slug = Some("  parent-doc  ".to_string());
+
+        process_ingest(&ctx, request).await.unwrap();
+
+        let doc = repo.find_by_slug("docs/hello").await.unwrap().unwrap();
+        assert_eq!(doc.parent_slug.as_deref(), Some("parent-doc"));
+    }
+
+    #[tokio::test]
+    async fn test_ingest_blank_parent_slug_is_treated_as_absent() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+
+        let mut request = make_request("valid-token", "docs/hello");
+        request.parent_slug = Some("   ".to_string());
+
+        process_ingest(&ctx, request).await.unwrap();
+
+        let doc = repo.find_by_slug("docs/hello").await.unwrap().unwrap();
+        assert_eq!(doc.parent_slug, None);
     }
 
     // ── Scoped token tests ───────────────────────────────────────────────

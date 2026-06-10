@@ -11,9 +11,8 @@ pub fn compute_hash(content: &str) -> String {
 
 /// Compute a metadata hash that matches `ingest::compute_metadata_hash` on the server.
 ///
-/// Including front-matter fields in the hash lets the sync protocol detect
-/// metadata-only changes (e.g. `access_level`, `title`, `summary`) without relying on
-/// content byte differences.
+/// Uses a BTreeMap serialised to JSON so keys are always alphabetically sorted,
+/// producing a deterministic canonical form that the server replicates exactly.
 pub fn compute_metadata_hash(
     title: &str,
     summary: Option<&str>,
@@ -24,15 +23,24 @@ pub fn compute_metadata_hash(
     order: i32,
     is_hidden: bool,
 ) -> String {
+    use std::collections::BTreeMap;
     let mut sorted_tags: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
     sorted_tags.sort_unstable();
-    let canonical = format!(
-        "title={title}\nsummary={}\naccess_level={}\nservice_owner={service_owner}\ntags={}\nparent_slug={}\norder={order}\nis_hidden={is_hidden}",
-        summary.unwrap_or(""),
-        access_level.to_lowercase(),
-        sorted_tags.join(","),
-        parent_slug.unwrap_or(""),
-    );
+    let tags_str = sorted_tags.join(",");
+    let order_str = order.to_string();
+    let is_hidden_str = is_hidden.to_string();
+    let access_level_lower = access_level.to_lowercase();
+    let mut map = BTreeMap::new();
+    map.insert("access_level", access_level_lower.as_str());
+    map.insert("is_hidden", is_hidden_str.as_str());
+    map.insert("order", order_str.as_str());
+    map.insert("parent_slug", parent_slug.unwrap_or(""));
+    map.insert("service_owner", service_owner);
+    map.insert("summary", summary.unwrap_or(""));
+    map.insert("tags", tags_str.as_str());
+    map.insert("title", title);
+    let canonical =
+        serde_json::to_string(&map).expect("BTreeMap<&str,&str> serialization is infallible");
     compute_hash(&canonical)
 }
 

@@ -104,14 +104,39 @@ pub async fn process_ingest(
         parent_slug: normalized_parent_slug.as_deref(),
         order: request.order,
         is_hidden: request.is_hidden,
-        source_id: &request.source_id,
     });
 
     // 5. Extract internal links from content
     let links_out = extract_internal_links(&request.content);
 
-    // 6. Get old document to diff backlinks and detect changes
-    let old_doc = ctx.repo.find_by_slug(&request.slug).await?;
+    // 6. Get old document to diff backlinks and detect changes.
+    //    If the slug is new or archived, check for an in-place rename via source_path:
+    //    a doc with the same source_path + source_id but a different slug was renamed.
+    let by_slug = ctx.repo.find_by_slug(&request.slug).await?;
+    let (old_doc, old_s3_key_before_rename) =
+        if by_slug.as_ref().map(|d| d.is_archived).unwrap_or(true) {
+            let by_source = ctx.repo.find_by_source_path(&request.source_path).await?;
+            if let Some(found) = by_source {
+                if found.slug != request.slug
+                    && found.source_id.as_deref() == Some(request.source_id.as_str())
+                    && !found.is_archived
+                {
+                    ctx.repo.rename_slug(&found.slug, &request.slug).await?;
+                    let old_key = found.s3_key.clone();
+                    let renamed = Document {
+                        slug: request.slug.clone(),
+                        ..found
+                    };
+                    (Some(renamed), Some(old_key))
+                } else {
+                    (by_slug, None)
+                }
+            } else {
+                (by_slug, None)
+            }
+        } else {
+            (by_slug, None)
+        };
 
     let (old_links, old_backlinks, old_parent_slug, old_order, old_is_hidden, old_hash) =
         match &old_doc {
@@ -181,8 +206,13 @@ pub async fn process_ingest(
             || d.links_out != links_out
     });
 
-    // If nothing changed, return early
-    if !content_changed && !metadata_changed && !source_path_changed && !source_id_changed {
+    // If nothing changed, return early (but not if we just renamed the slug)
+    if !content_changed
+        && !metadata_changed
+        && !source_path_changed
+        && !source_id_changed
+        && old_s3_key_before_rename.is_none()
+    {
         let s3_key = format!("docs/{}.md", request.slug.replace('/', "_"));
         return Ok(IngestResponse {
             message: "Document unchanged".to_string(),
@@ -192,8 +222,18 @@ pub async fn process_ingest(
         });
     }
 
-    // 7. Build the S3 key
-    let s3_key = format!("docs/{}.md", request.slug.replace('/', "_"));
+    // 7. Build the S3 key.
+    //    On a pure slug rename with no content change, reuse the existing S3 key
+    //    so we don't reference a non-existent object.
+    let s3_key = if let Some(ref old_key) = old_s3_key_before_rename {
+        if content_changed {
+            format!("docs/{}.md", request.slug.replace('/', "_"))
+        } else {
+            old_key.clone()
+        }
+    } else {
+        format!("docs/{}.md", request.slug.replace('/', "_"))
+    };
 
     // Keep raw content for search indexing
     let raw_content = request.content.clone();
@@ -338,33 +378,35 @@ pub(crate) struct MetadataHashInput<'a> {
     pub parent_slug: Option<&'a str>,
     pub order: u32,
     pub is_hidden: bool,
-    pub source_id: &'a str,
 }
 
-/// Build a canonical string from document metadata and hash it.
+/// Build a canonical JSON object from document metadata and hash it.
 ///
-/// The canonical format is identical to what `lekton-sync` (the CLI) computes,
-/// so the server and client always agree on what "metadata unchanged" means.
+/// Uses a BTreeMap so keys are always alphabetically sorted, ensuring a
+/// deterministic representation identical to what `lekton-sync` (the CLI) computes.
 ///
 /// Fields included: title, summary, access_level (already lowercase), service_owner,
-/// tags (sorted), parent_slug, order, is_hidden.
-/// `is_draft` is intentionally excluded because the CLI does not expose it yet.
+/// tags (comma-joined, sorted), parent_slug, order, is_hidden.
+/// `is_draft` and `source_id` are intentionally excluded (not sent by the CLI).
 #[cfg(feature = "ssr")]
 pub(crate) fn compute_metadata_hash(input: MetadataHashInput<'_>) -> String {
+    use std::collections::BTreeMap;
     let mut sorted_tags: Vec<&str> = input.tags.iter().map(|s| s.as_str()).collect();
     sorted_tags.sort_unstable();
-    let canonical = format!(
-        "title={}\nsummary={}\naccess_level={}\nservice_owner={}\ntags={}\nparent_slug={}\norder={}\nis_hidden={}\nsource_id={}",
-        input.title,
-        input.summary.unwrap_or(""),
-        input.access_level,
-        input.service_owner,
-        sorted_tags.join(","),
-        input.parent_slug.unwrap_or(""),
-        input.order,
-        input.is_hidden,
-        input.source_id,
-    );
+    let tags_str = sorted_tags.join(",");
+    let order_str = input.order.to_string();
+    let is_hidden_str = input.is_hidden.to_string();
+    let mut map = BTreeMap::new();
+    map.insert("access_level", input.access_level);
+    map.insert("is_hidden", is_hidden_str.as_str());
+    map.insert("order", order_str.as_str());
+    map.insert("parent_slug", input.parent_slug.unwrap_or(""));
+    map.insert("service_owner", input.service_owner);
+    map.insert("summary", input.summary.unwrap_or(""));
+    map.insert("tags", tags_str.as_str());
+    map.insert("title", input.title);
+    let canonical =
+        serde_json::to_string(&map).expect("BTreeMap<&str,&str> serialization is infallible");
     format!(
         "sha256:{}",
         crate::auth::token_service::TokenService::hash_token(&canonical)
@@ -764,6 +806,13 @@ mod tests {
             let mut docs = self.documents.lock().unwrap();
             if let Some(doc) = docs.iter_mut().find(|d| d.slug == slug) {
                 doc.is_archived = archived;
+            }
+            Ok(())
+        }
+        async fn rename_slug(&self, old_slug: &str, new_slug: &str) -> Result<(), AppError> {
+            let mut docs = self.documents.lock().unwrap();
+            if let Some(doc) = docs.iter_mut().find(|d| d.slug == old_slug) {
+                doc.slug = new_slug.to_string();
             }
             Ok(())
         }

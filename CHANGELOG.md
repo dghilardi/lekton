@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- `lekton-sync`: slug renames (changing the `slug` front-matter field after first sync) are now handled correctly. The server detects the rename via `source_path + source_id`, performs an in-place slug rename in MongoDB, preserves the existing S3 key when content is unchanged, and no longer silently ignores the new slug or creates a duplicate archived document.
+- `lekton-sync`: metadata hash mismatch between client and server is fixed. Both sides now use a canonical BTreeMap serialised to JSON (alphabetically sorted keys, without `source_id`), so hashes agree and unchanged documents are no longer re-uploaded on every run.
+- Sync now rejects a slug rename when the target slug is already in use by a different document, preventing silent overwrites.
+
 ## [0.24.24] 2026-06-08
 
 ### Fixed

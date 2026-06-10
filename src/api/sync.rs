@@ -124,7 +124,20 @@ pub async fn process_sync(
         // 4. New document — use the desired slug
         let actual_slug = if let Some(existing_slug) = server_by_source_path.get(&entry.source_path)
         {
-            existing_slug.clone()
+            if existing_slug == &entry.slug {
+                existing_slug.clone()
+            } else {
+                // Slug renamed — check that the new slug isn't already taken by a different doc
+                if server_by_slug.contains_key(entry.slug.as_str()) {
+                    return Err(AppError::BadRequest(format!(
+                        "Cannot rename '{}' to '{}': target slug is already in use by another document",
+                        existing_slug, entry.slug
+                    )));
+                }
+                // Claim the old slug so it isn't mistakenly archived before ingest renames it
+                claimed_slugs.insert(existing_slug.clone());
+                entry.slug.clone()
+            }
         } else if server_by_slug.contains_key(&entry.slug) {
             entry.slug.clone()
         } else if let Some(ref legacy) = entry.legacy_slug {
@@ -441,6 +454,13 @@ mod tests {
             let mut docs = self.documents.lock().unwrap();
             if let Some(doc) = docs.iter_mut().find(|d| d.slug == slug) {
                 doc.is_archived = archived;
+            }
+            Ok(())
+        }
+        async fn rename_slug(&self, old_slug: &str, new_slug: &str) -> Result<(), AppError> {
+            let mut docs = self.documents.lock().unwrap();
+            if let Some(doc) = docs.iter_mut().find(|d| d.slug == old_slug) {
+                doc.slug = new_slug.to_string();
             }
             Ok(())
         }
@@ -1005,8 +1025,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sync_source_path_lookup_after_migration() {
-        // After migration, doc has source_path set. Next sync should find it by source_path.
+    async fn test_sync_source_path_slug_rename_triggers_upload() {
+        // Doc has source_path set but the client's desired slug has changed.
+        // Sync should detect the rename and return the doc in to_upload with the new slug.
         let repo = MockRepo::with_docs(vec![make_doc("docs/my-guide", "sha256:content")]);
         let token_repo = MockServiceTokenRepo;
         let request = SyncRequest {
@@ -1014,7 +1035,7 @@ mod tests {
             source_id: "test-source".to_string(),
             documents: vec![SyncDocumentEntry {
                 source_path: "docs/my-guide.md".to_string(),
-                slug: "docs/my-cool-guide".to_string(),
+                slug: "docs/my-cool-guide".to_string(), // new desired slug
                 content_hash: "sha256:content".to_string(),
                 metadata_hash: None,
                 legacy_slug: Some("docs/my-guide".to_string()),
@@ -1025,9 +1046,71 @@ mod tests {
         let result = process_sync(&repo, &token_repo, None, None, Some("legacy"), request)
             .await
             .unwrap();
-        // Found by source_path → actual_slug = "docs/my-guide", nothing changed
+        // Rename detected: actual_slug = new slug, old slug is claimed (not archived)
+        assert_eq!(
+            result.to_upload,
+            vec![upload("docs/my-guide.md", "docs/my-cool-guide")],
+            "rename should produce to_upload entry with new slug"
+        );
+        assert!(result.unchanged.is_empty());
+        assert!(
+            result.to_archive.is_empty(),
+            "old slug must not be archived"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sync_source_path_same_slug_is_unchanged() {
+        // After migration, doc has source_path set and slug hasn't changed — nothing to do.
+        let repo = MockRepo::with_docs(vec![make_doc("docs/my-guide", "sha256:content")]);
+        let token_repo = MockServiceTokenRepo;
+        let request = SyncRequest {
+            service_token: "legacy".to_string(),
+            source_id: "test-source".to_string(),
+            documents: vec![SyncDocumentEntry {
+                source_path: "docs/my-guide.md".to_string(),
+                slug: "docs/my-guide".to_string(), // same as stored
+                content_hash: "sha256:content".to_string(),
+                metadata_hash: None,
+                legacy_slug: None,
+            }],
+            archive_missing: false,
+        };
+
+        let result = process_sync(&repo, &token_repo, None, None, Some("legacy"), request)
+            .await
+            .unwrap();
         assert!(result.to_upload.is_empty());
         assert_eq!(result.unchanged, vec!["docs/my-guide.md"]);
+    }
+
+    #[tokio::test]
+    async fn test_sync_rename_to_existing_slug_is_rejected() {
+        // Rename target slug is already in use by a different document — must error.
+        let repo = MockRepo::with_docs(vec![
+            make_doc("docs/old-name", "sha256:aaa"),
+            make_doc("docs/taken", "sha256:bbb"),
+        ]);
+        let token_repo = MockServiceTokenRepo;
+        let request = SyncRequest {
+            service_token: "legacy".to_string(),
+            source_id: "test-source".to_string(),
+            documents: vec![SyncDocumentEntry {
+                source_path: "docs/old-name.md".to_string(),
+                slug: "docs/taken".to_string(), // conflict!
+                content_hash: "sha256:aaa".to_string(),
+                metadata_hash: None,
+                legacy_slug: None,
+            }],
+            archive_missing: false,
+        };
+
+        let result = process_sync(&repo, &token_repo, None, None, Some("legacy"), request).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::BadRequest(msg) => assert!(msg.contains("already in use")),
+            other => panic!("Expected BadRequest, got: {:?}", other),
+        }
     }
 
     #[tokio::test]

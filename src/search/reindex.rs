@@ -147,6 +147,9 @@ mod tests {
         async fn set_archived(&self, _: &str, _: bool) -> Result<(), AppError> {
             Ok(())
         }
+        async fn rename_slug(&self, _: &str, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
         async fn find_by_source_path(&self, _: &str) -> Result<Option<Document>, AppError> {
             Ok(None)
         }

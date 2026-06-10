@@ -57,9 +57,15 @@ pub trait DocumentRepository: Send + Sync {
     /// Set the `is_archived` flag on a document.
     async fn set_archived(&self, slug: &str, archived: bool) -> Result<(), AppError>;
 
+    /// Rename a document's slug in-place, preserving all other fields and history.
+    ///
+    /// Does nothing if `old_slug` is not found.
+    async fn rename_slug(&self, old_slug: &str, new_slug: &str) -> Result<(), AppError>;
+
     /// Find a document by its source file path (e.g. `docs/guides/intro.md`).
     ///
     /// Returns `None` for documents ingested before `source_path` was introduced.
+    /// Includes archived documents — callers must check `is_archived` if needed.
     async fn find_by_source_path(&self, source_path: &str) -> Result<Option<Document>, AppError>;
 
     /// Return all non-archived documents belonging to the given import source.
@@ -272,6 +278,17 @@ impl DocumentRepository for MongoDocumentRepository {
             .update_one(
                 doc! { "slug": slug },
                 doc! { "$set": { "is_archived": archived } },
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn rename_slug(&self, old_slug: &str, new_slug: &str) -> Result<(), AppError> {
+        use mongodb::bson::doc;
+        self.collection
+            .update_one(
+                doc! { "slug": old_slug },
+                doc! { "$set": { "slug": new_slug } },
             )
             .await?;
         Ok(())

@@ -420,6 +420,30 @@ impl ChatService {
                         yield ChatEvent::Error {
                             message: format!("LLM error: {error_message}"),
                         };
+                        // Persist any partial response so the client can reload it
+                        // and emit Done so stream consumers are not left hanging.
+                        let saved_message_id = if !full_response.is_empty() {
+                            full_response.push_str("\n\n*(response truncated due to error)*");
+                            let msg_id = Uuid::new_v4().to_string();
+                            let msg = ChatMessage {
+                                id: msg_id.clone(),
+                                session_id: sid.clone(),
+                                role: "assistant".into(),
+                                content: full_response,
+                                sources: Some(sources.clone()),
+                                created_at: Utc::now(),
+                            };
+                            if let Err(save_err) = chat_repo.add_message(msg).await {
+                                tracing::error!("Failed to save partial assistant message: {save_err}");
+                            }
+                            if let Err(touch_err) = chat_repo.touch_session(&sid).await {
+                                tracing::error!("Failed to touch session after error: {touch_err}");
+                            }
+                            Some(msg_id)
+                        } else {
+                            None
+                        };
+                        yield ChatEvent::Done { message_id: saved_message_id };
                         return;
                     }
                 }

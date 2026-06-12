@@ -138,18 +138,14 @@ pub async fn process_ingest(
             (by_slug, None)
         };
 
-    let (old_links, old_backlinks, old_parent_slug, old_order, old_is_hidden, old_hash) =
-        match &old_doc {
-            Some(d) => (
-                d.links_out.clone(),
-                d.backlinks.clone(),
-                d.parent_slug.clone(),
-                d.order,
-                d.is_hidden,
-                d.content_hash.clone(),
-            ),
-            None => (vec![], vec![], None, 0, false, None),
-        };
+    let (old_links, old_backlinks, old_hash) = match &old_doc {
+        Some(d) => (
+            d.links_out.clone(),
+            d.backlinks.clone(),
+            d.content_hash.clone(),
+        ),
+        None => (vec![], vec![], None),
+    };
 
     // Reject cross-source overwrites of non-archived documents.
     if let Some(ref existing) = old_doc {
@@ -175,22 +171,11 @@ pub async fn process_ingest(
 
     let content_changed = old_hash.as_deref() != Some(&new_hash);
 
-    // Determine effective metadata values
-    let effective_parent_slug = if normalized_parent_slug.is_some() {
-        normalized_parent_slug
-    } else {
-        old_parent_slug
-    };
-    let effective_order = if request.order > 0 {
-        request.order
-    } else {
-        old_order
-    };
-    let effective_is_hidden = if request.is_hidden {
-        true
-    } else {
-        old_is_hidden
-    };
+    // The request is authoritative: use its values directly.
+    // This allows clearing is_hidden, order=0, and parent_slug=None via the sync path.
+    let effective_parent_slug = normalized_parent_slug;
+    let effective_order = request.order;
+    let effective_is_hidden = request.is_hidden;
 
     // Check if metadata changed (compared to existing doc)
     let metadata_changed = old_doc.as_ref().is_none_or(|d| {
@@ -1504,6 +1489,78 @@ mod tests {
         assert!(
             result.is_ok(),
             "source-b should be able to claim an archived slug"
+        );
+    }
+
+    /// Regression tests for BUG-4: is_hidden, order, and parent_slug must be clearable via ingest.
+    /// Previously a "keep old value" fallback made these fields impossible to unset.
+    #[tokio::test]
+    async fn test_ingest_clears_is_hidden_when_request_says_false() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+
+        // First ingest: hidden doc
+        let mut req = make_request("valid-token", "docs/hidden");
+        req.is_hidden = true;
+        process_ingest(&ctx, req).await.unwrap();
+        let doc = repo.find_by_slug("docs/hidden").await.unwrap().unwrap();
+        assert!(
+            doc.is_hidden,
+            "document should be hidden after first ingest"
+        );
+
+        // Second ingest: un-hide
+        let mut req2 = make_request("valid-token", "docs/hidden");
+        req2.is_hidden = false;
+        process_ingest(&ctx, req2).await.unwrap();
+        let doc2 = repo.find_by_slug("docs/hidden").await.unwrap().unwrap();
+        assert!(!doc2.is_hidden, "is_hidden must be clearable via ingest");
+    }
+
+    #[tokio::test]
+    async fn test_ingest_clears_order_when_request_sends_zero() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+
+        let mut req = make_request("valid-token", "docs/ordered");
+        req.order = 5;
+        process_ingest(&ctx, req).await.unwrap();
+        let doc = repo.find_by_slug("docs/ordered").await.unwrap().unwrap();
+        assert_eq!(doc.order, 5);
+
+        // Reset order to 0
+        let mut req2 = make_request("valid-token", "docs/ordered");
+        req2.order = 0;
+        process_ingest(&ctx, req2).await.unwrap();
+        let doc2 = repo.find_by_slug("docs/ordered").await.unwrap().unwrap();
+        assert_eq!(doc2.order, 0, "order must be clearable to 0 via ingest");
+    }
+
+    #[tokio::test]
+    async fn test_ingest_clears_parent_slug_when_request_sends_none() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+
+        let mut req = make_request("valid-token", "docs/child");
+        req.parent_slug = Some("docs/parent".to_string());
+        process_ingest(&ctx, req).await.unwrap();
+        let doc = repo.find_by_slug("docs/child").await.unwrap().unwrap();
+        assert_eq!(doc.parent_slug.as_deref(), Some("docs/parent"));
+
+        // Remove parent
+        let mut req2 = make_request("valid-token", "docs/child");
+        req2.parent_slug = None;
+        process_ingest(&ctx, req2).await.unwrap();
+        let doc2 = repo.find_by_slug("docs/child").await.unwrap().unwrap();
+        assert!(
+            doc2.parent_slug.is_none(),
+            "parent_slug must be clearable via ingest"
         );
     }
 }

@@ -26,7 +26,10 @@ async fn static_cache_headers(
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     let path = request.uri().path().to_owned();
-    let has_version = request.uri().query().is_some_and(|q| q.contains("v="));
+    let has_version = request
+        .uri()
+        .query()
+        .is_some_and(|q| q.split('&').any(|p| p == "v" || p.starts_with("v=")));
 
     let is_js_asset = path.starts_with("/js/")
         && (path.ends_with(".js") || path.ends_with(".mjs") || path.ends_with(".css"));

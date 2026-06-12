@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- RAG chat: mid-stream LLM errors now persist the partial response (with a truncation notice) and cleanly dismiss the loading state instead of leaving the UI hanging.
+- RAG chat: empty query vectors are skipped before Qdrant search, preventing spurious retrieval errors on empty or whitespace-only queries.
+- Admin: Navigation ordering "Discard" button now correctly restores the original order instead of doing nothing.
+- Chat: switching between sessions no longer carries over stale feedback button state from the previous session's messages.
+- `lekton-sync`: prompt metadata hash now matches the server wire format; prompts with unchanged metadata are no longer re-uploaded on every run.
+- `lekton-sync`: `is_hidden`, `order`, and `parent_slug` can now be cleared via sync (removing the field or setting it to the zero value is now authoritative).
+- `lekton-sync`: documents whose attachments failed to upload are now skipped with a clear per-file error instead of being ingested with broken links.
+- `lekton-sync`: negative `order` values in front-matter now produce a descriptive error (with file path and value) instead of an opaque HTTP 400.
+- Schemas REST API: authenticated non-admin users can now see schemas with `public` access level.
+- MCP `search_documentation_feedback`: non-admin users now only see their own feedback reports.
+
+### Security
+- Editor asset upload endpoint now requires an authenticated session.
+- Uploaded asset content-type is now derived from the file extension rather than the client-supplied header, preventing XSS via crafted HTML or JavaScript uploads.
+
 ## [0.24.25] 2026-06-12
 
 ### Fixed

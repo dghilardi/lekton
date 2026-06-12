@@ -226,7 +226,9 @@ fn ChatContent() -> impl IntoView {
                             let msgs = messages.get();
                             msgs.into_iter().enumerate().collect::<Vec<_>>()
                         }
-                        key=|(i, _)| *i
+                        key=|(_, msg)| {
+                            msg.id.clone().unwrap_or_else(|| format!("{}-{}", msg.role, msg.content))
+                        }
                         children=move |(idx, msg)| {
                             let is_user = msg.role == "user";
                             let msg_id = msg.id.clone();

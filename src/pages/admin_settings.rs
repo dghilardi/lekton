@@ -1267,9 +1267,15 @@ fn NavigationOrderEditor() -> impl IntoView {
                                 class="btn btn-ghost w-full sm:w-auto"
                                 disabled=move || !has_changes() || saving.get()
                                 on:click=move |_| {
-                                    // Reset to original order
-                                    let _ = nav_resource.get();
-                                    let _ = order_resource.get();
+                                    let orig = original_slugs.get_untracked();
+                                    let current = items.get_untracked();
+                                    let by_slug: std::collections::HashMap<String, OrderableItem> =
+                                        current.into_iter().map(|i| (i.slug.clone(), i)).collect();
+                                    let restored: Vec<OrderableItem> = orig
+                                        .iter()
+                                        .filter_map(|s| by_slug.get(s).cloned())
+                                        .collect();
+                                    set_items.set(restored);
                                 }
                             >
                                 "Discard"

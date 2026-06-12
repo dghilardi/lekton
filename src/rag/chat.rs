@@ -607,6 +607,32 @@ impl ChatService {
             return Err(AppError::Internal("embedding returned no vectors".into()));
         }
 
+        // Drop (query, vector) pairs where the embedding returned an empty vector —
+        // sending a zero-dim vector to Qdrant causes a hard dimension-mismatch error
+        // that aborts the entire retrieval. Mirrors the index-time guard in service.rs.
+        let (queries_to_embed, all_vectors): (Vec<_>, Vec<_>) = queries_to_embed
+            .into_iter()
+            .zip(all_vectors)
+            .filter(|(q, vec)| {
+                if vec.is_empty() {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        sub_query = %preview_text(q, 80),
+                        "RAG: empty query vector for sub-query, skipping"
+                    );
+                    false
+                } else {
+                    true
+                }
+            })
+            .unzip();
+
+        if queries_to_embed.is_empty() {
+            return Err(AppError::Internal(
+                "all query embeddings are empty, cannot search".into(),
+            ));
+        }
+
         let vector_limit = if self.search_service.is_some() || self.reranker.is_some() {
             MAX_CONTEXT_CHUNKS * CANDIDATE_MULTIPLIER
         } else {

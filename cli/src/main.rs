@@ -516,6 +516,17 @@ async fn main() -> Result<()> {
             );
         }
 
+        let order = match u32::try_from(doc.order) {
+            Ok(v) => v,
+            Err(_) => {
+                eprintln!(
+                    "Error: '{}' has a negative order value ({}) in its front-matter — fix or remove the 'order' field and retry",
+                    doc.source_path, doc.order
+                );
+                continue;
+            }
+        };
+
         let ingest_body = IngestRequest {
             service_token: token.clone(),
             source_path: doc.source_path.clone(),
@@ -528,7 +539,7 @@ async fn main() -> Result<()> {
             service_owner: doc.service_owner.clone(),
             tags: doc.tags.clone(),
             parent_slug: doc.parent_slug.clone(),
-            order: doc.order,
+            order,
             is_hidden: doc.is_hidden,
         };
 

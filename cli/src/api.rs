@@ -97,7 +97,7 @@ pub struct IngestRequest {
     pub service_owner: String,
     pub tags: Vec<String>,
     pub parent_slug: Option<String>,
-    pub order: i32,
+    pub order: u32,
     pub is_hidden: bool,
 }
 

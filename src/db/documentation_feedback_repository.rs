@@ -32,6 +32,7 @@ pub trait DocumentationFeedbackRepository: Send + Sync {
         kind: Option<DocumentationFeedbackKind>,
         status: Option<DocumentationFeedbackStatus>,
         limit: usize,
+        created_by: Option<&str>,
     ) -> Result<Vec<DocumentationFeedback>, AppError>;
     async fn list(
         &self,
@@ -114,10 +115,11 @@ impl DocumentationFeedbackRepository for MongoDocumentationFeedbackRepository {
         kind: Option<DocumentationFeedbackKind>,
         status: Option<DocumentationFeedbackStatus>,
         limit: usize,
+        created_by: Option<&str>,
     ) -> Result<Vec<DocumentationFeedback>, AppError> {
         use futures::TryStreamExt;
 
-        let filter = build_filter(Some(query), kind, status);
+        let filter = build_filter(Some(query), kind, status, created_by);
         let cursor = self
             .collection
             .find(filter)
@@ -141,7 +143,7 @@ impl DocumentationFeedbackRepository for MongoDocumentationFeedbackRepository {
         const MAX_PER_PAGE: u64 = 100;
         let per_page = params.per_page.clamp(1, MAX_PER_PAGE);
         let skip = params.page * per_page;
-        let filter = build_filter(params.query.as_deref(), params.kind, params.status);
+        let filter = build_filter(params.query.as_deref(), params.kind, params.status, None);
 
         let total = self
             .collection
@@ -233,10 +235,15 @@ fn build_filter(
     query: Option<&str>,
     kind: Option<DocumentationFeedbackKind>,
     status: Option<DocumentationFeedbackStatus>,
+    created_by: Option<&str>,
 ) -> mongodb::bson::Document {
     use mongodb::bson::{doc, Bson};
 
     let mut filter_parts = Vec::new();
+
+    if let Some(owner) = created_by {
+        filter_parts.push(doc! { "created_by": owner });
+    }
 
     if let Some(kind) = kind {
         filter_parts.push(doc! { "kind": kind.as_str() });
@@ -299,11 +306,35 @@ fn regex_escape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "ssr")]
-    use super::regex_escape;
+    use super::{build_filter, regex_escape};
 
     #[cfg(feature = "ssr")]
     #[test]
     fn regex_escape_escapes_special_chars() {
         assert_eq!(regex_escape("docs+(api)"), "docs\\+\\(api\\)");
+    }
+
+    /// Regression test for MCP-BUG-1: when created_by is Some, the filter must include
+    /// a created_by clause so non-admins only see their own feedback.
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn build_filter_scopes_to_created_by_when_provided() {
+        let filter = build_filter(None, None, None, Some("alice@example.com"));
+        let bson_str = filter.to_string();
+        assert!(
+            bson_str.contains("created_by") && bson_str.contains("alice@example.com"),
+            "filter must contain a created_by constraint: {bson_str}"
+        );
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn build_filter_no_created_by_for_admins() {
+        let filter = build_filter(None, None, None, None);
+        let bson_str = filter.to_string();
+        assert!(
+            !bson_str.contains("created_by"),
+            "admin filter must not restrict by created_by: {bson_str}"
+        );
     }
 }

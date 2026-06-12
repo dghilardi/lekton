@@ -851,8 +851,10 @@ impl LektonMcpServer {
     async fn search_documentation_feedback(
         &self,
         Parameters(params): Parameters<SearchDocumentationFeedbackParams>,
-        _ctx: RequestContext<RoleServer>,
+        ctx: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
+        let user_ctx = user_context(&ctx)?;
+
         let query = params.query.trim();
         if query.is_empty() {
             return Err(McpError::invalid_params(
@@ -865,9 +867,16 @@ impl LektonMcpServer {
         let status = parse_feedback_status(params.status.as_deref(), true)?;
         let limit = params.limit.clamp(1, 20);
 
+        // Non-admins may only search their own feedback reports.
+        let created_by = if user_ctx.user.is_admin {
+            None
+        } else {
+            Some(user_ctx.user.email.as_str())
+        };
+
         let results = self
             .documentation_feedback_repo
-            .search(query, kind, status, limit)
+            .search(query, kind, status, limit, created_by)
             .await
             .map_err(app_err)?;
 

@@ -132,6 +132,34 @@ mod tests {
         assert_eq!(h1, h2, "access_level comparison should be case-insensitive");
     }
 
+    /// Regression test for CLI-BUG-1: verifies that the canonical string for prompt hashing
+    /// uses lowercase status and context_cost, matching the server's Display-based wire format.
+    #[test]
+    fn prompt_metadata_hash_canonical_format() {
+        let canonical = "name=Code Review\ndescription=Review a diff\naccess_level=internal\nstatus=active\nowner=platform\ntags=review\nvariables=diff:Patch diff:true\npublish_to_mcp=true\ndefault_primary=true\ncontext_cost=medium";
+        let expected = compute_hash(canonical);
+        let got = compute_prompt_metadata_hash(
+            "Code Review",
+            "Review a diff",
+            "internal",
+            "active",
+            "platform",
+            &["review".to_string()],
+            &[PromptVariable {
+                name: "diff".to_string(),
+                description: "Patch diff".to_string(),
+                required: true,
+            }],
+            true,
+            true,
+            "medium",
+        );
+        assert_eq!(
+            got, expected,
+            "CLI canonical format must match server wire format"
+        );
+    }
+
     #[test]
     fn compute_metadata_hash_tags_order_independent() {
         let h1 = compute_metadata_hash(

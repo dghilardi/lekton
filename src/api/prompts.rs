@@ -328,7 +328,7 @@ pub fn compute_prompt_metadata_hash(request: &PromptIngestRequest) -> String {
     vars.sort_unstable();
 
     let canonical = format!(
-        "name={}\ndescription={}\naccess_level={}\nstatus={:?}\nowner={}\ntags={}\nvariables={}\npublish_to_mcp={}\ndefault_primary={}\ncontext_cost={:?}",
+        "name={}\ndescription={}\naccess_level={}\nstatus={}\nowner={}\ntags={}\nvariables={}\npublish_to_mcp={}\ndefault_primary={}\ncontext_cost={}",
         request.name,
         request.description,
         request.access_level.to_lowercase(),
@@ -997,6 +997,28 @@ mod tests {
         let err = process_prompt_ingest(&ctx, request).await.unwrap_err();
         assert!(
             matches!(err, AppError::BadRequest(msg) if msg.contains("Duplicate prompt variable"))
+        );
+    }
+
+    /// Regression test for CLI-BUG-1: server must use lowercase enum values in the hash,
+    /// matching the CLI wire format. Before the fix, {:?} produced "Active"/"Medium"
+    /// while the CLI sent "active"/"medium", causing every prompt to re-upload every sync.
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn prompt_metadata_hash_uses_lowercase_wire_format() {
+        use crate::auth::token_service::TokenService;
+
+        let req = make_request(); // PromptStatus::Active, ContextCost::Medium
+        let got = compute_prompt_metadata_hash(&req);
+
+        // Canonical string as the CLI produces it (lowercase status + context_cost).
+        // If server-side serialization ever diverges, this test catches it.
+        let canonical = "name=Code Review\ndescription=Review a diff\naccess_level=internal\nstatus=active\nowner=platform\ntags=review\nvariables=diff:Patch diff:true\npublish_to_mcp=true\ndefault_primary=true\ncontext_cost=medium";
+        let expected = format!("sha256:{}", TokenService::hash_token(canonical));
+
+        assert_eq!(
+            got, expected,
+            "hash must serialize status/context_cost as lowercase (CLI wire format)"
         );
     }
 }

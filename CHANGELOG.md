@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.25] 2026-06-12
+
 ### Fixed
 - Integration Tests CI now frees GitHub runner disk space before installing npm dependencies and pulling testcontainers images, avoiding `No space left on device` failures during the workflow.
 - `lekton-sync`: slug renames (changing the `slug` front-matter field after first sync) are now handled correctly. The server detects the rename via `source_path + source_id`, performs an in-place slug rename in MongoDB, preserves the existing S3 key when content is unchanged, and no longer silently ignores the new slug or creates a duplicate archived document.

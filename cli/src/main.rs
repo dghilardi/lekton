@@ -382,6 +382,8 @@ async fn main() -> Result<()> {
     // ── Upload attachments ────────────────────────────────────────────────────
     let mut attachments_uploaded = 0usize;
     let mut attachment_errors = 0usize;
+    let mut failed_attachment_keys: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
 
     if !all_attachments.is_empty() {
         let check_url = format!("{base_url}/api/v1/assets/check-hashes");
@@ -486,10 +488,12 @@ async fn main() -> Result<()> {
                     let body = r.text().await.unwrap_or_default();
                     eprintln!("  error: attachment {key}: HTTP {status} — {body}");
                     attachment_errors += 1;
+                    failed_attachment_keys.insert(key.clone());
                 }
                 Err(e) => {
                     eprintln!("  error: attachment {key}: {e}");
                     attachment_errors += 1;
+                    failed_attachment_keys.insert(key.clone());
                 }
             }
         }
@@ -514,6 +518,23 @@ async fn main() -> Result<()> {
                 "Uploading: {} (slug: {})",
                 upload_entry.source_path, upload_entry.actual_slug
             );
+        }
+
+        let blocking_attachments: Vec<&str> = doc
+            .attachments
+            .iter()
+            .filter(|a| failed_attachment_keys.contains(&a.asset_key))
+            .map(|a| a.raw_path.as_str())
+            .collect();
+        if !blocking_attachments.is_empty() {
+            eprintln!(
+                "Error: skipping '{}' — {} attachment(s) failed to upload: {}",
+                doc.source_path,
+                blocking_attachments.len(),
+                blocking_attachments.join(", ")
+            );
+            errors += 1;
+            continue;
         }
 
         let order = match u32::try_from(doc.order) {

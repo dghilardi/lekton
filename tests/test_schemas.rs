@@ -463,6 +463,59 @@ async fn schema_list_hides_versions_above_public_access() {
     assert!(!list.iter().any(|s| s.name == internal_name));
 }
 
+/// Regression test for SCHEMA-BUG-1: authenticated non-admin users must see public schemas
+/// via the REST API (previously `schema_visibility_from_request` never added "public" to
+/// the effective levels list for logged-in users).
+#[tokio::test]
+async fn schema_list_shows_public_schemas_to_authenticated_user() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+
+    let public_name = format!("public-auth-{}", uuid::Uuid::new_v4());
+    let internal_name = format!("internal-auth-{}", uuid::Uuid::new_v4());
+
+    ingest_schema(
+        &server,
+        &public_name,
+        "openapi",
+        "1.0.0",
+        "stable",
+        "public",
+        &openapi_spec(),
+    )
+    .await;
+    ingest_schema(
+        &server,
+        &internal_name,
+        "openapi",
+        "1.0.0",
+        "stable",
+        "internal",
+        &openapi_spec(),
+    )
+    .await;
+
+    let user = env
+        .create_test_user("u-schema-bug1", "user@example.com", false)
+        .await;
+    let cookie = env.auth_cookie(&user);
+
+    let list: Vec<SchemaListItem> = server
+        .get("/api/v1/schemas")
+        .add_cookie(cookie)
+        .await
+        .json();
+
+    assert!(
+        list.iter().any(|s| s.name == public_name),
+        "authenticated non-admin user must see public schemas"
+    );
+    assert!(
+        !list.iter().any(|s| s.name == internal_name),
+        "authenticated non-admin user must not see internal schemas without access level"
+    );
+}
+
 #[tokio::test]
 async fn schema_sync_archives_missing_version() {
     let env = common::TestEnv::start().await;

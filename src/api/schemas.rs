@@ -599,12 +599,15 @@ async fn schema_visibility_from_request(
             let effective = user_doc
                 .map(|u| {
                     let mut levels = u.effective_access_levels;
+                    if !levels.contains(&"public".to_string()) {
+                        levels.push("public".to_string());
+                    }
                     if !levels.contains(&"loggeduser".to_string()) {
                         levels.push("loggeduser".to_string());
                     }
                     levels
                 })
-                .unwrap_or_else(|| vec!["loggeduser".to_string()]);
+                .unwrap_or_else(|| vec!["public".to_string(), "loggeduser".to_string()]);
             Ok(Some(effective))
         }
         None => Ok(Some(vec!["public".to_string()])),

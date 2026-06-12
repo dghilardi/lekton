@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.26] 2026-06-12
+
 ### Fixed
 - RAG chat: mid-stream LLM errors now persist the partial response (with a truncation notice) and cleanly dismiss the loading state instead of leaving the UI hanging.
 - RAG chat: empty query vectors are skipped before Qdrant search, preventing spurious retrieval errors on empty or whitespace-only queries.

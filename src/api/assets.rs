@@ -252,13 +252,14 @@ pub async fn process_check_hashes(
     Ok(CheckHashesResponse { to_upload })
 }
 
-/// Core editor upload logic — no token validation, generates key from filename.
+/// Core editor upload logic — generates key from filename, records uploader identity.
 pub async fn process_editor_upload(
     asset_repo: &dyn AssetRepository,
     storage: &dyn StorageClient,
     file_name: &str,
     content_type: &str,
     data: Vec<u8>,
+    uploaded_by: &str,
 ) -> Result<EditorUploadResponse, AppError> {
     let sanitized_name: String = file_name
         .chars()
@@ -285,7 +286,7 @@ pub async fn process_editor_upload(
         size_bytes,
         s3_key,
         uploaded_at: Utc::now(),
-        uploaded_by: "web-editor".to_string(),
+        uploaded_by: uploaded_by.to_string(),
         referenced_by: vec![],
         content_hash,
     };
@@ -451,10 +452,11 @@ pub async fn delete_asset_handler(
 
 /// Axum handler for `POST /api/v1/editor/upload-asset`.
 ///
-/// Editor-based upload — no service token required. Accepts multipart with `file` field.
+/// Editor-based upload — requires an authenticated session. Accepts multipart with `file` field.
 #[cfg(feature = "ssr")]
 pub async fn editor_upload_asset_handler(
     axum::extract::State(state): axum::extract::State<crate::app::AppState>,
+    crate::auth::extractor::RequiredAuthUser(user): crate::auth::extractor::RequiredAuthUser,
     mut multipart: axum::extract::Multipart,
 ) -> Result<axum::Json<EditorUploadResponse>, AppError> {
     let mut file_data = None;
@@ -495,6 +497,7 @@ pub async fn editor_upload_asset_handler(
         &file_name,
         &content_type,
         data,
+        &user.email,
     )
     .await?;
 
@@ -1024,6 +1027,7 @@ mod tests {
             "test image.png",
             "image/png",
             vec![0x89, 0x50, 0x4E, 0x47],
+            "editor@example.com",
         )
         .await;
 
@@ -1037,7 +1041,7 @@ mod tests {
 
         // Verify asset was stored in repo
         let asset = repo.find_by_key(&response.key).await.unwrap().unwrap();
-        assert_eq!(asset.uploaded_by, "web-editor");
+        assert_eq!(asset.uploaded_by, "editor@example.com");
         assert_eq!(asset.content_type, "image/png");
 
         // Verify in storage
@@ -1056,6 +1060,7 @@ mod tests {
             "my file (1).png",
             "image/png",
             vec![1, 2, 3],
+            "editor@example.com",
         )
         .await
         .unwrap();

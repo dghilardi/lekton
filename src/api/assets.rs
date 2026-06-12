@@ -6,6 +6,28 @@ use crate::db::models::Asset;
 use crate::error::AppError;
 use crate::storage::client::StorageClient;
 
+/// Derive a safe content type from a filename extension.
+///
+/// Ignores client-supplied Content-Type to prevent XSS via uploaded HTML/JS.
+/// Unknown or dangerous extensions fall back to `application/octet-stream`.
+pub fn safe_content_type_from_filename(filename: &str) -> &'static str {
+    let ext = filename
+        .rsplit_once('.')
+        .map(|(_, e)| e)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "pdf" => "application/pdf",
+        "txt" | "md" => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
+    }
+}
+
 /// Compute the SHA-256 content hash for an asset in `sha256:<base64url>` format.
 pub fn compute_content_hash(data: &[u8]) -> String {
     use base64::engine::{general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -335,7 +357,6 @@ pub async fn upload_asset_handler(
 ) -> Result<axum::Json<AssetUploadResponse>, AppError> {
     let mut service_token = None;
     let mut file_data = None;
-    let mut content_type = None;
 
     while let Some(field) = multipart
         .next_field()
@@ -353,12 +374,6 @@ pub async fn upload_asset_handler(
                 );
             }
             "file" => {
-                content_type = Some(
-                    field
-                        .content_type()
-                        .unwrap_or("application/octet-stream")
-                        .to_string(),
-                );
                 file_data = Some(
                     field
                         .bytes()
@@ -374,7 +389,7 @@ pub async fn upload_asset_handler(
     let service_token =
         service_token.ok_or_else(|| AppError::BadRequest("Missing service_token field".into()))?;
     let data = file_data.ok_or_else(|| AppError::BadRequest("Missing file field".into()))?;
-    let content_type = content_type.unwrap_or_else(|| "application/octet-stream".to_string());
+    let content_type = safe_content_type_from_filename(&key).to_string();
 
     let response = process_upload_asset(
         state.asset_repo.as_ref(),
@@ -460,7 +475,6 @@ pub async fn editor_upload_asset_handler(
     mut multipart: axum::extract::Multipart,
 ) -> Result<axum::Json<EditorUploadResponse>, AppError> {
     let mut file_data = None;
-    let mut content_type = None;
     let mut file_name = None;
 
     while let Some(field) = multipart
@@ -471,12 +485,6 @@ pub async fn editor_upload_asset_handler(
         let name = field.name().unwrap_or("").to_string();
         if name == "file" {
             file_name = Some(field.file_name().unwrap_or("upload.bin").to_string());
-            content_type = Some(
-                field
-                    .content_type()
-                    .unwrap_or("application/octet-stream")
-                    .to_string(),
-            );
             file_data = Some(
                 field
                     .bytes()
@@ -488,8 +496,8 @@ pub async fn editor_upload_asset_handler(
     }
 
     let data = file_data.ok_or_else(|| AppError::BadRequest("Missing file field".into()))?;
-    let content_type = content_type.unwrap_or_else(|| "application/octet-stream".to_string());
     let file_name = file_name.unwrap_or_else(|| "upload.bin".to_string());
+    let content_type = safe_content_type_from_filename(&file_name).to_string();
 
     let response = process_editor_upload(
         state.asset_repo.as_ref(),
@@ -1193,5 +1201,32 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.to_upload, vec!["file.txt".to_string()]);
+    }
+
+    #[test]
+    fn safe_content_type_derives_from_extension_not_client_header() {
+        assert_eq!(safe_content_type_from_filename("photo.png"), "image/png");
+        assert_eq!(safe_content_type_from_filename("photo.JPG"), "image/jpeg");
+        assert_eq!(
+            safe_content_type_from_filename("doc.pdf"),
+            "application/pdf"
+        );
+        assert_eq!(
+            safe_content_type_from_filename("readme.md"),
+            "text/plain; charset=utf-8"
+        );
+        // Dangerous types fall back to octet-stream
+        assert_eq!(
+            safe_content_type_from_filename("xss.html"),
+            "application/octet-stream"
+        );
+        assert_eq!(
+            safe_content_type_from_filename("evil.js"),
+            "application/octet-stream"
+        );
+        assert_eq!(
+            safe_content_type_from_filename("no_extension"),
+            "application/octet-stream"
+        );
     }
 }

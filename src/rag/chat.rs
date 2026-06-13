@@ -283,17 +283,23 @@ impl ChatService {
             .await?;
         let source_references = build_source_references(&search_results);
 
-        // 7. Build context string from search results
+        // 7. Build context string from search results.
+        // Each chunk is wrapped in explicit BEGIN/END DOCUMENT markers so the
+        // model can treat its contents strictly as reference data. Document text
+        // is authenticated (ingested via service token), but fencing it as data
+        // mitigates prompt-injection carried inside the corpus ("ignore previous
+        // instructions…"). The default system template instructs the model not
+        // to follow directives found between these markers.
         let context = search_results
             .iter()
             .map(|r| {
                 format!(
-                    "[{}] ({})\n{}",
+                    "--- BEGIN DOCUMENT: {} ({}) ---\n{}\n--- END DOCUMENT ---",
                     r.document_title, r.document_slug, r.chunk_text
                 )
             })
             .collect::<Vec<_>>()
-            .join("\n\n---\n\n");
+            .join("\n\n");
 
         // 8. Render system prompt via Tera
         let mut tera_ctx = tera::Context::new();

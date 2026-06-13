@@ -826,45 +826,44 @@ pub async fn get_schema_version_handler(
         .into_response())
 }
 
-/// Catch-all raw schema handler supporting schema names that contain `/`.
+/// Handler for `GET /api/v1/schemas/{*name}` supporting multi-segment schema names.
 ///
-/// Resolution order:
-/// 1. Treat the full path as the schema name and return schema detail.
-/// 2. If not found, split on the last `/` and treat the suffix as `version`.
+/// - No `?version` param → returns schema detail JSON.
+/// - `?version=<ver>` param → returns schema content bytes (S3 artifact).
+///
+/// The explicit `?version=` query param replaces the old `rsplit_once('/')` heuristic
+/// that was ambiguous for scoped schema names (e.g. `payments/api`).
 #[cfg(feature = "ssr")]
 pub async fn get_schema_route_handler(
     axum::extract::State(state): axum::extract::State<crate::app::AppState>,
     crate::auth::extractor::OptionalAuthUser(user): crate::auth::extractor::OptionalAuthUser,
-    axum::extract::Path(rest): axum::extract::Path<String>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<axum::response::Response, AppError> {
     use axum::response::IntoResponse;
 
     let allowed_levels = schema_visibility_from_request(&state, user.as_ref()).await?;
 
-    match process_get_schema(state.schema_repo.as_ref(), &rest, allowed_levels.as_deref()).await {
-        Ok(detail) => return Ok(axum::Json(detail).into_response()),
-        Err(AppError::NotFound(_)) => {}
-        Err(err) => return Err(err),
+    if let Some(version) = params.get("version") {
+        let content = process_get_schema_content(
+            state.schema_repo.as_ref(),
+            state.storage_client.as_ref(),
+            &name,
+            version,
+            allowed_levels.as_deref(),
+        )
+        .await?;
+
+        return Ok((
+            [(axum::http::header::CACHE_CONTROL, "private, max-age=3600")],
+            content,
+        )
+            .into_response());
     }
 
-    let Some((name, version)) = rest.rsplit_once('/') else {
-        return Err(AppError::NotFound(format!("Schema '{}' not found", rest)));
-    };
-
-    let content = process_get_schema_content(
-        state.schema_repo.as_ref(),
-        state.storage_client.as_ref(),
-        name,
-        version,
-        allowed_levels.as_deref(),
-    )
-    .await?;
-
-    Ok((
-        [(axum::http::header::CACHE_CONTROL, "private, max-age=3600")],
-        content,
-    )
-        .into_response())
+    let detail =
+        process_get_schema(state.schema_repo.as_ref(), &name, allowed_levels.as_deref()).await?;
+    Ok(axum::Json(detail).into_response())
 }
 
 /// Axum handler for `POST /api/v1/admin/schemas/reindex-endpoints`.

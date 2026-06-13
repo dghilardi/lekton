@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::asset_repository::AssetRepository;
 use crate::db::models::Asset;
+use crate::db::repository::DocumentRepository;
 use crate::error::AppError;
 use crate::storage::client::StorageClient;
 
@@ -155,15 +156,50 @@ pub async fn process_upload_asset(
 }
 
 /// Core serve logic — returns (content_type, data).
+///
+/// Access is derived from the documents that reference the asset:
+/// - No referencing documents → only the uploader or an admin may serve it.
+/// - At least one referencing document → allowed if any referenced doc passes
+///   `doc_is_accessible(access_level, is_draft, allowed_levels, include_draft)`.
 pub async fn process_serve_asset(
     asset_repo: &dyn AssetRepository,
+    document_repo: &dyn DocumentRepository,
     storage: &dyn StorageClient,
     key: &str,
+    allowed_levels: Option<&[String]>,
+    include_draft: bool,
+    user_email: Option<&str>,
 ) -> Result<(String, Vec<u8>), AppError> {
     let asset = asset_repo
         .find_by_key(key)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Asset '{}' not found", key)))?;
+
+    if asset.referenced_by.is_empty() {
+        let is_admin = allowed_levels.is_none();
+        let is_uploader = user_email.map_or(false, |e| e == asset.uploaded_by.as_str());
+        if !is_admin && !is_uploader {
+            return Err(AppError::Forbidden("Asset access denied".into()));
+        }
+    } else {
+        let mut accessible = false;
+        for slug in &asset.referenced_by {
+            if let Some(doc) = document_repo.find_by_slug(slug).await? {
+                if crate::app::doc_is_accessible(
+                    &doc.access_level,
+                    doc.is_draft,
+                    allowed_levels,
+                    include_draft,
+                ) {
+                    accessible = true;
+                    break;
+                }
+            }
+        }
+        if !accessible {
+            return Err(AppError::Forbidden("Asset access denied".into()));
+        }
+    }
 
     let data = storage.get_object(&asset.s3_key).await?.ok_or_else(|| {
         AppError::Storage(format!("Asset content missing in storage for '{}'", key))
@@ -408,18 +444,62 @@ pub async fn upload_asset_handler(
     Ok(axum::Json(response))
 }
 
+/// Resolve asset visibility context from the optional authenticated user.
+///
+/// Returns `(allowed_levels, include_draft)` analogous to
+/// `UserContext::document_visibility()`.
+#[cfg(feature = "ssr")]
+async fn asset_visibility_from_request(
+    state: &crate::app::AppState,
+    user: Option<&crate::auth::models::AuthenticatedUser>,
+) -> Result<(Option<Vec<String>>, bool), AppError> {
+    match user {
+        Some(u) if u.is_admin => Ok((None, true)),
+        Some(u) if state.demo_mode && u.user_id.starts_with("demo-") => {
+            Ok((Some(vec!["public".to_string()]), false))
+        }
+        Some(u) => {
+            let user_doc = state.user_repo.find_user_by_id(&u.user_id).await?;
+            let (levels, include_draft) = match user_doc {
+                Some(doc) => {
+                    let mut levels = doc.effective_access_levels;
+                    if !levels.contains(&"public".to_string()) {
+                        levels.push("public".to_string());
+                    }
+                    if !levels.contains(&"loggeduser".to_string()) {
+                        levels.push("loggeduser".to_string());
+                    }
+                    (levels, doc.can_read_draft)
+                }
+                None => (vec!["public".to_string(), "loggeduser".to_string()], false),
+            };
+            Ok((Some(levels), include_draft))
+        }
+        None => Ok((Some(vec!["public".to_string()]), false)),
+    }
+}
+
 /// Axum handler for `GET /api/v1/assets/{*key}`.
 #[cfg(feature = "ssr")]
 pub async fn serve_asset_handler(
     axum::extract::State(state): axum::extract::State<crate::app::AppState>,
+    crate::auth::extractor::OptionalAuthUser(user): crate::auth::extractor::OptionalAuthUser,
     axum::extract::Path(key): axum::extract::Path<String>,
 ) -> Result<axum::response::Response, AppError> {
     use axum::response::IntoResponse;
 
+    let user_email = user.as_ref().map(|u| u.email.as_str());
+    let (allowed_levels, include_draft) =
+        asset_visibility_from_request(&state, user.as_ref()).await?;
+
     let (content_type, data) = process_serve_asset(
         state.asset_repo.as_ref(),
+        state.document_repo.as_ref(),
         state.storage_client.as_ref(),
         &key,
+        allowed_levels.as_deref(),
+        include_draft,
+        user_email,
     )
     .await?;
 
@@ -518,6 +598,8 @@ mod tests {
     use async_trait::async_trait;
     use std::sync::Mutex;
 
+    use crate::db::models::Document;
+    use crate::db::repository::DocumentRepository;
     use crate::db::service_token_models::ServiceToken;
     use crate::db::service_token_repository::ServiceTokenRepository;
     use crate::test_utils::MockStorage;
@@ -569,6 +651,63 @@ mod tests {
         }
         async fn delete_pat(&self, _: &str, _: &str) -> Result<(), AppError> {
             Ok(())
+        }
+    }
+
+    struct MockDocumentRepo {
+        docs: Vec<Document>,
+    }
+
+    impl MockDocumentRepo {
+        fn empty() -> Self {
+            Self { docs: vec![] }
+        }
+
+        fn with(docs: Vec<Document>) -> Self {
+            Self { docs }
+        }
+    }
+
+    #[async_trait]
+    impl DocumentRepository for MockDocumentRepo {
+        async fn create_or_update(&self, _: Document) -> Result<(), AppError> {
+            unimplemented!()
+        }
+        async fn find_by_slug(&self, slug: &str) -> Result<Option<Document>, AppError> {
+            Ok(self.docs.iter().find(|d| d.slug == slug).cloned())
+        }
+        async fn list_all(&self) -> Result<Vec<Document>, AppError> {
+            Ok(self.docs.clone())
+        }
+        async fn list_by_access_levels(
+            &self,
+            _: Option<&[String]>,
+            _: bool,
+        ) -> Result<Vec<Document>, AppError> {
+            unimplemented!()
+        }
+        async fn update_backlinks(
+            &self,
+            _: &str,
+            _: &[String],
+            _: &[String],
+        ) -> Result<(), AppError> {
+            unimplemented!()
+        }
+        async fn find_by_slug_prefix(&self, _: &str) -> Result<Vec<Document>, AppError> {
+            unimplemented!()
+        }
+        async fn set_archived(&self, _: &str, _: bool) -> Result<(), AppError> {
+            unimplemented!()
+        }
+        async fn rename_slug(&self, _: &str, _: &str) -> Result<(), AppError> {
+            unimplemented!()
+        }
+        async fn find_by_source_path(&self, _: &str) -> Result<Option<Document>, AppError> {
+            unimplemented!()
+        }
+        async fn find_all_by_source_id(&self, _: &str) -> Result<Vec<Document>, AppError> {
+            unimplemented!()
         }
     }
 
@@ -840,10 +979,19 @@ mod tests {
         .await
         .unwrap();
 
-        // Serve
-        let (ct, data) = process_serve_asset(&repo, &storage, "docs/manual.pdf")
-            .await
-            .unwrap();
+        // Serve (admin visibility — unrestricted)
+        let doc_repo = MockDocumentRepo::empty();
+        let (ct, data) = process_serve_asset(
+            &repo,
+            &doc_repo,
+            &storage,
+            "docs/manual.pdf",
+            None,
+            true,
+            None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(ct, "application/pdf");
         assert_eq!(data, content);
@@ -854,7 +1002,17 @@ mod tests {
         let repo = MockAssetRepo::new();
         let storage = MockStorage::new();
 
-        let result = process_serve_asset(&repo, &storage, "nonexistent.txt").await;
+        let doc_repo = MockDocumentRepo::empty();
+        let result = process_serve_asset(
+            &repo,
+            &doc_repo,
+            &storage,
+            "nonexistent.txt",
+            None,
+            true,
+            None,
+        )
+        .await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -1201,6 +1359,217 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.to_upload, vec!["file.txt".to_string()]);
+    }
+
+    fn test_doc(slug: &str, access_level: &str, is_draft: bool) -> Document {
+        Document {
+            slug: slug.to_string(),
+            title: "Test".to_string(),
+            summary: None,
+            s3_key: format!("docs/{}.md", slug),
+            access_level: access_level.to_string(),
+            is_draft,
+            service_owner: "platform".to_string(),
+            last_updated: Utc::now(),
+            tags: vec![],
+            links_out: vec![],
+            backlinks: vec![],
+            parent_slug: None,
+            order: 0,
+            is_hidden: false,
+            content_hash: None,
+            metadata_hash: None,
+            is_archived: false,
+            source_path: None,
+            source_id: None,
+        }
+    }
+
+    fn asset_with_refs(key: &str, uploaded_by: &str, referenced_by: Vec<String>) -> Asset {
+        Asset {
+            key: key.to_string(),
+            content_type: "image/png".to_string(),
+            size_bytes: 4,
+            s3_key: format!("assets/{}", key),
+            uploaded_at: Utc::now(),
+            uploaded_by: uploaded_by.to_string(),
+            referenced_by,
+            content_hash: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_serve_asset_admin_always_allowed_unreferenced() {
+        let asset_repo = MockAssetRepo::new();
+        let doc_repo = MockDocumentRepo::empty();
+        let storage = MockStorage::new();
+
+        let asset = asset_with_refs("img.png", "ci-bot", vec![]);
+        asset_repo.assets.lock().unwrap().push(asset.clone());
+        storage
+            .objects
+            .lock()
+            .unwrap()
+            .insert(asset.s3_key.clone(), b"data".to_vec());
+
+        let result = process_serve_asset(
+            &asset_repo,
+            &doc_repo,
+            &storage,
+            "img.png",
+            None, // admin
+            true,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_serve_asset_uploader_allowed_unreferenced() {
+        let asset_repo = MockAssetRepo::new();
+        let doc_repo = MockDocumentRepo::empty();
+        let storage = MockStorage::new();
+
+        let asset = asset_with_refs("img.png", "user@example.com", vec![]);
+        asset_repo.assets.lock().unwrap().push(asset.clone());
+        storage
+            .objects
+            .lock()
+            .unwrap()
+            .insert(asset.s3_key.clone(), b"data".to_vec());
+
+        let allowed = vec!["public".to_string(), "internal".to_string()];
+        let result = process_serve_asset(
+            &asset_repo,
+            &doc_repo,
+            &storage,
+            "img.png",
+            Some(&allowed),
+            false,
+            Some("user@example.com"),
+        )
+        .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_serve_asset_unauthenticated_denied_unreferenced() {
+        let asset_repo = MockAssetRepo::new();
+        let doc_repo = MockDocumentRepo::empty();
+        let storage = MockStorage::new();
+
+        let asset = asset_with_refs("img.png", "ci-bot", vec![]);
+        asset_repo.assets.lock().unwrap().push(asset.clone());
+        storage
+            .objects
+            .lock()
+            .unwrap()
+            .insert(asset.s3_key.clone(), b"data".to_vec());
+
+        let allowed = vec!["public".to_string()];
+        let result = process_serve_asset(
+            &asset_repo,
+            &doc_repo,
+            &storage,
+            "img.png",
+            Some(&allowed),
+            false,
+            None, // no user
+        )
+        .await;
+
+        assert!(matches!(result.unwrap_err(), AppError::Forbidden(_)));
+    }
+
+    #[tokio::test]
+    async fn test_serve_asset_allowed_via_accessible_referenced_doc() {
+        let asset_repo = MockAssetRepo::new();
+        let storage = MockStorage::new();
+
+        let asset = asset_with_refs("img.png", "ci-bot", vec!["guide".to_string()]);
+        asset_repo.assets.lock().unwrap().push(asset.clone());
+        storage
+            .objects
+            .lock()
+            .unwrap()
+            .insert(asset.s3_key.clone(), b"data".to_vec());
+
+        let doc_repo = MockDocumentRepo::with(vec![test_doc("guide", "public", false)]);
+        let allowed = vec!["public".to_string()];
+        let result = process_serve_asset(
+            &asset_repo,
+            &doc_repo,
+            &storage,
+            "img.png",
+            Some(&allowed),
+            false,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_serve_asset_denied_when_all_referenced_docs_inaccessible() {
+        let asset_repo = MockAssetRepo::new();
+        let storage = MockStorage::new();
+
+        let asset = asset_with_refs("img.png", "ci-bot", vec!["private-doc".to_string()]);
+        asset_repo.assets.lock().unwrap().push(asset.clone());
+        storage
+            .objects
+            .lock()
+            .unwrap()
+            .insert(asset.s3_key.clone(), b"data".to_vec());
+
+        // Doc exists but is internal; caller only has public access
+        let doc_repo = MockDocumentRepo::with(vec![test_doc("private-doc", "internal", false)]);
+        let allowed = vec!["public".to_string()];
+        let result = process_serve_asset(
+            &asset_repo,
+            &doc_repo,
+            &storage,
+            "img.png",
+            Some(&allowed),
+            false,
+            None,
+        )
+        .await;
+
+        assert!(matches!(result.unwrap_err(), AppError::Forbidden(_)));
+    }
+
+    #[tokio::test]
+    async fn test_serve_asset_denied_when_referenced_doc_is_draft_and_user_cannot_read_draft() {
+        let asset_repo = MockAssetRepo::new();
+        let storage = MockStorage::new();
+
+        let asset = asset_with_refs("img.png", "ci-bot", vec!["draft-doc".to_string()]);
+        asset_repo.assets.lock().unwrap().push(asset.clone());
+        storage
+            .objects
+            .lock()
+            .unwrap()
+            .insert(asset.s3_key.clone(), b"data".to_vec());
+
+        let doc_repo = MockDocumentRepo::with(vec![test_doc("draft-doc", "public", true)]);
+        let allowed = vec!["public".to_string()];
+        let result = process_serve_asset(
+            &asset_repo,
+            &doc_repo,
+            &storage,
+            "img.png",
+            Some(&allowed),
+            false, // cannot read draft
+            None,
+        )
+        .await;
+
+        assert!(matches!(result.unwrap_err(), AppError::Forbidden(_)));
     }
 
     #[test]

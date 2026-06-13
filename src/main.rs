@@ -50,12 +50,228 @@ async fn static_cache_headers(
     response
 }
 
+/// Build the public + admin REST API route surface (state applied by the caller).
+///
+/// Upload endpoints get a 50 MB body limit; all other routes use Axum's default
+/// 2 MB limit. Keeping the full route surface in one auditable function makes it
+/// easy to review which endpoints exist and how they are authenticated.
+#[cfg(feature = "ssr")]
+fn api_routes() -> axum::Router<lekton::app::AppState> {
+    use axum::Router;
+    use lekton::api;
+
+    let upload_routes = Router::new()
+        .route(
+            "/api/v1/upload-image",
+            axum::routing::post(api::upload::upload_image_handler),
+        )
+        .route(
+            "/api/v1/editor/upload-asset",
+            axum::routing::post(api::assets::editor_upload_asset_handler),
+        )
+        .route(
+            "/api/v1/assets/check-hashes",
+            axum::routing::post(api::assets::check_hashes_handler),
+        )
+        .route(
+            "/api/v1/assets/{*key}",
+            axum::routing::put(api::assets::upload_asset_handler)
+                .get(api::assets::serve_asset_handler)
+                .delete(api::assets::delete_asset_handler),
+        )
+        .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024)); // 50 MB
+
+    Router::new()
+        .merge(upload_routes)
+        // Health endpoints
+        .route("/health", axum::routing::get(api::health::liveness_handler))
+        .route(
+            "/health/ready",
+            axum::routing::get(api::health::readiness_handler),
+        )
+        // API routes
+        .route(
+            "/api/v1/ingest",
+            axum::routing::post(api::ingest::ingest_handler),
+        )
+        .route(
+            "/api/v1/search",
+            axum::routing::get(api::search::search_handler),
+        )
+        .route(
+            "/api/v1/image/{filename}",
+            axum::routing::get(api::upload::serve_image_handler),
+        )
+        .route(
+            "/api/v1/schemas",
+            axum::routing::get(api::schemas::list_schemas_handler)
+                .post(api::schemas::ingest_schema_handler),
+        )
+        .route(
+            "/api/v1/schemas/sync",
+            axum::routing::post(api::schemas::schema_sync_handler),
+        )
+        .route(
+            "/api/v1/schemas/{*rest}",
+            axum::routing::get(api::schemas::get_schema_route_handler),
+        )
+        .route("/api/v1/sync", axum::routing::post(api::sync::sync_handler))
+        .route(
+            "/api/v1/prompts/ingest",
+            axum::routing::post(api::prompts::prompt_ingest_handler),
+        )
+        .route(
+            "/api/v1/prompts/sync",
+            axum::routing::post(api::prompts::prompt_sync_handler),
+        )
+        .route(
+            "/api/v1/assets",
+            axum::routing::get(api::assets::list_assets_handler),
+        )
+        // Admin API
+        .route(
+            "/api/v1/admin/access-levels",
+            axum::routing::get(api::admin::list_access_levels_handler)
+                .post(api::admin::create_access_level_handler),
+        )
+        .route(
+            "/api/v1/admin/access-levels/{name}",
+            axum::routing::put(api::admin::update_access_level_handler)
+                .delete(api::admin::delete_access_level_handler),
+        )
+        .route(
+            "/api/v1/admin/users",
+            axum::routing::get(api::admin::list_users_handler),
+        )
+        .route(
+            "/api/v1/admin/users/{user_id}",
+            axum::routing::get(api::admin::get_user_handler),
+        )
+        .route(
+            "/api/v1/admin/users/{user_id}/access-levels",
+            axum::routing::put(api::admin::set_user_access_levels_handler),
+        )
+        .route(
+            "/api/v1/admin/service-tokens",
+            axum::routing::get(api::admin::list_service_tokens_handler)
+                .post(api::admin::create_service_token_handler),
+        )
+        .route(
+            "/api/v1/admin/service-tokens/{id}",
+            axum::routing::delete(api::admin::deactivate_service_token_handler),
+        )
+        // PAT management (user self-service + admin)
+        .route(
+            "/api/v1/user/pats",
+            axum::routing::get(api::pat::list_user_pats_handler)
+                .post(api::pat::create_user_pat_handler),
+        )
+        .route(
+            "/api/v1/user/pats/{id}",
+            axum::routing::patch(api::pat::toggle_user_pat_handler)
+                .delete(api::pat::delete_user_pat_handler),
+        )
+        .route(
+            "/api/v1/admin/pats",
+            axum::routing::get(api::pat::admin_list_pats_handler),
+        )
+        .route(
+            "/api/v1/admin/pats/{id}",
+            axum::routing::patch(api::pat::admin_toggle_pat_handler),
+        )
+        .route(
+            "/api/v1/admin/rag/reindex",
+            axum::routing::post(api::rag::trigger_reindex_handler),
+        )
+        .route(
+            "/api/v1/admin/rag/reindex/status",
+            axum::routing::get(api::rag::reindex_status_handler),
+        )
+        .route(
+            "/api/v1/admin/search/reindex",
+            axum::routing::post(api::search::trigger_reindex_handler),
+        )
+        .route(
+            "/api/v1/admin/search/reindex/status",
+            axum::routing::get(api::search::reindex_status_handler),
+        )
+        .route(
+            "/api/v1/admin/schemas/reindex-endpoints",
+            axum::routing::post(api::schemas::trigger_schema_endpoint_reindex_handler),
+        )
+        .route(
+            "/api/v1/admin/schemas/reindex-endpoints/status",
+            axum::routing::get(api::schemas::schema_endpoint_reindex_status_handler),
+        )
+        .route(
+            "/api/v1/admin/rag/feedback",
+            axum::routing::get(api::rag::admin_list_feedback_handler),
+        )
+        .route(
+            "/api/v1/rag/chat",
+            axum::routing::post(api::rag::chat_handler),
+        )
+        .route(
+            "/api/v1/rag/sessions",
+            axum::routing::get(api::rag::list_sessions_handler),
+        )
+        .route(
+            "/api/v1/rag/sessions/{id}",
+            axum::routing::delete(api::rag::delete_session_handler),
+        )
+        .route(
+            "/api/v1/rag/sessions/{id}/messages",
+            axum::routing::get(api::rag::get_session_messages_handler),
+        )
+        .route(
+            "/api/v1/rag/messages/{id}/feedback",
+            axum::routing::post(api::rag::submit_feedback_handler)
+                .delete(api::rag::delete_feedback_handler),
+        )
+}
+
+/// Build the auth route surface: demo auth when `demo_mode`, OAuth2/OIDC otherwise.
+#[cfg(feature = "ssr")]
+fn auth_routes(demo_mode: bool) -> axum::Router<lekton::app::AppState> {
+    use axum::Router;
+
+    if demo_mode {
+        use lekton::auth::demo_auth;
+        Router::new()
+            .route(
+                "/api/auth/login",
+                axum::routing::post(demo_auth::login_handler),
+            )
+            .route("/api/auth/me", axum::routing::get(demo_auth::me_handler))
+            .route(
+                "/api/auth/logout",
+                axum::routing::post(demo_auth::logout_handler),
+            )
+    } else {
+        use lekton::api::auth as auth_api;
+        Router::new()
+            .route("/auth/login", axum::routing::get(auth_api::login_handler))
+            .route(
+                "/auth/callback",
+                axum::routing::get(auth_api::callback_handler),
+            )
+            .route(
+                "/auth/refresh",
+                axum::routing::post(auth_api::refresh_handler),
+            )
+            .route(
+                "/auth/logout",
+                axum::routing::post(auth_api::logout_handler),
+            )
+            .route("/auth/me", axum::routing::get(auth_api::me_handler))
+    }
+}
+
 #[cfg(feature = "ssr")]
 #[tokio::main]
 async fn main() {
     use axum::middleware;
     use axum::Router;
-    use lekton::api;
     use lekton::app::App;
     use lekton::auth::provider::build_provider;
     use lekton::auth::token_service::TokenService;
@@ -445,215 +661,18 @@ async fn main() {
     // Generate the Leptos route list for SSR
     let routes = generate_route_list(App);
 
-    // Build the Axum router
-    //
-    // Upload endpoints get a 50 MB body limit; all other routes use the
-    // default 2 MB limit provided by Axum.
-    let upload_routes = Router::new()
-        .route(
-            "/api/v1/upload-image",
-            axum::routing::post(api::upload::upload_image_handler),
-        )
-        .route(
-            "/api/v1/editor/upload-asset",
-            axum::routing::post(api::assets::editor_upload_asset_handler),
-        )
-        .route(
-            "/api/v1/assets/check-hashes",
-            axum::routing::post(api::assets::check_hashes_handler),
-        )
-        .route(
-            "/api/v1/assets/{*key}",
-            axum::routing::put(api::assets::upload_asset_handler)
-                .get(api::assets::serve_asset_handler)
-                .delete(api::assets::delete_asset_handler),
-        )
-        .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024)); // 50 MB
+    // Build the Axum router. The full route surface lives in api_routes() so it
+    // can be audited in one place; auth routes are mounted below.
+    let mut app = api_routes();
 
-    let mut app = Router::new()
-        .merge(upload_routes)
-        // Health endpoints
-        .route("/health", axum::routing::get(api::health::liveness_handler))
-        .route(
-            "/health/ready",
-            axum::routing::get(api::health::readiness_handler),
-        )
-        // API routes
-        .route(
-            "/api/v1/ingest",
-            axum::routing::post(api::ingest::ingest_handler),
-        )
-        .route(
-            "/api/v1/search",
-            axum::routing::get(api::search::search_handler),
-        )
-        .route(
-            "/api/v1/image/{filename}",
-            axum::routing::get(api::upload::serve_image_handler),
-        )
-        .route(
-            "/api/v1/schemas",
-            axum::routing::get(api::schemas::list_schemas_handler)
-                .post(api::schemas::ingest_schema_handler),
-        )
-        .route(
-            "/api/v1/schemas/sync",
-            axum::routing::post(api::schemas::schema_sync_handler),
-        )
-        .route(
-            "/api/v1/schemas/{*rest}",
-            axum::routing::get(api::schemas::get_schema_route_handler),
-        )
-        .route("/api/v1/sync", axum::routing::post(api::sync::sync_handler))
-        .route(
-            "/api/v1/prompts/ingest",
-            axum::routing::post(api::prompts::prompt_ingest_handler),
-        )
-        .route(
-            "/api/v1/prompts/sync",
-            axum::routing::post(api::prompts::prompt_sync_handler),
-        )
-        .route(
-            "/api/v1/assets",
-            axum::routing::get(api::assets::list_assets_handler),
-        )
-        // Admin API
-        .route(
-            "/api/v1/admin/access-levels",
-            axum::routing::get(api::admin::list_access_levels_handler)
-                .post(api::admin::create_access_level_handler),
-        )
-        .route(
-            "/api/v1/admin/access-levels/{name}",
-            axum::routing::put(api::admin::update_access_level_handler)
-                .delete(api::admin::delete_access_level_handler),
-        )
-        .route(
-            "/api/v1/admin/users",
-            axum::routing::get(api::admin::list_users_handler),
-        )
-        .route(
-            "/api/v1/admin/users/{user_id}",
-            axum::routing::get(api::admin::get_user_handler),
-        )
-        .route(
-            "/api/v1/admin/users/{user_id}/access-levels",
-            axum::routing::put(api::admin::set_user_access_levels_handler),
-        )
-        .route(
-            "/api/v1/admin/service-tokens",
-            axum::routing::get(api::admin::list_service_tokens_handler)
-                .post(api::admin::create_service_token_handler),
-        )
-        .route(
-            "/api/v1/admin/service-tokens/{id}",
-            axum::routing::delete(api::admin::deactivate_service_token_handler),
-        )
-        // PAT management (user self-service + admin)
-        .route(
-            "/api/v1/user/pats",
-            axum::routing::get(api::pat::list_user_pats_handler)
-                .post(api::pat::create_user_pat_handler),
-        )
-        .route(
-            "/api/v1/user/pats/{id}",
-            axum::routing::patch(api::pat::toggle_user_pat_handler)
-                .delete(api::pat::delete_user_pat_handler),
-        )
-        .route(
-            "/api/v1/admin/pats",
-            axum::routing::get(api::pat::admin_list_pats_handler),
-        )
-        .route(
-            "/api/v1/admin/pats/{id}",
-            axum::routing::patch(api::pat::admin_toggle_pat_handler),
-        )
-        .route(
-            "/api/v1/admin/rag/reindex",
-            axum::routing::post(api::rag::trigger_reindex_handler),
-        )
-        .route(
-            "/api/v1/admin/rag/reindex/status",
-            axum::routing::get(api::rag::reindex_status_handler),
-        )
-        .route(
-            "/api/v1/admin/search/reindex",
-            axum::routing::post(api::search::trigger_reindex_handler),
-        )
-        .route(
-            "/api/v1/admin/search/reindex/status",
-            axum::routing::get(api::search::reindex_status_handler),
-        )
-        .route(
-            "/api/v1/admin/schemas/reindex-endpoints",
-            axum::routing::post(api::schemas::trigger_schema_endpoint_reindex_handler),
-        )
-        .route(
-            "/api/v1/admin/schemas/reindex-endpoints/status",
-            axum::routing::get(api::schemas::schema_endpoint_reindex_status_handler),
-        )
-        .route(
-            "/api/v1/admin/rag/feedback",
-            axum::routing::get(api::rag::admin_list_feedback_handler),
-        )
-        .route(
-            "/api/v1/rag/chat",
-            axum::routing::post(api::rag::chat_handler),
-        )
-        .route(
-            "/api/v1/rag/sessions",
-            axum::routing::get(api::rag::list_sessions_handler),
-        )
-        .route(
-            "/api/v1/rag/sessions/{id}",
-            axum::routing::delete(api::rag::delete_session_handler),
-        )
-        .route(
-            "/api/v1/rag/sessions/{id}/messages",
-            axum::routing::get(api::rag::get_session_messages_handler),
-        )
-        .route(
-            "/api/v1/rag/messages/{id}/feedback",
-            axum::routing::post(api::rag::submit_feedback_handler)
-                .delete(api::rag::delete_feedback_handler),
-        );
-
-    // Mount demo auth routes when demo mode is enabled, OAuth2/OIDC routes otherwise
+    // Mount auth routes: demo auth when demo_mode is enabled, OAuth2/OIDC otherwise.
+    app = app.merge(auth_routes(demo_mode));
     if demo_mode {
-        use lekton::auth::demo_auth;
-
-        app = app
-            .route(
-                "/api/auth/login",
-                axum::routing::post(demo_auth::login_handler),
-            )
-            .route("/api/auth/me", axum::routing::get(demo_auth::me_handler))
-            .route(
-                "/api/auth/logout",
-                axum::routing::post(demo_auth::logout_handler),
-            );
-
         tracing::info!("Demo auth routes mounted: /api/auth/login, /api/auth/me, /api/auth/logout");
     } else {
-        use lekton::api::auth as auth_api;
-
-        app = app
-            .route("/auth/login", axum::routing::get(auth_api::login_handler))
-            .route(
-                "/auth/callback",
-                axum::routing::get(auth_api::callback_handler),
-            )
-            .route(
-                "/auth/refresh",
-                axum::routing::post(auth_api::refresh_handler),
-            )
-            .route(
-                "/auth/logout",
-                axum::routing::post(auth_api::logout_handler),
-            )
-            .route("/auth/me", axum::routing::get(auth_api::me_handler));
-
-        tracing::info!("OAuth2/OIDC auth routes mounted: /auth/login, /auth/callback, /auth/refresh, /auth/logout, /auth/me");
+        tracing::info!(
+            "OAuth2/OIDC auth routes mounted: /auth/login, /auth/callback, /auth/refresh, /auth/logout, /auth/me"
+        );
     }
 
     // MCP server (requires RAG — needs embedding + vectorstore)

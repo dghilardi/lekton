@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.28] 2026-06-13
+
 ### Fixed
 - Asset serving: access is now derived from the documents that reference each asset. Unreferenced assets are restricted to the uploader or admins; assets referenced by at least one document inherit the visibility of those documents via the standard `doc_is_accessible` check.
 - Editor: navigating between `/edit/*` routes no longer resets in-progress edits. Title and content signals are now seeded in an `Effect` that only fires when the loaded slug changes, not on every resource refetch.

@@ -149,6 +149,46 @@ pub fn doc_is_accessible(
     level_ok && (!is_draft || include_draft)
 }
 
+/// Resolve `(allowed_levels, include_draft)` for an optionally-authenticated user.
+///
+/// This is the single source of truth for user visibility used by all HTTP handlers
+/// that need to filter documents, schemas, or assets by access level.
+///
+/// - Admin → `(None, true)` (unrestricted).
+/// - Demo user → `(["public"], false)`.
+/// - Authenticated user → effective levels + `"public"` + `"loggeduser"`, `can_read_draft`.
+/// - Unauthenticated → `(["public"], false)`.
+#[cfg(feature = "ssr")]
+pub async fn resolve_user_visibility(
+    state: &AppState,
+    user: Option<&crate::auth::models::AuthenticatedUser>,
+) -> Result<(Option<Vec<String>>, bool), crate::error::AppError> {
+    match user {
+        Some(u) if u.is_admin => Ok((None, true)),
+        Some(u) if state.demo_mode && u.user_id.starts_with("demo-") => {
+            Ok((Some(vec!["public".to_string()]), false))
+        }
+        Some(u) => {
+            let user_doc = state.user_repo.find_user_by_id(&u.user_id).await?;
+            let (levels, include_draft) = match user_doc {
+                Some(doc) => {
+                    let mut levels = doc.effective_access_levels;
+                    if !levels.contains(&"public".to_string()) {
+                        levels.push("public".to_string());
+                    }
+                    if !levels.contains(&"loggeduser".to_string()) {
+                        levels.push("loggeduser".to_string());
+                    }
+                    (levels, doc.can_read_draft)
+                }
+                None => (vec!["public".to_string(), "loggeduser".to_string()], false),
+            };
+            Ok((Some(levels), include_draft))
+        }
+        None => Ok((Some(vec!["public".to_string()]), false)),
+    }
+}
+
 /// Root application component.
 #[component]
 pub fn App() -> impl IntoView {

@@ -596,36 +596,6 @@ pub async fn process_get_schema_content(
         .map_err(|e| AppError::Internal(format!("Invalid UTF-8 in schema content: {e}")))
 }
 
-#[cfg(feature = "ssr")]
-async fn schema_visibility_from_request(
-    state: &crate::app::AppState,
-    user: Option<&crate::auth::models::AuthenticatedUser>,
-) -> Result<Option<Vec<String>>, AppError> {
-    match user {
-        Some(user) if user.is_admin => Ok(None),
-        Some(user) if state.demo_mode && user.user_id.starts_with("demo-") => {
-            Ok(Some(vec!["public".to_string()]))
-        }
-        Some(user) => {
-            let user_doc = state.user_repo.find_user_by_id(&user.user_id).await?;
-            let effective = user_doc
-                .map(|u| {
-                    let mut levels = u.effective_access_levels;
-                    if !levels.contains(&"public".to_string()) {
-                        levels.push("public".to_string());
-                    }
-                    if !levels.contains(&"loggeduser".to_string()) {
-                        levels.push("loggeduser".to_string());
-                    }
-                    levels
-                })
-                .unwrap_or_else(|| vec!["public".to_string(), "loggeduser".to_string()]);
-            Ok(Some(effective))
-        }
-        None => Ok(Some(vec!["public".to_string()])),
-    }
-}
-
 /// Extracts API operations from a schema document for indexing.
 ///
 /// Returns an empty list for JSON Schema or unrecognised formats.
@@ -781,7 +751,7 @@ pub async fn list_schemas_handler(
     axum::extract::State(state): axum::extract::State<crate::app::AppState>,
     crate::auth::extractor::OptionalAuthUser(user): crate::auth::extractor::OptionalAuthUser,
 ) -> Result<axum::Json<Vec<SchemaListItem>>, AppError> {
-    let allowed_levels = schema_visibility_from_request(&state, user.as_ref()).await?;
+    let (allowed_levels, _) = crate::app::resolve_user_visibility(&state, user.as_ref()).await?;
     let result =
         process_list_schemas(state.schema_repo.as_ref(), allowed_levels.as_deref()).await?;
     Ok(axum::Json(result))
@@ -794,7 +764,7 @@ pub async fn get_schema_handler(
     crate::auth::extractor::OptionalAuthUser(user): crate::auth::extractor::OptionalAuthUser,
     axum::extract::Path(name): axum::extract::Path<String>,
 ) -> Result<axum::Json<SchemaDetail>, AppError> {
-    let allowed_levels = schema_visibility_from_request(&state, user.as_ref()).await?;
+    let (allowed_levels, _) = crate::app::resolve_user_visibility(&state, user.as_ref()).await?;
     let result =
         process_get_schema(state.schema_repo.as_ref(), &name, allowed_levels.as_deref()).await?;
     Ok(axum::Json(result))
@@ -809,7 +779,7 @@ pub async fn get_schema_version_handler(
 ) -> Result<axum::response::Response, AppError> {
     use axum::response::IntoResponse;
 
-    let allowed_levels = schema_visibility_from_request(&state, user.as_ref()).await?;
+    let (allowed_levels, _) = crate::app::resolve_user_visibility(&state, user.as_ref()).await?;
     let content = process_get_schema_content(
         state.schema_repo.as_ref(),
         state.storage_client.as_ref(),
@@ -842,7 +812,7 @@ pub async fn get_schema_route_handler(
 ) -> Result<axum::response::Response, AppError> {
     use axum::response::IntoResponse;
 
-    let allowed_levels = schema_visibility_from_request(&state, user.as_ref()).await?;
+    let (allowed_levels, _) = crate::app::resolve_user_visibility(&state, user.as_ref()).await?;
 
     if let Some(version) = params.get("version") {
         let content = process_get_schema_content(

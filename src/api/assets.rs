@@ -458,41 +458,6 @@ pub async fn upload_asset_handler(
     Ok(axum::Json(response))
 }
 
-/// Resolve asset visibility context from the optional authenticated user.
-///
-/// Returns `(allowed_levels, include_draft)` analogous to
-/// `UserContext::document_visibility()`.
-#[cfg(feature = "ssr")]
-async fn asset_visibility_from_request(
-    state: &crate::app::AppState,
-    user: Option<&crate::auth::models::AuthenticatedUser>,
-) -> Result<(Option<Vec<String>>, bool), AppError> {
-    match user {
-        Some(u) if u.is_admin => Ok((None, true)),
-        Some(u) if state.demo_mode && u.user_id.starts_with("demo-") => {
-            Ok((Some(vec!["public".to_string()]), false))
-        }
-        Some(u) => {
-            let user_doc = state.user_repo.find_user_by_id(&u.user_id).await?;
-            let (levels, include_draft) = match user_doc {
-                Some(doc) => {
-                    let mut levels = doc.effective_access_levels;
-                    if !levels.contains(&"public".to_string()) {
-                        levels.push("public".to_string());
-                    }
-                    if !levels.contains(&"loggeduser".to_string()) {
-                        levels.push("loggeduser".to_string());
-                    }
-                    (levels, doc.can_read_draft)
-                }
-                None => (vec!["public".to_string(), "loggeduser".to_string()], false),
-            };
-            Ok((Some(levels), include_draft))
-        }
-        None => Ok((Some(vec!["public".to_string()]), false)),
-    }
-}
-
 /// Axum handler for `GET /api/v1/assets/{*key}`.
 #[cfg(feature = "ssr")]
 pub async fn serve_asset_handler(
@@ -504,7 +469,7 @@ pub async fn serve_asset_handler(
 
     let user_email = user.as_ref().map(|u| u.email.as_str());
     let (allowed_levels, include_draft) =
-        asset_visibility_from_request(&state, user.as_ref()).await?;
+        crate::app::resolve_user_visibility(&state, user.as_ref()).await?;
 
     let (content_type, data) = process_serve_asset(
         state.asset_repo.as_ref(),

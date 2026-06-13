@@ -14,7 +14,9 @@ use super::vectorstore::{ChunkPayload, QdrantVectorStore, VectorPoint, VectorSto
 
 #[async_trait]
 pub trait RagService: Send + Sync {
-    /// Index (or re-index) a document: delete old chunks, split, embed, upsert.
+    /// Index (or re-index) a document: split, embed, upsert new chunks, then
+    /// delete stale ones (upsert-then-delete-stale, so a failed embedding never
+    /// leaves the document missing from the store).
     async fn index_document(
         &self,
         slug: &str,
@@ -79,16 +81,15 @@ impl RagService for DefaultRagService {
         is_draft: bool,
         tags: &[String],
     ) -> Result<(), AppError> {
-        // 1. Remove previous chunks for this document
-        self.vectorstore.delete_by_slug(slug).await?;
-
-        // 2. Split content into token-aware chunks
+        // 1. Split content into token-aware chunks
         let chunks = split_document(content, self.chunk_size_tokens, self.chunk_overlap_tokens);
         if chunks.is_empty() {
+            // Document has no indexable content: remove any previously indexed chunks.
+            self.vectorstore.delete_by_slug(slug).await?;
             return Ok(());
         }
 
-        // 3. Build enriched embedding texts: "Title > Section\n\nChunk text"
+        // 2. Build enriched embedding texts: "Title > Section\n\nChunk text"
         // The embedding vector is computed on the enriched text for better recall of
         // context-ambiguous chunks. The display text (chunk.text) stays clean for prompt
         // injection and UI rendering; only embedding_text is sent to the embedder.
@@ -105,11 +106,10 @@ impl RagService for DefaultRagService {
             .collect();
         let vectors = self.embedding.embed(&embedding_texts).await?;
 
-        // 4. Build Qdrant points, skipping any chunk whose embedding is empty.
+        // 3. Build Qdrant points, skipping any chunk whose embedding is empty.
         // Some embedding backends (e.g. Ollama) return [] for whitespace-only
         // or otherwise problematic inputs; sending a zero-dim vector to Qdrant
         // causes a hard error ("expected dim: 768, got 0").
-        let num_chunks = chunks.len();
         let points: Vec<VectorPoint> = chunks
             .into_iter()
             .zip(vectors)
@@ -140,8 +140,25 @@ impl RagService for DefaultRagService {
             })
             .collect();
 
-        // 5. Upsert into vector store
+        // All chunks failed to embed: leave the existing index untouched rather
+        // than wiping it on a degenerate embedding run (avoids silent data loss).
+        if points.is_empty() {
+            tracing::warn!(
+                slug,
+                "RAG: no embeddable chunks produced; existing index left intact"
+            );
+            return Ok(());
+        }
+
+        // 4. Upsert the new chunks, then 5. delete the stale ones (everything for
+        // this slug except the ids just written). Upsert-then-delete means the
+        // document is never absent from the store: embedding is computed before
+        // any destructive write, and a failure after upsert leaves duplicates
+        // (corrected on the next reindex) instead of a gap.
+        let num_chunks = points.len();
+        let new_ids: Vec<String> = points.iter().map(|p| p.id.clone()).collect();
         self.vectorstore.upsert_chunks(points).await?;
+        self.vectorstore.delete_stale_chunks(slug, &new_ids).await?;
 
         tracing::debug!(slug, chunks = num_chunks, "RAG: indexed document");
         Ok(())

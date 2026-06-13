@@ -64,6 +64,13 @@ pub trait VectorStore: Send + Sync {
     /// Delete all chunks that belong to a given document slug.
     async fn delete_by_slug(&self, slug: &str) -> Result<(), AppError>;
 
+    /// Delete chunks for a slug **except** the given point ids.
+    ///
+    /// Used after an upsert to remove stale chunks left by a previous indexing
+    /// pass (upsert-then-delete-stale), so the document is never absent from the
+    /// store. An empty `keep_ids` deletes every chunk for the slug.
+    async fn delete_stale_chunks(&self, slug: &str, keep_ids: &[String]) -> Result<(), AppError>;
+
     /// Semantic search filtered by access levels and draft visibility.
     ///
     /// * `access_levels` — `None` means unrestricted (admin), `Some([])` means no access.
@@ -248,6 +255,29 @@ impl VectorStore for QdrantVectorStore {
             )
             .await
             .map_err(|e| AppError::Internal(format!("qdrant delete_points: {e}")))?;
+
+        Ok(())
+    }
+
+    async fn delete_stale_chunks(&self, slug: &str, keep_ids: &[String]) -> Result<(), AppError> {
+        let mut must_not = Vec::new();
+        if !keep_ids.is_empty() {
+            must_not.push(Condition::has_id(keep_ids.iter().cloned()));
+        }
+        let filter = Filter {
+            must: vec![Condition::matches("document_slug", slug.to_string())],
+            must_not,
+            ..Default::default()
+        };
+
+        self.client
+            .delete_points(
+                DeletePointsBuilder::new(&self.collection)
+                    .points(filter)
+                    .wait(true),
+            )
+            .await
+            .map_err(|e| AppError::Internal(format!("qdrant delete_stale_chunks: {e}")))?;
 
         Ok(())
     }

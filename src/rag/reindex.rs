@@ -49,16 +49,21 @@ pub async fn run_reindex(
 
     tracing::info!(total, "RAG reindex: starting");
 
+    let mut skipped = 0usize;
+    let mut failed = 0usize;
+
     for (i, doc) in documents.iter().enumerate() {
         // Fetch content from S3
         let content = match storage.get_object(&doc.s3_key).await {
             Ok(Some(bytes)) => String::from_utf8_lossy(&bytes).into_owned(),
             Ok(None) => {
                 tracing::warn!(slug = %doc.slug, "RAG reindex: content not found in S3, skipping");
+                skipped += 1;
                 continue;
             }
             Err(e) => {
                 tracing::warn!(slug = %doc.slug, "RAG reindex: failed to read from S3: {e}");
+                failed += 1;
                 continue;
             }
         };
@@ -76,6 +81,7 @@ pub async fn run_reindex(
             .await
         {
             tracing::warn!(slug = %doc.slug, "RAG reindex: failed to index: {e}");
+            failed += 1;
         }
 
         // Update progress
@@ -83,7 +89,18 @@ pub async fn run_reindex(
         reindex.progress.store(pct, Ordering::Relaxed);
     }
 
-    tracing::info!(total, "RAG reindex: complete");
+    let indexed = total - failed - skipped;
+    if failed > 0 {
+        tracing::warn!(
+            total,
+            indexed,
+            skipped,
+            failed,
+            "RAG reindex: complete with failures"
+        );
+    } else {
+        tracing::info!(total, indexed, skipped, "RAG reindex: complete");
+    }
     reindex.progress.store(100, Ordering::Relaxed);
     reindex.is_running.store(false, Ordering::Release);
 }

@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - Schema registry: schema format (and the stored object extension / served content-type) is now detected by attempting a strict JSON parse rather than checking for a leading `{`. Array-rooted or BOM-prefixed JSON schemas are no longer mis-stored and served as YAML.
+- Chat: the "View session" deep-link from the profile feedback list (`/chat?session=<id>`) now loads that session's messages instead of opening an empty chat.
 
 ## [0.24.28] 2026-06-13
 

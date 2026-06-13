@@ -83,16 +83,30 @@ pub fn ChatPage() -> impl IntoView {
     #[allow(unused_variables)]
     let context = use_context::<ChatContext>().expect("ChatContext not found");
 
-    // Load sessions on mount
+    // Load sessions on mount; if a `session` query param is present (deep-link,
+    // e.g. "View session" from the profile feedback list), open that session.
     #[cfg(feature = "hydrate")]
     {
         use leptos::task::spawn_local;
         let sessions = context.sessions;
+        let messages = context.messages;
+        let session_id = context.session_id;
+        let deep_link_session = leptos_router::hooks::use_query_map()
+            .read_untracked()
+            .get("session");
         spawn_local(async move {
             if let Ok(list) = fetch_sessions().await {
                 sessions.set(list);
             }
         });
+        if let Some(sid) = deep_link_session {
+            session_id.set(Some(sid.clone()));
+            spawn_local(async move {
+                if let Ok(msgs) = fetch_session_messages(&sid).await {
+                    messages.set(msgs);
+                }
+            });
+        }
     }
 
     let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();

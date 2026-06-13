@@ -179,6 +179,21 @@ pub fn EditorPage() -> impl IntoView {
     let (_selection, set_selection) = signal(TiptapSelectionState::default());
     let (save_status, set_save_status) = signal(String::new());
     let (saving, set_saving) = signal(false);
+    // Sentinel: the slug whose content is currently loaded in the editor signals.
+    // The Effect below only overwrites title/value when the slug changes, so
+    // in-progress edits are never clobbered by a resource refetch for the same doc.
+    let (loaded_slug, set_loaded_slug) = signal(String::new());
+
+    Effect::new(move || {
+        let current_slug = slug();
+        if let Some(Ok(Some((doc_title, html)))) = doc_resource.get() {
+            if loaded_slug.get_untracked() != current_slug {
+                set_loaded_slug.set(current_slug);
+                set_title.set(doc_title);
+                set_value.set(html);
+            }
+        }
+    });
 
     let save_action = Action::new(move |_: &()| {
         let current_slug = slug();
@@ -199,10 +214,7 @@ pub fn EditorPage() -> impl IntoView {
         <Suspense fallback=move || view! { <div class="loading loading-spinner loading-lg"></div> }>
             {move || {
                 doc_resource.get().map(|result| match result {
-                    Ok(Some((doc_title, html))) => {
-                        set_title.set(doc_title);
-                        set_value.set(html);
-
+                    Ok(Some(_)) => {
                         view! {
                             <div class="space-y-4">
                                 // Title input

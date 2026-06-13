@@ -193,6 +193,11 @@ struct StoredPromptBlob {
 const DOCS_URI_SCHEME: &str = "lekton://docs/";
 const DOCS_RESOURCE_TEMPLATE: &str = "lekton://docs/{id}";
 
+/// Maximum schema artifact size returned by `get_schema_content`, in bytes.
+/// Schemas are arbitrary uploads; cap the response to avoid materialising a
+/// huge object as a UTF-8 string.
+const MAX_SCHEMA_CONTENT_BYTES: usize = 5 * 1024 * 1024;
+
 // ── MCP Server ──────────────────────────────────────────────────────────────
 
 /// The MCP server instance, created once per session.
@@ -672,8 +677,28 @@ impl LektonMcpServer {
                 )
             })?;
 
-        let content = String::from_utf8(bytes)
-            .map_err(|e| McpError::internal_error(format!("Invalid UTF-8 content: {e}"), None))?;
+        if bytes.len() > MAX_SCHEMA_CONTENT_BYTES {
+            return Err(McpError::invalid_params(
+                format!(
+                    "Schema content for '{}'@'{}' is too large to return ({} bytes, max {})",
+                    params.name,
+                    params.version,
+                    bytes.len(),
+                    MAX_SCHEMA_CONTENT_BYTES
+                ),
+                None,
+            ));
+        }
+
+        let content = String::from_utf8(bytes).map_err(|_| {
+            McpError::invalid_params(
+                format!(
+                    "Schema content for '{}'@'{}' is not valid UTF-8 text",
+                    params.name, params.version
+                ),
+                None,
+            )
+        })?;
 
         let mime = if version.s3_key.ends_with(".yaml") || version.s3_key.ends_with(".yml") {
             "application/yaml"

@@ -6,12 +6,16 @@
 //! and injects a [`UserContext`] into the request extensions so that downstream
 //! handlers can enforce access-level filtering.
 //!
-//! ## Admin PAT (no user_id)
+//! ## User-less PAT (no user_id)
 //!
-//! If the PAT has `user_id = None`, it is treated as an admin token with full
-//! access to all documents. This is useful for machine-to-machine integrations
-//! (e.g. demo mode, CI pipelines) where tying the token to a specific user
-//! account is not practical.
+//! A PAT with `user_id = None` is a machine token not tied to a user account
+//! (e.g. for machine-to-machine integrations). Its access is bounded by the
+//! token's optional `access_levels`:
+//!
+//! - `Some(levels)` — a scoped, non-admin context limited to `levels`, with
+//!   `can_write` taken from the token.
+//! - `None` — full admin (historical behaviour). Provision such tokens
+//!   sparingly: a leaked one exposes the entire corpus.
 
 use std::sync::Arc;
 
@@ -81,18 +85,33 @@ pub async fn pat_auth_middleware(
             };
             UserContext::from_user_doc(auth_user, &user)
         }
-        // Admin PAT — no user_id, full access to all documents
-        None => UserContext {
-            user: AuthenticatedUser {
-                user_id: token.id.clone(),
-                email: format!("pat:{}@lekton", token.name),
-                name: Some(token.name.clone()),
-                is_admin: true,
+        // User-less PAT — bounded by the token's access_levels when set,
+        // otherwise full admin (historical behaviour).
+        None => match token.access_levels.clone() {
+            Some(levels) => UserContext {
+                user: AuthenticatedUser {
+                    user_id: token.id.clone(),
+                    email: format!("pat:{}@lekton", token.name),
+                    name: Some(token.name.clone()),
+                    is_admin: false,
+                },
+                effective_access_levels: levels,
+                can_write: token.can_write,
+                can_read_draft: false,
+                can_write_draft: false,
             },
-            effective_access_levels: vec![],
-            can_write: true,
-            can_read_draft: true,
-            can_write_draft: true,
+            None => UserContext {
+                user: AuthenticatedUser {
+                    user_id: token.id.clone(),
+                    email: format!("pat:{}@lekton", token.name),
+                    name: Some(token.name.clone()),
+                    is_admin: true,
+                },
+                effective_access_levels: vec![],
+                can_write: true,
+                can_read_draft: true,
+                can_write_draft: true,
+            },
         },
     };
 

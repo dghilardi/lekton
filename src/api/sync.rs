@@ -594,6 +594,7 @@ mod tests {
             token_type: "service".to_string(),
             user_id: None,
             can_write,
+            access_levels: None,
             created_by: "admin".to_string(),
             created_at: Utc::now(),
             last_used_at: None,

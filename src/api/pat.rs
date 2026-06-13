@@ -138,6 +138,7 @@ pub async fn create_user_pat_handler(
         token_type: "pat".to_string(),
         user_id: Some(user.user_id.clone()),
         can_write: false,
+        access_levels: None,
         created_by: user.user_id,
         created_at: now,
         last_used_at: None,

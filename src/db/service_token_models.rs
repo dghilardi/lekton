@@ -28,6 +28,13 @@ pub struct ServiceToken {
     /// Read access is implicit for all active tokens.
     #[serde(default)]
     pub can_write: bool,
+    /// Bounds a user-less admin PAT (`user_id = None`) to a specific set of
+    /// access levels instead of granting full admin. `None` preserves the
+    /// historical "full admin" behaviour for user-less PATs; `Some(levels)`
+    /// scopes the MCP context to those levels (non-admin). Ignored for
+    /// user-linked tokens, which derive access from the user.
+    #[serde(default)]
+    pub access_levels: Option<Vec<String>>,
     /// The admin user ID who created this token.
     pub created_by: String,
     /// When this token was created.
@@ -121,6 +128,7 @@ mod tests {
             token_type: "service".to_string(),
             user_id: None,
             can_write: true,
+            access_levels: None,
             created_by: "admin".to_string(),
             created_at: Utc::now(),
             last_used_at: None,

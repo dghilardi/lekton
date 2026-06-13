@@ -415,6 +415,7 @@ impl TestEnv {
             token_type: "service".to_string(),
             user_id: None,
             can_write,
+            access_levels: None,
             created_by: "test-admin".to_string(),
             created_at: chrono::Utc::now(),
             last_used_at: None,

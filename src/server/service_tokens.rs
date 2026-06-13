@@ -99,6 +99,7 @@ pub async fn create_service_token(
         token_type: "service".to_string(),
         user_id: None,
         can_write,
+        access_levels: None,
         created_by: user.user_id,
         created_at: chrono::Utc::now(),
         last_used_at: None,

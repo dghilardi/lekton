@@ -719,6 +719,7 @@ mod tests {
                     token_type: "service".into(),
                     user_id: None,
                     can_write: true,
+                    access_levels: None,
                     created_by: "admin".into(),
                     created_at: Utc::now(),
                     last_used_at: None,

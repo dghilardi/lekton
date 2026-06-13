@@ -59,36 +59,6 @@ impl MongoDocumentationFeedbackRepository {
             collection: db.collection("documentation_feedback"),
         }
     }
-
-    pub async fn ensure_indexes(&self) -> Result<(), AppError> {
-        use mongodb::options::IndexOptions;
-        use mongodb::IndexModel;
-
-        self.collection
-            .create_index(
-                IndexModel::builder()
-                    .keys(mongodb::bson::doc! { "id": 1 })
-                    .options(IndexOptions::builder().unique(true).build())
-                    .build(),
-            )
-            .await
-            .map_err(|e| {
-                AppError::Database(format!("create documentation_feedback id index: {e}"))
-            })?;
-
-        self.collection
-            .create_index(
-                IndexModel::builder()
-                    .keys(mongodb::bson::doc! { "status": 1, "kind": 1, "created_at": -1 })
-                    .build(),
-            )
-            .await
-            .map_err(|e| {
-                AppError::Database(format!("create documentation_feedback status index: {e}"))
-            })?;
-
-        Ok(())
-    }
 }
 
 #[cfg(feature = "ssr")]

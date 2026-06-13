@@ -53,23 +53,6 @@ impl MongoEmbeddingCacheRepository {
             collection: db.collection("embedding_cache"),
         }
     }
-
-    /// Ensure the unique compound index on `(hash, model)` exists.
-    pub async fn ensure_index(&self) -> Result<(), AppError> {
-        use mongodb::bson::doc;
-        use mongodb::options::IndexOptions;
-        use mongodb::IndexModel;
-
-        let opts = IndexOptions::builder().unique(true).build();
-        let model = IndexModel::builder()
-            .keys(doc! { "hash": 1, "model": 1 })
-            .options(opts)
-            .build();
-        self.collection.create_index(model).await.map_err(|e| {
-            AppError::Internal(format!("embedding_cache index creation failed: {e}"))
-        })?;
-        Ok(())
-    }
 }
 
 #[cfg(feature = "ssr")]

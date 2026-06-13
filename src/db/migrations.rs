@@ -44,6 +44,21 @@ mod inner {
                 "davide.ghilardi@comelit.it",
                 add_refresh_tokens_hash_index,
             )
+            .register(
+                "008_add_documents_indexes",
+                "davide.ghilardi@comelit.it",
+                add_documents_indexes,
+            )
+            .register(
+                "009_add_documentation_feedback_indexes",
+                "davide.ghilardi@comelit.it",
+                add_documentation_feedback_indexes,
+            )
+            .register(
+                "010_add_embedding_cache_index",
+                "davide.ghilardi@comelit.it",
+                add_embedding_cache_index,
+            )
     }
 
     /// Backfills `created_at` on AccessLevelEntity documents created before the
@@ -153,6 +168,82 @@ mod inner {
             .create_index(
                 IndexModel::builder()
                     .keys(bson::doc! { "token_hash": 1 })
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Creates indexes on the `documents` collection:
+    /// - unique on `slug` (primary lookup key; prevents concurrent-ingest duplicates)
+    /// - non-unique on `source_path` and `source_id` (sync rename detection)
+    async fn add_documents_indexes(db: Database) -> Result<(), mongodb::error::Error> {
+        use mongodb::options::IndexOptions;
+        use mongodb::IndexModel;
+
+        let col = db.collection::<bson::Document>("documents");
+
+        col.create_index(
+            IndexModel::builder()
+                .keys(bson::doc! { "slug": 1 })
+                .options(IndexOptions::builder().unique(true).build())
+                .build(),
+        )
+        .await?;
+
+        col.create_index(
+            IndexModel::builder()
+                .keys(bson::doc! { "source_path": 1 })
+                .build(),
+        )
+        .await?;
+
+        col.create_index(
+            IndexModel::builder()
+                .keys(bson::doc! { "source_id": 1 })
+                .build(),
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    /// Creates indexes on `documentation_feedback` (previously in `ensure_indexes()`).
+    async fn add_documentation_feedback_indexes(db: Database) -> Result<(), mongodb::error::Error> {
+        use mongodb::options::IndexOptions;
+        use mongodb::IndexModel;
+
+        let col = db.collection::<bson::Document>("documentation_feedback");
+
+        col.create_index(
+            IndexModel::builder()
+                .keys(bson::doc! { "id": 1 })
+                .options(IndexOptions::builder().unique(true).build())
+                .build(),
+        )
+        .await?;
+
+        col.create_index(
+            IndexModel::builder()
+                .keys(bson::doc! { "status": 1, "kind": 1, "created_at": -1 })
+                .build(),
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    /// Creates the unique compound index on `(hash, model)` for `embedding_cache`
+    /// (previously in `ensure_index()`).
+    async fn add_embedding_cache_index(db: Database) -> Result<(), mongodb::error::Error> {
+        use mongodb::options::IndexOptions;
+        use mongodb::IndexModel;
+
+        db.collection::<bson::Document>("embedding_cache")
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "hash": 1, "model": 1 })
                     .options(IndexOptions::builder().unique(true).build())
                     .build(),
             )

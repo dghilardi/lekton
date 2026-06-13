@@ -205,22 +205,15 @@ async fn main() {
         } else {
             None
         };
-    let documentation_feedback_repo_impl = MongoDocumentationFeedbackRepository::new(&mongo_db);
-    if let Err(e) = documentation_feedback_repo_impl.ensure_indexes().await {
-        tracing::warn!("Failed to create documentation feedback indexes: {e}");
-    }
     let documentation_feedback_repo: Arc<
         dyn lekton::db::documentation_feedback_repository::DocumentationFeedbackRepository,
-    > = Arc::new(documentation_feedback_repo_impl);
+    > = Arc::new(MongoDocumentationFeedbackRepository::new(&mongo_db));
     let embedding_cache_repo: Option<
         Arc<dyn lekton::db::embedding_cache_repository::EmbeddingCacheRepository>,
     > = if config.rag.is_enabled() {
-        let repo =
-            lekton::db::embedding_cache_repository::MongoEmbeddingCacheRepository::new(&mongo_db);
-        if let Err(e) = repo.ensure_index().await {
-            tracing::warn!("Failed to create embedding cache index: {e}");
-        }
-        Some(Arc::new(repo))
+        Some(Arc::new(
+            lekton::db::embedding_cache_repository::MongoEmbeddingCacheRepository::new(&mongo_db),
+        ))
     } else {
         None
     };

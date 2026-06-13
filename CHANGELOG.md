@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Documents collection now has fail-fast indexes on `slug` (unique), `source_path`, and `source_id`, created via the migration plan instead of a best-effort startup call. Indexes for `documentation_feedback` and `embedding_cache` are likewise moved to migrations, making all index creation versioned, ordered, and fatal on failure.
+
 ## [0.24.27] 2026-06-13
 
 ## [0.24.26] 2026-06-12

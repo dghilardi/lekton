@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - Editor: navigating between `/edit/*` routes no longer resets in-progress edits. Title and content signals are now seeded in an `Effect` that only fires when the loaded slug changes, not on every resource refetch.
+- Added shared wire-vector tests (CLI ↔ server) for document, prompt, and schema metadata hashes, so any future canonical-format drift is caught immediately.
 
 ### Changed
 - Documents collection now has fail-fast indexes on `slug` (unique), `source_path`, and `source_id`, created via the migration plan instead of a best-effort startup call. Indexes for `documentation_feedback` and `embedding_cache` are likewise moved to migrations, making all index creation versioned, ordered, and fatal on failure.

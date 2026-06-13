@@ -1021,4 +1021,35 @@ mod tests {
             "hash must serialize status/context_cost as lowercase (CLI wire format)"
         );
     }
+
+    /// Shared wire vector with `cli/src/hash.rs::prompt_metadata_hash_wire_vector`.
+    /// If the canonical string format ever changes on one side, this test catches it.
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn prompt_metadata_hash_wire_vector() {
+        let req = PromptIngestRequest {
+            service_token: String::new(),
+            slug: "prompts/my-prompt".into(),
+            name: "My Prompt".into(),
+            description: "Does something".into(),
+            prompt_body: String::new(),
+            access_level: "internal".into(),
+            status: PromptStatus::Active,
+            owner: "platform".into(),
+            tags: vec!["ai".into(), "code".into()],
+            variables: vec![PromptVariable {
+                name: "topic".into(),
+                description: "The topic".into(),
+                required: true,
+            }],
+            publish_to_mcp: true,
+            default_primary: false,
+            context_cost: ContextCost::Low,
+        };
+        assert_eq!(
+            compute_prompt_metadata_hash(&req),
+            "sha256:1sQ3VcAQpx-fF4X-vbVjDou524ey2ZnZj1NuEu9Ts6Q",
+            "prompt metadata hash wire contract with CLI"
+        );
+    }
 }

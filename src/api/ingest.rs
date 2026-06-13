@@ -1563,4 +1563,25 @@ mod tests {
             "parent_slug must be clearable via ingest"
         );
     }
+
+    /// Shared wire vector with `cli/src/hash.rs::document_metadata_hash_wire_vector`.
+    /// If the canonical string format ever changes on one side, this test catches it.
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn document_metadata_hash_wire_vector() {
+        let got = compute_metadata_hash(MetadataHashInput {
+            title: "Test Doc",
+            summary: Some("A test document"),
+            access_level: "internal",
+            service_owner: "platform",
+            tags: &["rust".to_string(), "web".to_string()],
+            parent_slug: Some("guides"),
+            order: 5,
+            is_hidden: false,
+        });
+        assert_eq!(
+            got, "sha256:zwiTusSDUfQZa8E3I2cGxlQ21XSoiQW4u3R8GgXT0bc",
+            "document metadata hash wire contract with CLI"
+        );
+    }
 }

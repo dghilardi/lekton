@@ -160,6 +160,61 @@ mod tests {
         );
     }
 
+    /// Shared wire vector with `src/api/ingest.rs::document_metadata_hash_wire_vector`.
+    /// If the canonical JSON format ever drifts between CLI and server, this catches it.
+    #[test]
+    fn document_metadata_hash_wire_vector() {
+        let got = compute_metadata_hash(
+            "Test Doc",
+            Some("A test document"),
+            "internal",
+            "platform",
+            &["rust".to_string(), "web".to_string()],
+            Some("guides"),
+            5,
+            false,
+        );
+        assert_eq!(
+            got, "sha256:zwiTusSDUfQZa8E3I2cGxlQ21XSoiQW4u3R8GgXT0bc",
+            "document metadata hash wire contract with server"
+        );
+    }
+
+    /// Shared wire vector with `src/api/prompts.rs::prompt_metadata_hash_wire_vector`.
+    #[test]
+    fn prompt_metadata_hash_wire_vector() {
+        let got = compute_prompt_metadata_hash(
+            "My Prompt",
+            "Does something",
+            "internal",
+            "active",
+            "platform",
+            &["ai".to_string(), "code".to_string()],
+            &[PromptVariable {
+                name: "topic".to_string(),
+                description: "The topic".to_string(),
+                required: true,
+            }],
+            true,
+            false,
+            "low",
+        );
+        assert_eq!(
+            got, "sha256:1sQ3VcAQpx-fF4X-vbVjDou524ey2ZnZj1NuEu9Ts6Q",
+            "prompt metadata hash wire contract with server"
+        );
+    }
+
+    /// Shared wire vector with `src/api/schemas.rs::schema_metadata_hash_wire_vector`.
+    #[test]
+    fn schema_metadata_hash_wire_vector() {
+        let got = compute_schema_metadata_hash("active", "internal");
+        assert_eq!(
+            got, "sha256:euK7yhXUhu3ACjYxviKr-mIkQAHKBUWkZ6Vkqsio09s",
+            "schema metadata hash wire contract with server"
+        );
+    }
+
     #[test]
     fn compute_metadata_hash_tags_order_independent() {
         let h1 = compute_metadata_hash(

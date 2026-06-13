@@ -1386,4 +1386,16 @@ mod tests {
 
         assert!(matches!(result, Err(AppError::NotFound(_))));
     }
+
+    /// Shared wire vector with `cli/src/hash.rs::schema_metadata_hash_wire_vector`.
+    /// If the canonical string format ever changes on one side, this test catches it.
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn schema_metadata_hash_wire_vector() {
+        assert_eq!(
+            compute_schema_metadata_hash("active", "internal"),
+            "sha256:euK7yhXUhu3ACjYxviKr-mIkQAHKBUWkZ6Vkqsio09s",
+            "schema metadata hash wire contract with CLI"
+        );
+    }
 }

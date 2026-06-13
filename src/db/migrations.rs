@@ -178,11 +178,40 @@ mod inner {
     /// Creates indexes on the `documents` collection:
     /// - unique on `slug` (primary lookup key; prevents concurrent-ingest duplicates)
     /// - non-unique on `source_path` and `source_id` (sync rename detection)
+    ///
+    /// Runs a pre-flight check before creating the unique `slug` index: if any
+    /// duplicate slugs exist (possible due to the concurrent-ingest race described in
+    /// BUG-3), the migration fails with a clear message listing the offending slugs
+    /// instead of an opaque MongoDB E11000 error.
     async fn add_documents_indexes(db: Database) -> Result<(), mongodb::error::Error> {
+        use futures::TryStreamExt;
         use mongodb::options::IndexOptions;
         use mongodb::IndexModel;
 
         let col = db.collection::<bson::Document>("documents");
+
+        // Pre-flight: detect duplicate slugs before attempting to build the unique index.
+        let pipeline = vec![
+            bson::doc! { "$group": { "_id": "$slug", "count": { "$sum": 1 } } },
+            bson::doc! { "$match": { "count": { "$gt": 1 } } },
+            bson::doc! { "$sort": { "_id": 1 } },
+        ];
+        let mut cursor = col.aggregate(pipeline).await?;
+        let mut duplicates: Vec<String> = Vec::new();
+        while let Some(doc) = cursor.try_next().await? {
+            if let Some(slug) = doc.get_str("_id").ok() {
+                duplicates.push(slug.to_string());
+            }
+        }
+        if !duplicates.is_empty() {
+            return Err(mongodb::error::Error::custom(format!(
+                "Migration 008 pre-flight failed: {} duplicate slug(s) found in the \
+                 'documents' collection. Resolve them before restarting, then retry.\n\
+                 Duplicate slugs: {}",
+                duplicates.len(),
+                duplicates.join(", ")
+            )));
+        }
 
         col.create_index(
             IndexModel::builder()

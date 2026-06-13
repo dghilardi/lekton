@@ -14,6 +14,9 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - Documents collection now has fail-fast indexes on `slug` (unique), `source_path`, and `source_id`, created via the migration plan instead of a best-effort startup call. Indexes for `documentation_feedback` and `embedding_cache` are likewise moved to migrations, making all index creation versioned, ordered, and fatal on failure.
 
+### Security
+- Asset serving now sets `X-Content-Type-Options: nosniff` and a `Content-Disposition` header (images and PDFs `inline`, all other types — including SVG — `attachment`), preventing stored-XSS from SVG or other uploaded content being rendered as a top-level document in the origin.
+
 ## [0.24.27] 2026-06-13
 
 ## [0.24.26] 2026-06-12
@@ -29,6 +32,8 @@ All notable changes to this project will be documented in this file.
 - `lekton-sync`: negative `order` values in front-matter now produce a descriptive error (with file path and value) instead of an opaque HTTP 400.
 - Schemas REST API: authenticated non-admin users can now see schemas with `public` access level.
 - MCP `search_documentation_feedback`: non-admin users now only see their own feedback reports.
+- Static asset caching: the 1-year `immutable` cache is now applied only when an actual `v` fingerprint query parameter is present, not for any query string merely containing the substring `v=` (e.g. `?nav=1`).
+- Startup: removed debug `println!` lines that wrote the demo-mode environment variable to stdout before logging was initialized; replaced with a gated `tracing::debug!`.
 
 ### Security
 - Editor asset upload endpoint now requires an authenticated session.

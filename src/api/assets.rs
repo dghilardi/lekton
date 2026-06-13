@@ -29,6 +29,20 @@ pub fn safe_content_type_from_filename(filename: &str) -> &'static str {
     }
 }
 
+/// Decide the `Content-Disposition` for a served asset from its content type.
+///
+/// Image and PDF types that browsers render safely are served `inline`. SVG is
+/// served `attachment` because it can carry executable script (a stored-XSS
+/// vector on direct navigation while still embeddable via `<img>`); everything
+/// else (including `application/octet-stream`) is also `attachment`, so untrusted
+/// bytes are never rendered as a top-level document in our origin.
+pub fn content_disposition_for(content_type: &str) -> &'static str {
+    match content_type {
+        "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "application/pdf" => "inline",
+        _ => "attachment",
+    }
+}
+
 /// Compute the SHA-256 content hash for an asset in `sha256:<base64url>` format.
 pub fn compute_content_hash(data: &[u8]) -> String {
     use base64::engine::{general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -503,7 +517,22 @@ pub async fn serve_asset_handler(
     )
     .await?;
 
-    Ok(([(axum::http::header::CONTENT_TYPE, content_type)], data).into_response())
+    let disposition = content_disposition_for(&content_type);
+    Ok((
+        [
+            (axum::http::header::CONTENT_TYPE, content_type),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                disposition.to_string(),
+            ),
+            (
+                axum::http::header::X_CONTENT_TYPE_OPTIONS,
+                "nosniff".to_string(),
+            ),
+        ],
+        data,
+    )
+        .into_response())
 }
 
 /// Axum handler for `GET /api/v1/assets`.
@@ -1596,6 +1625,25 @@ mod tests {
         assert_eq!(
             safe_content_type_from_filename("no_extension"),
             "application/octet-stream"
+        );
+    }
+
+    #[test]
+    fn content_disposition_is_attachment_for_svg_and_unknown_types() {
+        // Browser-safe render types are inline.
+        assert_eq!(content_disposition_for("image/png"), "inline");
+        assert_eq!(content_disposition_for("image/jpeg"), "inline");
+        assert_eq!(content_disposition_for("application/pdf"), "inline");
+        // SVG can carry script → never rendered as a top-level document.
+        assert_eq!(content_disposition_for("image/svg+xml"), "attachment");
+        // Everything else is downloaded, not rendered.
+        assert_eq!(
+            content_disposition_for("text/plain; charset=utf-8"),
+            "attachment"
+        );
+        assert_eq!(
+            content_disposition_for("application/octet-stream"),
+            "attachment"
         );
     }
 }

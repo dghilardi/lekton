@@ -467,36 +467,28 @@ async fn resolve_prompt_token_name(ctx: &PromptIngestContext<'_>, raw_token: &st
     }
 }
 
+/// Validate the token for prompt sync (a write precursor) and return its scopes.
+/// Requires `can_write`; a read-only token is rejected.
 #[cfg(feature = "ssr")]
 async fn validate_sync_token(
     service_token_repo: &dyn crate::db::service_token_repository::ServiceTokenRepository,
     legacy_token: Option<&str>,
     raw_token: &str,
 ) -> Result<Vec<String>, AppError> {
-    if let Some(legacy) = legacy_token {
-        if !legacy.is_empty() && raw_token == legacy {
-            return Ok(vec!["*".to_string()]);
-        }
+    let resolved = crate::api::token_validation::resolve_service_token(
+        service_token_repo,
+        legacy_token,
+        raw_token,
+    )
+    .await?;
+
+    if !resolved.can_write {
+        return Err(AppError::Forbidden(
+            "Token does not have write permission".into(),
+        ));
     }
 
-    let token_hash = crate::auth::token_service::TokenService::hash_token(raw_token);
-    let token = service_token_repo
-        .find_by_hash(&token_hash)
-        .await?
-        .ok_or_else(|| AppError::Auth("Invalid service token".into()))?;
-
-    if !token.is_active {
-        return Err(AppError::Auth("Service token is deactivated".into()));
-    }
-
-    if let Err(err) = service_token_repo.touch_last_used(&token.id).await {
-        tracing::warn!(
-            "Failed to update last_used_at for token {}: {err}",
-            token.id
-        );
-    }
-
-    Ok(token.allowed_scopes)
+    Ok(resolved.scopes)
 }
 
 #[cfg(feature = "ssr")]

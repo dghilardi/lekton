@@ -465,42 +465,23 @@ async fn validate_token(
     raw_token: &str,
     slug: &str,
 ) -> Result<(), AppError> {
-    // 1. Legacy token bypass (full access, no scope check)
-    if let Some(legacy) = ctx.legacy_token {
-        if !legacy.is_empty() && raw_token == legacy {
-            return Ok(());
-        }
-    }
+    let resolved = crate::api::token_validation::resolve_service_token(
+        ctx.service_token_repo,
+        ctx.legacy_token,
+        raw_token,
+    )
+    .await?;
 
-    // 2. Look up scoped token by hash
-    let token_hash = crate::auth::token_service::TokenService::hash_token(raw_token);
-    let token = ctx
-        .service_token_repo
-        .find_by_hash(&token_hash)
-        .await?
-        .ok_or_else(|| AppError::Auth("Invalid service token".into()))?;
-
-    if !token.is_active {
-        return Err(AppError::Auth("Service token is deactivated".into()));
-    }
-
-    if !token.can_write {
+    if !resolved.can_write {
         return Err(AppError::Forbidden(
             "Token does not have write permission".into(),
         ));
     }
 
-    if !token.matches_slug(slug) {
+    if !crate::api::sync::scope_matches_any(slug, &resolved.scopes) {
         return Err(AppError::Forbidden(
             "Token does not have access to this document scope".into(),
         ));
-    }
-
-    // Fire-and-forget last_used update
-    let id = token.id.clone();
-    let repo = ctx.service_token_repo;
-    if let Err(e) = repo.touch_last_used(&id).await {
-        tracing::warn!("Failed to update last_used_at for token {id}: {e}");
     }
 
     Ok(())

@@ -225,36 +225,29 @@ pub async fn process_sync(
 
 /// Validate the token for sync and return its scopes.
 /// Legacy token gets a wildcard scope ("*").
+///
+/// Sync is a precursor to writes (it tells the client what to upload), so the
+/// token must have `can_write`; a read-only token is rejected.
 #[cfg(feature = "ssr")]
 pub(crate) async fn validate_sync_token(
     service_token_repo: &dyn crate::db::service_token_repository::ServiceTokenRepository,
     legacy_token: Option<&str>,
     raw_token: &str,
 ) -> Result<Vec<String>, AppError> {
-    // Legacy token bypass — full access
-    if let Some(legacy) = legacy_token {
-        if !legacy.is_empty() && raw_token == legacy {
-            return Ok(vec!["*".to_string()]);
-        }
+    let resolved = crate::api::token_validation::resolve_service_token(
+        service_token_repo,
+        legacy_token,
+        raw_token,
+    )
+    .await?;
+
+    if !resolved.can_write {
+        return Err(AppError::Forbidden(
+            "Token does not have write permission".into(),
+        ));
     }
 
-    // Look up scoped token
-    let token_hash = crate::auth::token_service::TokenService::hash_token(raw_token);
-    let token = service_token_repo
-        .find_by_hash(&token_hash)
-        .await?
-        .ok_or_else(|| AppError::Auth("Invalid service token".into()))?;
-
-    if !token.is_active {
-        return Err(AppError::Auth("Service token is deactivated".into()));
-    }
-
-    // Touch last_used (fire-and-forget)
-    if let Err(e) = service_token_repo.touch_last_used(&token.id).await {
-        tracing::warn!("Failed to update last_used_at for token {}: {e}", token.id);
-    }
-
-    Ok(token.allowed_scopes)
+    Ok(resolved.scopes)
 }
 
 /// Check if a slug matches any of the given scopes.
@@ -538,6 +531,76 @@ mod tests {
         }
     }
 
+    /// A token repo returning a single configurable token on matching hash.
+    struct ScopedTokenRepo(ServiceToken);
+    #[async_trait]
+    impl ServiceTokenRepository for ScopedTokenRepo {
+        async fn create(&self, _: ServiceToken) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn find_by_hash(&self, hash: &str) -> Result<Option<ServiceToken>, AppError> {
+            if hash == self.0.token_hash {
+                Ok(Some(self.0.clone()))
+            } else {
+                Ok(None)
+            }
+        }
+        async fn find_by_name(&self, _: &str) -> Result<Option<ServiceToken>, AppError> {
+            Ok(None)
+        }
+        async fn find_by_id(&self, _: &str) -> Result<Option<ServiceToken>, AppError> {
+            Ok(None)
+        }
+        async fn list_all(&self) -> Result<Vec<ServiceToken>, AppError> {
+            Ok(vec![])
+        }
+        async fn deactivate(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn touch_last_used(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn check_scope_overlap(
+            &self,
+            _: &[String],
+            _: Option<&str>,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        async fn set_active(&self, _: &str, _: bool) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn list_by_user_id(&self, _: &str) -> Result<Vec<ServiceToken>, AppError> {
+            Ok(vec![])
+        }
+        async fn list_pats_paginated(
+            &self,
+            _: u64,
+            _: u64,
+        ) -> Result<(Vec<ServiceToken>, u64), AppError> {
+            Ok((vec![], 0))
+        }
+        async fn delete_pat(&self, _: &str, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+
+    fn make_service_token(scopes: Vec<&str>, can_write: bool) -> ServiceToken {
+        ServiceToken {
+            id: "st-1".to_string(),
+            name: "test".to_string(),
+            token_hash: crate::auth::token_service::TokenService::hash_token("scoped-tok"),
+            allowed_scopes: scopes.into_iter().map(String::from).collect(),
+            token_type: "service".to_string(),
+            user_id: None,
+            can_write,
+            created_by: "admin".to_string(),
+            created_at: Utc::now(),
+            last_used_at: None,
+            is_active: true,
+        }
+    }
+
     fn make_doc(slug: &str, hash: &str) -> Document {
         Document {
             slug: slug.to_string(),
@@ -686,75 +749,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_sync_scope_validation() {
-        let scoped = ServiceToken {
-            id: "st-1".to_string(),
-            name: "test".to_string(),
-            token_hash: crate::auth::token_service::TokenService::hash_token("scoped-tok"),
-            allowed_scopes: vec!["protocols/*".to_string()],
-            token_type: "service".to_string(),
-            user_id: None,
-            can_write: true,
-            created_by: "admin".to_string(),
-            created_at: Utc::now(),
-            last_used_at: None,
-            is_active: true,
-        };
-
-        struct ScopedTokenRepo(ServiceToken);
-        #[async_trait]
-        impl ServiceTokenRepository for ScopedTokenRepo {
-            async fn create(&self, _: ServiceToken) -> Result<(), AppError> {
-                Ok(())
-            }
-            async fn find_by_hash(&self, hash: &str) -> Result<Option<ServiceToken>, AppError> {
-                if hash == self.0.token_hash {
-                    Ok(Some(self.0.clone()))
-                } else {
-                    Ok(None)
-                }
-            }
-            async fn find_by_name(&self, _: &str) -> Result<Option<ServiceToken>, AppError> {
-                Ok(None)
-            }
-            async fn find_by_id(&self, _: &str) -> Result<Option<ServiceToken>, AppError> {
-                Ok(None)
-            }
-            async fn list_all(&self) -> Result<Vec<ServiceToken>, AppError> {
-                Ok(vec![])
-            }
-            async fn deactivate(&self, _: &str) -> Result<(), AppError> {
-                Ok(())
-            }
-            async fn touch_last_used(&self, _: &str) -> Result<(), AppError> {
-                Ok(())
-            }
-            async fn check_scope_overlap(
-                &self,
-                _: &[String],
-                _: Option<&str>,
-            ) -> Result<bool, AppError> {
-                Ok(false)
-            }
-            async fn set_active(&self, _: &str, _: bool) -> Result<(), AppError> {
-                Ok(())
-            }
-            async fn list_by_user_id(&self, _: &str) -> Result<Vec<ServiceToken>, AppError> {
-                Ok(vec![])
-            }
-            async fn list_pats_paginated(
-                &self,
-                _: u64,
-                _: u64,
-            ) -> Result<(Vec<ServiceToken>, u64), AppError> {
-                Ok((vec![], 0))
-            }
-            async fn delete_pat(&self, _: &str, _: &str) -> Result<(), AppError> {
-                Ok(())
-            }
-        }
-
         let repo = MockRepo::new();
-        let token_repo = ScopedTokenRepo(scoped);
+        let token_repo = ScopedTokenRepo(make_service_token(vec!["protocols/*"], true));
         let request = SyncRequest {
             service_token: "scoped-tok".to_string(),
             source_id: "test-source".to_string(),
@@ -775,6 +771,34 @@ mod tests {
         match result.unwrap_err() {
             AppError::Forbidden(msg) => assert!(msg.contains("docs/outside")),
             other => panic!("Expected Forbidden, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sync_rejects_read_only_token() {
+        // A token without can_write must not be able to drive a sync (which is a
+        // precursor to uploads), even when the slug is within its scope.
+        let repo = MockRepo::new();
+        let token_repo = ScopedTokenRepo(make_service_token(vec!["*"], false));
+        let request = SyncRequest {
+            service_token: "scoped-tok".to_string(),
+            source_id: "test-source".to_string(),
+            documents: vec![entry("docs/a", "sha256:abc")],
+            archive_missing: false,
+        };
+
+        let result = process_sync(
+            &repo,
+            &token_repo,
+            None,
+            None,
+            Some("other-legacy"),
+            request,
+        )
+        .await;
+        match result.unwrap_err() {
+            AppError::Forbidden(msg) => assert!(msg.contains("write permission")),
+            other => panic!("Expected Forbidden (write permission), got: {:?}", other),
         }
     }
 

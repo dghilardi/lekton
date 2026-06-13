@@ -359,11 +359,8 @@ fn endpoint_matches_query(endpoint: &crate::db::models::SchemaEndpoint, query: &
 }
 
 fn schema_list_entry(schema: &Schema, visible_versions: &[&SchemaVersion]) -> serde_json::Value {
-    let latest = visible_versions
-        .iter()
-        .find(|v| v.status != "deprecated")
-        .or_else(|| visible_versions.first())
-        .map(|v| v.version.clone());
+    let latest =
+        crate::db::models::latest_schema_version_refs(visible_versions).map(|v| v.version.clone());
 
     serde_json::json!({
         "name": schema.name,

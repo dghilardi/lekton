@@ -135,6 +135,106 @@ fn default_public_access_level() -> String {
     "public".to_string()
 }
 
+/// Returns the latest non-deprecated version from a slice, using semver ordering.
+///
+/// Versions are compared numerically component-by-component (semver-style), with a
+/// lexical fallback for non-numeric components. The highest version that is not
+/// `"deprecated"` is returned; if every version is deprecated the overall highest
+/// is returned instead. Returns `None` on an empty slice.
+///
+/// Accepts both `&[SchemaVersion]` and `&[&SchemaVersion]` via the two overloads below.
+pub fn latest_schema_version<'a>(versions: &'a [SchemaVersion]) -> Option<&'a SchemaVersion> {
+    if versions.is_empty() {
+        return None;
+    }
+    let mut sorted: Vec<&SchemaVersion> = versions.iter().collect();
+    sorted.sort_unstable_by(|a, b| semver_cmp_desc(&a.version, &b.version));
+    sorted
+        .iter()
+        .copied()
+        .find(|v| v.status != "deprecated")
+        .or_else(|| sorted.first().copied())
+}
+
+/// Same as [`latest_schema_version`] but accepts a slice of references, as produced by
+/// `visible_versions()` in the REST and MCP layers.
+pub fn latest_schema_version_refs<'a>(versions: &[&'a SchemaVersion]) -> Option<&'a SchemaVersion> {
+    if versions.is_empty() {
+        return None;
+    }
+    let mut sorted: Vec<&SchemaVersion> = versions.to_vec();
+    sorted.sort_unstable_by(|a, b| semver_cmp_desc(&a.version, &b.version));
+    sorted
+        .iter()
+        .copied()
+        .find(|v| v.status != "deprecated")
+        .or_else(|| sorted.first().copied())
+}
+
+/// Compare two version strings descending (highest first).
+/// Splits on `'.'`, parses each component as u64; falls back to lexical.
+/// Public so other modules (e.g. API response types) can reuse the same ordering.
+pub fn semver_cmp_desc(a: &str, b: &str) -> std::cmp::Ordering {
+    let parts = |s: &str| -> Vec<u64> { s.split('.').filter_map(|p| p.parse().ok()).collect() };
+    let ap = parts(a);
+    let bp = parts(b);
+    if ap.is_empty() || bp.is_empty() {
+        return b.cmp(a); // lexical descending
+    }
+    bp.cmp(&ap) // numeric descending
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+
+    fn ver(v: &str, status: &str) -> SchemaVersion {
+        SchemaVersion {
+            version: v.to_string(),
+            s3_key: String::new(),
+            status: status.to_string(),
+            access_level: "public".to_string(),
+            content_hash: None,
+            metadata_hash: None,
+            is_archived: false,
+            endpoints: vec![],
+        }
+    }
+
+    #[test]
+    fn latest_picks_highest_semver() {
+        let versions = vec![
+            ver("1.0.0", "stable"),
+            ver("2.0.0", "stable"),
+            ver("10.0.0", "stable"),
+        ];
+        assert_eq!(latest_schema_version(&versions).unwrap().version, "10.0.0");
+    }
+
+    #[test]
+    fn latest_skips_deprecated() {
+        let versions = vec![ver("1.0.0", "stable"), ver("2.0.0", "deprecated")];
+        assert_eq!(latest_schema_version(&versions).unwrap().version, "1.0.0");
+    }
+
+    #[test]
+    fn latest_falls_back_to_deprecated_if_all_deprecated() {
+        let versions = vec![ver("1.0.0", "deprecated"), ver("2.0.0", "deprecated")];
+        assert_eq!(latest_schema_version(&versions).unwrap().version, "2.0.0");
+    }
+
+    #[test]
+    fn latest_handles_non_semver_lexical() {
+        let versions = vec![ver("beta", "stable"), ver("alpha", "stable")];
+        assert_eq!(latest_schema_version(&versions).unwrap().version, "beta");
+    }
+
+    #[test]
+    fn latest_empty_is_none() {
+        assert!(latest_schema_version(&[]).is_none());
+    }
+}
+
 /// Represents a binary asset stored in MongoDB with content in S3.
 ///
 /// Assets are identified by a caller-defined key (e.g., "project-a/configs/nginx.conf").

@@ -198,13 +198,10 @@ pub fn SchemaViewerPage() -> impl IntoView {
                         let selection_missing =
                             !selected.is_empty() && !versions.iter().any(|v| v.version == selected);
                         if (selected.is_empty() || selection_missing) && !versions.is_empty() {
-                            let default_ver = versions
-                                .iter()
-                                .rev()
-                                .find(|v| v.status == "stable")
-                                .or(versions.last())
-                                .map(|v| v.version.clone())
-                                .unwrap_or_default();
+                            let default_ver =
+                                crate::api::schemas::latest_version_info(&versions)
+                                    .map(|v| v.version.clone())
+                                    .unwrap_or_default();
                             set_selected_version.set(default_ver);
                         }
 

@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - Editor: navigating between `/edit/*` routes no longer resets in-progress edits. Title and content signals are now seeded in an `Effect` that only fires when the loaded slug changes, not on every resource refetch.
+- Schema registry: "latest version" is now determined by semver ordering (numerically descending, lexical fallback) rather than insertion order. REST API, MCP, and UI now all use the same `latest_schema_version` helper, so they agree on which version is "latest" regardless of ingest order.
 - Added shared wire-vector tests (CLI ↔ server) for document, prompt, and schema metadata hashes, so any future canonical-format drift is caught immediately.
 
 ### Changed

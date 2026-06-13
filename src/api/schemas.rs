@@ -108,6 +108,21 @@ pub struct SchemaVersionInfo {
     pub s3_key: String,
 }
 
+/// Returns the latest non-deprecated `SchemaVersionInfo` from a slice using semver ordering.
+/// Mirrors [`crate::db::models::latest_schema_version`] for API response types.
+pub fn latest_version_info(versions: &[SchemaVersionInfo]) -> Option<&SchemaVersionInfo> {
+    if versions.is_empty() {
+        return None;
+    }
+    let mut sorted: Vec<&SchemaVersionInfo> = versions.iter().collect();
+    sorted.sort_unstable_by(|a, b| crate::db::models::semver_cmp_desc(&a.version, &b.version));
+    sorted
+        .iter()
+        .copied()
+        .find(|v| v.status != "deprecated")
+        .or_else(|| sorted.first().copied())
+}
+
 #[cfg(feature = "ssr")]
 const VALID_SCHEMA_TYPES: &[&str] = &["openapi", "asyncapi", "jsonschema"];
 #[cfg(feature = "ssr")]
@@ -501,11 +516,8 @@ pub async fn process_list_schemas(
                 return None;
             }
 
-            let latest = visible
-                .iter()
-                .rfind(|v| v.status != "deprecated")
-                .or_else(|| visible.last())
-                .map(|v| v.version.clone());
+            let latest =
+                crate::db::models::latest_schema_version_refs(&visible).map(|v| v.version.clone());
 
             Some(SchemaListItem {
                 name: schema.name.clone(),

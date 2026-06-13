@@ -166,22 +166,47 @@ async fn ingest_preserves_hierarchy_on_update() {
     assert_eq!(doc.parent_slug.as_deref(), Some("parent-doc"));
     assert_eq!(doc.order, 5);
 
-    // Re-ingest without parent_slug (should preserve existing)
-    env.ingest(
-        &server,
-        &slug,
-        "Child Doc Updated",
-        "# Updated Child",
-        "developer",
-    )
-    .await;
+    // Re-ingest with explicit parent_slug: client must send it to preserve hierarchy
+    server
+        .post("/api/v1/ingest")
+        .json(&serde_json::json!({
+            "service_token": "test-token",
+            "slug": slug,
+            "source_path": format!("docs/{}.md", slug),
+            "source_id": "test-source",
+            "title": "Child Doc Updated",
+            "content": "# Updated Child",
+            "access_level": "developer",
+            "service_owner": "test-team",
+            "tags": ["test"],
+            "parent_slug": "parent-doc",
+            "order": 5,
+            "is_hidden": false
+        }))
+        .await;
 
     let doc = env.repo.find_by_slug(&slug).await.unwrap().unwrap();
     assert_eq!(doc.title, "Child Doc Updated");
     assert_eq!(
         doc.parent_slug.as_deref(),
         Some("parent-doc"),
-        "parent_slug should be preserved on update"
+        "parent_slug should be preserved when explicitly sent in the update"
+    );
+
+    // Re-ingest without parent_slug clears it (request is authoritative)
+    env.ingest(
+        &server,
+        &slug,
+        "Child Doc Cleared",
+        "# Cleared Child",
+        "developer",
+    )
+    .await;
+
+    let doc = env.repo.find_by_slug(&slug).await.unwrap().unwrap();
+    assert_eq!(
+        doc.parent_slug, None,
+        "parent_slug should be cleared when omitted from the request"
     );
 }
 

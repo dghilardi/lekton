@@ -171,6 +171,23 @@ fn compute_schema_content_hash(content: &str) -> String {
     )
 }
 
+/// File extension (`"json"` or `"yaml"`) for a schema's stored object key.
+///
+/// Detects the format by attempting a strict JSON parse first — every JSON
+/// document is also valid YAML, so YAML must be the fallback. A leading BOM is
+/// ignored. Mirrors the parse order in [`extract_schema_endpoints`], replacing
+/// the previous `starts_with('{')` heuristic that mis-stored array-rooted or
+/// BOM-prefixed JSON as `.yaml`.
+#[cfg(feature = "ssr")]
+fn schema_content_extension(content: &str) -> &'static str {
+    let trimmed = content.trim_start_matches('\u{feff}');
+    if serde_json::from_str::<serde_json::Value>(trimmed).is_ok() {
+        "json"
+    } else {
+        "yaml"
+    }
+}
+
 #[cfg(feature = "ssr")]
 pub fn compute_schema_metadata_hash(status: &str, access_level: &str) -> String {
     let canonical = format!(
@@ -276,11 +293,7 @@ pub async fn process_schema_ingest(
 
     let new_content_hash = compute_schema_content_hash(&request.content);
     let new_metadata_hash = compute_schema_metadata_hash(&request.status, &access_level);
-    let extension = if request.content.trim_start().starts_with('{') {
-        "json"
-    } else {
-        "yaml"
-    };
+    let extension = schema_content_extension(&request.content);
     let s3_key = format!("schemas/{}/{}.{}", request.name, request.version, extension);
 
     let existing = ctx.schema_repo.find_by_name(&request.name).await?;
@@ -1377,6 +1390,25 @@ mod tests {
             compute_schema_metadata_hash("active", "internal"),
             "sha256:euK7yhXUhu3ACjYxviKr-mIkQAHKBUWkZ6Vkqsio09s",
             "schema metadata hash wire contract with CLI"
+        );
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn schema_content_extension_detects_format() {
+        // Object-rooted JSON
+        assert_eq!(schema_content_extension(r#"{"openapi":"3.0.0"}"#), "json");
+        // Array-rooted JSON — was mis-stored as ".yaml" by the old `{` heuristic
+        assert_eq!(schema_content_extension(r#"[{"a":1}]"#), "json");
+        // BOM-prefixed JSON
+        assert_eq!(
+            schema_content_extension("\u{feff}{\"openapi\":\"3.0.0\"}"),
+            "json"
+        );
+        // Genuine YAML
+        assert_eq!(
+            schema_content_extension("openapi: 3.0.0\npaths: {}"),
+            "yaml"
         );
     }
 }

@@ -1,6 +1,19 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use leptos::prelude::StoredValue;
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
+
+/// Monotonic counter for generating stable client-side message IDs.
+/// Prevents key collisions when the same text is sent more than once in a session.
+static CLIENT_MSG_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn next_client_msg_id() -> String {
+    format!(
+        "client-{}",
+        CLIENT_MSG_COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
+}
 
 use crate::components::MarkdownContent;
 use crate::db::chat_models::SourceReference;
@@ -135,10 +148,10 @@ fn ChatContent() -> impl IntoView {
         streaming_content.set(String::new());
         streaming_sources.set(Vec::new());
 
-        // Add user message to completed messages list
+        // Add user message to completed messages list with a stable client-side ID.
         messages.update(|msgs| {
             msgs.push(UiMessage {
-                id: None,
+                id: Some(next_client_msg_id()),
                 role: "user".into(),
                 content: msg.clone(),
                 sources: None,

@@ -2,7 +2,7 @@
 
 | **Project Name** | Lekton |
 | --- | --- |
-| **Status** | Draft / Planning |
+| **Status** | Living document — reflects the shipped product (v0.24.x). The original phases 1–4 are delivered; see `IMPLEMENTATION_ROADMAP.md` for current state. |
 | **Target Stack** | Rust (Leptos, Axum), MongoDB, S3, Meilisearch |
 | **Primary Goal** | Replace the static Nextra fork with a dynamic, high-performance, RBAC-aware portal. |
 
@@ -44,7 +44,7 @@ The system follows a **Headless CMS** architecture where the Rust backend acts a
 ### 4.1. Authentication & Authorization (RBAC)
 
 *   **Auth Provider:** Integration with company OIDC/OAuth provider (e.g., Keycloak, Okta, Google Workspace).
-*   **Role Mapping:** Map Lekton groups to internal roles: `Public`, `Developer`, `Architect`, `Admin`.
+*   **Access Levels:** Rather than a fixed role enum, Lekton uses a **dynamic `access_levels` collection** (e.g. `public`, `internal`, `developer`, `architect`) plus a per-user `user_permissions` table granting `can_read` / `can_write` / `can_read_draft` / `can_write_draft` per level. `public` and `loggeduser` are implicit. Admins are a boolean flag on the user. (See §5 data models.)
 *   **Granularity:**
 *   Every document and schema version must have a `min_access_level` field in MongoDB.
 *   The Axum middleware must reject requests to restricted paths before fetching content from S3.
@@ -264,7 +264,10 @@ Default levels seeded on first startup: `public` (system), `internal`,
 * Migrate existing content from Nextra (write a one-off migration script).
 * Decommission Nextra.
 
-### Phase 4: Future Tech (AI)
+### Phase 4: Future Tech (AI) — ✅ Delivered & Extended
 
-* Add Vector Database (Qdrant or Meilisearch Vectors).
-* Implement "Ask the Docs" chat interface.
+* ✅ Vector database (Qdrant) with token-aware chunking and access-scoped retrieval.
+* ✅ "Ask the Docs" streamed chat, with optional hybrid search, HyDE, query rewriting, and cross-encoder reranking.
+* ✅ MCP server exposing docs/schemas/prompts as tools; versioned Prompt Library; documentation feedback loop.
+
+See `IMPLEMENTATION_ROADMAP.md` Phase 7 for the full breakdown and candidate next steps.

@@ -7,9 +7,11 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - `docker-compose.yml`: environment variables migrated to `LKN__` prefix (e.g. `LKN__DATABASE__URI`, `LKN__AUTH__DEMO_MODE`). The previous legacy names (`MONGODB_URI`, `DEMO_MODE`, etc.) were silently ignored by the config loader, making `docker-compose up` non-functional.
 - README: Configuration table, `.env` snippet, e2e test command, and Demo Mode section updated to use `LKN__*` variable names. License section corrected from "GNU GPL v3" to "GNU AGPL v3".
+- RAG indexing: a document is no longer dropped from the vector store when its embedding fails. Indexing now computes embeddings before any destructive write and upserts the new chunks before deleting the stale ones (upsert-then-delete-stale); previously the old chunks were deleted first, so a failed/timed-out embedding left the document unsearchable in chat while still present in MongoDB. RAG re-index also now reports indexed/skipped/failed counts instead of silently swallowing per-document failures.
 
 ### Changed
 - `.gitignore`: added `*.err` and `.codex` patterns; removed stray tracked files (`build_ssr.err`, `.codex`, `cli/.codex`).
+- Documentation: README now lists RAG chat, the MCP server, and the Prompt Library as features, links the `lekton-sync` CLI, and documents the full `v1` API surface (RAG, prompts, PATs, schemas, reindex). `AGENTS.md` project tree, `IMPLEMENTATION_ROADMAP.md`, and `REQUIREMENTS.md` updated to reflect the shipped subsystems (RAG/MCP/Prompt Library/PAT) and the dynamic access-level RBAC model.
 
 ## [0.24.29] 2026-06-13
 

@@ -28,24 +28,41 @@ Lekton is a dynamic IDP built with **Leptos (frontend)** and **Axum (backend)**.
 ## 📁 Project Structure
 ```
 src/
-├── app.rs          # Leptos root component, router, layout
-├── lib.rs          # Library root, module re-exports, WASM hydrate
-├── main.rs         # Axum server entry point (SSR feature only)
+├── app.rs          # Leptos root component, router, AppState (derives FromRef)
+├── lib.rs          # Library root, module re-exports, WASM hydrate entry
+├── main.rs         # Axum server entry point + router assembly (ssr only)
+├── config.rs       # Typed config-rs configuration (AppConfig, LKN__ env vars)
 ├── error.rs        # AppError enum (thiserror)
-├── auth/           # OIDC authentication & RBAC
-│   ├── config.rs   # OidcConfig from env vars
-│   ├── middleware.rs # Claims mapping, user extraction
-│   └── models.rs   # AccessLevel enum, AuthenticatedUser
-├── api/            # REST API handlers
-│   ├── errors.rs   # AppError → HTTP response mapping
-│   └── ingest.rs   # POST /api/v1/ingest handler
-├── db/             # MongoDB models & repository
-│   ├── models.rs   # Document, Schema, IngestRequest/Response
-│   └── repository.rs # DocumentRepository trait + MongoDocumentRepository
-├── storage/        # S3 blob storage
-│   └── client.rs   # StorageClient trait + S3StorageClient
-└── rendering/      # Content rendering
-    └── markdown.rs # GFM markdown → HTML renderer
+├── api/            # REST API handlers (ingest, sync, schemas, prompts,
+│                   #   assets, upload, search, rag, admin, pat, auth, health)
+├── auth/           # OIDC/OAuth2 authentication & RBAC
+│   ├── config.rs   # AuthConfig (from AppConfig)
+│   ├── provider.rs # OIDC + generic OAuth2 providers
+│   ├── token_service.rs / refresh_client.rs  # JWT issue/verify, refresh rotation
+│   ├── middleware.rs / extractor.rs           # Auth extraction & guards
+│   ├── demo_auth.rs # Built-in demo users (DEMO_MODE)
+│   └── models.rs   # AccessLevel, AuthenticatedUser, UserContext
+├── db/             # MongoDB models, repositories (trait + Mongo impl) and
+│                   #   the versioned migration plan (migrations.rs)
+├── server/         # Leptos #[server] functions (docs, search, nav, prompts,
+│                   #   pats, users, feedback, access_levels, custom_css, reindex)
+├── pages/          # Leptos page components (home, doc, chat, login, profile,
+│                   #   prompts, admin_settings, not_found)
+├── components/     # Shared UI components (layout, navigation, search, theme,
+│                   #   markdown_content, contextual_sidebars, user_menu, …)
+├── editor/         # Tiptap WYSIWYG editor + asset panel
+├── schema/         # Schema registry UI component + endpoint reindex
+├── rag/            # RAG pipeline: service, chat, embedding, vectorstore (Qdrant),
+│                   #   splitters, reranker, hyde, query_rewriter, rrf, eval, reindex
+├── mcp/            # Model Context Protocol server (server.rs, auth.rs) at /mcp
+├── search/         # Meilisearch client, tenant tokens, reindex
+├── storage/        # S3 blob storage (StorageClient trait + S3StorageClient)
+├── rendering/      # GFM markdown → HTML, link extraction & transformation
+├── jobs/           # Background jobs (e.g. recompute_access_levels)
+└── bin/            # rag-eval, rag-bench (retrieval quality tooling)
+
+cli/                # `lekton-sync`: CI/CD ingestion CLI (separate workspace member)
+config/default.toml # Embedded default configuration (overridden by LKN__ env vars)
 ```
 
 ## 📝 Maintenance

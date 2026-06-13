@@ -68,3 +68,30 @@ Fulfill the core differentiator of Lekton: robust RBAC and a seamless authoring 
 *   [ ] **Migration Tooling:** Write a one-off script to parse the current Nextra markdown structure, extract frontmatter, and ingest it into Lekton via the `POST /api/v1/ingest` endpoint.
 *   [ ] **Beta Rollout:** Run Lekton in parallel with Nextra for a testing period.
 *   [ ] **Decommission Nextra:** Sunsetting the legacy portal once full parity and stability are confirmed.
+
+## Phase 7: Knowledge & Integration Platform (Beyond Nextra Parity)
+
+These subsystems were built after Nextra parity was reached and now constitute the bulk of Lekton's differentiation. They fulfil and extend the "Future Tech (AI)" phase of `REQUIREMENTS.md`.
+
+*   [x] **RAG "Ask the Docs" Chat:**
+    *   Token-aware chunking + embeddings stored in Qdrant; streamed (SSE) chat over the corpus, scoped by the user's access levels.
+    *   Optional retrieval enhancements: hybrid search (Qdrant + Meilisearch via RRF), HyDE, query rewriting for multi-turn, and cross-encoder reranking.
+    *   Offline retrieval-quality tooling (`rag-eval`, `rag-bench`) reporting Recall@k / MRR / nDCG.
+*   [x] **MCP Server:**
+    *   Exposes documents, schemas, and prompts as Model Context Protocol tools at `/mcp`, authenticated via Personal Access Tokens, access-scoped per user.
+*   [x] **Prompt Library:**
+    *   Versioned, RBAC-aware registry of reusable LLM prompts (`POST /api/v1/prompts/ingest` + sync), with per-user preferences. See `docs/PROMPT_LIBRARY_SPEC.md`.
+*   [x] **Personal Access Tokens (PAT):**
+    *   User self-service tokens for programmatic / MCP access, with admin oversight.
+*   [x] **Service Tokens with Scopes:**
+    *   Scoped CI/CD ingestion tokens (replacing the single static `SERVICE_TOKEN`), managed via the admin API.
+*   [x] **Documentation Feedback:**
+    *   Users (and MCP clients) can report documentation gaps; admins triage them.
+*   [x] **Schema Endpoint Indexing:**
+    *   Individual API operations are extracted and indexed for search across all schemas (`search_schema_operations`).
+
+### Candidate next steps (not yet started)
+
+*   [ ] **Schema breaking-change / diff detection** between versions.
+*   [ ] **Stale-doc detection & owner dashboards** (leveraging `service_owner` + `last_updated`).
+*   [ ] **Doc analytics** (view counts, no-result searches) for owners.

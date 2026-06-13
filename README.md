@@ -11,9 +11,12 @@ Lekton decouples content from code, allowing microservices to push their documen
 
 ## ✨ Key Features
 
--   **Dynamic Ingestion:** CI/CD integration for live documentation updates.
+-   **Dynamic Ingestion:** CI/CD integration for live documentation updates via the [`lekton-sync`](cli/README.md) CLI.
 -   **Granular RBAC:** Server-level Role-Based Access Control for sensitive documents.
 -   **Unified Schema Registry:** Support for OpenAPI (Swagger), AsyncAPI, and JSON Schema with versioning.
+-   **Ask the Docs (RAG):** Retrieval-augmented chat over your documentation, with hybrid search, HyDE, query rewriting, and cross-encoder reranking (optional, see [RAG setup](#optional-rag-enhancements)).
+-   **MCP Server:** Exposes docs, schemas, and prompts as [Model Context Protocol](https://modelcontextprotocol.io/) tools at `/mcp`, authenticated via Personal Access Tokens.
+-   **Prompt Library:** Versioned, RBAC-aware prompt registry for sharing reusable LLM prompts across teams.
 -   **Blazing Fast:** SSR powered by Leptos and Axum.
 -   **Modern UI:** Tailwind CSS v4 and DaisyUI 5 for a rich, responsive design system.
 -   **Intelligent Search:** Powered by Meilisearch with tenancy protection.
@@ -456,33 +459,69 @@ For more details, see [DaisyUI Themes Documentation](https://daisyui.com/docs/th
 
 ## API
 
-### Ingestion
+Most write endpoints are driven by the [`lekton-sync`](cli/README.md) CLI in CI/CD; you rarely call them by hand. Endpoints below are the stable `v1` surface.
 
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| `POST` | `/api/v1/ingest` | Service token | Create/update a document |
-| `POST` | `/api/v1/schemas` | Service token | Create/update a schema |
-| `POST` | `/api/v1/schemas/sync` | Service token | Compute schema delta / archive missing versions |
-| `POST` | `/api/v1/upload/{*key}` | Service token | Upload an asset |
+### Ingestion (service token)
 
-### Search
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/ingest` | Create/update a document |
+| `POST` | `/api/v1/sync` | Compute document delta (which docs need re-upload) |
+| `POST` | `/api/v1/schemas` | Create/update a schema |
+| `POST` | `/api/v1/schemas/sync` | Compute schema delta / archive missing versions |
+| `POST` | `/api/v1/prompts/ingest` | Create/update a prompt |
+| `POST` | `/api/v1/prompts/sync` | Compute prompt delta |
+| `PUT` | `/api/v1/assets/{*key}` | Upload an asset |
+| `POST` | `/api/v1/assets/check-hashes` | Check which asset hashes already exist |
+
+### Read & Search
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
 | `GET` | `/api/v1/search?q=...` | Public (scoped) | Search documents |
+| `GET` | `/api/v1/schemas` | Public (scoped) | List schemas |
+| `GET` | `/api/v1/schemas/{name}?version={ver}` | Public (scoped) | Schema detail (no `version`) or artifact content |
+| `GET` | `/api/v1/assets/{*key}` | Derived from referencing docs | Serve an asset |
+
+### RAG Chat (authenticated user)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/rag/chat` | Streamed chat completion (SSE) over the corpus |
+| `GET` | `/api/v1/rag/sessions` | List the user's chat sessions |
+| `DELETE` | `/api/v1/rag/sessions/{id}` | Delete a session |
+| `GET` | `/api/v1/rag/sessions/{id}/messages` | Load a session's messages |
+| `POST`/`DELETE` | `/api/v1/rag/messages/{id}/feedback` | Submit / clear feedback on an answer |
+
+### Personal Access Tokens (authenticated user)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET`/`POST` | `/api/v1/user/pats` | List / create your PATs (used for MCP auth) |
+| `PATCH`/`DELETE` | `/api/v1/user/pats/{id}` | Enable-disable / delete a PAT |
 
 ### Admin
 
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| `GET` | `/api/v1/admin/access-levels` | Admin | List all access levels |
-| `POST` | `/api/v1/admin/access-levels` | Admin | Create an access level |
-| `PUT` | `/api/v1/admin/access-levels/{name}` | Admin | Update an access level |
-| `DELETE` | `/api/v1/admin/access-levels/{name}` | Admin | Delete an access level |
-| `GET` | `/api/v1/admin/users` | Admin | List all users |
-| `GET` | `/api/v1/admin/user-permissions/{user_id}` | Admin | List user permissions |
-| `POST` | `/api/v1/admin/user-permissions` | Admin | Grant/update a permission |
-| `DELETE` | `/api/v1/admin/user-permissions/{user_id}/{level}` | Admin | Revoke a permission |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET`/`POST` | `/api/v1/admin/access-levels` | List / create access levels |
+| `PUT`/`DELETE` | `/api/v1/admin/access-levels/{name}` | Update / delete an access level |
+| `GET` | `/api/v1/admin/users`, `/api/v1/admin/users/{id}` | List users / get one |
+| `PUT` | `/api/v1/admin/users/{id}/access-levels` | Set a user's granted access levels |
+| `GET`/`POST` | `/api/v1/admin/service-tokens` | List / create CI/CD service tokens |
+| `DELETE` | `/api/v1/admin/service-tokens/{id}` | Deactivate a service token |
+| `GET` | `/api/v1/admin/pats`, `PATCH /…/pats/{id}` | List all PATs / toggle one |
+| `POST` | `/api/v1/admin/{rag,search}/reindex` | Trigger a RAG / search re-index (poll `…/status`) |
+| `POST` | `/api/v1/admin/schemas/reindex-endpoints` | Re-extract schema operations (poll `…/status`) |
+
+### Auth & MCP
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/auth/login`, `/auth/callback` | OAuth2/OIDC login flow (`/api/auth/login` in demo mode) |
+| `POST` | `/auth/refresh`, `/auth/logout` | Rotate refresh token / log out |
+| `GET` | `/auth/me` | Current authenticated user |
+| — | `/mcp` | Model Context Protocol Streamable HTTP endpoint (PAT auth) |
 
 ## Demo Mode
 

@@ -44,7 +44,7 @@ async fn upload_asset_creates_new_asset() {
     let body: serde_json::Value = response.json();
     assert_eq!(body["key"], "project-a/readme.txt");
     assert_eq!(body["s3_key"], "assets/project-a/readme.txt");
-    assert_eq!(body["content_type"], "text/plain");
+    assert_eq!(body["content_type"], "text/plain; charset=utf-8");
     assert_eq!(body["size_bytes"], 11);
 
     // Verify in repo
@@ -54,7 +54,7 @@ async fn upload_asset_creates_new_asset() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(asset.content_type, "text/plain");
+    assert_eq!(asset.content_type, "text/plain; charset=utf-8");
     assert_eq!(asset.size_bytes, 11);
 
     // Verify in S3
@@ -282,6 +282,9 @@ async fn delete_asset_rejects_invalid_token() {
 async fn editor_upload_creates_asset() {
     let env = common::TestEnv::start().await;
     let server = env.server();
+    let user = env
+        .create_test_user("u1", "editor@example.com", false)
+        .await;
 
     let png_bytes: Vec<u8> = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 
@@ -294,6 +297,7 @@ async fn editor_upload_creates_asset() {
 
     let response = server
         .post("/api/v1/editor/upload-asset")
+        .add_cookie(env.auth_cookie(&user))
         .multipart(form)
         .await;
 
@@ -323,7 +327,7 @@ async fn editor_upload_creates_asset() {
 
     // Verify asset exists in repo
     let asset = env.asset_repo.find_by_key(key).await.unwrap().unwrap();
-    assert_eq!(asset.uploaded_by, "web-editor");
+    assert_eq!(asset.uploaded_by, "editor@example.com");
     assert_eq!(asset.content_type, "image/png");
 
     // Verify content in S3
@@ -340,6 +344,9 @@ async fn editor_upload_creates_asset() {
 async fn editor_upload_serves_correctly() {
     let env = common::TestEnv::start().await;
     let server = env.server();
+    let user = env
+        .create_test_user("u2", "editor2@example.com", false)
+        .await;
 
     let content = b"test file content";
     let form = MultipartForm::new().add_part(
@@ -351,6 +358,7 @@ async fn editor_upload_serves_correctly() {
 
     let upload_response = server
         .post("/api/v1/editor/upload-asset")
+        .add_cookie(env.auth_cookie(&user))
         .multipart(form)
         .await;
 
@@ -362,7 +370,10 @@ async fn editor_upload_serves_correctly() {
     response.assert_status_ok();
 
     let headers = response.headers();
-    assert_eq!(headers.get("content-type").unwrap(), "text/plain");
+    assert_eq!(
+        headers.get("content-type").unwrap(),
+        "text/plain; charset=utf-8"
+    );
 
     let served_content = response.into_bytes();
     assert_eq!(served_content.as_ref(), content);
@@ -372,11 +383,15 @@ async fn editor_upload_serves_correctly() {
 async fn editor_upload_missing_file_field() {
     let env = common::TestEnv::start().await;
     let server = env.server_permissive();
+    let user = env
+        .create_test_user("u3", "editor3@example.com", false)
+        .await;
 
     let form = MultipartForm::new().add_text("wrong_field", "some data");
 
     let response = server
         .post("/api/v1/editor/upload-asset")
+        .add_cookie(env.auth_cookie(&user))
         .multipart(form)
         .await;
 

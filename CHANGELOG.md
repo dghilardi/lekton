@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Schema registry: schema format (and the stored object extension / served content-type) is now detected by attempting a strict JSON parse rather than checking for a leading `{`. Array-rooted or BOM-prefixed JSON schemas are no longer mis-stored and served as YAML.
+
 ## [0.24.28] 2026-06-13
 
 ### Fixed

@@ -1,4 +1,4 @@
-mod admin_settings;
+mod admin;
 pub mod chat;
 mod doc;
 mod home;
@@ -7,7 +7,7 @@ mod not_found;
 mod profile;
 mod prompts;
 
-pub use admin_settings::*;
+pub use admin::*;
 pub use chat::*;
 pub use doc::*;
 pub use home::*;

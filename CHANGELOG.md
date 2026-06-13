@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- `docker-compose.yml`: environment variables migrated to `LKN__` prefix (e.g. `LKN__DATABASE__URI`, `LKN__AUTH__DEMO_MODE`). The previous legacy names (`MONGODB_URI`, `DEMO_MODE`, etc.) were silently ignored by the config loader, making `docker-compose up` non-functional.
+- README: Configuration table, `.env` snippet, e2e test command, and Demo Mode section updated to use `LKN__*` variable names. License section corrected from "GNU GPL v3" to "GNU AGPL v3".
+
+### Changed
+- `.gitignore`: added `*.err` and `.codex` patterns; removed stray tracked files (`build_ssr.err`, `.codex`, `cli/.codex`).
+
 ## [0.24.29] 2026-06-13
 
 ### Fixed

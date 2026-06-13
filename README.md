@@ -156,24 +156,24 @@ Create a `.env` file in the project root with these variables:
 
 ```bash
 # MongoDB Configuration
-MONGODB_URI=mongodb://localhost:27017
-MONGODB_DATABASE=lekton
+LKN__DATABASE__URI=mongodb://localhost:27017
+LKN__DATABASE__NAME=lekton
 
 # S3 Storage Configuration (use credentials from garage-init output)
-S3_BUCKET=lekton-docs
-S3_ENDPOINT=http://localhost:3900
+LKN__STORAGE__BUCKET=lekton-docs
+LKN__STORAGE__ENDPOINT=http://localhost:3900
 AWS_ACCESS_KEY_ID=GK6dcd28a916458f75d62f0720
 AWS_SECRET_ACCESS_KEY=893fa79f053d67be65237fdc5d2a8521df5dc0a27858f991ffa72c1ba3470291
 AWS_REGION=garage
 
 # Service Token for API ingestion
-SERVICE_TOKEN=demo-ingest-token
+LKN__AUTH__SERVICE_TOKEN=demo-ingest-token
 
 # Enable demo auth mode (bypasses OIDC)
-DEMO_MODE=true
+LKN__AUTH__DEMO_MODE=true
 
 # Logging
-RUST_LOG=lekton=info,tower_http=info
+LKN__SERVER__LOG_FILTER=lekton=info,tower_http=info
 
 # Leptos configuration
 LEPTOS_SITE_ADDR=127.0.0.1:3000
@@ -291,7 +291,7 @@ cargo test --features ssr --test '*' -- --test-threads=1
 
 # E2E tests — server must be running on :3000 first
 source .env
-MONGODB_DATABASE=lekton_e2e SERVICE_TOKEN=test-token RATE_LIMIT_BURST=1000 DEMO_MODE=true \
+LKN__DATABASE__NAME=lekton_e2e LKN__AUTH__SERVICE_TOKEN=test-token LKN__SERVER__RATE_LIMIT_BURST=1000 LKN__AUTH__DEMO_MODE=true \
     cargo leptos serve &
 npx playwright test
 ```
@@ -314,21 +314,26 @@ GitHub Actions runs `cargo fmt --all --check` on pushes and pull requests, so un
 
 ## ⚙️ Configuration
 
-Lekton is configured via environment variables:
+Lekton is configured via environment variables with the `LKN__` prefix and `__` as the nesting separator (e.g. `LKN__DATABASE__URI`). AWS credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`) use their standard names directly.
 
-| Variable            | Description                          | Default                          |
-| ------------------- | ------------------------------------ | -------------------------------- |
-| `MONGODB_URI`       | MongoDB connection string            | `mongodb://localhost:27017`      |
-| `MONGODB_DATABASE`  | MongoDB database name                | `lekton`                         |
-| `S3_BUCKET`         | S3 bucket name                       | *(required)*                     |
-| `S3_ENDPOINT`       | Custom S3 endpoint (MinIO, etc.)     | *(AWS default)*                  |
-| `AWS_REGION`        | AWS region                           | *(from AWS config)*              |
-| `SERVICE_TOKEN`     | Token for CI/CD ingestion API        | `dev-token`                      |
-| `OIDC_ISSUER_URL`   | OIDC identity provider URL           | *(required for auth)*            |
-| `OIDC_CLIENT_ID`    | OIDC client ID                       | *(required for auth)*            |
-| `OIDC_CLIENT_SECRET`| OIDC client secret                   | *(required for auth)*            |
-| `OIDC_REDIRECT_URI` | OIDC callback redirect URI           | *(required for auth)*            |
-| `RUST_LOG`          | Log level filter                     | `lekton=info,tower_http=info`    |
+For a full reference with all options and defaults, see [`config/default.toml`](config/default.toml) and the inline docs in [`src/config.rs`](src/config.rs). The `.env.example` file at the repo root is a ready-to-use template.
+
+Common variables:
+
+| Variable                        | Description                          | Default                          |
+| ------------------------------- | ------------------------------------ | -------------------------------- |
+| `LKN__DATABASE__URI`            | MongoDB connection string            | `mongodb://localhost:27017`      |
+| `LKN__DATABASE__NAME`           | MongoDB database name                | `lekton`                         |
+| `LKN__STORAGE__BUCKET`          | S3 bucket name                       | *(required)*                     |
+| `LKN__STORAGE__ENDPOINT`        | Custom S3 endpoint (MinIO, etc.)     | *(AWS default)*                  |
+| `AWS_REGION`                    | AWS region                           | *(from AWS config)*              |
+| `LKN__AUTH__SERVICE_TOKEN`      | Token for CI/CD ingestion API        | *(optional)*                     |
+| `LKN__AUTH__DEMO_MODE`          | Enable built-in demo auth            | `false`                          |
+| `LKN__AUTH__CLIENT_ID`          | OAuth2/OIDC client ID                | *(required for auth)*            |
+| `LKN__AUTH__CLIENT_SECRET`      | OAuth2/OIDC client secret            | *(required for auth)*            |
+| `LKN__AUTH__REDIRECT_URI`       | OAuth2/OIDC callback URI             | *(required for auth)*            |
+| `LKN__AUTH__AUTHORIZATION_ENDPOINT` | OIDC issuer / OAuth2 auth endpoint | *(required for auth)*          |
+| `LKN__SERVER__LOG_FILTER`       | Log level filter                     | `lekton=info,tower_http=info`    |
 
 ## 🎨 Customizability & Theming
 
@@ -481,7 +486,7 @@ For more details, see [DaisyUI Themes Documentation](https://daisyui.com/docs/th
 
 ## Demo Mode
 
-Set `DEMO_MODE=true` to enable built-in demo authentication without an external
+Set `LKN__AUTH__DEMO_MODE=true` to enable built-in demo authentication without an external
 OAuth/OIDC provider. This creates three predefined users:
 
 | Username | Password | Role |
@@ -491,7 +496,7 @@ OAuth/OIDC provider. This creates three predefined users:
 | `public` | `public` | Public-level access only |
 
 Demo mode is intended for local development and evaluation only. In production,
-configure a real OIDC or OAuth2 provider via `AUTH_PROVIDER_*` environment variables.
+configure a real OIDC or OAuth2 provider via `LKN__AUTH__*` environment variables.
 
 ## Architecture
 
@@ -502,4 +507,4 @@ Lekton follows a Headless CMS architecture:
 
 ## License
 
-Distributed under the GNU GPL v3 License. See [LICENSE](LICENSE) for more information.
+Distributed under the GNU AGPL v3 License. See [LICENSE](LICENSE) for more information.

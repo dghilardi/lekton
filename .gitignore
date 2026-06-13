@@ -35,7 +35,9 @@ Thumbs.db
 # Note: package-lock.json is now tracked for reproducible builds and CI caching
 
 *.log
+*.err
 *_log.txt
+.codex
 
 /playwright-report
 /test-results

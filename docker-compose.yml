@@ -83,20 +83,20 @@ services:
       qdrant:
         condition: service_healthy
     environment:
-      - MONGODB_URI=mongodb://mongodb:27017
-      - MONGODB_DATABASE=lekton
-      - S3_BUCKET=lekton-docs
-      - S3_ENDPOINT=http://garage:3900
+      - LKN__DATABASE__URI=mongodb://mongodb:27017
+      - LKN__DATABASE__NAME=lekton
+      - LKN__STORAGE__BUCKET=lekton-docs
+      - LKN__STORAGE__ENDPOINT=http://garage:3900
       - AWS_ACCESS_KEY_ID=lekton-demo-key
       - AWS_SECRET_ACCESS_KEY=lekton-demo-secret
       - AWS_REGION=garage
-      - SERVICE_TOKEN=demo-ingest-token
-      - MEILISEARCH_URL=http://meilisearch:7700
-      - MEILISEARCH_API_KEY=dev-master-key-change-in-prod
+      - LKN__AUTH__SERVICE_TOKEN=demo-ingest-token
+      - LKN__SEARCH__URL=http://meilisearch:7700
+      - LKN__SEARCH__API_KEY=dev-master-key-change-in-prod
       - LKN__RAG__QDRANT_URL=http://qdrant:6334
       - LKN__RAG__QDRANT_COLLECTION=lekton
-      - DEMO_MODE=true
-      - RUST_LOG=lekton=info,tower_http=info
+      - LKN__AUTH__DEMO_MODE=true
+      - LKN__SERVER__LOG_FILTER=lekton=info,tower_http=info
       - LEPTOS_SITE_ADDR=0.0.0.0:3000
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:3000"]

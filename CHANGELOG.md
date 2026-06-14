@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- `lekton-sync`: all sync and ingest HTTP calls now share a single retry helper, so the document/prompt/schema *sync* requests also retry with exponential backoff on HTTP 429 (previously only the ingest/upload calls did).
+
 ## [0.24.31] 2026-06-14
 
 ## [0.24.30] 2026-06-14

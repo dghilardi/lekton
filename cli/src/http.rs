@@ -27,6 +27,25 @@ pub async fn backoff_on_429(
     }
 }
 
+/// Send a request, retrying with exponential backoff on HTTP 429.
+///
+/// `build` is invoked once per attempt to produce a fresh request, since
+/// `RequestBuilder::send` consumes the builder (and multipart forms cannot be
+/// cloned). Non-429 responses and transport errors are returned immediately.
+pub async fn send_with_retry<F>(mut build: F) -> reqwest::Result<reqwest::Response>
+where
+    F: FnMut() -> reqwest::RequestBuilder,
+{
+    let mut attempt = 0u32;
+    let mut backoff_ms = INITIAL_BACKOFF_MS;
+    loop {
+        match build().send().await {
+            Ok(r) if backoff_on_429(&r, &mut attempt, &mut backoff_ms).await => continue,
+            other => break other,
+        }
+    }
+}
+
 pub fn is_interactive() -> bool {
     use std::io::IsTerminal;
     std::io::stdin().is_terminal() && std::env::var("CI").is_err()

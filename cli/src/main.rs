@@ -21,10 +21,7 @@ use api::{
     PromptSyncResponse, SchemaIngestRequest, SchemaIngestResponse, SchemaSyncEntry,
     SchemaSyncRequest, SchemaSyncResponse, SyncDocEntry, SyncRequest, SyncResponse,
 };
-use http::{
-    backoff_on_429, detect_git_remote, is_interactive, prompt_and_persist_source_id,
-    INITIAL_BACKOFF_MS,
-};
+use http::{detect_git_remote, is_interactive, prompt_and_persist_source_id, send_with_retry};
 use scan::{scan_documents, scan_prompts, scan_schemas};
 
 // ── CLI args ──────────────────────────────────────────────────────────────────
@@ -158,15 +155,13 @@ async fn main() -> Result<()> {
             })
             .collect();
 
-        let sync_resp = client
-            .post(&sync_url)
-            .json(&SyncRequest {
-                service_token: token.clone(),
-                source_id: source_id.clone(),
-                documents: sync_entries,
-                archive_missing,
-            })
-            .send()
+        let sync_request = SyncRequest {
+            service_token: token.clone(),
+            source_id: source_id.clone(),
+            documents: sync_entries,
+            archive_missing,
+        };
+        let sync_resp = send_with_retry(|| client.post(&sync_url).json(&sync_request))
             .await
             .context("Failed to call sync API")?;
 
@@ -211,14 +206,12 @@ async fn main() -> Result<()> {
             })
             .collect();
 
-        let sync_resp = client
-            .post(&sync_url)
-            .json(&PromptSyncRequest {
-                service_token: token.clone(),
-                prompts: sync_entries,
-                archive_missing,
-            })
-            .send()
+        let sync_request = PromptSyncRequest {
+            service_token: token.clone(),
+            prompts: sync_entries,
+            archive_missing,
+        };
+        let sync_resp = send_with_retry(|| client.post(&sync_url).json(&sync_request))
             .await
             .context("Failed to call prompt sync API")?;
 
@@ -264,14 +257,12 @@ async fn main() -> Result<()> {
             })
             .collect();
 
-        let sync_resp = client
-            .post(&sync_url)
-            .json(&SchemaSyncRequest {
-                service_token: token.clone(),
-                schemas: sync_entries,
-                archive_missing: archive_missing_schemas,
-            })
-            .send()
+        let sync_request = SchemaSyncRequest {
+            service_token: token.clone(),
+            schemas: sync_entries,
+            archive_missing: archive_missing_schemas,
+        };
+        let sync_resp = send_with_retry(|| client.post(&sync_url).json(&sync_request))
             .await
             .context("Failed to call schema sync API")?;
 
@@ -461,9 +452,7 @@ async fn main() -> Result<()> {
                 .unwrap_or_else(|| "file".to_string());
             let content_type_str = att.content_type.clone();
 
-            let mut attempt = 0u32;
-            let mut backoff_ms = INITIAL_BACKOFF_MS;
-            let upload_result = loop {
+            let upload_result = send_with_retry(|| {
                 let file_part = reqwest::multipart::Part::bytes(data.clone())
                     .file_name(file_name.clone())
                     .mime_str(&content_type_str)
@@ -471,12 +460,9 @@ async fn main() -> Result<()> {
                 let form = reqwest::multipart::Form::new()
                     .text("service_token", token.clone())
                     .part("file", file_part);
-
-                match client.put(&upload_url).multipart(form).send().await {
-                    Ok(r) if backoff_on_429(&r, &mut attempt, &mut backoff_ms).await => continue,
-                    other => break other,
-                }
-            };
+                client.put(&upload_url).multipart(form)
+            })
+            .await;
 
             match upload_result {
                 Ok(r) if r.status().is_success() => {
@@ -564,14 +550,7 @@ async fn main() -> Result<()> {
             is_hidden: doc.is_hidden,
         };
 
-        let mut attempt = 0u32;
-        let mut backoff_ms = INITIAL_BACKOFF_MS;
-        let result = loop {
-            match client.post(&ingest_url).json(&ingest_body).send().await {
-                Ok(r) if backoff_on_429(&r, &mut attempt, &mut backoff_ms).await => continue,
-                other => break other,
-            }
-        };
+        let result = send_with_retry(|| client.post(&ingest_url).json(&ingest_body)).await;
 
         match result {
             Ok(r) if r.status().is_success() => {
@@ -648,19 +627,7 @@ async fn main() -> Result<()> {
             context_cost: prompt.context_cost.clone(),
         };
 
-        let mut attempt = 0u32;
-        let mut backoff_ms = INITIAL_BACKOFF_MS;
-        let result = loop {
-            match client
-                .post(&prompt_ingest_url)
-                .json(&ingest_body)
-                .send()
-                .await
-            {
-                Ok(r) if backoff_on_429(&r, &mut attempt, &mut backoff_ms).await => continue,
-                other => break other,
-            }
-        };
+        let result = send_with_retry(|| client.post(&prompt_ingest_url).json(&ingest_body)).await;
 
         match result {
             Ok(r) if r.status().is_success() => {
@@ -722,19 +689,7 @@ async fn main() -> Result<()> {
             content: schema.content.clone(),
         };
 
-        let mut attempt = 0u32;
-        let mut backoff_ms = INITIAL_BACKOFF_MS;
-        let result = loop {
-            match client
-                .post(&schema_ingest_url)
-                .json(&ingest_body)
-                .send()
-                .await
-            {
-                Ok(r) if backoff_on_429(&r, &mut attempt, &mut backoff_ms).await => continue,
-                other => break other,
-            }
-        };
+        let result = send_with_retry(|| client.post(&schema_ingest_url).json(&ingest_body)).await;
 
         match result {
             Ok(r) if r.status().is_success() => {

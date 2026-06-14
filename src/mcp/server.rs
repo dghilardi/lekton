@@ -279,15 +279,13 @@ fn slug_from_docs_uri(uri: &str) -> Result<&str, McpError> {
 }
 
 fn can_read_document(user_ctx: &UserContext, doc: &Document) -> bool {
-    if user_ctx.user.is_admin {
-        return true;
-    }
-
-    if doc.is_draft {
-        user_ctx.can_read_draft(&doc.access_level)
-    } else {
-        user_ctx.can_read(&doc.access_level)
-    }
+    let (allowed_levels, include_draft) = user_ctx.document_visibility();
+    crate::app::doc_is_accessible(
+        &doc.access_level,
+        doc.is_draft,
+        allowed_levels.as_deref(),
+        include_draft,
+    )
 }
 
 fn can_read_prompt(user_ctx: &UserContext, prompt: &Prompt) -> bool {
@@ -334,10 +332,14 @@ fn validate_docs_resource_uris(uris: &[String]) -> Result<(), McpError> {
 }
 
 fn can_read_schema_version(user_ctx: &UserContext, version: &SchemaVersion) -> bool {
-    if user_ctx.user.is_admin {
-        return true;
-    }
-    user_ctx.can_read(&version.access_level)
+    // Schema versions have no draft concept; treat them as always-published.
+    let (allowed_levels, _) = user_ctx.document_visibility();
+    crate::app::doc_is_accessible(
+        &version.access_level,
+        false,
+        allowed_levels.as_deref(),
+        true,
+    )
 }
 
 fn schema_version_summary(v: &SchemaVersion) -> serde_json::Value {

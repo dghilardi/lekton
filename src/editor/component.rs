@@ -137,6 +137,7 @@ pub async fn save_doc_content(
         is_archived: false,
         source_path: None,
         source_id: None,
+        needs_reindex: false,
     };
 
     let search_doc = state

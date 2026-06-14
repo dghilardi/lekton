@@ -72,6 +72,13 @@ pub struct Document {
     /// was introduced.
     #[serde(default)]
     pub source_id: Option<String>,
+    /// `true` when the last ingest failed to (re)index this document in
+    /// Meilisearch and/or the RAG vector store, so search/chat are known to be
+    /// stale relative to MongoDB. Cleared on the next successful ingest. Lets
+    /// operators detect documents that need a re-index after a transient
+    /// search/embedding outage instead of the drift being silent.
+    #[serde(default)]
+    pub needs_reindex: bool,
 }
 
 /// Represents an API schema entry stored in MongoDB.
@@ -320,6 +327,11 @@ pub struct IngestResponse {
     /// `false` when the content hash and all metadata fields match the existing document.
     #[serde(default = "default_true")]
     pub changed: bool,
+    /// `false` when the document was persisted to MongoDB but could not be
+    /// (re)indexed in Meilisearch and/or the RAG vector store (search/chat are
+    /// stale). Lets the CLI warn the operator that a re-index is needed.
+    #[serde(default = "default_true")]
+    pub indexed: bool,
 }
 
 fn default_true() -> bool {
@@ -352,6 +364,7 @@ mod tests {
             is_archived: false,
             source_path: Some("engineering/deployment-guide.md".to_string()),
             source_id: Some("test-source".to_string()),
+            needs_reindex: false,
         };
 
         let json = serde_json::to_string(&doc).unwrap();
@@ -444,6 +457,7 @@ mod tests {
             is_archived: false,
             source_path: None,
             source_id: None,
+            needs_reindex: false,
         };
 
         let json = serde_json::to_string(&doc).unwrap();
@@ -524,6 +538,7 @@ mod tests {
             slug: "docs/hello".to_string(),
             s3_key: "docs/hello/v1.md".to_string(),
             changed: true,
+            indexed: true,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("docs/hello"));

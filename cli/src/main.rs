@@ -575,8 +575,10 @@ async fn main() -> Result<()> {
 
         match result {
             Ok(r) if r.status().is_success() => {
-                let ingest: IngestResponse =
-                    r.json().await.unwrap_or(IngestResponse { changed: true });
+                let ingest: IngestResponse = r.json().await.unwrap_or(IngestResponse {
+                    changed: true,
+                    indexed: true,
+                });
                 uploaded += 1;
                 if args.verbose {
                     let note = if ingest.changed {
@@ -590,6 +592,13 @@ async fn main() -> Result<()> {
                     );
                 } else {
                     println!("  uploaded: {}", upload_entry.source_path);
+                }
+                if !ingest.indexed {
+                    eprintln!(
+                        "  warning: {} was saved but failed to index in search/RAG — \
+                         run an admin re-index to restore search/chat",
+                        upload_entry.source_path
+                    );
                 }
             }
             Ok(r) => {

@@ -234,8 +234,15 @@ async fn asset_lifecycle_with_document() {
 
     response.assert_status_ok();
 
-    // Serve the asset back
-    let response = server.get("/api/v1/assets/project-x/config.yaml").await;
+    let admin = env
+        .create_test_user("admin-x", "admin@example.com", true)
+        .await;
+
+    // Serve the asset back (admin access required for unreferenced assets)
+    let response = server
+        .get("/api/v1/assets/project-x/config.yaml")
+        .add_cookie(env.auth_cookie(&admin))
+        .await;
     response.assert_status_ok();
     let body = response.text();
     assert_eq!(body, "asset-content-here");

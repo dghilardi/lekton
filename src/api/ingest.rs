@@ -171,6 +171,10 @@ pub async fn process_ingest(
 
     let content_changed = old_hash.as_deref() != Some(&new_hash);
 
+    // A document whose previous ingest failed to index is re-processed even when
+    // nothing else changed, so the retry re-runs indexing and clears the flag.
+    let old_doc_needs_reindex = old_doc.as_ref().is_some_and(|d| d.needs_reindex);
+
     // The request is authoritative: use its values directly.
     // This allows clearing is_hidden, order=0, and parent_slug=None via the sync path.
     let effective_parent_slug = normalized_parent_slug;
@@ -197,6 +201,7 @@ pub async fn process_ingest(
         && !source_path_changed
         && !source_id_changed
         && old_s3_key_before_rename.is_none()
+        && !old_doc_needs_reindex
     {
         let s3_key = format!("docs/{}.md", request.slug.replace('/', "_"));
         return Ok(IngestResponse {
@@ -204,6 +209,7 @@ pub async fn process_ingest(
             slug: request.slug,
             s3_key,
             changed: false,
+            indexed: true,
         });
     }
 
@@ -267,8 +273,8 @@ pub async fn process_ingest(
             .await?;
     }
 
-    // 9. Upsert document metadata in MongoDB
-    let doc = Document {
+    // 9. Build the document. `needs_reindex` is set below from the indexing outcome.
+    let mut doc = Document {
         slug: request.slug.clone(),
         title: request.title,
         summary,
@@ -288,25 +294,50 @@ pub async fn process_ingest(
         is_archived: false,
         source_path: Some(request.source_path.clone()),
         source_id: Some(request.source_id.clone()),
+        needs_reindex: false,
     };
 
-    // 10. Build search document before ownership transfer
+    // 10. (Re)index in Meilisearch + RAG *before* persisting, so the stored
+    //     document records whether it is in sync with the indexes. A transient
+    //     search/embedding outage now leaves a durable `needs_reindex` flag and
+    //     an `indexed: false` response instead of silently drifting from MongoDB.
     let search_doc = ctx
         .search
         .as_ref()
         .map(|_| crate::search::client::build_search_document(&doc, &raw_content));
 
-    // Capture fields for RAG indexing before doc is consumed
-    let rag_slug = doc.slug.clone();
-    let rag_title = doc.title.clone();
-    let rag_access_level = doc.access_level.clone();
-    let rag_is_draft = doc.is_draft;
-    let rag_tags = doc.tags.clone();
-    let rag_is_archived = doc.is_archived;
+    let mut indexed_ok = true;
 
+    if let (Some(search_svc), Some(search_doc)) = (ctx.search, search_doc) {
+        if let Err(e) = search_svc.index_document(&search_doc).await {
+            tracing::warn!(slug = %doc.slug, "Failed to index document in search: {e}");
+            indexed_ok = false;
+        }
+    }
+
+    if let Some(rag) = ctx.rag {
+        if let Err(e) = rag
+            .index_document(
+                &doc.slug,
+                &doc.title,
+                &raw_content,
+                &doc.access_level,
+                doc.is_draft,
+                &doc.tags,
+            )
+            .await
+        {
+            tracing::warn!(slug = %doc.slug, "Failed to index document in RAG: {e}");
+            indexed_ok = false;
+        }
+    }
+
+    doc.needs_reindex = !indexed_ok;
+
+    // 11. Upsert document metadata in MongoDB (records `needs_reindex`).
     ctx.repo.create_or_update(doc).await?;
 
-    // 11. Update backlinks on referenced documents.
+    // 12. Update backlinks on referenced documents.
     //     Note: this is not atomic with the create_or_update above.
     //     Both operations are idempotent, so partial failure leaves
     //     consistent (if stale) state that self-heals on re-ingest.
@@ -314,41 +345,12 @@ pub async fn process_ingest(
         .update_backlinks(&request.slug, &old_links, &links_out)
         .await?;
 
-    // 12. Index in Meilisearch (if available)
-    if let (Some(search_svc), Some(search_doc)) = (ctx.search, search_doc) {
-        if let Err(e) = search_svc.index_document(&search_doc).await {
-            tracing::warn!("Failed to index document in search: {e}");
-        }
-    }
-
-    // 13. Index in RAG vector store (if available)
-    if let Some(rag) = ctx.rag {
-        if rag_is_archived {
-            if let Err(e) = rag.delete_document(&rag_slug).await {
-                tracing::warn!("Failed to remove archived document from RAG: {e}");
-            }
-        } else {
-            if let Err(e) = rag
-                .index_document(
-                    &rag_slug,
-                    &rag_title,
-                    &raw_content,
-                    &rag_access_level,
-                    rag_is_draft,
-                    &rag_tags,
-                )
-                .await
-            {
-                tracing::warn!("Failed to index document in RAG: {e}");
-            }
-        }
-    }
-
     Ok(IngestResponse {
         message: "Document ingested successfully".to_string(),
         slug: request.slug,
         s3_key,
         changed: true,
+        indexed: indexed_ok,
     })
 }
 
@@ -871,6 +873,76 @@ mod tests {
             rag: None,
             legacy_token,
         }
+    }
+
+    /// A RAG service whose `index_document` always fails, to exercise the
+    /// partial-indexing path (BUG-6).
+    struct FailingRagService;
+
+    #[async_trait]
+    impl crate::rag::service::RagService for FailingRagService {
+        async fn index_document(
+            &self,
+            _slug: &str,
+            _title: &str,
+            _content: &str,
+            _access_level: &str,
+            _is_draft: bool,
+            _tags: &[String],
+        ) -> Result<(), AppError> {
+            Err(AppError::Internal("rag down".to_string()))
+        }
+        async fn delete_document(&self, _slug: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ingest_index_failure_flags_needs_reindex() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let mut ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+        let failing_rag = FailingRagService;
+        ctx.rag = Some(&failing_rag);
+
+        let response = process_ingest(&ctx, make_request("valid-token", "docs/hello"))
+            .await
+            .unwrap();
+
+        // The document is persisted but the caller is told indexing did not succeed.
+        assert!(!response.indexed);
+        let doc = repo.find_by_slug("docs/hello").await.unwrap().unwrap();
+        assert!(doc.needs_reindex);
+    }
+
+    #[tokio::test]
+    async fn test_unchanged_doc_is_reprocessed_when_needs_reindex() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+
+        // First ingest fails to index → doc flagged needs_reindex.
+        {
+            let mut ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+            let failing_rag = FailingRagService;
+            ctx.rag = Some(&failing_rag);
+            process_ingest(&ctx, make_request("valid-token", "docs/hello"))
+                .await
+                .unwrap();
+        }
+
+        // Second ingest with identical content, RAG now healthy (absent): the
+        // unchanged doc is re-processed (not skipped) and the flag is cleared.
+        let ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+        let response = process_ingest(&ctx, make_request("valid-token", "docs/hello"))
+            .await
+            .unwrap();
+
+        assert!(response.changed);
+        assert!(response.indexed);
+        let doc = repo.find_by_slug("docs/hello").await.unwrap().unwrap();
+        assert!(!doc.needs_reindex);
     }
 
     fn make_scoped_token(raw_token: &str, scopes: Vec<&str>) -> ServiceToken {

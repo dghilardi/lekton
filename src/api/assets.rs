@@ -1376,6 +1376,7 @@ mod tests {
             is_archived: false,
             source_path: None,
             source_id: None,
+            needs_reindex: false,
         }
     }
 

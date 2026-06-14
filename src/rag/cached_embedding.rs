@@ -24,6 +24,20 @@ fn sha256_hex(text: &str) -> String {
     hash.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Builds the cache namespace that scopes every embedding entry.
+///
+/// Two cached vectors only collide when the model name, vector dimensions, AND
+/// backend endpoint all match. Without the dimensions/endpoint, repointing
+/// `embedding_url` (or a Vertex project) to a different backend — or changing
+/// dimensions for a Matryoshka model — while keeping the model name would return
+/// stale vectors from the old backend (dimension mismatch vs Qdrant or
+/// semantically wrong results). Changing any of the three components naturally
+/// busts the cache, so it doubles as a bumpable cache-version namespace.
+pub fn cache_namespace(model: &str, dimensions: u32, endpoint: &str) -> String {
+    let endpoint_hash = sha256_hex(endpoint);
+    format!("{model}|{dimensions}|{}", &endpoint_hash[..16])
+}
+
 // ── CachedEmbeddingService ────────────────────────────────────────────────────
 
 /// Wraps any [`EmbeddingService`] with a MongoDB-backed cache.
@@ -34,8 +48,9 @@ fn sha256_hex(text: &str) -> String {
 pub struct CachedEmbeddingService {
     inner: Arc<dyn EmbeddingService>,
     cache: Arc<dyn EmbeddingCacheRepository>,
-    /// Model name used as part of the cache key.
-    model: String,
+    /// Cache namespace (model + dimensions + endpoint) used as part of the cache key.
+    /// Build it with [`cache_namespace`].
+    namespace: String,
     /// Whether to persist the original normalised text alongside the embedding.
     store_text: bool,
 }
@@ -44,13 +59,13 @@ impl CachedEmbeddingService {
     pub fn new(
         inner: Arc<dyn EmbeddingService>,
         cache: Arc<dyn EmbeddingCacheRepository>,
-        model: String,
+        namespace: String,
         store_text: bool,
     ) -> Self {
         Self {
             inner,
             cache,
-            model,
+            namespace,
             store_text,
         }
     }
@@ -70,7 +85,7 @@ impl EmbeddingService for CachedEmbeddingService {
         // 2. Batch-fetch whatever is already in the cache.
         let pairs: Vec<(String, String)> = hashes
             .iter()
-            .map(|h| (h.clone(), self.model.clone()))
+            .map(|h| (h.clone(), self.namespace.clone()))
             .collect();
         let cached_entries = self.cache.get_many(&pairs).await?;
 
@@ -103,7 +118,7 @@ impl EmbeddingService for CachedEmbeddingService {
                 .filter(|(_, v)| !v.is_empty())
                 .map(|(&i, v)| EmbeddingCacheEntry {
                     hash: hashes[i].clone(),
-                    model: self.model.clone(),
+                    model: self.namespace.clone(),
                     embedding: v.clone(),
                     generated_at: Utc::now(),
                     text: if self.store_text {
@@ -274,6 +289,41 @@ mod tests {
         assert_eq!(result.len(), 2);
         // Inner was called again, but only for 1 text
         assert_eq!(inner.calls(), 2);
+    }
+
+    #[tokio::test]
+    async fn different_namespace_misses_cache() {
+        // Same text + same backing cache, but two services scoped to different
+        // namespaces (e.g. different dimensions or endpoint) must not share entries.
+        let inner = Arc::new(CountingEmbedding::new(4));
+        let cache = Arc::new(InMemoryCache::new());
+        let svc_a = CachedEmbeddingService::new(
+            inner.clone(),
+            cache.clone(),
+            cache_namespace("m", 768, "oai:http://a"),
+            false,
+        );
+        let svc_b = CachedEmbeddingService::new(
+            inner.clone(),
+            cache.clone(),
+            cache_namespace("m", 1024, "oai:http://a"),
+            false,
+        );
+        let texts = vec!["hello world".to_string()];
+        svc_a.embed(&texts).await.unwrap();
+        svc_b.embed(&texts).await.unwrap();
+        // Distinct namespaces → both went to the inner service.
+        assert_eq!(inner.calls(), 2);
+    }
+
+    #[test]
+    fn cache_namespace_varies_with_each_component() {
+        let base = cache_namespace("model-x", 768, "oai:http://host");
+        assert_ne!(base, cache_namespace("model-y", 768, "oai:http://host"));
+        assert_ne!(base, cache_namespace("model-x", 1024, "oai:http://host"));
+        assert_ne!(base, cache_namespace("model-x", 768, "oai:http://other"));
+        // Stable for identical inputs.
+        assert_eq!(base, cache_namespace("model-x", 768, "oai:http://host"));
     }
 
     #[tokio::test]

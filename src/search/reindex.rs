@@ -237,6 +237,7 @@ mod tests {
             is_archived,
             source_path: None,
             source_id: None,
+            needs_reindex: false,
         }
     }
 

@@ -313,6 +313,7 @@ mod tests {
             is_archived: false,
             source_path: None,
             source_id: None,
+            needs_reindex: false,
         };
 
         let search_doc = build_search_document(&doc, "# Getting Started\n\nWelcome to Lekton.");
@@ -347,6 +348,7 @@ mod tests {
             is_archived: false,
             source_path: None,
             source_id: None,
+            needs_reindex: false,
         };
 
         let search_doc = build_search_document(&doc, "# WIP content");

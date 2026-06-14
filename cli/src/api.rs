@@ -104,6 +104,14 @@ pub struct IngestRequest {
 #[derive(Deserialize)]
 pub struct IngestResponse {
     pub changed: bool,
+    /// `false` when the server persisted the document but could not (re)index it
+    /// in search/RAG. Defaults to `true` for older servers that omit the field.
+    #[serde(default = "default_true")]
+    pub indexed: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Serialize)]

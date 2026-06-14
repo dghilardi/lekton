@@ -146,6 +146,9 @@ async fn upload_asset_with_nested_key() {
 async fn serve_asset_returns_content() {
     let env = common::TestEnv::start().await;
     let server = env.server();
+    let admin = env
+        .create_test_user("admin1", "admin@example.com", true)
+        .await;
 
     let content = b"PDF content here";
     upload_asset(
@@ -157,7 +160,10 @@ async fn serve_asset_returns_content() {
     )
     .await;
 
-    let response = server.get("/api/v1/assets/docs/manual.pdf").await;
+    let response = server
+        .get("/api/v1/assets/docs/manual.pdf")
+        .add_cookie(env.auth_cookie(&admin))
+        .await;
     response.assert_status_ok();
 
     let headers = response.headers();
@@ -365,8 +371,8 @@ async fn editor_upload_serves_correctly() {
     let body: serde_json::Value = upload_response.json();
     let url = body["url"].as_str().unwrap();
 
-    // Serve it back
-    let response = server.get(url).await;
+    // Serve it back (uploader has access to their own unreferenced asset)
+    let response = server.get(url).add_cookie(env.auth_cookie(&user)).await;
     response.assert_status_ok();
 
     let headers = response.headers();

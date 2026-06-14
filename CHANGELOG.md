@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.30] 2026-06-14
+
 ### Fixed
 - RAG embedding cache: the cache key now includes the embedding dimensions and a hash of the backend endpoint, not just the model name. Repointing the embedding URL / Vertex project, or changing dimensions for a Matryoshka model while keeping the model name, no longer returns stale vectors from the old backend (which caused dimension mismatches against Qdrant or semantically wrong results). The composite namespace doubles as a bumpable cache-version key.
 - Ingest: when a document is persisted to MongoDB but fails to (re)index in Meilisearch/RAG, the failure is no longer silent. The document is flagged `needs_reindex`, the ingest response reports `indexed: false`, and `lekton-sync` warns the operator to run an admin re-index. A flagged document is also re-processed on its next ingest (instead of being skipped as unchanged), so the index is retried automatically.

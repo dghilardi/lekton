@@ -267,11 +267,85 @@ fn auth_routes(demo_mode: bool) -> axum::Router<lekton::app::AppState> {
     }
 }
 
+/// Build the MCP server route (`/mcp`, Streamable HTTP) with PAT auth applied.
+///
+/// Kept alongside api_routes()/auth_routes() so the whole route surface is
+/// auditable in one place. Only mounted when RAG is configured (embedding +
+/// vectorstore present), since the MCP tools depend on both.
+#[cfg(feature = "ssr")]
+fn mcp_routes(
+    app_state: &lekton::app::AppState,
+    config: &lekton::config::AppConfig,
+    emb: &std::sync::Arc<dyn lekton::rag::embedding::EmbeddingService>,
+    vs: &std::sync::Arc<dyn lekton::rag::vectorstore::VectorStore>,
+) -> axum::Router<lekton::app::AppState> {
+    use axum::Router;
+    use lekton::mcp::auth::{pat_auth_middleware, McpAuthState};
+    use lekton::mcp::server::LektonMcpServer;
+    use rmcp::transport::streamable_http_server::{
+        session::local::LocalSessionManager, tower::StreamableHttpService,
+        StreamableHttpServerConfig,
+    };
+
+    let doc_repo = app_state.document_repo.clone();
+    let schema_repo = app_state.schema_repo.clone();
+    let prompt_repo = app_state.prompt_repo.clone();
+    let user_prompt_preference_repo = app_state.user_prompt_preference_repo.clone();
+    let documentation_feedback_repo = app_state.documentation_feedback_repo.clone();
+    let storage = app_state.storage_client.clone();
+    let emb = emb.clone();
+    let vs = vs.clone();
+
+    let mcp_config = if config.mcp.allowed_hosts.is_empty() {
+        StreamableHttpServerConfig::default().disable_allowed_hosts()
+    } else {
+        StreamableHttpServerConfig::default().with_allowed_hosts(config.mcp.allowed_hosts.clone())
+    }
+    .with_stateful_mode(config.mcp.stateful_mode)
+    .with_json_response(config.mcp.json_response);
+
+    let mut session_manager = LocalSessionManager::default();
+    session_manager.session_config.keep_alive = config
+        .mcp
+        .session_keep_alive_secs
+        .map(std::time::Duration::from_secs);
+    session_manager.session_config.completed_cache_ttl =
+        std::time::Duration::from_secs(config.mcp.completed_cache_ttl_secs);
+
+    let mcp_service = StreamableHttpService::new(
+        move || {
+            Ok(LektonMcpServer::new(
+                doc_repo.clone(),
+                schema_repo.clone(),
+                prompt_repo.clone(),
+                user_prompt_preference_repo.clone(),
+                documentation_feedback_repo.clone(),
+                storage.clone(),
+                emb.clone(),
+                vs.clone(),
+            ))
+        },
+        session_manager.into(),
+        mcp_config,
+    );
+
+    let mcp_auth = McpAuthState {
+        service_token_repo: app_state.service_token_repo.clone(),
+        user_repo: app_state.user_repo.clone(),
+    };
+
+    Router::new()
+        .nest_service("/mcp", mcp_service)
+        .layer(axum::middleware::from_fn_with_state(
+            mcp_auth,
+            pat_auth_middleware,
+        ))
+}
+
 #[cfg(feature = "ssr")]
 #[tokio::main]
 async fn main() {
     use axum::middleware;
-    use axum::Router;
     use lekton::app::App;
     use lekton::auth::provider::build_provider;
     use lekton::auth::token_service::TokenService;
@@ -294,7 +368,6 @@ async fn main() {
     use leptos_axum::{generate_route_list, LeptosRoutes};
     use std::net::SocketAddr;
     use std::sync::Arc;
-    use std::time::Duration;
     use tower_http::services::ServeDir;
 
     // Install a default rustls CryptoProvider before any TLS connections are made.
@@ -694,64 +767,7 @@ async fn main() {
 
     // MCP server (requires RAG — needs embedding + vectorstore)
     if let (Some(ref emb), Some(ref vs)) = (&embedding_service, &vector_store) {
-        use lekton::mcp::auth::{pat_auth_middleware, McpAuthState};
-        use lekton::mcp::server::LektonMcpServer;
-        use rmcp::transport::streamable_http_server::{
-            session::local::LocalSessionManager, tower::StreamableHttpService,
-            StreamableHttpServerConfig,
-        };
-
-        let doc_repo = app_state.document_repo.clone();
-        let schema_repo = app_state.schema_repo.clone();
-        let prompt_repo = app_state.prompt_repo.clone();
-        let user_prompt_preference_repo = app_state.user_prompt_preference_repo.clone();
-        let documentation_feedback_repo = app_state.documentation_feedback_repo.clone();
-        let storage = app_state.storage_client.clone();
-        let emb = emb.clone();
-        let vs = vs.clone();
-
-        let mcp_config = if config.mcp.allowed_hosts.is_empty() {
-            StreamableHttpServerConfig::default().disable_allowed_hosts()
-        } else {
-            StreamableHttpServerConfig::default()
-                .with_allowed_hosts(config.mcp.allowed_hosts.clone())
-        }
-        .with_stateful_mode(config.mcp.stateful_mode)
-        .with_json_response(config.mcp.json_response);
-
-        let mut session_manager = LocalSessionManager::default();
-        session_manager.session_config.keep_alive =
-            config.mcp.session_keep_alive_secs.map(Duration::from_secs);
-        session_manager.session_config.completed_cache_ttl =
-            Duration::from_secs(config.mcp.completed_cache_ttl_secs);
-
-        let mcp_service = StreamableHttpService::new(
-            move || {
-                Ok(LektonMcpServer::new(
-                    doc_repo.clone(),
-                    schema_repo.clone(),
-                    prompt_repo.clone(),
-                    user_prompt_preference_repo.clone(),
-                    documentation_feedback_repo.clone(),
-                    storage.clone(),
-                    emb.clone(),
-                    vs.clone(),
-                ))
-            },
-            session_manager.into(),
-            mcp_config,
-        );
-
-        let mcp_auth = McpAuthState {
-            service_token_repo: app_state.service_token_repo.clone(),
-            user_repo: app_state.user_repo.clone(),
-        };
-
-        let mcp_router = Router::new().nest_service("/mcp", mcp_service).layer(
-            axum::middleware::from_fn_with_state(mcp_auth, pat_auth_middleware),
-        );
-
-        app = app.merge(mcp_router);
+        app = app.merge(mcp_routes(&app_state, &config, emb, vs));
 
         tracing::info!(
             stateful_mode = config.mcp.stateful_mode,

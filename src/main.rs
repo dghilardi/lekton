@@ -533,10 +533,27 @@ async fn main() {
                 // Wrap raw embedding with the cache for chunk indexing.
                 let cached_embedding: Arc<dyn lekton::rag::embedding::EmbeddingService> =
                     if let Some(ref cache_repo) = embedding_cache_repo {
+                        // Endpoint identity: distinct per backend so repointing the URL
+                        // (or Vertex project) busts the cache instead of returning stale
+                        // vectors from the old backend.
+                        let endpoint = if config.rag.embedding_vertex_project_id.is_empty() {
+                            format!("oai:{}", config.rag.embedding_url)
+                        } else {
+                            format!(
+                                "vertex:{}/{}",
+                                config.rag.embedding_vertex_project_id,
+                                config.rag.embedding_vertex_location
+                            )
+                        };
+                        let namespace = lekton::rag::cached_embedding::cache_namespace(
+                            &config.rag.embedding_model,
+                            config.rag.embedding_dimensions,
+                            &endpoint,
+                        );
                         Arc::new(CachedEmbeddingService::new(
                             raw_embedding.clone(),
                             cache_repo.clone(),
-                            config.rag.embedding_model.clone(),
+                            namespace,
                             config.rag.embedding_cache_store_text,
                         ))
                     } else {

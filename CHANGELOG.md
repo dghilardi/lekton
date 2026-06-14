@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- RAG embedding cache: the cache key now includes the embedding dimensions and a hash of the backend endpoint, not just the model name. Repointing the embedding URL / Vertex project, or changing dimensions for a Matryoshka model while keeping the model name, no longer returns stale vectors from the old backend (which caused dimension mismatches against Qdrant or semantically wrong results). The composite namespace doubles as a bumpable cache-version key.
 - `docker-compose.yml`: environment variables migrated to `LKN__` prefix (e.g. `LKN__DATABASE__URI`, `LKN__AUTH__DEMO_MODE`). The previous legacy names (`MONGODB_URI`, `DEMO_MODE`, etc.) were silently ignored by the config loader, making `docker-compose up` non-functional.
 - README: Configuration table, `.env` snippet, e2e test command, and Demo Mode section updated to use `LKN__*` variable names. License section corrected from "GNU GPL v3" to "GNU AGPL v3".
 - RAG indexing: a document is no longer dropped from the vector store when its embedding fails. Indexing now computes embeddings before any destructive write and upserts the new chunks before deleting the stale ones (upsert-then-delete-stale); previously the old chunks were deleted first, so a failed/timed-out embedding left the document unsearchable in chat while still present in MongoDB. RAG re-index also now reports indexed/skipped/failed counts instead of silently swallowing per-document failures.

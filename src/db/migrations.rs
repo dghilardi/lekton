@@ -199,7 +199,7 @@ mod inner {
         let mut cursor = col.aggregate(pipeline).await?;
         let mut duplicates: Vec<String> = Vec::new();
         while let Some(doc) = cursor.try_next().await? {
-            if let Some(slug) = doc.get_str("_id").ok() {
+            if let Ok(slug) = doc.get_str("_id") {
                 duplicates.push(slug.to_string());
             }
         }

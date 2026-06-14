@@ -150,7 +150,7 @@ fn default_public_access_level() -> String {
 /// is returned instead. Returns `None` on an empty slice.
 ///
 /// Accepts both `&[SchemaVersion]` and `&[&SchemaVersion]` via the two overloads below.
-pub fn latest_schema_version<'a>(versions: &'a [SchemaVersion]) -> Option<&'a SchemaVersion> {
+pub fn latest_schema_version(versions: &[SchemaVersion]) -> Option<&SchemaVersion> {
     if versions.is_empty() {
         return None;
     }

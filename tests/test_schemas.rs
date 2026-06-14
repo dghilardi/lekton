@@ -305,7 +305,10 @@ async fn schema_get_version_content() {
     )
     .await;
 
-    let response = server.get(&format!("/api/v1/schemas/{}/1.0.0", name)).await;
+    let response = server
+        .get(&format!("/api/v1/schemas/{}", name))
+        .add_query_param("version", "1.0.0")
+        .await;
 
     let content = response.text();
     assert!(content.contains("openapi"));
@@ -331,7 +334,10 @@ async fn schema_get_version_not_found() {
     .await;
 
     let server = env.server_permissive();
-    let response = server.get(&format!("/api/v1/schemas/{}/9.9.9", name)).await;
+    let response = server
+        .get(&format!("/api/v1/schemas/{}", name))
+        .add_query_param("version", "9.9.9")
+        .await;
 
     response.assert_status_not_found();
 }
@@ -404,7 +410,8 @@ async fn schema_full_lifecycle() {
 
     // 5. Fetch version content
     let content = server
-        .get(&format!("/api/v1/schemas/{}/1.0.0", name))
+        .get(&format!("/api/v1/schemas/{}", name))
+        .add_query_param("version", "1.0.0")
         .await
         .text();
     assert!(content.contains("openapi"));
@@ -591,7 +598,8 @@ async fn schema_raw_api_supports_names_with_slashes() {
     assert_eq!(detail.name, name);
 
     let content = server
-        .get(&format!("/api/v1/schemas/{}/1.0.0", name))
+        .get(&format!("/api/v1/schemas/{}", name))
+        .add_query_param("version", "1.0.0")
         .await
         .text();
     assert!(content.contains("openapi"));

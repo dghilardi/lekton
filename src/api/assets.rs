@@ -191,7 +191,7 @@ pub async fn process_serve_asset(
 
     if asset.referenced_by.is_empty() {
         let is_admin = allowed_levels.is_none();
-        let is_uploader = user_email.map_or(false, |e| e == asset.uploaded_by.as_str());
+        let is_uploader = user_email == Some(asset.uploaded_by.as_str());
         if !is_admin && !is_uploader {
             return Err(AppError::Forbidden("Asset access denied".into()));
         }

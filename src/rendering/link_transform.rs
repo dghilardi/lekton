@@ -126,11 +126,15 @@ pub fn rewrite_links_in_html(html: &str, ctx: &LinkContext<'_>, target: Transfor
         if let Some(end) = rest[content_start..].find(quote as char) {
             let url = &rest[content_start..content_start + end];
             let transformed = transform_url(url, ctx, target);
+            let external_navigation = should_force_external_navigation(&transformed, target);
 
             result.push_str(&format!(
                 "href={}{}{}",
                 quote as char, transformed, quote as char
             ));
+            if external_navigation {
+                result.push_str(" rel=\"external\"");
+            }
             rest = &rest[content_start + end + 1..]; // +1 skips closing quote
         } else {
             // Malformed attribute: copy as-is and continue past `href=`.
@@ -244,6 +248,16 @@ fn normalize_path(path: &str) -> String {
         }
     }
     parts.join("/")
+}
+
+fn should_force_external_navigation(url: &str, target: TransformTarget) -> bool {
+    matches!(target, TransformTarget::Web) && is_api_asset_link(url)
+}
+
+fn is_api_asset_link(url: &str) -> bool {
+    let (path, _) = split_anchor(url);
+    let path = path.split('?').next().unwrap_or(path);
+    path.starts_with("/api/v1/assets/")
 }
 
 #[cfg(test)]
@@ -447,6 +461,19 @@ mod tests {
         let html = r#"<p>See <a href="./user">user service</a> and <a href="https://example.com">external</a>.</p>"#;
         let result = rewrite_links_in_html(html, &ctx, TransformTarget::Web);
         assert!(result.contains(r#"href="/docs/cloud/services/user""#));
+        assert!(!result.contains(r#"href="/docs/cloud/services/user" rel="external""#));
         assert!(result.contains(r#"href="https://example.com""#));
+    }
+
+    #[test]
+    fn test_asset_links_force_external_navigation() {
+        let siblings = HashMap::new();
+        let ctx = LinkContext {
+            source_path: Some("docs/services/device.md"),
+            siblings: &siblings,
+        };
+        let html = r#"<p><a href="/api/v1/assets/docs/manual.pdf">manual</a></p>"#;
+        let result = rewrite_links_in_html(html, &ctx, TransformTarget::Web);
+        assert!(result.contains(r#"href="/api/v1/assets/docs/manual.pdf" rel="external""#));
     }
 }

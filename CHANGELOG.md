@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Document links to uploaded assets such as PDFs now force a full browser navigation instead of being intercepted by the client router, so `/api/v1/assets/...` links open correctly from the docs view.
+
 ## [0.24.32] 2026-06-14
 
 ### Changed

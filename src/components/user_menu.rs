@@ -12,7 +12,7 @@ pub fn UserMenu() -> impl IntoView {
         .expect("UserMenu must be inside App")
         .0;
 
-    let logout_action = Action::new(move |_: &()| async move {
+    let logout_action = Action::new_local(move |_: &()| async move {
         #[cfg(feature = "hydrate")]
         {
             use gloo_net::http::Request;

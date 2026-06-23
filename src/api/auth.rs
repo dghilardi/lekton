@@ -17,8 +17,9 @@ use serde::{Deserialize, Serialize};
 use crate::app::AppState;
 use crate::auth::extractor::{
     access_token_cookie, auth_state_cookie, clear_access_token_cookie, clear_auth_state_cookie,
-    clear_logged_in_cookie, clear_refresh_token_cookie, logged_in_cookie, refresh_token_cookie,
-    OptionalAuthUser, AUTH_STATE_COOKIE, REFRESH_TOKEN_COOKIE,
+    clear_legacy_refresh_token_cookie, clear_logged_in_cookie, clear_refresh_token_cookie,
+    logged_in_cookie, refresh_token_cookie, OptionalAuthUser, AUTH_STATE_COOKIE,
+    REFRESH_TOKEN_COOKIE,
 };
 use crate::auth::middleware::build_user_from_claims;
 use crate::auth::models::AuthenticatedUser;
@@ -203,6 +204,7 @@ pub async fn callback_handler(
 
     let secure = !app_state.insecure_cookies;
     let jar = jar
+        .remove(clear_legacy_refresh_token_cookie())
         .add(access_token_cookie(access_token, ttl_secs, secure))
         .add(refresh_token_cookie(refresh_token, ttl_days, secure))
         .add(logged_in_cookie(ttl_days, secure));
@@ -260,6 +262,7 @@ async fn refresh_handler_inner(
             let jar = jar
                 .clone()
                 .remove(clear_refresh_token_cookie())
+                .remove(clear_legacy_refresh_token_cookie())
                 .remove(clear_logged_in_cookie())
                 .remove(clear_access_token_cookie());
             (jar, AppError::Auth("Refresh token not found".into()))
@@ -270,6 +273,7 @@ async fn refresh_handler_inner(
         // thinking the user is logged in.
         let jar = jar
             .remove(clear_refresh_token_cookie())
+            .remove(clear_legacy_refresh_token_cookie())
             .remove(clear_logged_in_cookie())
             .remove(clear_access_token_cookie());
         return Err((
@@ -311,6 +315,7 @@ async fn refresh_handler_inner(
 
     let secure = !app_state.insecure_cookies;
     let jar = jar
+        .remove(clear_legacy_refresh_token_cookie())
         .add(access_token_cookie(access_token, ttl_secs, secure))
         .add(refresh_token_cookie(new_refresh, ttl_days, secure))
         .add(logged_in_cookie(ttl_days, secure));
@@ -334,6 +339,7 @@ pub async fn logout_handler(
     let jar = jar
         .remove(clear_access_token_cookie())
         .remove(clear_refresh_token_cookie())
+        .remove(clear_legacy_refresh_token_cookie())
         .remove(clear_logged_in_cookie());
 
     (StatusCode::OK, jar)

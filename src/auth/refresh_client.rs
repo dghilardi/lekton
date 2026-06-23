@@ -167,8 +167,9 @@ mod inner {
 
     /// POST to `/auth/refresh` and return whether it succeeded.
     ///
-    /// The refresh-token cookie is path-restricted to `/auth/refresh` by the
-    /// server, so the browser sends it automatically on this exact path.
+    /// The refresh-token cookie is path-restricted to `/auth` by the server,
+    /// so the browser sends it automatically to both `/auth/refresh` and
+    /// `/auth/logout`.
     /// `gloo_net` defaults to same-origin credentials, which is correct here.
     async fn do_refresh() -> RefreshResult {
         use gloo_net::http::Request;

@@ -293,6 +293,10 @@ impl TestEnv {
             // Auth OIDC routes (refresh, me, logout — work without auth_provider)
             .route("/auth/refresh", post(lekton::api::auth::refresh_handler))
             .route("/auth/logout", post(lekton::api::auth::logout_handler))
+            .route(
+                "/auth/refresh/logout",
+                post(lekton::api::auth::logout_handler),
+            )
             .route("/auth/me", get(lekton::api::auth::me_handler))
             // Demo auth routes
             .route(

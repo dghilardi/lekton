@@ -35,9 +35,9 @@ async fn refresh_token_rotates_tokens() {
     let user = env.create_test_user("user-1", "user@test.com", false).await;
     let (_access, refresh_raw, _hash) = issue_tokens(&env, &user).await;
 
-    // The refresh endpoint reads from the lekton_refresh_token cookie at path /auth/refresh
+    // The refresh token cookie is scoped to /auth so both refresh and logout receive it.
     let refresh_cookie = cookie::Cookie::build(("lekton_refresh_token", refresh_raw))
-        .path("/auth/refresh")
+        .path("/auth")
         .build();
 
     let response = server
@@ -60,7 +60,7 @@ async fn refresh_token_revokes_old() {
     let (_access, refresh_raw, refresh_hash) = issue_tokens(&env, &user).await;
 
     let refresh_cookie = cookie::Cookie::build(("lekton_refresh_token", refresh_raw))
-        .path("/auth/refresh")
+        .path("/auth")
         .build();
 
     server
@@ -102,7 +102,7 @@ async fn refresh_with_revoked_token_fails() {
         .unwrap();
 
     let refresh_cookie = cookie::Cookie::build(("lekton_refresh_token", refresh_raw))
-        .path("/auth/refresh")
+        .path("/auth")
         .build();
 
     let response = server
@@ -183,7 +183,7 @@ async fn logout_revokes_and_clears() {
     let (_access, refresh_raw, refresh_hash) = issue_tokens(&env, &user).await;
 
     let refresh_cookie = cookie::Cookie::build(("lekton_refresh_token", refresh_raw))
-        .path("/auth/refresh")
+        .path("/auth")
         .build();
 
     let response = server
@@ -204,5 +204,37 @@ async fn logout_revokes_and_clears() {
     assert!(
         stored.revoked_at.is_some(),
         "refresh token should be revoked after logout"
+    );
+}
+
+#[tokio::test]
+async fn legacy_logout_path_still_revokes_and_clears() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+
+    let user = env.create_test_user("user-1", "user@test.com", false).await;
+    let (_access, refresh_raw, refresh_hash) = issue_tokens(&env, &user).await;
+
+    let refresh_cookie = cookie::Cookie::build(("lekton_refresh_token", refresh_raw))
+        .path("/auth/refresh")
+        .build();
+
+    let response = server
+        .post("/auth/refresh/logout")
+        .add_cookie(env.auth_cookie(&user))
+        .add_cookie(refresh_cookie)
+        .await;
+
+    response.assert_status_ok();
+
+    let stored = env
+        .user_repo
+        .find_refresh_token_by_hash(&refresh_hash)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        stored.revoked_at.is_some(),
+        "legacy refresh token should still be revoked after logout"
     );
 }

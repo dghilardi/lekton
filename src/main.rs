@@ -263,6 +263,10 @@ fn auth_routes(demo_mode: bool) -> axum::Router<lekton::app::AppState> {
                 "/auth/logout",
                 axum::routing::post(auth_api::logout_handler),
             )
+            .route(
+                "/auth/refresh/logout",
+                axum::routing::post(auth_api::logout_handler),
+            )
             .route("/auth/me", axum::routing::get(auth_api::me_handler))
     }
 }

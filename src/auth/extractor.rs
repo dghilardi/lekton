@@ -24,6 +24,11 @@ use crate::auth::token_service::TokenService;
 pub const ACCESS_TOKEN_COOKIE: &str = "lekton_access_token";
 /// Name of the httpOnly cookie carrying the opaque refresh token.
 pub const REFRESH_TOKEN_COOKIE: &str = "lekton_refresh_token";
+/// Canonical path used for the refresh-token cookie.
+pub const REFRESH_TOKEN_COOKIE_PATH: &str = "/auth";
+/// Legacy refresh-token path kept temporarily so deployments can remove the
+/// pre-migration cookie that used to be scoped only to `/auth/refresh`.
+pub const LEGACY_REFRESH_TOKEN_COOKIE_PATH: &str = "/auth/refresh";
 /// Name of the httpOnly cookie carrying the serialised OAuth2/OIDC flow state.
 pub const AUTH_STATE_COOKIE: &str = "lekton_auth_state";
 /// Name of the httpOnly cookie carrying the demo session (demo mode only).
@@ -163,8 +168,9 @@ pub fn access_token_cookie(
         .build()
 }
 
-/// Build the refresh-token httpOnly cookie (path restricted to `/auth/refresh`
-/// to limit exposure).
+/// Build the refresh-token httpOnly cookie (path restricted to `/auth`
+/// so both refresh and logout endpoints receive it while keeping it away from
+/// the general application routes).
 ///
 /// Uses `SameSite::Strict` — the refresh endpoint is only called from our own
 /// frontend, never from a cross-site redirect.
@@ -176,7 +182,7 @@ pub fn refresh_token_cookie(
     secure: bool,
 ) -> axum_extra::extract::cookie::Cookie<'static> {
     axum_extra::extract::cookie::Cookie::build((REFRESH_TOKEN_COOKIE, value))
-        .path("/auth/refresh")
+        .path(REFRESH_TOKEN_COOKIE_PATH)
         .http_only(true)
         .secure(secure)
         .same_site(axum_extra::extract::cookie::SameSite::Strict)
@@ -215,7 +221,15 @@ pub fn clear_access_token_cookie() -> axum_extra::extract::cookie::Cookie<'stati
 /// Clear the refresh-token cookie.
 pub fn clear_refresh_token_cookie() -> axum_extra::extract::cookie::Cookie<'static> {
     axum_extra::extract::cookie::Cookie::build((REFRESH_TOKEN_COOKIE, ""))
-        .path("/auth/refresh")
+        .path(REFRESH_TOKEN_COOKIE_PATH)
+        .removal()
+        .build()
+}
+
+/// Clear the legacy refresh-token cookie that was scoped to `/auth/refresh`.
+pub fn clear_legacy_refresh_token_cookie() -> axum_extra::extract::cookie::Cookie<'static> {
+    axum_extra::extract::cookie::Cookie::build((REFRESH_TOKEN_COOKIE, ""))
+        .path(LEGACY_REFRESH_TOKEN_COOKIE_PATH)
         .removal()
         .build()
 }
@@ -287,7 +301,7 @@ mod tests {
     #[test]
     fn test_refresh_token_cookie_path() {
         let cookie = refresh_token_cookie("raw".to_string(), 30, true);
-        assert_eq!(cookie.path(), Some("/auth/refresh"));
+        assert_eq!(cookie.path(), Some(REFRESH_TOKEN_COOKIE_PATH));
     }
 
     #[test]

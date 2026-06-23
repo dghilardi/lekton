@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Logout no longer leaves the browser in a stale "logged in" state: the refresh-token cookie is scoped to `/auth`, OIDC logout has a migration-safe `/auth/refresh/logout` alias for pre-update sessions, and the session indicator cookie is cleared to prevent post-logout auth refresh/redirect loops.
 - Document links to uploaded assets such as PDFs now force a full browser navigation instead of being intercepted by the client router, so `/api/v1/assets/...` links open correctly from the docs view.
 
 ## [0.24.32] 2026-06-14

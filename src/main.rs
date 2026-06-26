@@ -385,12 +385,10 @@ async fn main() {
     let config =
         lekton::config::AppConfig::load().expect("Failed to load application configuration");
 
-    if config.rag.is_enabled() {
-        config.rag.validate().expect("Invalid RAG configuration");
-        if config.rag.hybrid_search_enabled && config.search.url.is_empty() {
-            panic!("rag.hybrid_search_enabled = true requires search.url to be set");
-        }
-    }
+    // Fail-fast: reject features that are enabled without their prerequisites.
+    config
+        .validate_features()
+        .unwrap_or_else(|e| panic!("Invalid feature configuration: {e}"));
 
     // Initialize tracing
     tracing_subscriber::fmt()
@@ -483,7 +481,7 @@ async fn main() {
         dyn lekton::db::navigation_order_repository::NavigationOrderRepository,
     > = Arc::new(MongoNavigationOrderRepository::new(&mongo_db));
     let chat_repo: Option<Arc<dyn lekton::db::chat_repository::ChatRepository>> =
-        if config.rag.is_enabled() {
+        if config.features.rag {
             Some(Arc::new(
                 lekton::db::chat_repository::MongoChatRepository::new(&mongo_db),
             ))
@@ -491,7 +489,7 @@ async fn main() {
             None
         };
     let feedback_repo: Option<Arc<dyn lekton::db::feedback_repository::FeedbackRepository>> =
-        if config.rag.is_enabled() {
+        if config.features.rag {
             Some(Arc::new(
                 lekton::db::feedback_repository::MongoFeedbackRepository::new(&mongo_db),
             ))
@@ -503,7 +501,7 @@ async fn main() {
     > = Arc::new(MongoDocumentationFeedbackRepository::new(&mongo_db));
     let embedding_cache_repo: Option<
         Arc<dyn lekton::db::embedding_cache_repository::EmbeddingCacheRepository>,
-    > = if config.rag.is_enabled() {
+    > = if config.features.rag {
         Some(Arc::new(
             lekton::db::embedding_cache_repository::MongoEmbeddingCacheRepository::new(&mongo_db),
         ))
@@ -594,7 +592,7 @@ async fn main() {
         Option<Arc<lekton::rag::chat::ChatService>>,
         Option<Arc<dyn lekton::rag::embedding::EmbeddingService>>,
         Option<Arc<dyn lekton::rag::vectorstore::VectorStore>>,
-    ) = if config.rag.is_enabled() {
+    ) = if config.features.rag {
         use lekton::rag::cached_embedding::CachedEmbeddingService;
         use lekton::rag::embedding::build_embedding_service;
         use lekton::rag::vectorstore::QdrantVectorStore;
@@ -714,6 +712,21 @@ async fn main() {
         (None, None, None, None)
     };
 
+    // Resolve runtime feature flags from config + actual service availability.
+    // External-service features (rag, search) are on only when both the config
+    // flag is set and the service initialised. validate_features() already
+    // failed fast on enabled-but-misconfigured features, so this reflects what
+    // the client UI can safely surface.
+    let features = lekton::app::FeatureFlags {
+        mcp: config.features.mcp,
+        rag: config.features.rag && rag_service.is_some() && chat_service.is_some(),
+        editor: config.features.editor,
+        schema_registry: config.features.schema_registry,
+        search: config.features.search && search_service.is_some(),
+        prompt_library: config.features.prompt_library,
+        documentation_feedback: config.features.documentation_feedback,
+    };
+
     // Build application state
     let app_state = lekton::app::AppState {
         document_repo,
@@ -750,6 +763,7 @@ async fn main() {
         embedding_cache_repo,
         insecure_cookies: config.server.insecure_cookies,
         max_attachment_size_bytes: config.server.max_attachment_size_mb * 1024 * 1024,
+        features,
     };
 
     // Generate the Leptos route list for SSR

@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Runtime feature flags (`[features]` config section, `LKN__FEATURES__*`) to enable/disable functional areas at startup: `mcp`, `rag`, `editor`, `schema_registry`, `search`, `prompt_library`, `documentation_feedback`. A disabled feature is hidden end-to-end (no backend services, no routes, no UI). Enabling a feature without its prerequisites fails fast at startup with an actionable error.
+
+### Changed
+- **Breaking:** RAG and full-text search are now off by default and must be enabled explicitly via `LKN__FEATURES__RAG=true` / `LKN__FEATURES__SEARCH=true` (in addition to their existing `[rag]` / `[search]` configuration). Previously they auto-enabled whenever their connection URLs were set.
+
 ## [0.24.34] 2026-06-23
 
 ## [0.24.33] 2026-06-23

@@ -33,6 +33,28 @@ pub struct IsDemoMode(pub Signal<bool>);
 #[derive(Clone, Copy)]
 pub struct IsRagEnabled(pub Signal<bool>);
 
+/// Resolved runtime feature toggles, sent to the client so the UI can hide
+/// disabled functionality. Mirrors the validated `[features]` config: because
+/// enabled-but-misconfigured features fail fast at startup, a `true` flag here
+/// means the feature is fully available.
+///
+/// `Default` is all-`false`: the conservative state shown before the flags
+/// resolve on the client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct FeatureFlags {
+    pub mcp: bool,
+    pub rag: bool,
+    pub editor: bool,
+    pub schema_registry: bool,
+    pub search: bool,
+    pub prompt_library: bool,
+    pub documentation_feedback: bool,
+}
+
+/// Newtype wrapper for the feature-flags signal, used as Leptos context.
+#[derive(Clone, Copy)]
+pub struct Features(pub Signal<FeatureFlags>);
+
 #[cfg(feature = "ssr")]
 impl axum::extract::FromRef<AppState> for crate::auth::extractor::DemoMode {
     fn from_ref(state: &AppState) -> Self {
@@ -84,6 +106,8 @@ pub struct AppState {
     pub insecure_cookies: bool,
     #[from_ref(skip)]
     pub max_attachment_size_bytes: u64,
+    #[from_ref(skip)]
+    pub features: FeatureFlags,
 }
 
 #[cfg(feature = "ssr")]
@@ -197,7 +221,7 @@ pub fn App() -> impl IntoView {
     let user_resource =
         LocalResource::new(|| crate::auth::refresh_client::with_auth_bootstrap(get_current_user));
     let demo_mode_resource = LocalResource::new(get_is_demo_mode);
-    let rag_resource = LocalResource::new(get_is_rag_enabled);
+    let features_resource = LocalResource::new(get_feature_flags);
 
     let current_user: Signal<Option<crate::auth::models::AuthenticatedUser>> =
         Signal::derive(move || user_resource.get().and_then(|res| res.ok()).flatten());
@@ -209,8 +233,14 @@ pub fn App() -> impl IntoView {
             .unwrap_or(true)
     });
 
-    let is_rag_enabled: Signal<bool> =
-        Signal::derive(move || rag_resource.get().and_then(|res| res.ok()).unwrap_or(false));
+    let features: Signal<FeatureFlags> = Signal::derive(move || {
+        features_resource
+            .get()
+            .and_then(|res| res.ok())
+            .unwrap_or_default()
+    });
+
+    let is_rag_enabled: Signal<bool> = Signal::derive(move || features.get().rag);
 
     // Add 'lekton-play' to <html> once the auth check completes. This unpauses
     // the entrance animations and fades out the splash screen (CSS-driven).
@@ -235,6 +265,7 @@ pub fn App() -> impl IntoView {
     provide_context(current_user);
     provide_context(IsDemoMode(is_demo_mode));
     provide_context(IsRagEnabled(is_rag_enabled));
+    provide_context(Features(features));
     provide_context(crate::pages::chat::ChatContext::new());
 
     view! {

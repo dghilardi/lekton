@@ -6,6 +6,21 @@
 #   2. Environment variables with the LKN__ prefix and __ as separator
 #      e.g. LKN__DATABASE__URI, LKN__AUTH__JWT_SECRET
 
+[features]
+# Runtime feature toggles. A feature that is enabled but missing its
+# prerequisites fails fast at startup with an actionable error.
+#
+# rag and search depend on external services (Qdrant, Meilisearch) and are
+# therefore off by default: enable them together with their [rag]/[search]
+# configuration. The remaining features have no external dependency and are on.
+mcp = true
+rag = false
+editor = true
+schema_registry = true
+search = false
+prompt_library = true
+documentation_feedback = true
+
 [server]
 rate_limit_burst = 50
 rate_limit_per_second = 5

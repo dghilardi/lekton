@@ -125,13 +125,24 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
                     "documentation-feedback" => view! { <DocumentationFeedbackAdminPanel /> }.into_any(),
                     "navigation" => view! { <NavigationOrderEditor /> }.into_any(),
                     "css" => view! { <CustomCssEditor /> }.into_any(),
-                    "rag" => view! {
-                        <div class="space-y-6">
-                            <SearchReindexSection />
-                            <RagReindexSection />
-                            <SchemaEndpointReindexSection />
-                        </div>
-                    }.into_any(),
+                    "rag" => {
+                        let search_enabled = crate::app::use_feature(|f| f.search);
+                        let rag_enabled = crate::app::use_feature(|f| f.rag);
+                        let schema_enabled = crate::app::use_feature(|f| f.schema_registry);
+                        view! {
+                            <div class="space-y-6">
+                                <Show when=move || search_enabled.get()>
+                                    <SearchReindexSection />
+                                </Show>
+                                <Show when=move || rag_enabled.get()>
+                                    <RagReindexSection />
+                                </Show>
+                                <Show when=move || schema_enabled.get()>
+                                    <SchemaEndpointReindexSection />
+                                </Show>
+                            </div>
+                        }.into_any()
+                    }
                     "access-levels" => view! { <AccessLevelManager /> }.into_any(),
                     "users" => view! { <UserManager /> }.into_any(),
                     _ => view! { <div class="alert alert-warning">"Page not found"</div> }.into_any(),

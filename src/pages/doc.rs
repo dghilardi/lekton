@@ -129,11 +129,13 @@ pub fn DocPage() -> impl IntoView {
                         let has_tags = !data.tags.is_empty();
                         let tags = data.tags.clone();
                         let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
+                        let editor_enabled = crate::app::use_feature(|f| f.editor);
                         let can_edit = move || {
-                            current_user
-                                .and_then(|s| s.get())
-                                .map(|u| u.is_admin)
-                                .unwrap_or(false)
+                            editor_enabled.get()
+                                && current_user
+                                    .and_then(|s| s.get())
+                                    .map(|u| u.is_admin)
+                                    .unwrap_or(false)
                         };
                         view! {
                             <div class="flex gap-8 items-start">

@@ -52,8 +52,40 @@ pub struct FeatureFlags {
 }
 
 /// Newtype wrapper for the feature-flags signal, used as Leptos context.
+///
+/// Holds `None` until the flags resolve on the client. Consumers choose how to
+/// treat the unresolved state: navigation hides entries (default `false`),
+/// while route guards render optimistically (default `true`) to avoid a
+/// not-found flash on first paint.
 #[derive(Clone, Copy)]
-pub struct Features(pub Signal<FeatureFlags>);
+pub struct Features(pub Signal<Option<FeatureFlags>>);
+
+/// Reactive accessor for one feature flag, for navigation/buttons: the entry
+/// stays hidden until the flags resolve.
+pub fn use_feature(
+    selector: impl Fn(FeatureFlags) -> bool + Send + Sync + 'static,
+) -> Signal<bool> {
+    let features = use_context::<Features>();
+    Signal::derive(move || {
+        features
+            .and_then(|f| f.0.get())
+            .map(|f| selector(f))
+            .unwrap_or(false)
+    })
+}
+
+/// Reactive accessor for route guards: renders optimistically (treats the
+/// unresolved state as enabled) so an enabled page does not flash the
+/// not-found view before the flags arrive.
+fn route_feature(selector: impl Fn(FeatureFlags) -> bool + Send + Sync + 'static) -> Signal<bool> {
+    let features = use_context::<Features>();
+    Signal::derive(move || {
+        features
+            .and_then(|f| f.0.get())
+            .map(|f| selector(f))
+            .unwrap_or(true)
+    })
+}
 
 #[cfg(feature = "ssr")]
 impl axum::extract::FromRef<AppState> for crate::auth::extractor::DemoMode {
@@ -233,14 +265,11 @@ pub fn App() -> impl IntoView {
             .unwrap_or(true)
     });
 
-    let features: Signal<FeatureFlags> = Signal::derive(move || {
-        features_resource
-            .get()
-            .and_then(|res| res.ok())
-            .unwrap_or_default()
-    });
+    let features: Signal<Option<FeatureFlags>> =
+        Signal::derive(move || features_resource.get().and_then(|res| res.ok()));
 
-    let is_rag_enabled: Signal<bool> = Signal::derive(move || features.get().rag);
+    let is_rag_enabled: Signal<bool> =
+        Signal::derive(move || features.get().map(|f| f.rag).unwrap_or(false));
 
     // Add 'lekton-play' to <html> once the auth check completes. This unpauses
     // the entrance animations and fades out the splash screen (CSS-driven).
@@ -286,17 +315,50 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/") view=HomePage />
                     <Route path=path!("/login") view=LoginPage />
                     <Route path=path!("/docs/*slug") view=DocPage />
-                    <Route path=path!("/edit/*slug") view=EditorPage />
-                    <Route path=path!("/schemas") view=SchemaListPage />
-                    <Route path=path!("/schemas/*name") view=SchemaViewerPage />
-                    <Route path=path!("/chat") view=ChatPage />
-                    <Route path=path!("/prompts") view=PromptsPage />
+                    <Route path=path!("/edit/*slug") view=EditorRoute />
+                    <Route path=path!("/schemas") view=SchemaListRoute />
+                    <Route path=path!("/schemas/*name") view=SchemaViewerRoute />
+                    <Route path=path!("/chat") view=ChatRoute />
+                    <Route path=path!("/prompts") view=PromptsRoute />
                     <Route path=path!("/profile") view=ProfilePage />
                     <Route path=path!("/admin/:section") view=AdminSettingsPage />
                 </Routes>
             </Layout>
         </Router>
     }
+}
+
+/// Route guards: render the page only when its feature is enabled, otherwise
+/// fall back to the not-found view. Optimistic while flags are unresolved so an
+/// enabled page never flashes not-found on first paint.
+#[component]
+fn EditorRoute() -> impl IntoView {
+    let enabled = route_feature(|f| f.editor);
+    view! { <Show when=move || enabled.get() fallback=|| view! { <NotFound /> }><EditorPage /></Show> }
+}
+
+#[component]
+fn SchemaListRoute() -> impl IntoView {
+    let enabled = route_feature(|f| f.schema_registry);
+    view! { <Show when=move || enabled.get() fallback=|| view! { <NotFound /> }><SchemaListPage /></Show> }
+}
+
+#[component]
+fn SchemaViewerRoute() -> impl IntoView {
+    let enabled = route_feature(|f| f.schema_registry);
+    view! { <Show when=move || enabled.get() fallback=|| view! { <NotFound /> }><SchemaViewerPage /></Show> }
+}
+
+#[component]
+fn ChatRoute() -> impl IntoView {
+    let enabled = route_feature(|f| f.rag);
+    view! { <Show when=move || enabled.get() fallback=|| view! { <NotFound /> }><ChatPage /></Show> }
+}
+
+#[component]
+fn PromptsRoute() -> impl IntoView {
+    let enabled = route_feature(|f| f.prompt_library);
+    view! { <Show when=move || enabled.get() fallback=|| view! { <NotFound /> }><PromptsPage /></Show> }
 }
 
 #[cfg(test)]

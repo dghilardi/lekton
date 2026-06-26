@@ -56,33 +56,14 @@ async fn static_cache_headers(
 /// 2 MB limit. Keeping the full route surface in one auditable function makes it
 /// easy to review which endpoints exist and how they are authenticated.
 #[cfg(feature = "ssr")]
-fn api_routes() -> axum::Router<lekton::app::AppState> {
+fn api_routes(features: &lekton::app::FeatureFlags) -> axum::Router<lekton::app::AppState> {
     use axum::Router;
     use lekton::api;
 
-    let upload_routes = Router::new()
-        .route(
-            "/api/v1/upload-image",
-            axum::routing::post(api::upload::upload_image_handler),
-        )
-        .route(
-            "/api/v1/editor/upload-asset",
-            axum::routing::post(api::assets::editor_upload_asset_handler),
-        )
-        .route(
-            "/api/v1/assets/check-hashes",
-            axum::routing::post(api::assets::check_hashes_handler),
-        )
-        .route(
-            "/api/v1/assets/{*key}",
-            axum::routing::put(api::assets::upload_asset_handler)
-                .get(api::assets::serve_asset_handler)
-                .delete(api::assets::delete_asset_handler),
-        )
-        .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024)); // 50 MB
-
-    Router::new()
-        .merge(upload_routes)
+    // Core + read-only routes that are always available regardless of feature
+    // flags. Asset *serving* and listing stay on even in read-only mode; only
+    // the write/upload surface is gated by the editor feature below.
+    let mut router = Router::new()
         // Health endpoints
         .route("/health", axum::routing::get(api::health::liveness_handler))
         .route(
@@ -95,35 +76,10 @@ fn api_routes() -> axum::Router<lekton::app::AppState> {
             axum::routing::post(api::ingest::ingest_handler),
         )
         .route(
-            "/api/v1/search",
-            axum::routing::get(api::search::search_handler),
-        )
-        .route(
             "/api/v1/image/{filename}",
             axum::routing::get(api::upload::serve_image_handler),
         )
-        .route(
-            "/api/v1/schemas",
-            axum::routing::get(api::schemas::list_schemas_handler)
-                .post(api::schemas::ingest_schema_handler),
-        )
-        .route(
-            "/api/v1/schemas/sync",
-            axum::routing::post(api::schemas::schema_sync_handler),
-        )
-        .route(
-            "/api/v1/schemas/{*rest}",
-            axum::routing::get(api::schemas::get_schema_route_handler),
-        )
         .route("/api/v1/sync", axum::routing::post(api::sync::sync_handler))
-        .route(
-            "/api/v1/prompts/ingest",
-            axum::routing::post(api::prompts::prompt_ingest_handler),
-        )
-        .route(
-            "/api/v1/prompts/sync",
-            axum::routing::post(api::prompts::prompt_sync_handler),
-        )
         .route(
             "/api/v1/assets",
             axum::routing::get(api::assets::list_assets_handler),
@@ -178,56 +134,135 @@ fn api_routes() -> axum::Router<lekton::app::AppState> {
         .route(
             "/api/v1/admin/pats/{id}",
             axum::routing::patch(api::pat::admin_toggle_pat_handler),
-        )
-        .route(
-            "/api/v1/admin/rag/reindex",
-            axum::routing::post(api::rag::trigger_reindex_handler),
-        )
-        .route(
-            "/api/v1/admin/rag/reindex/status",
-            axum::routing::get(api::rag::reindex_status_handler),
-        )
-        .route(
-            "/api/v1/admin/search/reindex",
-            axum::routing::post(api::search::trigger_reindex_handler),
-        )
-        .route(
-            "/api/v1/admin/search/reindex/status",
-            axum::routing::get(api::search::reindex_status_handler),
-        )
-        .route(
-            "/api/v1/admin/schemas/reindex-endpoints",
-            axum::routing::post(api::schemas::trigger_schema_endpoint_reindex_handler),
-        )
-        .route(
-            "/api/v1/admin/schemas/reindex-endpoints/status",
-            axum::routing::get(api::schemas::schema_endpoint_reindex_status_handler),
-        )
-        .route(
-            "/api/v1/admin/rag/feedback",
-            axum::routing::get(api::rag::admin_list_feedback_handler),
-        )
-        .route(
-            "/api/v1/rag/chat",
-            axum::routing::post(api::rag::chat_handler),
-        )
-        .route(
-            "/api/v1/rag/sessions",
-            axum::routing::get(api::rag::list_sessions_handler),
-        )
-        .route(
-            "/api/v1/rag/sessions/{id}",
-            axum::routing::delete(api::rag::delete_session_handler),
-        )
-        .route(
-            "/api/v1/rag/sessions/{id}/messages",
-            axum::routing::get(api::rag::get_session_messages_handler),
-        )
-        .route(
-            "/api/v1/rag/messages/{id}/feedback",
-            axum::routing::post(api::rag::submit_feedback_handler)
-                .delete(api::rag::delete_feedback_handler),
-        )
+        );
+
+    // ── Search (Meilisearch) ────────────────────────────────────────────────
+    if features.search {
+        router = router
+            .route(
+                "/api/v1/search",
+                axum::routing::get(api::search::search_handler),
+            )
+            .route(
+                "/api/v1/admin/search/reindex",
+                axum::routing::post(api::search::trigger_reindex_handler),
+            )
+            .route(
+                "/api/v1/admin/search/reindex/status",
+                axum::routing::get(api::search::reindex_status_handler),
+            );
+    }
+
+    // ── Schema registry ─────────────────────────────────────────────────────
+    if features.schema_registry {
+        router = router
+            .route(
+                "/api/v1/schemas",
+                axum::routing::get(api::schemas::list_schemas_handler)
+                    .post(api::schemas::ingest_schema_handler),
+            )
+            .route(
+                "/api/v1/schemas/sync",
+                axum::routing::post(api::schemas::schema_sync_handler),
+            )
+            .route(
+                "/api/v1/schemas/{*rest}",
+                axum::routing::get(api::schemas::get_schema_route_handler),
+            )
+            .route(
+                "/api/v1/admin/schemas/reindex-endpoints",
+                axum::routing::post(api::schemas::trigger_schema_endpoint_reindex_handler),
+            )
+            .route(
+                "/api/v1/admin/schemas/reindex-endpoints/status",
+                axum::routing::get(api::schemas::schema_endpoint_reindex_status_handler),
+            );
+    }
+
+    // ── Prompt library ──────────────────────────────────────────────────────
+    if features.prompt_library {
+        router = router
+            .route(
+                "/api/v1/prompts/ingest",
+                axum::routing::post(api::prompts::prompt_ingest_handler),
+            )
+            .route(
+                "/api/v1/prompts/sync",
+                axum::routing::post(api::prompts::prompt_sync_handler),
+            );
+    }
+
+    // ── RAG (chat + indexing) ───────────────────────────────────────────────
+    if features.rag {
+        router = router
+            .route(
+                "/api/v1/admin/rag/reindex",
+                axum::routing::post(api::rag::trigger_reindex_handler),
+            )
+            .route(
+                "/api/v1/admin/rag/reindex/status",
+                axum::routing::get(api::rag::reindex_status_handler),
+            )
+            .route(
+                "/api/v1/admin/rag/feedback",
+                axum::routing::get(api::rag::admin_list_feedback_handler),
+            )
+            .route(
+                "/api/v1/rag/chat",
+                axum::routing::post(api::rag::chat_handler),
+            )
+            .route(
+                "/api/v1/rag/sessions",
+                axum::routing::get(api::rag::list_sessions_handler),
+            )
+            .route(
+                "/api/v1/rag/sessions/{id}",
+                axum::routing::delete(api::rag::delete_session_handler),
+            )
+            .route(
+                "/api/v1/rag/sessions/{id}/messages",
+                axum::routing::get(api::rag::get_session_messages_handler),
+            )
+            .route(
+                "/api/v1/rag/messages/{id}/feedback",
+                axum::routing::post(api::rag::submit_feedback_handler)
+                    .delete(api::rag::delete_feedback_handler),
+            );
+    }
+
+    // ── Editor (write surface) ──────────────────────────────────────────────
+    // Asset serving (GET /api/v1/assets/{*key}) and listing stay available in
+    // read-only mode; only uploads/deletes and image upload are gated here.
+    if features.editor {
+        let editor_uploads = Router::new()
+            .route(
+                "/api/v1/upload-image",
+                axum::routing::post(api::upload::upload_image_handler),
+            )
+            .route(
+                "/api/v1/editor/upload-asset",
+                axum::routing::post(api::assets::editor_upload_asset_handler),
+            )
+            .route(
+                "/api/v1/assets/check-hashes",
+                axum::routing::post(api::assets::check_hashes_handler),
+            )
+            .route(
+                "/api/v1/assets/{*key}",
+                axum::routing::put(api::assets::upload_asset_handler)
+                    .get(api::assets::serve_asset_handler)
+                    .delete(api::assets::delete_asset_handler),
+            )
+            .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024)); // 50 MB
+        router = router.merge(editor_uploads);
+    } else {
+        router = router.route(
+            "/api/v1/assets/{*key}",
+            axum::routing::get(api::assets::serve_asset_handler),
+        );
+    }
+
+    router
 }
 
 /// Build the auth route surface: demo auth when `demo_mode`, OAuth2/OIDC otherwise.
@@ -531,20 +566,26 @@ async fn main() {
 
     tracing::info!("S3 storage client initialized");
 
-    // Initialize Meilisearch (optional — app works without it)
+    // Initialize Meilisearch — only when the search feature is enabled.
+    // validate_features() already guaranteed search.url is set in that case.
     let search_service: Option<Arc<dyn lekton::search::client::SearchService>> =
-        match MeilisearchService::from_app_config(&config.search) {
-            Ok(service) => {
-                if let Err(e) = service.configure_index().await {
-                    tracing::warn!("Failed to configure Meilisearch index: {e}");
+        if config.features.search {
+            match MeilisearchService::from_app_config(&config.search) {
+                Ok(service) => {
+                    if let Err(e) = service.configure_index().await {
+                        tracing::warn!("Failed to configure Meilisearch index: {e}");
+                    }
+                    tracing::info!("Meilisearch search service initialized");
+                    Some(Arc::new(service))
                 }
-                tracing::info!("Meilisearch search service initialized");
-                Some(Arc::new(service))
+                Err(e) => {
+                    tracing::warn!("Meilisearch not available: {e} — search will be disabled");
+                    None
+                }
             }
-            Err(e) => {
-                tracing::warn!("Meilisearch not available: {e} — search will be disabled");
-                None
-            }
+        } else {
+            tracing::info!("Search not configured — feature disabled");
+            None
         };
     let search_reindex_state = if search_service.is_some() {
         Some(Arc::new(
@@ -771,7 +812,7 @@ async fn main() {
 
     // Build the Axum router. The full route surface lives in api_routes() so it
     // can be audited in one place; auth routes are mounted below.
-    let mut app = api_routes();
+    let mut app = api_routes(&features);
 
     // Mount auth routes: demo auth when demo_mode is enabled, OAuth2/OIDC otherwise.
     app = app.merge(auth_routes(demo_mode));

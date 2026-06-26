@@ -17,6 +17,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
     let groups_resource = Resource::new(|| (), |_| get_navbar_groups());
     let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
     let is_rag = use_context::<crate::app::IsRagEnabled>();
+    let schema_enabled = crate::app::use_feature(|f| f.schema_registry);
 
     view! {
         <Suspense fallback=move || view! { <span class="loading loading-spinner loading-sm"></span> }>
@@ -125,9 +126,11 @@ pub fn TopNavbarLinks() -> impl IntoView {
                             // Separator
                             <div class="w-px h-5 bg-base-300 mx-1 self-center"></div>
 
+                            {move || if schema_enabled.get() { view! {
                             <a href="/schemas" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">
                                 "Registry"
                             </a>
+                            }.into_any() } else { view! { <span></span> }.into_any() }}
                             {move || {
                                 let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
                                 let rag_enabled = is_rag.map(|sig| sig.0.get()).unwrap_or(false);
@@ -178,9 +181,11 @@ pub fn TopNavbarLinks() -> impl IntoView {
                             // Separator
                             <div class="w-px h-5 bg-base-300 mx-1 self-center"></div>
 
+                            {move || if schema_enabled.get() { view! {
                             <a href="/schemas" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">
                                 "Registry"
                             </a>
+                            }.into_any() } else { view! { <span></span> }.into_any() }}
                             {move || {
                                 let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
                                 let rag_enabled = is_rag.map(|sig| sig.0.get()).unwrap_or(false);
@@ -231,13 +236,15 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                 </ul>
                             </div>
 
-                            // Registry icon
+                            // Registry icon (conditional)
+                            {move || if schema_enabled.get() { view! {
                             <a href="/schemas"
                                class="btn btn-ghost btn-sm px-2 text-base-content/80 hover:text-base-content hover:bg-base-200/50"
                                title="Registry">
                                 // File-list icon
                                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
                             </a>
+                            }.into_any() } else { view! { <span></span> }.into_any() }}
 
                             // Chat icon (conditional)
                             {move || {
@@ -285,6 +292,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
 #[component]
 pub fn Layout(children: Children) -> impl IntoView {
     let (search_modal_open, set_search_modal_open) = signal(false);
+    let search_enabled = crate::app::use_feature(|f| f.search);
     let location = leptos_router::hooks::use_location();
     let path = Memo::new(move |_| location.pathname.get());
     let has_context_sidebar = Memo::new(move |_| {
@@ -298,7 +306,7 @@ pub fn Layout(children: Children) -> impl IntoView {
 
     use leptos::ev;
     window_event_listener(ev::keydown, move |ev| {
-        if (ev.ctrl_key() || ev.meta_key()) && ev.key() == "k" {
+        if search_enabled.get() && (ev.ctrl_key() || ev.meta_key()) && ev.key() == "k" {
             ev.prevent_default();
             ev.stop_propagation();
             set_search_modal_open.set(true);
@@ -325,6 +333,7 @@ pub fn Layout(children: Children) -> impl IntoView {
                     </div>
                 </div>
                 // Center — visible at md+, replaced by icon on smaller screens
+                <Show when=move || search_enabled.get()>
                 <div class="hidden 2xl:flex flex-1 min-w-0 items-center justify-center">
                     <div class="w-full max-w-md">
                         <button
@@ -341,12 +350,15 @@ pub fn Layout(children: Children) -> impl IntoView {
                         </button>
                     </div>
                 </div>
+                </Show>
                 // Right — never shrinks
                 <div class="flex items-center gap-2 flex-nowrap shrink-0">
                     // Search icon — shown when full search bar is hidden
+                    <Show when=move || search_enabled.get()>
                     <button class="btn btn-circle btn-ghost 2xl:hidden" on:click=move |_| set_search_modal_open.set(true)>
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                     </button>
+                    </Show>
                     // Theme toggle
                     <ThemeToggle />
                     // User area — shows login button or user info
@@ -355,7 +367,9 @@ pub fn Layout(children: Children) -> impl IntoView {
             </header>
 
             // Global search modal
-            <SearchModal is_open=search_modal_open set_is_open=set_search_modal_open />
+            <Show when=move || search_enabled.get()>
+                <SearchModal is_open=search_modal_open set_is_open=set_search_modal_open />
+            </Show>
 
             // Main content area with sidebar
             <div class=move || {

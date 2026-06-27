@@ -23,9 +23,10 @@ use rmcp::{
     model::*,
     schemars,
     service::RequestContext,
-    tool, tool_handler, tool_router, ErrorData as McpError, RoleServer, ServerHandler,
+    tool, tool_router, ErrorData as McpError, RoleServer, ServerHandler,
 };
 
+use crate::app::FeatureFlags;
 use crate::auth::models::UserContext;
 use crate::db::documentation_feedback_models::{
     DocumentationFeedback, DocumentationFeedbackKind, DocumentationFeedbackStatus,
@@ -209,8 +210,12 @@ pub struct LektonMcpServer {
     user_prompt_preference_repo: Arc<dyn UserPromptPreferenceRepository>,
     documentation_feedback_repo: Arc<dyn DocumentationFeedbackRepository>,
     storage_client: Arc<dyn StorageClient>,
-    embedding_service: Arc<dyn EmbeddingService>,
-    vector_store: Arc<dyn VectorStore>,
+    /// Present only when the RAG feature is enabled — the `search_documents`
+    /// tool requires it and is hidden otherwise.
+    embedding_service: Option<Arc<dyn EmbeddingService>>,
+    vector_store: Option<Arc<dyn VectorStore>>,
+    /// Resolved feature flags: control which tools are advertised and callable.
+    features: FeatureFlags,
     #[allow(dead_code)]
     tool_router: ToolRouter<LektonMcpServer>,
 }
@@ -224,8 +229,9 @@ impl LektonMcpServer {
         user_prompt_preference_repo: Arc<dyn UserPromptPreferenceRepository>,
         documentation_feedback_repo: Arc<dyn DocumentationFeedbackRepository>,
         storage_client: Arc<dyn StorageClient>,
-        embedding_service: Arc<dyn EmbeddingService>,
-        vector_store: Arc<dyn VectorStore>,
+        embedding_service: Option<Arc<dyn EmbeddingService>>,
+        vector_store: Option<Arc<dyn VectorStore>>,
+        features: FeatureFlags,
     ) -> Self {
         Self {
             document_repo,
@@ -236,7 +242,31 @@ impl LektonMcpServer {
             storage_client,
             embedding_service,
             vector_store,
+            features,
             tool_router: Self::tool_router(),
+        }
+    }
+
+    /// Whether a tool is exposed, given the active feature flags. Tools whose
+    /// feature is disabled are excluded from `list_tools` and rejected by
+    /// `call_tool`. Document tools (`get_index`) are always available.
+    fn tool_enabled(&self, name: &str) -> bool {
+        match name {
+            "search_documents" => {
+                self.features.rag && self.embedding_service.is_some() && self.vector_store.is_some()
+            }
+            "list_schemas"
+            | "search_schemas"
+            | "get_schema_detail"
+            | "get_schema_content"
+            | "search_schema_operations" => self.features.schema_registry,
+            "list_prompts" | "get_prompt" | "search_prompts" | "get_context_prompts" => {
+                self.features.prompt_library
+            }
+            "search_documentation_feedback"
+            | "report_missing_documentation"
+            | "propose_documentation_improvement" => self.features.documentation_feedback,
+            _ => true,
         }
     }
 }
@@ -826,11 +856,22 @@ impl LektonMcpServer {
         let user_ctx = user_context(&ctx)?;
         let (levels, include_draft) = user_ctx.document_visibility();
 
+        // RAG-dependent: requires embedding + vector store. Disabled otherwise.
+        let (embedding_service, vector_store) = match (&self.embedding_service, &self.vector_store)
+        {
+            (Some(emb), Some(vs)) => (emb, vs),
+            _ => {
+                return Err(McpError::invalid_params(
+                    "search_documents is unavailable: the RAG feature is disabled",
+                    None,
+                ))
+            }
+        };
+
         let limit = params.limit.clamp(1, 20);
 
         // Embed the query
-        let vectors = self
-            .embedding_service
+        let vectors = embedding_service
             .embed(std::slice::from_ref(&params.query))
             .await
             .map_err(app_err)?;
@@ -841,8 +882,7 @@ impl LektonMcpServer {
             .ok_or_else(|| McpError::internal_error("Embedding returned no vectors", None))?;
 
         // Search Qdrant with access-level filtering
-        let results = self
-            .vector_store
+        let results = vector_store
             .search(query_vector, limit, levels.as_deref(), include_draft)
             .await
             .map_err(app_err)?;
@@ -1336,13 +1376,53 @@ fn prompt_mcp_result(
     ))
 }
 
-#[tool_handler]
+// NOTE: `#[tool_handler]` is intentionally not used here. We implement
+// `list_tools`/`call_tool` manually so the advertised + callable tool set
+// reflects the active feature flags (see `tool_enabled`).
 impl ServerHandler for LektonMcpServer {
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, McpError> {
+        let tools = self
+            .tool_router
+            .list_all()
+            .into_iter()
+            .filter(|t| self.tool_enabled(&t.name))
+            .collect();
+        Ok(ListToolsResult {
+            tools,
+            ..Default::default()
+        })
+    }
+
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        if !self.tool_enabled(&request.name) {
+            return Err(McpError::invalid_params(
+                format!(
+                    "Tool '{}' is unavailable: its feature is disabled",
+                    request.name
+                ),
+                None,
+            ));
+        }
+        let ctx = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        self.tool_router.call(ctx).await
+    }
+
     async fn get_prompt(
         &self,
         request: GetPromptRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<GetPromptResult, McpError> {
+        if !self.features.prompt_library {
+            return Err(McpError::invalid_params("Prompt library is disabled", None));
+        }
         let user_ctx = user_context(&context)?;
         let prompt_entries = self
             .build_context_prompt_entries(&user_ctx)
@@ -1370,6 +1450,13 @@ impl ServerHandler for LektonMcpServer {
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, McpError> {
+        if !self.features.prompt_library {
+            return Ok(ListPromptsResult {
+                prompts: vec![],
+                meta: None,
+                next_cursor: None,
+            });
+        }
         let user_ctx = user_context(&context)?;
         let prompt_entries = self
             .build_context_prompt_entries(&user_ctx)

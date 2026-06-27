@@ -309,14 +309,16 @@ fn auth_routes(demo_mode: bool) -> axum::Router<lekton::app::AppState> {
 /// Build the MCP server route (`/mcp`, Streamable HTTP) with PAT auth applied.
 ///
 /// Kept alongside api_routes()/auth_routes() so the whole route surface is
-/// auditable in one place. Only mounted when RAG is configured (embedding +
-/// vectorstore present), since the MCP tools depend on both.
+/// auditable in one place. Mounted whenever the MCP feature is enabled; the
+/// embedding/vectorstore are optional and only the RAG `search_documents` tool
+/// requires them — the server hides tools whose feature is disabled.
 #[cfg(feature = "ssr")]
 fn mcp_routes(
     app_state: &lekton::app::AppState,
     config: &lekton::config::AppConfig,
-    emb: &std::sync::Arc<dyn lekton::rag::embedding::EmbeddingService>,
-    vs: &std::sync::Arc<dyn lekton::rag::vectorstore::VectorStore>,
+    emb: Option<std::sync::Arc<dyn lekton::rag::embedding::EmbeddingService>>,
+    vs: Option<std::sync::Arc<dyn lekton::rag::vectorstore::VectorStore>>,
+    features: lekton::app::FeatureFlags,
 ) -> axum::Router<lekton::app::AppState> {
     use axum::Router;
     use lekton::mcp::auth::{pat_auth_middleware, McpAuthState};
@@ -332,8 +334,6 @@ fn mcp_routes(
     let user_prompt_preference_repo = app_state.user_prompt_preference_repo.clone();
     let documentation_feedback_repo = app_state.documentation_feedback_repo.clone();
     let storage = app_state.storage_client.clone();
-    let emb = emb.clone();
-    let vs = vs.clone();
 
     let mcp_config = if config.mcp.allowed_hosts.is_empty() {
         StreamableHttpServerConfig::default().disable_allowed_hosts()
@@ -362,6 +362,7 @@ fn mcp_routes(
                 storage.clone(),
                 emb.clone(),
                 vs.clone(),
+                features,
             ))
         },
         session_manager.into(),
@@ -824,11 +825,20 @@ async fn main() {
         );
     }
 
-    // MCP server (requires RAG — needs embedding + vectorstore)
-    if let (Some(ref emb), Some(ref vs)) = (&embedding_service, &vector_store) {
-        app = app.merge(mcp_routes(&app_state, &config, emb, vs));
+    // MCP server — mounted whenever the MCP feature is enabled. The RAG
+    // embedding/vectorstore are passed through optionally; the server hides the
+    // search_documents tool (and any other) whose feature is off.
+    if features.mcp {
+        app = app.merge(mcp_routes(
+            &app_state,
+            &config,
+            embedding_service.clone(),
+            vector_store.clone(),
+            features,
+        ));
 
         tracing::info!(
+            rag_tools = features.rag && embedding_service.is_some() && vector_store.is_some(),
             stateful_mode = config.mcp.stateful_mode,
             json_response = config.mcp.json_response,
             session_keep_alive_secs = ?config.mcp.session_keep_alive_secs,
@@ -836,7 +846,7 @@ async fn main() {
             "MCP server mounted at POST /mcp (Streamable HTTP, PAT auth)"
         );
     } else {
-        tracing::info!("MCP server not available — RAG not configured");
+        tracing::info!("MCP server disabled (features.mcp = false)");
     }
 
     // Rate limiting applies to explicit dynamic routes only; static fallback assets
@@ -902,7 +912,7 @@ async fn main() {
         // Leptos SSR routes
         .leptos_routes(&app_state, routes, {
             let options = app_state.leptos_options.clone();
-            move || lekton::app::shell(options.clone())
+            move || lekton::app::shell(options.clone(), features)
         })
         .route_layer(tower_governor::GovernorLayer::new(governor_conf))
         // Static files (including custom.css)

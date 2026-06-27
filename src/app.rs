@@ -143,7 +143,14 @@ pub struct AppState {
 }
 
 #[cfg(feature = "ssr")]
-pub fn shell(options: LeptosOptions) -> impl IntoView {
+pub fn shell(options: LeptosOptions, features: FeatureFlags) -> impl IntoView {
+    // The WYSIWYG editor bundle is only needed when the editor feature is on.
+    let editor_scripts = features.editor.then(|| {
+        view! {
+            <script type="module" src="/js/tiptap-bundle.min.js"></script>
+            <script type="module" src="/js/tiptap.js"></script>
+        }
+    });
     view! {
         <!DOCTYPE html>
         <html lang="en" data-theme="light">
@@ -165,8 +172,7 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                 <meta name="description" content="Lekton: A dynamic, high-performance Internal Developer Portal with RBAC and unified schema registry." />
                 <Stylesheet id="leptos" href="/pkg/lekton.css" />
                 <Link rel="stylesheet" href="/custom.css" />
-                <script type="module" src="/js/tiptap-bundle.min.js"></script>
-                <script type="module" src="/js/tiptap.js"></script>
+                {editor_scripts}
                 <script src="/js/mermaid-loader.js"></script>
                 <script src="/js/code-blocks.js"></script>
             </head>

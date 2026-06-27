@@ -465,6 +465,10 @@ pub async fn upload_asset_handler(
     )
     .await?;
 
+    if let Some(queue) = &state.attachment_queue {
+        queue.enqueue(&key);
+    }
+
     Ok(axum::Json(response))
 }
 
@@ -544,6 +548,13 @@ pub async fn delete_asset_handler(
     )
     .await?;
 
+    // Remove any RAG chunks indexed from this attachment.
+    if let Some(rag) = &state.rag_service {
+        if let Err(e) = rag.delete_attachment(&key).await {
+            tracing::warn!(key, "Failed to delete attachment chunks from RAG: {e}");
+        }
+    }
+
     Ok(axum::Json(
         serde_json::json!({"message": format!("Asset '{}' deleted", key)}),
     ))
@@ -592,6 +603,10 @@ pub async fn editor_upload_asset_handler(
         &user.email,
     )
     .await?;
+
+    if let Some(queue) = &state.attachment_queue {
+        queue.enqueue(&response.key);
+    }
 
     Ok(axum::Json(response))
 }

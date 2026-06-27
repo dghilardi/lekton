@@ -21,6 +21,13 @@ pub struct SourceReference {
     /// Optional short preview snippet for UI display.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snippet: Option<String>,
+    /// Asset key when this source is an attachment (links to
+    /// `/api/v1/assets/{key}`); `None` for document sources.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachment_key: Option<String>,
+    /// 1-based page number within the attachment, when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_page: Option<u32>,
 }
 
 /// Feedback rating for an AI response.
@@ -103,6 +110,8 @@ mod tests {
                 section_anchor: Some("installation".into()),
                 score: 0.91,
                 snippet: Some("Quick start guide".into()),
+                attachment_key: None,
+                source_page: None,
             }]),
             created_at: Utc::now(),
         };

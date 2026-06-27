@@ -25,7 +25,7 @@ use crate::rag::hyde::HydeService;
 use crate::rag::provider::LlmProvider;
 use crate::rag::query_rewriter::QueryRewriter;
 use crate::rag::reranker::Reranker;
-use crate::rag::vectorstore::{VectorSearchResult, VectorStore};
+use crate::rag::vectorstore::{SourceKind, VectorSearchResult, VectorStore};
 use crate::search::client::SearchService;
 
 /// Maximum number of context chunks returned to the LLM.
@@ -60,6 +60,9 @@ pub struct ChatService {
     tera: tera::Tera,
     system_template_name: String,
     query_rewriter: Option<QueryRewriter>,
+    /// When false, attachment-sourced chunks are filtered out of retrieval
+    /// (e.g. the `attachment_indexing` feature is off but old chunks linger).
+    include_attachments: bool,
 }
 
 /// Result of a pure retrieval pass (no LLM generation, no chat persistence).
@@ -111,6 +114,7 @@ pub enum ChatEvent {
 }
 
 impl ChatService {
+    #[allow(clippy::too_many_arguments)]
     pub async fn from_rag_config(
         config: &RagConfig,
         chat_repo: Arc<dyn ChatRepository>,
@@ -118,6 +122,7 @@ impl ChatService {
         vectorstore: Arc<dyn VectorStore>,
         search_service: Option<Arc<dyn SearchService>>,
         reranker: Option<Arc<dyn Reranker>>,
+        include_attachments: bool,
     ) -> Result<Self, AppError> {
         let chat_resolved = config.resolve_chat();
         if chat_resolved.model.is_empty() {
@@ -210,6 +215,7 @@ impl ChatService {
             tera,
             system_template_name: template_name.to_string(),
             query_rewriter,
+            include_attachments,
         })
     }
 
@@ -779,6 +785,19 @@ impl ChatService {
             "RAG: retrieval complete"
         );
 
+        // Drop attachment chunks when attachment indexing is disabled (old
+        // chunks may linger from when it was on).
+        let (pre_rerank, post_rerank) = if self.include_attachments {
+            (pre_rerank, post_rerank)
+        } else {
+            let drop_attachments = |v: Vec<VectorSearchResult>| {
+                v.into_iter()
+                    .filter(|r| r.source_kind != SourceKind::Attachment)
+                    .collect::<Vec<_>>()
+            };
+            (drop_attachments(pre_rerank), drop_attachments(post_rerank))
+        };
+
         Ok(RetrievalOutput {
             retrieval_query,
             query_plan,
@@ -1074,8 +1093,14 @@ fn build_source_references(
 
     for result in results {
         let snippet = preview_text(&result.chunk_text, 180);
-        let section_title = result.section_path.last().cloned();
-        let section_anchor = if result.section_anchor.is_empty() {
+        let is_attachment = result.source_kind == crate::rag::vectorstore::SourceKind::Attachment;
+        // For attachments the heading path is unused; surface the page instead.
+        let section_title = if is_attachment {
+            result.source_page.map(|p| format!("p. {p}"))
+        } else {
+            result.section_path.last().cloned()
+        };
+        let section_anchor = if is_attachment || result.section_anchor.is_empty() {
             None
         } else {
             Some(result.section_anchor.clone())
@@ -1091,11 +1116,24 @@ fn build_source_references(
             } else {
                 Some(snippet)
             },
+            attachment_key: result.attachment_key.clone(),
+            source_page: result.source_page,
         };
-        let dedupe_key = (
-            result.document_slug.clone(),
-            section_anchor.clone().unwrap_or_default(),
-        );
+        // Attachments dedupe by (key, page); documents by (slug, section).
+        let dedupe_key = if is_attachment {
+            (
+                result.attachment_key.clone().unwrap_or_default(),
+                result
+                    .source_page
+                    .map(|p| p.to_string())
+                    .unwrap_or_default(),
+            )
+        } else {
+            (
+                result.document_slug.clone(),
+                section_anchor.clone().unwrap_or_default(),
+            )
+        };
 
         match deduped.get(&dedupe_key) {
             Some(existing) if existing.score >= candidate.score => {}
@@ -1171,6 +1209,7 @@ mod tests {
                 section_path: vec!["Intro".into()],
                 section_anchor: "intro".into(),
                 score: 0.42,
+                ..Default::default()
             },
             VectorSearchResult {
                 point_id: "p2".into(),
@@ -1181,6 +1220,7 @@ mod tests {
                 section_path: vec!["Intro".into()],
                 section_anchor: "intro".into(),
                 score: 0.81,
+                ..Default::default()
             },
             VectorSearchResult {
                 point_id: "p3".into(),
@@ -1191,6 +1231,7 @@ mod tests {
                 section_path: vec!["Usage".into()],
                 section_anchor: "usage".into(),
                 score: 0.65,
+                ..Default::default()
             },
         ]);
 
@@ -1215,6 +1256,7 @@ mod tests {
                 section_path: vec!["Architecture".into(), "Storage".into()],
                 section_anchor: "architecture-storage".into(),
                 score: 0.77,
+                ..Default::default()
             },
             VectorSearchResult {
                 point_id: "p2".into(),
@@ -1225,6 +1267,7 @@ mod tests {
                 section_path: vec!["Architecture".into(), "Deployment".into()],
                 section_anchor: "architecture-deployment".into(),
                 score: 0.71,
+                ..Default::default()
             },
         ]);
 
@@ -1261,6 +1304,7 @@ mod tests {
                 section_path: vec!["Architecture".into(), "Storage".into()],
                 section_anchor: "architecture-storage".into(),
                 score: 0.91,
+                ..Default::default()
             },
             VectorSearchResult {
                 point_id: "p2".into(),
@@ -1271,6 +1315,7 @@ mod tests {
                 section_path: vec!["Usage".into()],
                 section_anchor: "usage".into(),
                 score: 0.77,
+                ..Default::default()
             },
         ];
         let parents = unique_parents_in_order(&reranked);
@@ -1285,6 +1330,7 @@ mod tests {
                     section_path: vec!["Architecture".into(), "Storage".into()],
                     section_anchor: "architecture-storage".into(),
                     score: 0.0,
+                    ..Default::default()
                 },
                 VectorSearchResult {
                     point_id: "f2".into(),
@@ -1295,6 +1341,7 @@ mod tests {
                     section_path: vec!["Architecture".into(), "Storage".into()],
                     section_anchor: "architecture-storage".into(),
                     score: 0.0,
+                    ..Default::default()
                 },
             ]),
             Ok(vec![VectorSearchResult {
@@ -1306,6 +1353,7 @@ mod tests {
                 section_path: vec!["Usage".into()],
                 section_anchor: "usage".into(),
                 score: 0.0,
+                ..Default::default()
             }]),
         ];
 
@@ -1330,6 +1378,7 @@ mod tests {
             section_path: Vec::new(),
             section_anchor: String::new(),
             score,
+            ..Default::default()
         }
     }
 

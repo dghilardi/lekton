@@ -714,6 +714,7 @@ async fn main() {
                             vectorstore.clone(),
                             search_service.clone(),
                             reranker,
+                            config.features.attachment_indexing,
                         )
                         .await
                         {

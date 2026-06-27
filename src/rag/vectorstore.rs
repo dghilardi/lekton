@@ -74,7 +74,7 @@ pub struct VectorPoint {
 }
 
 /// A single search hit returned from the vector store.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct VectorSearchResult {
     /// Stable identifier of the underlying vector point. Used by offline
     /// evaluation tooling to match retrieved chunks against an expected set;
@@ -88,6 +88,12 @@ pub struct VectorSearchResult {
     pub section_path: Vec<String>,
     pub section_anchor: String,
     pub score: f32,
+    /// Whether this hit comes from a document body or an attachment.
+    pub source_kind: SourceKind,
+    /// Asset key of the originating attachment (`None` for document hits).
+    pub attachment_key: Option<String>,
+    /// 1-based page number within the attachment (`None` for document hits).
+    pub source_page: Option<u32>,
 }
 
 // ── Trait ─────────────────────────────────────────────────────────────────────
@@ -527,6 +533,22 @@ impl VectorStore for QdrantVectorStore {
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
+                let source_kind = scored
+                    .payload
+                    .get("source_kind")
+                    .and_then(|v| v.as_str())
+                    .map(|s| SourceKind::from_payload(s))
+                    .unwrap_or_default();
+                let attachment_key = scored
+                    .payload
+                    .get("attachment_key")
+                    .and_then(|v| v.as_str())
+                    .cloned();
+                let source_page = scored
+                    .payload
+                    .get("source_page")
+                    .and_then(|v| v.as_integer())
+                    .map(|n| n as u32);
 
                 VectorSearchResult {
                     point_id,
@@ -537,6 +559,9 @@ impl VectorStore for QdrantVectorStore {
                     section_path,
                     section_anchor,
                     score: scored.score,
+                    source_kind,
+                    attachment_key,
+                    source_page,
                 }
             })
             .collect();
@@ -627,6 +652,7 @@ impl VectorStore for QdrantVectorStore {
                     section_path,
                     section_anchor: section_anchor.to_string(),
                     score: 0.0,
+                    ..Default::default()
                 }
             })
             .collect();

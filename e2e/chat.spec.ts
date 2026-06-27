@@ -23,13 +23,17 @@ test.describe('Chat page', () => {
     await page.goto('/chat');
     await page.waitForLoadState('networkidle');
 
-    // The chat page renders one of two states:
+    // With features.rag enabled, the chat page renders one of two states:
     // - textarea/input when LLM is configured (full chat UI)
     // - a notice text when not configured
-    // Both are valid; we assert the page is not blank.
+    // With features.rag disabled, /chat is intentionally routed to NotFound.
     const hasInput = await page.locator('textarea').count() > 0;
     const hasNotice = await page.locator('text=/not available|not configured|unavailable/i').count() > 0;
+    const hasNotFound = await page.locator('text=The page you are looking for does not exist.').count() > 0;
 
-    expect(hasInput || hasNotice, 'chat page should show either input or unavailability notice').toBeTruthy();
+    expect(
+      hasInput || hasNotice || hasNotFound,
+      'chat page should show chat UI, an unavailability notice, or the feature-disabled 404 page',
+    ).toBeTruthy();
   });
 });

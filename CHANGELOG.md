@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 - Runtime feature flags (`[features]` config section, `LKN__FEATURES__*`) to enable/disable functional areas at startup: `mcp`, `rag`, `editor`, `schema_registry`, `search`, `prompt_library`, `documentation_feedback`. A disabled feature is hidden end-to-end (no backend services, no routes, no UI). Enabling a feature without its prerequisites fails fast at startup with an actionable error.
 
 ### Changed
+- E2E tests now enable `features.search` explicitly and treat `/chat` returning the feature-disabled 404 page as valid when RAG is off, keeping CI aligned with the new runtime feature-flag defaults.
 - **Breaking:** RAG and full-text search are now off by default and must be enabled explicitly via `LKN__FEATURES__RAG=true` / `LKN__FEATURES__SEARCH=true` (in addition to their existing `[rag]` / `[search]` configuration). Previously they auto-enabled whenever their connection URLs were set.
 - The MCP server is no longer coupled to RAG: it mounts whenever `features.mcp` is enabled and advertises only the tools whose feature is on (`search_documents` needs RAG; the schema, prompt, and documentation-feedback tools follow their respective flags). Previously `/mcp` was mounted only when RAG was configured.
 - Disabling the editor (`LKN__FEATURES__EDITOR=false`) puts the portal in read-only mode: the `/edit` route and asset-upload endpoints are gone, edit affordances are hidden, and the WYSIWYG editor bundle is not loaded. Documents are still created via the ingest API.

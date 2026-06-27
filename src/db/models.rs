@@ -242,6 +242,23 @@ mod version_tests {
     }
 }
 
+/// Status of an attachment's text extraction for RAG indexing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtractionStatus {
+    /// Not yet extracted (newly uploaded, or awaiting a backfill pass).
+    #[default]
+    Pending,
+    /// Extraction/indexing is currently running.
+    InProgress,
+    /// Successfully extracted and indexed.
+    Done,
+    /// Extraction failed; see `extraction_error`.
+    Failed,
+    /// Content type not supported for extraction; intentionally not indexed.
+    Skipped,
+}
+
 /// Represents a binary asset stored in MongoDB with content in S3.
 ///
 /// Assets are identified by a caller-defined key (e.g., "project-a/configs/nginx.conf").
@@ -268,6 +285,25 @@ pub struct Asset {
     /// content hashing was introduced.
     #[serde(default)]
     pub content_hash: Option<String>,
+    /// Text-extraction status for RAG indexing of this attachment.
+    #[serde(default)]
+    pub extraction_status: ExtractionStatus,
+    /// Error message from the last failed extraction, if any.
+    #[serde(default)]
+    pub extraction_error: Option<String>,
+    /// `content_hash` of the binary that was last successfully extracted, so a
+    /// re-upload of identical content can skip re-extraction.
+    #[serde(default)]
+    pub extracted_content_hash: Option<String>,
+    /// When extraction last completed.
+    #[serde(
+        default,
+        with = "bson::serde_helpers::chrono_datetime_as_bson_datetime_optional"
+    )]
+    pub extracted_at: Option<DateTime<Utc>>,
+    /// Number of chunks indexed from this attachment on the last run.
+    #[serde(default)]
+    pub indexed_chunks: Option<u32>,
 }
 
 /// The request payload for the ingest API.
@@ -555,6 +591,11 @@ mod tests {
             uploaded_by: "ci-pipeline".to_string(),
             referenced_by: vec!["deployment-guide".to_string()],
             content_hash: Some("sha256:abc123".to_string()),
+            extraction_status: ExtractionStatus::Pending,
+            extraction_error: None,
+            extracted_content_hash: None,
+            extracted_at: None,
+            indexed_chunks: None,
         };
 
         let json = serde_json::to_string(&asset).unwrap();

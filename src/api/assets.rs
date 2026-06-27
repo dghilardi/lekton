@@ -156,6 +156,11 @@ pub async fn process_upload_asset(
         uploaded_by: uploaded_by.to_string(),
         referenced_by,
         content_hash,
+        extraction_status: crate::db::models::ExtractionStatus::Pending,
+        extraction_error: None,
+        extracted_content_hash: None,
+        extracted_at: None,
+        indexed_chunks: None,
     };
 
     asset_repo.create_or_update(asset).await?;
@@ -361,6 +366,11 @@ pub async fn process_editor_upload(
         uploaded_by: uploaded_by.to_string(),
         referenced_by: vec![],
         content_hash,
+        extraction_status: crate::db::models::ExtractionStatus::Pending,
+        extraction_error: None,
+        extracted_content_hash: None,
+        extracted_at: None,
+        indexed_chunks: None,
     };
 
     asset_repo.create_or_update(asset).await?;
@@ -1390,6 +1400,11 @@ mod tests {
             uploaded_by: uploaded_by.to_string(),
             referenced_by,
             content_hash: None,
+            extraction_status: crate::db::models::ExtractionStatus::Pending,
+            extraction_error: None,
+            extracted_content_hash: None,
+            extracted_at: None,
+            indexed_chunks: None,
         }
     }
 

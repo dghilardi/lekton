@@ -902,8 +902,8 @@ mod tests {
             _pages: &[crate::rag::service::AttachmentPage],
             _access_levels: &[String],
             _tags: &[String],
-        ) -> Result<(), AppError> {
-            Ok(())
+        ) -> Result<usize, AppError> {
+            Ok(0)
         }
         async fn delete_attachment(&self, _attachment_key: &str) -> Result<(), AppError> {
             Ok(())

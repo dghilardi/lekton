@@ -45,7 +45,7 @@ pub trait RagService: Send + Sync {
     ///
     /// `access_levels` is the set inherited from the attachment's referencing
     /// (published) documents. Chunks are stored with `source_kind = Attachment`
-    /// and `is_draft = false`.
+    /// and `is_draft = false`. Returns the number of chunks indexed.
     async fn index_attachment(
         &self,
         attachment_key: &str,
@@ -53,7 +53,7 @@ pub trait RagService: Send + Sync {
         pages: &[AttachmentPage],
         access_levels: &[String],
         tags: &[String],
-    ) -> Result<(), AppError>;
+    ) -> Result<usize, AppError>;
 
     /// Remove all chunks for an attachment.
     async fn delete_attachment(&self, attachment_key: &str) -> Result<(), AppError>;
@@ -217,7 +217,7 @@ impl RagService for DefaultRagService {
         pages: &[AttachmentPage],
         access_levels: &[String],
         tags: &[String],
-    ) -> Result<(), AppError> {
+    ) -> Result<usize, AppError> {
         // 1. Split each page into chunks and build enriched embedding texts:
         // "filename > p.N\n\nChunk text". A running index keeps chunk_index unique
         // across pages.
@@ -247,7 +247,7 @@ impl RagService for DefaultRagService {
             self.vectorstore
                 .delete_by_attachment_key(attachment_key)
                 .await?;
-            return Ok(());
+            return Ok(0);
         }
 
         // 2. Embed (cache-backed), skipping any chunk whose embedding is empty.
@@ -290,7 +290,7 @@ impl RagService for DefaultRagService {
                 attachment_key,
                 "RAG: no embeddable chunks for attachment; existing index left intact"
             );
-            return Ok(());
+            return Ok(0);
         }
 
         // 3. Upsert then delete stale (mirrors index_document).
@@ -306,7 +306,7 @@ impl RagService for DefaultRagService {
             chunks = num_chunks,
             "RAG: indexed attachment"
         );
-        Ok(())
+        Ok(num_chunks)
     }
 
     async fn delete_attachment(&self, attachment_key: &str) -> Result<(), AppError> {

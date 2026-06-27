@@ -356,8 +356,8 @@ mod tests {
             _: &[crate::rag::service::AttachmentPage],
             _: &[String],
             _: &[String],
-        ) -> Result<(), AppError> {
-            Ok(())
+        ) -> Result<usize, AppError> {
+            Ok(0)
         }
 
         async fn delete_attachment(&self, _: &str) -> Result<(), AppError> {

@@ -1,7 +1,19 @@
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 
-use crate::db::models::Asset;
+use crate::db::models::{Asset, ExtractionStatus};
 use crate::error::AppError;
+
+/// The extraction-tracking fields to write, leaving the rest of the asset
+/// (notably `referenced_by`) untouched. Fields left `None` are cleared.
+#[derive(Debug, Clone)]
+pub struct ExtractionUpdate {
+    pub status: ExtractionStatus,
+    pub error: Option<String>,
+    pub extracted_content_hash: Option<String>,
+    pub extracted_at: Option<DateTime<Utc>>,
+    pub indexed_chunks: Option<u32>,
+}
 
 /// Repository trait for asset operations.
 ///
@@ -22,6 +34,10 @@ pub trait AssetRepository: Send + Sync {
 
     /// Delete an asset by key.
     async fn delete(&self, key: &str) -> Result<(), AppError>;
+
+    /// Update only the extraction-tracking fields of an asset. A no-op when the
+    /// key does not exist.
+    async fn update_extraction(&self, key: &str, update: ExtractionUpdate) -> Result<(), AppError>;
 }
 
 /// MongoDB implementation of the AssetRepository.
@@ -125,6 +141,29 @@ impl AssetRepository for MongoAssetRepository {
         if result.deleted_count == 0 {
             return Err(AppError::NotFound(format!("Asset '{}' not found", key)));
         }
+
+        Ok(())
+    }
+
+    async fn update_extraction(&self, key: &str, update: ExtractionUpdate) -> Result<(), AppError> {
+        use mongodb::bson::{doc, to_bson, DateTime as BsonDateTime};
+
+        let status = to_bson(&update.status).map_err(|e| {
+            AppError::Internal(format!("failed to serialize extraction status: {e}"))
+        })?;
+        let extracted_at = update.extracted_at.map(BsonDateTime::from_chrono);
+
+        let set = doc! {
+            "extraction_status": status,
+            "extraction_error": update.error,
+            "extracted_content_hash": update.extracted_content_hash,
+            "extracted_at": extracted_at,
+            "indexed_chunks": update.indexed_chunks.map(|c| c as i64),
+        };
+
+        self.collection
+            .update_one(doc! { "key": key }, doc! { "$set": set })
+            .await?;
 
         Ok(())
     }

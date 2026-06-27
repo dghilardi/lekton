@@ -770,6 +770,22 @@ mod tests {
             }
             Ok(())
         }
+
+        async fn update_extraction(
+            &self,
+            key: &str,
+            update: crate::db::asset_repository::ExtractionUpdate,
+        ) -> Result<(), AppError> {
+            let mut assets = self.assets.lock().unwrap();
+            if let Some(a) = assets.iter_mut().find(|a| a.key == key) {
+                a.extraction_status = update.status;
+                a.extraction_error = update.error;
+                a.extracted_content_hash = update.extracted_content_hash;
+                a.extracted_at = update.extracted_at;
+                a.indexed_chunks = update.indexed_chunks;
+            }
+            Ok(())
+        }
     }
 
     #[tokio::test]

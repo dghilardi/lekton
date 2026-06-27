@@ -774,12 +774,14 @@ async fn main() {
     // Bounded queue; uploads enqueue keys and a single worker drains them.
     let attachment_queue = if features.attachment_indexing {
         rag_service.clone().map(|rag| {
+            let extractors = Arc::new(lekton::rag::extraction::AttachmentExtractors::new());
             let svc = Arc::new(
                 lekton::rag::attachment_extraction::AttachmentExtractionService::new(
                     storage_client.clone(),
                     asset_repo.clone(),
                     document_repo.clone(),
                     rag,
+                    extractors,
                 ),
             );
             svc.spawn(256)

@@ -17,7 +17,7 @@ use crate::db::models::ExtractionStatus;
 use crate::db::repository::DocumentRepository;
 use crate::error::AppError;
 use crate::rag::attachment_acl::{attachment_access_levels, ReferencingDoc};
-use crate::rag::extraction::{extract_attachment, ExtractionOutcome};
+use crate::rag::extraction::{AttachmentExtractors, ExtractionOutcome};
 use crate::rag::service::RagService;
 use crate::storage::client::StorageClient;
 
@@ -47,6 +47,7 @@ pub struct AttachmentExtractionService {
     asset_repo: Arc<dyn AssetRepository>,
     document_repo: Arc<dyn DocumentRepository>,
     rag: Arc<dyn RagService>,
+    extractors: Arc<AttachmentExtractors>,
 }
 
 impl AttachmentExtractionService {
@@ -55,12 +56,14 @@ impl AttachmentExtractionService {
         asset_repo: Arc<dyn AssetRepository>,
         document_repo: Arc<dyn DocumentRepository>,
         rag: Arc<dyn RagService>,
+        extractors: Arc<AttachmentExtractors>,
     ) -> Self {
         Self {
             storage,
             asset_repo,
             document_repo,
             rag,
+            extractors,
         }
     }
 
@@ -114,7 +117,7 @@ impl AttachmentExtractionService {
             Err(e) => return self.fail(key, &format!("storage error: {e}")).await,
         };
 
-        let pages = match extract_attachment(&bytes, &asset.content_type).await {
+        let pages = match self.extractors.extract(&bytes, &asset.content_type).await {
             Ok(ExtractionOutcome::Extracted(pages)) => pages,
             Ok(ExtractionOutcome::Unsupported) => {
                 // Not indexable: drop any stale chunks and record it as skipped.

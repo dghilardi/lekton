@@ -14,8 +14,10 @@ use async_trait::async_trait;
 use crate::error::AppError;
 use crate::rag::service::AttachmentPage;
 
+mod pdf;
 mod text;
 
+pub use pdf::PdfExtractor;
 pub use text::TextExtractor;
 
 /// Extracts indexable, per-page text from an attachment's raw bytes.
@@ -43,21 +45,47 @@ pub enum ExtractionOutcome {
     Unsupported,
 }
 
-/// Dispatch extraction to the first extractor that supports `content_type`.
+/// The set of attachment extractors, dispatched by MIME content type.
 ///
-/// Returns [`ExtractionOutcome::Unsupported`] when no extractor matches, so the
-/// caller can mark the asset `Skipped` rather than `Failed`.
-pub async fn extract_attachment(
-    bytes: &[u8],
-    content_type: &str,
-) -> Result<ExtractionOutcome, AppError> {
-    let text = TextExtractor;
-    if text.supports(content_type) {
-        return Ok(ExtractionOutcome::Extracted(
-            text.extract(bytes, content_type).await?,
-        ));
+/// Holds any per-extractor configuration (e.g. PDF routing). Construct once and
+/// share via `Arc`.
+pub struct AttachmentExtractors {
+    text: TextExtractor,
+    pdf: PdfExtractor,
+}
+
+impl AttachmentExtractors {
+    pub fn new() -> Self {
+        Self {
+            text: TextExtractor,
+            pdf: PdfExtractor::new(),
+        }
     }
 
-    // PDF (and other) extractors slot in here.
-    Ok(ExtractionOutcome::Unsupported)
+    /// Extract using the first extractor that supports `content_type`. Returns
+    /// [`ExtractionOutcome::Unsupported`] when none matches, so the caller can
+    /// mark the asset `Skipped` rather than `Failed`.
+    pub async fn extract(
+        &self,
+        bytes: &[u8],
+        content_type: &str,
+    ) -> Result<ExtractionOutcome, AppError> {
+        if self.text.supports(content_type) {
+            return Ok(ExtractionOutcome::Extracted(
+                self.text.extract(bytes, content_type).await?,
+            ));
+        }
+        if self.pdf.supports(content_type) {
+            return Ok(ExtractionOutcome::Extracted(
+                self.pdf.extract(bytes, content_type).await?,
+            ));
+        }
+        Ok(ExtractionOutcome::Unsupported)
+    }
+}
+
+impl Default for AttachmentExtractors {
+    fn default() -> Self {
+        Self::new()
+    }
 }

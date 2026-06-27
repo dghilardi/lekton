@@ -68,6 +68,10 @@ pub struct FeaturesConfig {
     /// Documentation feedback: reporting gaps and the related MCP tools.
     #[serde(default = "default_true")]
     pub documentation_feedback: bool,
+    /// Index attachment text (PDF/text files) into the RAG store. Requires
+    /// `rag`. Off by default — opt in with `LKN__FEATURES__ATTACHMENT_INDEXING=true`.
+    #[serde(default)]
+    pub attachment_indexing: bool,
 }
 
 fn default_true() -> bool {
@@ -84,6 +88,7 @@ impl Default for FeaturesConfig {
             search: true,
             prompt_library: true,
             documentation_feedback: true,
+            attachment_indexing: false,
         }
     }
 }
@@ -570,6 +575,14 @@ impl AppConfig {
                 );
             }
             self.rag.validate()?;
+        }
+
+        if self.features.attachment_indexing && !self.features.rag {
+            return Err(
+                "features.attachment_indexing = true requires features.rag = true \
+                 (set LKN__FEATURES__RAG=true or disable attachment indexing)"
+                    .into(),
+            );
         }
 
         if self.features.search && self.search.url.is_empty() {

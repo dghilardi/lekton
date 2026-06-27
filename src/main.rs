@@ -767,6 +767,25 @@ async fn main() {
         search: config.features.search && search_service.is_some(),
         prompt_library: config.features.prompt_library,
         documentation_feedback: config.features.documentation_feedback,
+        attachment_indexing: config.features.attachment_indexing && rag_service.is_some(),
+    };
+
+    // Spawn the attachment extraction worker when attachment indexing is enabled.
+    // Bounded queue; uploads enqueue keys and a single worker drains them.
+    let attachment_queue = if features.attachment_indexing {
+        rag_service.clone().map(|rag| {
+            let svc = Arc::new(
+                lekton::rag::attachment_extraction::AttachmentExtractionService::new(
+                    storage_client.clone(),
+                    asset_repo.clone(),
+                    document_repo.clone(),
+                    rag,
+                ),
+            );
+            svc.spawn(256)
+        })
+    } else {
+        None
     };
 
     // Build application state
@@ -796,6 +815,7 @@ async fn main() {
             None
         },
         rag_service,
+        attachment_queue,
         chat_repo,
         chat_service,
         search_reindex_state,

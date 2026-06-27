@@ -20,6 +20,8 @@ schema_registry = true
 search = false
 prompt_library = true
 documentation_feedback = true
+# Index attachment text (PDF/text) into RAG. Requires rag = true. Off by default.
+attachment_indexing = false
 
 [server]
 rate_limit_burst = 50

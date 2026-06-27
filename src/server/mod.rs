@@ -2,6 +2,7 @@ pub mod access_levels;
 pub mod auth_fns;
 pub mod custom_css;
 pub mod docs;
+pub mod document_upload;
 pub mod feedback;
 pub mod nav;
 pub mod pats;

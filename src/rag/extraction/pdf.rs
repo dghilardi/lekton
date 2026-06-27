@@ -96,6 +96,50 @@ impl AttachmentExtractor for PdfExtractor {
     }
 }
 
+/// Extract native text from the first `max_pages` pages, concatenated.
+///
+/// Fast path for synchronously summarizing a freshly uploaded PDF: it reads
+/// only the native text layer (no rendering, no VLM) of the leading pages,
+/// enough to give an LLM a sense of the document before the full async
+/// extraction runs. Returns an empty string for image-only PDFs (no text
+/// layer).
+pub async fn extract_preview(bytes: &[u8], max_pages: usize) -> Result<String, AppError> {
+    let bytes = bytes.to_vec();
+    tokio::task::spawn_blocking(move || load_preview_text(&bytes, max_pages))
+        .await
+        .map_err(|e| AppError::Internal(format!("pdf preview task failed: {e}")))?
+}
+
+/// Concatenate native text from the first `max_pages` pages. Blocking.
+fn load_preview_text(bytes: &[u8], max_pages: usize) -> Result<String, AppError> {
+    use pdfium_render::prelude::*;
+
+    let bindings = Pdfium::bind_to_system_library()
+        .map_err(|e| AppError::Internal(format!("failed to bind libpdfium: {e}")))?;
+    let pdfium = Pdfium::new(bindings);
+
+    let document = pdfium
+        .load_pdf_from_byte_slice(bytes, None)
+        .map_err(|e| AppError::Internal(format!("failed to load PDF: {e}")))?;
+
+    let mut out = String::new();
+    for (index, page) in document.pages().iter().enumerate() {
+        if index >= max_pages {
+            break;
+        }
+        let text = page.text().map(|t| t.all()).unwrap_or_default();
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            if !out.is_empty() {
+                out.push_str("\n\n");
+            }
+            out.push_str(trimmed);
+        }
+    }
+
+    Ok(out)
+}
+
 /// Bind libpdfium, load the document, extract per-page native text, and render
 /// image-heavy pages to PNG when `render_images` is set. Blocking.
 fn load_pdf(

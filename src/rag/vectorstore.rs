@@ -16,7 +16,11 @@ pub struct ChunkPayload {
     pub chunk_text: String,
     pub document_slug: String,
     pub document_title: String,
-    pub access_level: String,
+    /// Access levels under which this chunk is visible. For document chunks this
+    /// is a single-element list; attachment chunks may carry several (one per
+    /// referencing document). A search matches when this list intersects the
+    /// caller's access levels.
+    pub access_levels: Vec<String>,
     pub is_draft: bool,
     pub tags: Vec<String>,
     pub chunk_index: u32,
@@ -130,8 +134,10 @@ impl QdrantVectorStore {
                     "section lookup requested with empty access levels".into(),
                 ));
             }
+            // `matches` against a list payload field is a "match any": the chunk
+            // passes when its `access_levels` list intersects the caller's levels.
             conditions.push(Condition::matches(
-                "access_level",
+                "access_levels",
                 levels.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
             ));
         }
@@ -200,7 +206,22 @@ impl VectorStore for QdrantVectorStore {
                 payload.insert("chunk_text", p.payload.chunk_text);
                 payload.insert("document_slug", p.payload.document_slug);
                 payload.insert("document_title", p.payload.document_title);
-                payload.insert("access_level", p.payload.access_level);
+                let access_level_values: Vec<qdrant_client::qdrant::Value> = p
+                    .payload
+                    .access_levels
+                    .into_iter()
+                    .map(|a| a.into())
+                    .collect();
+                payload.insert(
+                    "access_levels",
+                    qdrant_client::qdrant::Value {
+                        kind: Some(qdrant_client::qdrant::value::Kind::ListValue(
+                            qdrant_client::qdrant::ListValue {
+                                values: access_level_values,
+                            },
+                        )),
+                    },
+                );
                 payload.insert("is_draft", p.payload.is_draft);
                 payload.insert("chunk_index", p.payload.chunk_index as i64);
                 payload.insert("section_anchor", p.payload.section_anchor);

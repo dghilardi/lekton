@@ -131,7 +131,7 @@ impl RagService for DefaultRagService {
                         section_anchor: chunk.section_anchor,
                         document_slug: slug.to_string(),
                         document_title: title.to_string(),
-                        access_level: access_level.to_string(),
+                        access_levels: vec![access_level.to_string()],
                         is_draft,
                         tags: tags.to_vec(),
                         chunk_index: chunk.chunk_index,

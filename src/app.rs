@@ -69,7 +69,7 @@ pub fn use_feature(
     Signal::derive(move || {
         features
             .and_then(|f| f.0.get())
-            .map(|f| selector(f))
+            .map(&selector)
             .unwrap_or(false)
     })
 }
@@ -82,7 +82,7 @@ fn route_feature(selector: impl Fn(FeatureFlags) -> bool + Send + Sync + 'static
     Signal::derive(move || {
         features
             .and_then(|f| f.0.get())
-            .map(|f| selector(f))
+            .map(&selector)
             .unwrap_or(true)
     })
 }

@@ -157,6 +157,12 @@ pub async fn save_doc_content(
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
+    // Reconcile asset references so referenced assets record this document.
+    let asset_keys = crate::rendering::links::extract_asset_keys_from_html(&html_content);
+    if let Err(e) = state.asset_repo.set_references(&slug, &asset_keys).await {
+        tracing::warn!(slug = %slug, "Failed to update asset references: {e}");
+    }
+
     if let (Some(svc), Some(sdoc)) = (state.search_service.as_ref(), search_doc) {
         let _ = svc.index_document(&sdoc).await;
     }

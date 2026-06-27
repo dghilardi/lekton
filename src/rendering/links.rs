@@ -68,6 +68,26 @@ pub fn extract_asset_keys(markdown: &str) -> Vec<String> {
     keys
 }
 
+/// Extract asset keys from rendered HTML content (e.g. from TipTap).
+///
+/// Scans both `href` (links) and `src` (images) attributes for
+/// `/api/v1/assets/{key}` targets. The HTML analogue of [`extract_asset_keys`].
+pub fn extract_asset_keys_from_html(html: &str) -> Vec<String> {
+    let mut keys = Vec::new();
+    for attr in ["href=\"", "src=\""] {
+        for segment in html.split(attr).skip(1) {
+            if let Some(end) = segment.find('"') {
+                if let Some(key) = asset_key_from_url(&segment[..end]) {
+                    if !keys.contains(&key) {
+                        keys.push(key);
+                    }
+                }
+            }
+        }
+    }
+    keys
+}
+
 /// Extract an asset key from a `/api/v1/assets/{key}` URL, or `None` otherwise.
 fn asset_key_from_url(url: &str) -> Option<String> {
     let path = url.split(['#', '?']).next().unwrap_or(url);
@@ -192,6 +212,15 @@ mod tests {
         let md = "[doc](/docs/guide) [img](/api/v1/image/x.png) [ext](https://e.com/a) \
                   [empty](/api/v1/assets/)";
         assert!(extract_asset_keys(md).is_empty());
+    }
+
+    #[test]
+    fn test_extract_asset_keys_from_html_href_and_src() {
+        let html = r#"<p><a href="/api/v1/assets/proj/manual.pdf">m</a>
+                      <img src="/api/v1/assets/proj/arch.png"></p>
+                      <a href="/docs/guide">g</a>"#;
+        let keys = extract_asset_keys_from_html(html);
+        assert_eq!(keys, vec!["proj/manual.pdf", "proj/arch.png"]);
     }
 
     #[test]

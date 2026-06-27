@@ -786,6 +786,20 @@ mod tests {
             }
             Ok(())
         }
+
+        async fn set_references(&self, source_slug: &str, keys: &[String]) -> Result<(), AppError> {
+            let mut assets = self.assets.lock().unwrap();
+            for a in assets.iter_mut() {
+                let referenced = keys.contains(&a.key);
+                let has = a.referenced_by.iter().any(|s| s == source_slug);
+                if referenced && !has {
+                    a.referenced_by.push(source_slug.to_string());
+                } else if !referenced && has {
+                    a.referenced_by.retain(|s| s != source_slug);
+                }
+            }
+            Ok(())
+        }
     }
 
     #[tokio::test]

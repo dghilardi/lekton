@@ -38,6 +38,11 @@ pub trait AssetRepository: Send + Sync {
     /// Update only the extraction-tracking fields of an asset. A no-op when the
     /// key does not exist.
     async fn update_extraction(&self, key: &str, update: ExtractionUpdate) -> Result<(), AppError>;
+
+    /// Reconcile `referenced_by` so that `source_slug` references exactly `keys`:
+    /// add it to those assets and remove it from every other asset that still
+    /// lists it. Idempotent; needs no knowledge of the previous reference set.
+    async fn set_references(&self, source_slug: &str, keys: &[String]) -> Result<(), AppError>;
 }
 
 /// MongoDB implementation of the AssetRepository.
@@ -164,6 +169,32 @@ impl AssetRepository for MongoAssetRepository {
         self.collection
             .update_one(doc! { "key": key }, doc! { "$set": set })
             .await?;
+
+        Ok(())
+    }
+
+    async fn set_references(&self, source_slug: &str, keys: &[String]) -> Result<(), AppError> {
+        use mongodb::bson::doc;
+
+        let keys: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
+
+        // Remove the slug from assets it no longer references.
+        self.collection
+            .update_many(
+                doc! { "referenced_by": source_slug, "key": { "$nin": &keys } },
+                doc! { "$pull": { "referenced_by": source_slug } },
+            )
+            .await?;
+
+        // Add the slug to the assets it now references.
+        if !keys.is_empty() {
+            self.collection
+                .update_many(
+                    doc! { "key": { "$in": &keys } },
+                    doc! { "$addToSet": { "referenced_by": source_slug } },
+                )
+                .await?;
+        }
 
         Ok(())
     }

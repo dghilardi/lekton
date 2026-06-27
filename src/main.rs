@@ -769,6 +769,7 @@ async fn main() {
         prompt_library: config.features.prompt_library,
         documentation_feedback: config.features.documentation_feedback,
         attachment_indexing: config.features.attachment_indexing && rag_service.is_some(),
+        document_upload: config.features.document_upload,
     };
 
     // Spawn the attachment extraction worker when attachment indexing is enabled.

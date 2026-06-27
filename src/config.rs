@@ -72,6 +72,12 @@ pub struct FeaturesConfig {
     /// `rag`. Off by default — opt in with `LKN__FEATURES__ATTACHMENT_INDEXING=true`.
     #[serde(default)]
     pub attachment_indexing: bool,
+    /// Admin-only guided document upload: a form to upload a PDF, create a
+    /// markdown stub linking to it, and assign title/access level/tree position.
+    /// Independent of `editor` (works in a read-only portal). The AI-summary
+    /// helper additionally needs `rag`. Off by default.
+    #[serde(default)]
+    pub document_upload: bool,
 }
 
 fn default_true() -> bool {
@@ -89,6 +95,7 @@ impl Default for FeaturesConfig {
             prompt_library: true,
             documentation_feedback: true,
             attachment_indexing: false,
+            document_upload: false,
         }
     }
 }
@@ -713,6 +720,8 @@ mod tests {
         assert!(config.features.schema_registry);
         assert!(config.features.prompt_library);
         assert!(config.features.documentation_feedback);
+        assert!(!config.features.attachment_indexing);
+        assert!(!config.features.document_upload);
 
         // Default config validates cleanly (nothing external is enabled).
         assert!(config.validate_features().is_ok());

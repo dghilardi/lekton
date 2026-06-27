@@ -9,6 +9,8 @@ pub mod embedding;
 #[cfg(feature = "ssr")]
 pub mod eval;
 #[cfg(feature = "ssr")]
+pub mod extraction;
+#[cfg(feature = "ssr")]
 pub mod hyde;
 #[cfg(feature = "ssr")]
 pub mod provider;

@@ -159,8 +159,23 @@ pub async fn save_doc_content(
 
     // Reconcile asset references so referenced assets record this document.
     let asset_keys = crate::rendering::links::extract_asset_keys_from_html(&html_content);
-    if let Err(e) = state.asset_repo.set_references(&slug, &asset_keys).await {
-        tracing::warn!(slug = %slug, "Failed to update asset references: {e}");
+    match state.asset_repo.set_references(&slug, &asset_keys).await {
+        Ok(affected) => {
+            if let Some(rag) = &state.rag_service {
+                if !affected.is_empty() {
+                    crate::rag::attachment_extraction::recompute_access_levels(
+                        rag.as_ref(),
+                        state.asset_repo.as_ref(),
+                        state.document_repo.as_ref(),
+                        &affected,
+                    )
+                    .await;
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!(slug = %slug, "Failed to update asset references: {e}");
+        }
     }
 
     if let (Some(svc), Some(sdoc)) = (state.search_service.as_ref(), search_doc) {

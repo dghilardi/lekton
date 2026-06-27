@@ -41,8 +41,13 @@ pub trait AssetRepository: Send + Sync {
 
     /// Reconcile `referenced_by` so that `source_slug` references exactly `keys`:
     /// add it to those assets and remove it from every other asset that still
-    /// lists it. Idempotent; needs no knowledge of the previous reference set.
-    async fn set_references(&self, source_slug: &str, keys: &[String]) -> Result<(), AppError>;
+    /// lists it. Idempotent. Returns the keys whose reference set actually
+    /// changed (added or removed), so callers can recompute derived state.
+    async fn set_references(
+        &self,
+        source_slug: &str,
+        keys: &[String],
+    ) -> Result<Vec<String>, AppError>;
 }
 
 /// MongoDB implementation of the AssetRepository.
@@ -173,29 +178,57 @@ impl AssetRepository for MongoAssetRepository {
         Ok(())
     }
 
-    async fn set_references(&self, source_slug: &str, keys: &[String]) -> Result<(), AppError> {
+    async fn set_references(
+        &self,
+        source_slug: &str,
+        keys: &[String],
+    ) -> Result<Vec<String>, AppError> {
+        use futures::TryStreamExt;
         use mongodb::bson::doc;
 
-        let keys: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
-
-        // Remove the slug from assets it no longer references.
-        self.collection
-            .update_many(
-                doc! { "referenced_by": source_slug, "key": { "$nin": &keys } },
-                doc! { "$pull": { "referenced_by": source_slug } },
-            )
+        // Keys currently referencing this slug, to compute the exact diff.
+        let mut cursor = self
+            .collection
+            .find(doc! { "referenced_by": source_slug })
             .await?;
+        let mut current = Vec::new();
+        while let Some(asset) = cursor.try_next().await? {
+            current.push(asset.key);
+        }
 
-        // Add the slug to the assets it now references.
-        if !keys.is_empty() {
+        let removed: Vec<String> = current
+            .iter()
+            .filter(|k| !keys.contains(k))
+            .cloned()
+            .collect();
+        let added: Vec<String> = keys
+            .iter()
+            .filter(|k| !current.contains(k))
+            .cloned()
+            .collect();
+
+        if !removed.is_empty() {
+            let removed_refs: Vec<&str> = removed.iter().map(|s| s.as_str()).collect();
             self.collection
                 .update_many(
-                    doc! { "key": { "$in": &keys } },
+                    doc! { "key": { "$in": &removed_refs } },
+                    doc! { "$pull": { "referenced_by": source_slug } },
+                )
+                .await?;
+        }
+
+        if !added.is_empty() {
+            let added_refs: Vec<&str> = added.iter().map(|s| s.as_str()).collect();
+            self.collection
+                .update_many(
+                    doc! { "key": { "$in": &added_refs } },
                     doc! { "$addToSet": { "referenced_by": source_slug } },
                 )
                 .await?;
         }
 
-        Ok(())
+        let mut affected = removed;
+        affected.extend(added);
+        Ok(affected)
     }
 }

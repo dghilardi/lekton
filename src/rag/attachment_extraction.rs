@@ -217,6 +217,48 @@ impl AttachmentExtractionService {
     }
 }
 
+/// Recompute and apply RAG access levels for attachments whose referencing
+/// documents changed (e.g. after a document save). A no-op for keys with no
+/// indexed chunks. Per-key errors are logged, never propagated, so a document
+/// save is not failed by RAG bookkeeping.
+pub async fn recompute_access_levels(
+    rag: &dyn RagService,
+    asset_repo: &dyn AssetRepository,
+    document_repo: &dyn DocumentRepository,
+    keys: &[String],
+) {
+    for key in keys {
+        let asset = match asset_repo.find_by_key(key).await {
+            Ok(Some(a)) => a,
+            Ok(None) => continue,
+            Err(e) => {
+                tracing::warn!(key, "recompute attachment ACL: find asset failed: {e}");
+                continue;
+            }
+        };
+
+        let mut docs = Vec::new();
+        for slug in &asset.referenced_by {
+            if let Ok(Some(doc)) = document_repo.find_by_slug(slug).await {
+                docs.push((doc.access_level, doc.is_draft, doc.is_archived));
+            }
+        }
+        let refs: Vec<ReferencingDoc> = docs
+            .iter()
+            .map(|(access_level, is_draft, is_archived)| ReferencingDoc {
+                access_level,
+                is_draft: *is_draft,
+                is_archived: *is_archived,
+            })
+            .collect();
+        let levels = attachment_access_levels(&refs);
+
+        if let Err(e) = rag.update_attachment_access_levels(key, &levels).await {
+            tracing::warn!(key, "recompute attachment ACL: update failed: {e}");
+        }
+    }
+}
+
 /// The last path segment of an asset key, used as the attachment's display name.
 fn filename_from_key(key: &str) -> String {
     key.rsplit('/').next().unwrap_or(key).to_string()

@@ -802,18 +802,25 @@ mod tests {
             Ok(())
         }
 
-        async fn set_references(&self, source_slug: &str, keys: &[String]) -> Result<(), AppError> {
+        async fn set_references(
+            &self,
+            source_slug: &str,
+            keys: &[String],
+        ) -> Result<Vec<String>, AppError> {
             let mut assets = self.assets.lock().unwrap();
+            let mut affected = Vec::new();
             for a in assets.iter_mut() {
                 let referenced = keys.contains(&a.key);
                 let has = a.referenced_by.iter().any(|s| s == source_slug);
                 if referenced && !has {
                     a.referenced_by.push(source_slug.to_string());
+                    affected.push(a.key.clone());
                 } else if !referenced && has {
                     a.referenced_by.retain(|s| s != source_slug);
+                    affected.push(a.key.clone());
                 }
             }
-            Ok(())
+            Ok(affected)
         }
     }
 

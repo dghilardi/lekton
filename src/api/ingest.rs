@@ -352,12 +352,30 @@ pub async fn process_ingest(
     //     document in its `referenced_by` (and drops it where no longer linked).
     //     This drives attachment access levels for RAG and asset-serve access.
     let asset_keys = extract_asset_keys(&raw_content);
-    if let Err(e) = ctx
+    match ctx
         .asset_repo
         .set_references(&request.slug, &asset_keys)
         .await
     {
-        tracing::warn!(slug = %request.slug, "Failed to update asset references: {e}");
+        Ok(affected) => {
+            // Recompute RAG access levels for attachments whose reference set
+            // changed, so already-indexed attachments become (in)visible without
+            // waiting for a re-extraction.
+            if let Some(rag) = ctx.rag {
+                if !affected.is_empty() {
+                    crate::rag::attachment_extraction::recompute_access_levels(
+                        rag,
+                        ctx.asset_repo,
+                        ctx.repo,
+                        &affected,
+                    )
+                    .await;
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!(slug = %request.slug, "Failed to update asset references: {e}");
+        }
     }
 
     Ok(IngestResponse {
@@ -901,8 +919,8 @@ mod tests {
         ) -> Result<(), AppError> {
             Ok(())
         }
-        async fn set_references(&self, _: &str, _: &[String]) -> Result<(), AppError> {
-            Ok(())
+        async fn set_references(&self, _: &str, _: &[String]) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
         }
     }
 

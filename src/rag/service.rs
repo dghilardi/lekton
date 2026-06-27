@@ -377,6 +377,8 @@ mod tests {
             analyzer: None,
             hyde: None,
             rewriter: None,
+            vlm: None,
+            attachment_page_text_threshold: 100,
         };
         assert!(DefaultRagService::from_rag_config(&config).await.is_err());
     }

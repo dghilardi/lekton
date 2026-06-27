@@ -279,6 +279,8 @@ mod ssr {
                 analyzer: self.analyzer.clone(),
                 hyde: self.hyde.clone(),
                 rewriter: None,
+                vlm: None,
+                attachment_page_text_threshold: 100,
             }
         }
 

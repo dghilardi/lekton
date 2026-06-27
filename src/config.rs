@@ -370,6 +370,23 @@ pub struct RagConfig {
     /// Absent = disabled (first-turn pass-through only).
     #[serde(default)]
     pub rewriter: Option<LlmStepConfig>,
+
+    /// Vision LLM used to transcribe image-heavy attachment pages (diagrams,
+    /// tables, screenshots, scans) during RAG indexing. Absent = VLM routing
+    /// disabled, native text extraction only. Uses the same Vertex/OpenAI-
+    /// compatible fallback rules as the other steps.
+    #[serde(default)]
+    pub vlm: Option<LlmStepConfig>,
+
+    /// A PDF page whose natively-extracted text is shorter than this (in chars)
+    /// is treated as image-heavy and routed to `vlm` for transcription (when
+    /// configured). Default: 100.
+    #[serde(default = "default_attachment_page_text_threshold")]
+    pub attachment_page_text_threshold: usize,
+}
+
+fn default_attachment_page_text_threshold() -> usize {
+    100
 }
 
 impl RagConfig {

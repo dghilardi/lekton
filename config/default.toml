@@ -82,6 +82,10 @@ embedding_vertex_location = ""
 # Token-aware chunking (cl100k_base tokenizer).
 chunk_size_tokens = 256
 chunk_overlap_tokens = 64
+
+# Attachment indexing: a PDF page with fewer extractable text chars than this is
+# treated as image-heavy and routed to [rag.vlm] for transcription (when set).
+attachment_page_text_threshold = 100
 # Expand top reranked chunks to their full parent section before prompt injection.
 expand_to_parent = false
 
@@ -159,3 +163,11 @@ Rules:
 # [rag.rewriter]       # multi-turn query rewriter
 # model = ""
 # max_tokens = 80
+#
+# [rag.vlm]            # vision LLM for transcribing image-heavy attachment pages
+# model = ""           # required to enable VLM routing (e.g. a vision-capable model)
+# max_tokens = 1024
+# url = ""             # override rag.llm.url for this step only
+# api_key = ""
+# vertex_project_id = ""
+# vertex_location = ""

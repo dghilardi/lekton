@@ -9,6 +9,8 @@
 //! plus VLM transcription of image-heavy pages) lands in a later commit once the
 //! native `pdfium` library is wired in.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 
 use crate::error::AppError;
@@ -16,9 +18,11 @@ use crate::rag::service::AttachmentPage;
 
 mod pdf;
 mod text;
+mod vlm;
 
 pub use pdf::PdfExtractor;
 pub use text::TextExtractor;
+pub use vlm::VlmTranscriber;
 
 /// Extracts indexable, per-page text from an attachment's raw bytes.
 #[async_trait]
@@ -55,10 +59,13 @@ pub struct AttachmentExtractors {
 }
 
 impl AttachmentExtractors {
-    pub fn new() -> Self {
+    /// Build the extractor set. `page_text_threshold` and `vlm` configure PDF
+    /// image-heavy-page routing; pass `vlm = None` to disable VLM transcription
+    /// (native text only).
+    pub fn new(page_text_threshold: usize, vlm: Option<Arc<VlmTranscriber>>) -> Self {
         Self {
             text: TextExtractor,
-            pdf: PdfExtractor::new(),
+            pdf: PdfExtractor::new(page_text_threshold, vlm),
         }
     }
 
@@ -81,11 +88,5 @@ impl AttachmentExtractors {
             ));
         }
         Ok(ExtractionOutcome::Unsupported)
-    }
-}
-
-impl Default for AttachmentExtractors {
-    fn default() -> Self {
-        Self::new()
     }
 }

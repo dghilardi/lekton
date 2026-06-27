@@ -772,20 +772,45 @@ async fn main() {
 
     // Spawn the attachment extraction worker when attachment indexing is enabled.
     // Bounded queue; uploads enqueue keys and a single worker drains them.
-    let attachment_queue = if features.attachment_indexing {
-        rag_service.clone().map(|rag| {
-            let extractors = Arc::new(lekton::rag::extraction::AttachmentExtractors::new());
-            let svc = Arc::new(
-                lekton::rag::attachment_extraction::AttachmentExtractionService::new(
-                    storage_client.clone(),
-                    asset_repo.clone(),
-                    document_repo.clone(),
-                    rag,
-                    extractors,
-                ),
-            );
-            svc.spawn(256)
-        })
+    let attachment_queue = if let (true, Some(rag)) =
+        (features.attachment_indexing, rag_service.clone())
+    {
+        // Optional VLM transcriber for image-heavy PDF pages, from [rag.vlm].
+        let vlm = match &config.rag.vlm {
+            Some(step) => {
+                let resolved = config.rag.resolve_step(step);
+                match lekton::rag::provider::LlmProvider::initialize(&resolved).await {
+                    Ok(provider) => Some(Arc::new(lekton::rag::extraction::VlmTranscriber::new(
+                        provider,
+                        step.model.clone(),
+                        step.max_tokens,
+                        resolved.headers,
+                    ))),
+                    Err(e) => {
+                        tracing::warn!(
+                            "VLM not available: {e} — image-heavy PDF pages will use native text only"
+                        );
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
+
+        let extractors = Arc::new(lekton::rag::extraction::AttachmentExtractors::new(
+            config.rag.attachment_page_text_threshold,
+            vlm,
+        ));
+        let svc = Arc::new(
+            lekton::rag::attachment_extraction::AttachmentExtractionService::new(
+                storage_client.clone(),
+                asset_repo.clone(),
+                document_repo.clone(),
+                rag,
+                extractors,
+            ),
+        );
+        Some(svc.spawn(256))
     } else {
         None
     };

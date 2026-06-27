@@ -145,6 +145,9 @@ urlencoding = { version = "2", optional = true }
 # PDF text extraction and page rendering (binds to the system libpdfium)
 pdfium-render = { version = "0.8", optional = true }
 
+# PNG encoding of rendered PDF pages for VLM transcription
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+
 # Cookie duration (re-exported by axum-extra transitively)
 time = { version = "0.3", optional = true }
 
@@ -221,6 +224,7 @@ ssr = [
     "dep:toml",
     "dep:syntect",
     "dep:pdfium-render",
+    "dep:image",
     "leptos/ssr",
     "leptos_meta/ssr",
     "leptos_router/ssr",

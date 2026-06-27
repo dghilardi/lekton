@@ -190,6 +190,8 @@ pub fn RegistrySidebar() -> impl IntoView {
 #[component]
 pub fn AdminSidebar() -> impl IntoView {
     let pathname = leptos_router::hooks::use_location().pathname;
+    let doc_feedback_enabled = crate::app::use_feature(|f| f.documentation_feedback);
+    let indexes_enabled = crate::app::use_feature(|f| f.search || f.rag || f.schema_registry);
 
     view! {
         <ul class="flex flex-col gap-1 mt-6">
@@ -206,12 +208,14 @@ pub fn AdminSidebar() -> impl IntoView {
                     "Personal Tokens"
                 </a>
             </li>
+            <Show when=move || doc_feedback_enabled.get()>
             <li>
                 <a href="/admin/documentation-feedback" aria-current=move || if pathname.get() == "/admin/documentation-feedback" { Some("page") } else { None } class="gap-3 group transition-colors">
                     <svg class="w-4 h-4 opacity-70" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path><path d="M8 10h8"></path><path d="M8 14h6"></path></svg>
                     "Documentation Feedback"
                 </a>
             </li>
+            </Show>
             <li>
                 <a href="/admin/access-levels" aria-current=move || if pathname.get() == "/admin/access-levels" { Some("page") } else { None } class="gap-3 group transition-colors">
                     <svg class="w-4 h-4 opacity-70" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
@@ -236,12 +240,14 @@ pub fn AdminSidebar() -> impl IntoView {
                     "Custom CSS"
                 </a>
             </li>
+            <Show when=move || indexes_enabled.get()>
             <li>
                 <a href="/admin/rag" aria-current=move || if pathname.get() == "/admin/rag" { Some("page") } else { None } class="gap-3 group transition-colors">
                     <svg class="w-4 h-4 opacity-70" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
                     "Indexes"
                 </a>
             </li>
+            </Show>
         </ul>
     }
 }

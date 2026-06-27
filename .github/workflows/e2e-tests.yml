@@ -11,6 +11,7 @@ env:
   CARGO_TERM_COLOR: always
   LKN__AUTH__DEMO_MODE: "true"
   LKN__AUTH__SERVICE_TOKEN: "test-token"
+  LKN__FEATURES__SEARCH: "true"
   LKN__DATABASE__URI: "mongodb://localhost:27017"
   LKN__DATABASE__NAME: "lekton_e2e"
   AWS_ACCESS_KEY_ID: "minioadmin"

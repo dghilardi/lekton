@@ -28,6 +28,64 @@ pub struct AppConfig {
     pub auth: AuthConfig,
     pub mcp: McpConfig,
     pub rag: RagConfig,
+    #[serde(default)]
+    pub features: FeaturesConfig,
+}
+
+// ── Features ────────────────────────────────────────────────────────────────
+
+/// Runtime feature toggles. Each flag fully enables or disables a functional
+/// area: when disabled, its backend services are never constructed, its routes
+/// are not mounted, and its UI entry points are hidden.
+///
+/// Each field defaults to `true` when absent, but the shipped `default.toml`
+/// turns `rag` and `search` off (they need external services). A flag that is
+/// `true` but missing its prerequisites is a hard error at startup — see
+/// [`AppConfig::validate_features`].
+///
+/// Via env: `LKN__FEATURES__RAG=false`, `LKN__FEATURES__MCP=false`, …
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct FeaturesConfig {
+    /// MCP Streamable HTTP server at `/mcp`.
+    #[serde(default = "default_true")]
+    pub mcp: bool,
+    /// RAG pipeline: indexing, chat, and the MCP semantic-search tool.
+    #[serde(default = "default_true")]
+    pub rag: bool,
+    /// WYSIWYG editor and asset uploads. When off the portal is read-only
+    /// (documents are still created via the ingest API).
+    #[serde(default = "default_true")]
+    pub editor: bool,
+    /// Schema registry: browsing, ingestion, and the MCP schema tools.
+    #[serde(default = "default_true")]
+    pub schema_registry: bool,
+    /// Meilisearch full-text search.
+    #[serde(default = "default_true")]
+    pub search: bool,
+    /// Prompt library: browsing and the MCP prompt tools.
+    #[serde(default = "default_true")]
+    pub prompt_library: bool,
+    /// Documentation feedback: reporting gaps and the related MCP tools.
+    #[serde(default = "default_true")]
+    pub documentation_feedback: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for FeaturesConfig {
+    fn default() -> Self {
+        Self {
+            mcp: true,
+            rag: true,
+            editor: true,
+            schema_registry: true,
+            search: true,
+            prompt_library: true,
+            documentation_feedback: true,
+        }
+    }
 }
 
 // ── Server ────────────────────────────────────────────────────────────────────
@@ -472,6 +530,49 @@ impl AppConfig {
             .build()?
             .try_deserialize()
     }
+
+    /// Validate enabled feature flags against their prerequisites.
+    ///
+    /// Fail-fast policy: a feature that is enabled but missing required
+    /// configuration is a startup error with an actionable message, rather than
+    /// being silently downgraded. Call once after [`AppConfig::load`].
+    pub fn validate_features(&self) -> Result<(), String> {
+        if self.features.rag {
+            if self.rag.qdrant_url.is_empty() {
+                return Err("features.rag = true but rag.qdrant_url is empty — set \
+                     LKN__RAG__QDRANT_URL or disable RAG with LKN__FEATURES__RAG=false"
+                    .into());
+            }
+            if self.rag.embedding_url.is_empty() && self.rag.embedding_vertex_project_id.is_empty()
+            {
+                return Err(
+                    "features.rag = true but no embedding backend is configured — set \
+                     LKN__RAG__EMBEDDING_URL or LKN__RAG__EMBEDDING_VERTEX_PROJECT_ID, or disable \
+                     RAG with LKN__FEATURES__RAG=false"
+                        .into(),
+                );
+            }
+            self.rag.validate()?;
+        }
+
+        if self.features.search && self.search.url.is_empty() {
+            return Err(
+                "features.search = true but search.url is empty — set LKN__SEARCH__URL \
+                 or disable search with LKN__FEATURES__SEARCH=false"
+                    .into(),
+            );
+        }
+
+        if self.features.rag && self.rag.hybrid_search_enabled && !self.features.search {
+            return Err(
+                "rag.hybrid_search_enabled = true requires features.search = true \
+                 (set LKN__FEATURES__SEARCH=true or disable hybrid search)"
+                    .into(),
+            );
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -568,5 +669,43 @@ mod tests {
         let resolved = config.rag.resolve_chat();
         assert_eq!(resolved.model, config.rag.llm.model);
         let _ = HashMap::<String, String>::new(); // suppress unused import
+    }
+
+    #[test]
+    #[cfg(feature = "ssr")]
+    fn test_features_defaults_and_validation() {
+        // Embedded defaults: external-service features off, the rest on.
+        let mut config = super::AppConfig::load().unwrap();
+        assert!(!config.features.rag);
+        assert!(!config.features.search);
+        assert!(config.features.mcp);
+        assert!(config.features.editor);
+        assert!(config.features.schema_registry);
+        assert!(config.features.prompt_library);
+        assert!(config.features.documentation_feedback);
+
+        // Default config validates cleanly (nothing external is enabled).
+        assert!(config.validate_features().is_ok());
+
+        // Enabling RAG without Qdrant configured fails fast.
+        config.features.rag = true;
+        let err = config.validate_features().unwrap_err();
+        assert!(err.contains("rag.qdrant_url"), "unexpected error: {err}");
+
+        // With Qdrant + an embedding backend, RAG validates.
+        config.rag.qdrant_url = "http://localhost:6334".into();
+        config.rag.embedding_url = "http://localhost:11434".into();
+        assert!(config.validate_features().is_ok());
+
+        // Hybrid search requires the search feature.
+        config.rag.hybrid_search_enabled = true;
+        let err = config.validate_features().unwrap_err();
+        assert!(err.contains("features.search"), "unexpected error: {err}");
+
+        // Enabling search without a URL fails fast.
+        config.rag.hybrid_search_enabled = false;
+        config.features.search = true;
+        let err = config.validate_features().unwrap_err();
+        assert!(err.contains("search.url"), "unexpected error: {err}");
     }
 }

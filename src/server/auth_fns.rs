@@ -72,10 +72,10 @@ pub async fn get_is_demo_mode() -> Result<bool, ServerFnError> {
     Ok(state.demo_mode)
 }
 
-#[server(GetIsRagEnabled, "/api")]
-pub async fn get_is_rag_enabled() -> Result<bool, ServerFnError> {
+#[server(GetFeatureFlags, "/api")]
+pub async fn get_feature_flags() -> Result<crate::app::FeatureFlags, ServerFnError> {
     let state = expect_context::<AppState>();
-    Ok(state.rag_service.is_some() && state.chat_service.is_some())
+    Ok(state.features)
 }
 
 /// Lightweight SSR-side cookie presence check — no token validation, no DB call.

@@ -11,6 +11,7 @@ pub fn UserMenu() -> impl IntoView {
     let is_demo_mode = use_context::<IsDemoMode>()
         .expect("UserMenu must be inside App")
         .0;
+    let prompt_library_enabled = crate::app::use_feature(|f| f.prompt_library);
 
     let logout_action = Action::new_local(move |_: &()| async move {
         #[cfg(feature = "hydrate")]
@@ -52,6 +53,7 @@ pub fn UserMenu() -> impl IntoView {
                             <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-[1] w-52 p-2 shadow border border-base-200 mt-2">
                                 <li class="menu-title text-xs opacity-60 px-2 pb-1 truncate">{user.email.clone()}</li>
                                 <div class="divider my-1"></div>
+                                {move || if prompt_library_enabled.get() { view! {
                                 <li>
                                     <a href="/prompts">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -60,6 +62,7 @@ pub fn UserMenu() -> impl IntoView {
                                         "Prompt Library"
                                     </a>
                                 </li>
+                                }.into_any() } else { view! { <span></span> }.into_any() }}
                                 <li>
                                     <a href="/profile">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

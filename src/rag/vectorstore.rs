@@ -28,7 +28,8 @@ impl SourceKind {
         }
     }
 
-    pub fn from_str(s: &str) -> Self {
+    /// Parse the value stored in the Qdrant payload, defaulting to `Document`.
+    pub fn from_payload(s: &str) -> Self {
         match s {
             "attachment" => SourceKind::Attachment,
             _ => SourceKind::Document,

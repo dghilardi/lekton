@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use qdrant_client::qdrant::{
     Condition, CreateCollectionBuilder, DeletePointsBuilder, Distance, Filter, PointStruct,
-    ScrollPointsBuilder, SearchPointsBuilder, UpsertPointsBuilder, VectorParamsBuilder,
+    ScrollPointsBuilder, SearchPointsBuilder, SetPayloadPointsBuilder, UpsertPointsBuilder,
+    VectorParamsBuilder,
 };
 use qdrant_client::{Payload, Qdrant};
 
@@ -10,12 +11,45 @@ use crate::error::AppError;
 
 // ── Data types ───────────────────────────────────────────────────────────────
 
+/// Origin of an indexed chunk: the body of a document, or an attachment
+/// (PDF/text file) referenced by one or more documents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SourceKind {
+    #[default]
+    Document,
+    Attachment,
+}
+
+impl SourceKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SourceKind::Document => "document",
+            SourceKind::Attachment => "attachment",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "attachment" => SourceKind::Attachment,
+            _ => SourceKind::Document,
+        }
+    }
+}
+
 /// Metadata stored alongside each vector in Qdrant.
 #[derive(Debug, Clone)]
 pub struct ChunkPayload {
     pub chunk_text: String,
     pub document_slug: String,
     pub document_title: String,
+    /// Whether this chunk comes from a document body or an attachment.
+    pub source_kind: SourceKind,
+    /// Asset key of the originating attachment (`None` for document chunks).
+    /// Used to build citations and resolve referencing documents.
+    pub attachment_key: Option<String>,
+    /// 1-based page number within the attachment (`None` for document chunks or
+    /// non-paginated sources).
+    pub source_page: Option<u32>,
     /// Access levels under which this chunk is visible. For document chunks this
     /// is a single-element list; attachment chunks may carry several (one per
     /// referencing document). A search matches when this list intersects the
@@ -74,6 +108,26 @@ pub trait VectorStore: Send + Sync {
     /// pass (upsert-then-delete-stale), so the document is never absent from the
     /// store. An empty `keep_ids` deletes every chunk for the slug.
     async fn delete_stale_chunks(&self, slug: &str, keep_ids: &[String]) -> Result<(), AppError>;
+
+    /// Delete all chunks belonging to an attachment.
+    async fn delete_by_attachment_key(&self, attachment_key: &str) -> Result<(), AppError>;
+
+    /// Delete chunks for an attachment **except** the given point ids
+    /// (upsert-then-delete-stale, mirroring [`delete_stale_chunks`]).
+    async fn delete_stale_attachment_chunks(
+        &self,
+        attachment_key: &str,
+        keep_ids: &[String],
+    ) -> Result<(), AppError>;
+
+    /// Overwrite the `access_levels` payload of every chunk for an attachment
+    /// without re-embedding. Used when the set of referencing documents (or
+    /// their access levels) changes.
+    async fn set_attachment_access_levels(
+        &self,
+        attachment_key: &str,
+        access_levels: &[String],
+    ) -> Result<(), AppError>;
 
     /// Semantic search filtered by access levels and draft visibility.
     ///
@@ -223,6 +277,13 @@ impl VectorStore for QdrantVectorStore {
                     },
                 );
                 payload.insert("is_draft", p.payload.is_draft);
+                payload.insert("source_kind", p.payload.source_kind.as_str());
+                if let Some(key) = p.payload.attachment_key {
+                    payload.insert("attachment_key", key);
+                }
+                if let Some(page) = p.payload.source_page {
+                    payload.insert("source_page", page as i64);
+                }
                 payload.insert("chunk_index", p.payload.chunk_index as i64);
                 payload.insert("section_anchor", p.payload.section_anchor);
                 let tag_values: Vec<qdrant_client::qdrant::Value> =
@@ -299,6 +360,90 @@ impl VectorStore for QdrantVectorStore {
             )
             .await
             .map_err(|e| AppError::Internal(format!("qdrant delete_stale_chunks: {e}")))?;
+
+        Ok(())
+    }
+
+    async fn delete_by_attachment_key(&self, attachment_key: &str) -> Result<(), AppError> {
+        self.client
+            .delete_points(
+                DeletePointsBuilder::new(&self.collection)
+                    .points(Filter::must([Condition::matches(
+                        "attachment_key",
+                        attachment_key.to_string(),
+                    )]))
+                    .wait(true),
+            )
+            .await
+            .map_err(|e| AppError::Internal(format!("qdrant delete_points (attachment): {e}")))?;
+
+        Ok(())
+    }
+
+    async fn delete_stale_attachment_chunks(
+        &self,
+        attachment_key: &str,
+        keep_ids: &[String],
+    ) -> Result<(), AppError> {
+        let mut must_not = Vec::new();
+        if !keep_ids.is_empty() {
+            must_not.push(Condition::has_id(keep_ids.iter().cloned()));
+        }
+        let filter = Filter {
+            must: vec![Condition::matches(
+                "attachment_key",
+                attachment_key.to_string(),
+            )],
+            must_not,
+            ..Default::default()
+        };
+
+        self.client
+            .delete_points(
+                DeletePointsBuilder::new(&self.collection)
+                    .points(filter)
+                    .wait(true),
+            )
+            .await
+            .map_err(|e| {
+                AppError::Internal(format!("qdrant delete_stale_attachment_chunks: {e}"))
+            })?;
+
+        Ok(())
+    }
+
+    async fn set_attachment_access_levels(
+        &self,
+        attachment_key: &str,
+        access_levels: &[String],
+    ) -> Result<(), AppError> {
+        let mut payload = Payload::new();
+        let values: Vec<qdrant_client::qdrant::Value> =
+            access_levels.iter().map(|a| a.clone().into()).collect();
+        payload.insert(
+            "access_levels",
+            qdrant_client::qdrant::Value {
+                kind: Some(qdrant_client::qdrant::value::Kind::ListValue(
+                    qdrant_client::qdrant::ListValue { values },
+                )),
+            },
+        );
+
+        self.client
+            .set_payload(
+                SetPayloadPointsBuilder::new(&self.collection, payload)
+                    .points_selector(Filter::must([Condition::matches(
+                        "attachment_key",
+                        attachment_key.to_string(),
+                    )]))
+                    .wait(true),
+            )
+            .await
+            .map_err(|e| {
+                AppError::Internal(format!(
+                    "qdrant set_payload (attachment access_levels): {e}"
+                ))
+            })?;
 
         Ok(())
     }

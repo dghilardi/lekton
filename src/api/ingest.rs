@@ -895,6 +895,26 @@ mod tests {
         async fn delete_document(&self, _slug: &str) -> Result<(), AppError> {
             Ok(())
         }
+        async fn index_attachment(
+            &self,
+            _attachment_key: &str,
+            _filename: &str,
+            _pages: &[crate::rag::service::AttachmentPage],
+            _access_levels: &[String],
+            _tags: &[String],
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn delete_attachment(&self, _attachment_key: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn update_attachment_access_levels(
+            &self,
+            _attachment_key: &str,
+            _access_levels: &[String],
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     #[tokio::test]

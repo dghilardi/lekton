@@ -348,6 +348,29 @@ mod tests {
             self.deleted.lock().unwrap().push(slug.to_string());
             Ok(())
         }
+
+        async fn index_attachment(
+            &self,
+            _: &str,
+            _: &str,
+            _: &[crate::rag::service::AttachmentPage],
+            _: &[String],
+            _: &[String],
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+
+        async fn delete_attachment(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+
+        async fn update_attachment_access_levels(
+            &self,
+            _: &str,
+            _: &[String],
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     #[async_trait]

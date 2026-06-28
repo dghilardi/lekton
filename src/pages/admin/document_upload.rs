@@ -190,7 +190,7 @@ pub fn DocumentUploadManager() -> impl IntoView {
             <div class="card-body p-8 space-y-6">
                 <div>
                     <h2 class="card-title text-2xl mb-1">
-                        {move || if edit_slug.get().is_some() { "Edit document" } else { "Upload document" }}
+                        {move || if edit_slug.get().is_some() { "Edit document" } else { "New document" }}
                     </h2>
                     <p class="text-base-content/60 text-sm">
                         "Upload a PDF and publish it as a page with a description and a download link."

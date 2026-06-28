@@ -47,7 +47,7 @@ mod rag_integration {
     async fn index_and_retrieve_document() {
         let qdrant = GenericImage::new("qdrant/qdrant", "v1.17.0")
             .with_exposed_port(ContainerPort::Tcp(6334))
-            .with_wait_for(WaitFor::message_on_stdout("Qdrant HTTP listening"))
+            .with_wait_for(WaitFor::message_on_stdout("Qdrant gRPC listening"))
             .start()
             .await
             .expect("failed to start Qdrant container");

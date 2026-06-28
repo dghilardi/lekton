@@ -48,6 +48,7 @@ export default defineConfig({
       LKN__AUTH__DEMO_MODE: 'true',
       LKN__AUTH__SERVICE_TOKEN: 'test-token',
       LKN__FEATURES__SEARCH: process.env.LKN__FEATURES__SEARCH || 'true',
+      LKN__FEATURES__DOCUMENT_UPLOAD: process.env.LKN__FEATURES__DOCUMENT_UPLOAD || 'true',
       LKN__SERVER__RATE_LIMIT_BURST: '1000',
       LKN__DATABASE__URI: process.env.LKN__DATABASE__URI || 'mongodb://localhost:27017',
       LKN__DATABASE__NAME: process.env.LKN__DATABASE__NAME || 'lekton_e2e',

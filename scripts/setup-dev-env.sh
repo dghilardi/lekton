@@ -134,41 +134,36 @@ LKN__AUTH__SERVICE_TOKEN=demo-ingest-token
 LKN__SEARCH__URL=http://localhost:7700
 LKN__SEARCH__API_KEY=dev-master-key-change-in-prod
 
-# RAG Configuration (Vector Database)
+# Feature flags (all enabled for local dev)
+LKN__FEATURES__RAG=true
+LKN__FEATURES__SEARCH=true
+LKN__FEATURES__ATTACHMENT_INDEXING=true
+LKN__FEATURES__DOCUMENT_UPLOAD=true
+
+# RAG Configuration (Vector Database + Ollama)
 LKN__RAG__QDRANT_URL=http://localhost:6334
 LKN__RAG__QDRANT_COLLECTION=lekton
 LKN__RAG__EMBEDDING_URL=http://localhost:11434/v1
 LKN__RAG__EMBEDDING_MODEL=nomic-embed-text
 LKN__RAG__EMBEDDING_DIMENSIONS=768
 LKN__RAG__EMBEDDING_API_KEY=ollama
-LKN__RAG__CHAT_URL=http://localhost:11434/v1
-LKN__RAG__CHAT_MODEL=qwen3.5:0.8b
-LKN__RAG__CHAT_API_KEY=ollama
 
-# RAG Enhancements (all optional — uncomment to enable)
-#
-# Hybrid search: combines Qdrant vector search with Meilisearch via RRF.
-# Requires LKN__SEARCH__URL to be configured (already set above).
-#LKN__RAG__HYBRID_SEARCH_ENABLED=true
-#
-# Cross-encoder reranker: re-scores retrieved chunks for better precision.
-# Requires Infinity server: docker-compose up -d infinity  (downloads ~600 MB on first run)
+# Base LLM (shared fallback for all pipeline steps)
+LKN__RAG__LLM__URL=http://localhost:11434/v1
+LKN__RAG__LLM__API_KEY=ollama
+LKN__RAG__LLM__MODEL=qwen3.5:0.8b
+
+# RAG pipeline steps (model overrides — URL/key fall back to LLM base above)
+LKN__RAG__ANALYZER__MODEL=phi3:mini
+LKN__RAG__HYDE__MODEL=phi3:mini
+LKN__RAG__REWRITER__MODEL=phi3:mini
+
+# RAG Enhancements
+LKN__RAG__HYBRID_SEARCH_ENABLED=true
+
+# Cross-encoder reranker (requires Infinity: docker-compose up -d infinity, ~600 MB on first run)
 #LKN__RAG__RERANKER_URL=http://localhost:7997/rerank
 #LKN__RAG__RERANKER_MODEL=BAAI/bge-reranker-v2-m3
-#
-# Query decomposition: classifies query complexity and runs parallel sub-queries.
-# Uses a lightweight local model — pull it first: ollama pull phi3:mini
-# To use a dedicated local endpoint different from the main chat_url:
-#LKN__RAG__ANALYZER_MODEL=phi3:mini
-#LKN__RAG__ANALYZER_URL=http://localhost:11434/v1
-#
-# HyDE: generates a hypothetical answer document to improve embedding recall.
-# Same model as the analyzer is fine for development.
-#LKN__RAG__HYDE_MODEL=phi3:mini
-#LKN__RAG__HYDE_URL=http://localhost:11434/v1
-#
-# Query rewriting: rewrites follow-up questions into standalone queries.
-#LKN__RAG__REWRITE_MODEL=phi3:mini
 
 # Enable demo auth mode (bypasses OIDC)
 LKN__AUTH__DEMO_MODE=true

@@ -120,16 +120,28 @@ pub async fn save_document_with_attachment(
     }
 
     let is_edit = form.slug.is_some();
+    // The asset the document currently links to, captured before the edit so a
+    // replaced PDF can be cleaned up afterwards.
+    let mut old_asset_key: Option<String> = None;
     let slug = match form.slug {
         Some(s) => {
             let existing = state
                 .document_repo
                 .find_by_slug(&s)
                 .await
-                .map_err(|e| ServerFnError::new(e.to_string()))?;
-            if existing.is_none_or(|d| d.is_archived) {
-                return Err(ServerFnError::new(format!("No document at '{s}' to edit")));
-            }
+                .map_err(|e| ServerFnError::new(e.to_string()))?
+                .filter(|d| !d.is_archived)
+                .ok_or_else(|| ServerFnError::new(format!("No document at '{s}' to edit")))?;
+            let old_content = state
+                .storage_client
+                .get_object(&existing.s3_key)
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))?
+                .and_then(|b| String::from_utf8(b).ok())
+                .unwrap_or_default();
+            old_asset_key = crate::rendering::links::extract_asset_keys(&old_content)
+                .into_iter()
+                .next();
             s
         }
         None => {
@@ -202,6 +214,25 @@ pub async fn save_document_with_attachment(
                 std::slice::from_ref(&form.asset_key),
             )
             .await;
+        }
+    }
+
+    // If the PDF was replaced during an edit, clean up the now-unreferenced old
+    // asset (S3 object, metadata, and RAG chunks). process_ingest has already
+    // unlinked this document from it; only delete when nothing else references
+    // it, so a PDF shared by several documents is left intact.
+    if let Some(old_key) = old_asset_key {
+        if old_key != form.asset_key && !old_key.is_empty() {
+            match state.asset_repo.find_by_key(&old_key).await {
+                Ok(Some(old_asset)) if old_asset.referenced_by.is_empty() => {
+                    let _ = state.storage_client.delete_object(&old_asset.s3_key).await;
+                    let _ = state.asset_repo.delete(&old_key).await;
+                    if let Some(rag) = state.rag_service.as_deref() {
+                        let _ = rag.delete_attachment(&old_key).await;
+                    }
+                }
+                _ => {}
+            }
         }
     }
 

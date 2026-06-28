@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.25.0] 2026-06-28
+
 ### Added
 - Guided document upload (`LKN__FEATURES__DOCUMENT_UPLOAD=true`, off by default): an admin-only form (Admin → Upload Document) to publish an existing PDF as a portal page. Upload the PDF, set title, access level, tree position and a description, and a page with that description plus a download link is created and indexed for search and RAG (the linked PDF inherits the page's access level). A "Generate with AI" button drafts the description from the document's first pages (requires `rag`). Upload-origin pages get an Edit button that reopens the form. Independent of the `editor` feature, so it works in a read-only portal.
 - Runtime feature flags (`[features]` config section, `LKN__FEATURES__*`) to enable/disable functional areas at startup: `mcp`, `rag`, `editor`, `schema_registry`, `search`, `prompt_library`, `documentation_feedback`. A disabled feature is hidden end-to-end (no backend services, no routes, no UI). Enabling a feature without its prerequisites fails fast at startup with an actionable error.

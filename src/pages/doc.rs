@@ -16,6 +16,10 @@ pub struct DocPageData {
     /// True when the document was created through the admin upload form, so the
     /// page can offer to edit it via that form rather than the markdown editor.
     pub is_upload_doc: bool,
+    /// True when the document is managed by an external source (ingest API /
+    /// lekton-sync). Such pages are read-only in the portal — editing them would
+    /// be overwritten on the next sync — so no edit affordance is shown.
+    pub is_sync_doc: bool,
 }
 
 /// Breadcrumbs component to show document hierarchy based on slug.
@@ -141,10 +145,14 @@ pub fn DocPage() -> impl IntoView {
                                 .unwrap_or(false)
                         };
                         let is_upload_doc = data.is_upload_doc;
-                        // Upload-origin docs are edited via the upload form; others via
-                        // the markdown editor. The two buttons are mutually exclusive.
+                        let is_sync_doc = data.is_sync_doc;
+                        // Edit affordance by provenance: upload-origin docs use the
+                        // upload form, hand-made docs use the markdown editor, and
+                        // externally-managed (sync) docs are read-only (no button).
                         let can_edit_upload = move || upload_enabled.get() && is_admin() && is_upload_doc;
-                        let can_edit = move || editor_enabled.get() && is_admin() && !is_upload_doc;
+                        let can_edit = move || {
+                            editor_enabled.get() && is_admin() && !is_upload_doc && !is_sync_doc
+                        };
                         let edit_href = format!("/edit/{current_slug}");
                         let upload_edit_href = format!("/admin/upload?edit={current_slug}");
                         view! {

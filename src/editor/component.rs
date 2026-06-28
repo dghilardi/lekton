@@ -33,6 +33,15 @@ pub async fn get_doc_content(slug: String) -> Result<Option<(String, String)>, S
         return Ok(None);
     };
 
+    // Externally-managed (ingest API / lekton-sync) and upload-form documents
+    // are read-only in the markdown editor: editing them here would be lost on
+    // the next sync, or diverge from the upload form.
+    if doc.source_id.as_deref().is_some_and(|s| !s.is_empty()) {
+        return Err(ServerFnError::new(
+            "This page is managed outside the editor and can't be edited here.",
+        ));
+    }
+
     let content_bytes = state
         .storage_client
         .get_object(&doc.s3_key)
@@ -73,6 +82,16 @@ pub async fn save_doc_content(
         .find_by_slug(&slug)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    // Refuse to overwrite externally-managed (ingest / lekton-sync) or
+    // upload-form documents from the markdown editor.
+    if let Some(ref d) = old_doc {
+        if d.source_id.as_deref().is_some_and(|s| !s.is_empty()) {
+            return Err(ServerFnError::new(
+                "This page is managed outside the editor and can't be edited here.",
+            ));
+        }
+    }
 
     let (
         old_links,

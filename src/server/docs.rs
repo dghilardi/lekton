@@ -121,6 +121,7 @@ pub async fn get_doc_html(
                 last_updated: chrono::Utc::now().format("%B %d, %Y").to_string(),
                 tags: vec![],
                 is_upload_doc: false,
+                is_sync_doc: false,
             }));
         }
 
@@ -173,6 +174,7 @@ pub async fn get_doc_html(
             last_updated: chrono::Utc::now().format("%B %d, %Y").to_string(),
             tags: vec![],
             is_upload_doc: false,
+            is_sync_doc: false,
         }));
     };
 
@@ -225,6 +227,9 @@ pub async fn get_doc_html(
     let headings = extract_headings(&raw);
     let last_updated = doc.last_updated.format("%B %d, %Y").to_string();
     let is_upload_doc = doc.service_owner == "document-upload";
+    // Externally managed (ingest API / lekton-sync) when it carries a source id
+    // and isn't an upload-form document.
+    let is_sync_doc = !is_upload_doc && doc.source_id.as_deref().is_some_and(|s| !s.is_empty());
 
     Ok(Some(crate::pages::DocPageData {
         title: doc.title,
@@ -233,5 +238,6 @@ pub async fn get_doc_html(
         last_updated,
         tags: doc.tags,
         is_upload_doc,
+        is_sync_doc,
     }))
 }

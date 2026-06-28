@@ -262,6 +262,17 @@ fn api_routes(features: &lekton::app::FeatureFlags) -> axum::Router<lekton::app:
         );
     }
 
+    // ── Document upload (admin form) ─────────────────────────────────────────
+    // Admin-only PDF upload backing the guided document-upload form. Gated by
+    // its own feature so it works even when the editor is off (read-only portal).
+    if features.document_upload {
+        router = router.route(
+            "/api/v1/document-upload/asset",
+            axum::routing::post(api::assets::admin_upload_asset_handler)
+                .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024)), // 50 MB
+        );
+    }
+
     router
 }
 

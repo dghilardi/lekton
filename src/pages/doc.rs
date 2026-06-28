@@ -13,6 +13,9 @@ pub struct DocPageData {
     pub headings: Vec<crate::rendering::markdown::TocHeading>,
     pub last_updated: String,
     pub tags: Vec<String>,
+    /// True when the document was created through the admin upload form, so the
+    /// page can offer to edit it via that form rather than the markdown editor.
+    pub is_upload_doc: bool,
 }
 
 /// Breadcrumbs component to show document hierarchy based on slug.
@@ -130,13 +133,20 @@ pub fn DocPage() -> impl IntoView {
                         let tags = data.tags.clone();
                         let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
                         let editor_enabled = crate::app::use_feature(|f| f.editor);
-                        let can_edit = move || {
-                            editor_enabled.get()
-                                && current_user
-                                    .and_then(|s| s.get())
-                                    .map(|u| u.is_admin)
-                                    .unwrap_or(false)
+                        let upload_enabled = crate::app::use_feature(|f| f.document_upload);
+                        let is_admin = move || {
+                            current_user
+                                .and_then(|s| s.get())
+                                .map(|u| u.is_admin)
+                                .unwrap_or(false)
                         };
+                        let is_upload_doc = data.is_upload_doc;
+                        // Upload-origin docs are edited via the upload form; others via
+                        // the markdown editor. The two buttons are mutually exclusive.
+                        let can_edit_upload = move || upload_enabled.get() && is_admin() && is_upload_doc;
+                        let can_edit = move || editor_enabled.get() && is_admin() && !is_upload_doc;
+                        let edit_href = format!("/edit/{current_slug}");
+                        let upload_edit_href = format!("/admin/upload?edit={current_slug}");
                         view! {
                             <div class="flex gap-8 items-start">
                                 <div class="flex-1 min-w-0">
@@ -145,7 +155,20 @@ pub fn DocPage() -> impl IntoView {
                                         <Breadcrumbs slug=current_slug.clone() />
                                         <Show when=can_edit>
                                             <a
-                                                href={let s = current_slug.clone(); move || format!("/edit/{}", s)}
+                                                href=edit_href.clone()
+                                                class="btn btn-ghost btn-sm flex-shrink-0 gap-1.5 text-base-content/60 hover:text-primary"
+                                            >
+                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                        d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z">
+                                                    </path>
+                                                </svg>
+                                                "Edit"
+                                            </a>
+                                        </Show>
+                                        <Show when=can_edit_upload>
+                                            <a
+                                                href=upload_edit_href.clone()
                                                 class="btn btn-ghost btn-sm flex-shrink-0 gap-1.5 text-base-content/60 hover:text-primary"
                                             >
                                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

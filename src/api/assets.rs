@@ -611,6 +611,66 @@ pub async fn editor_upload_asset_handler(
     Ok(axum::Json(response))
 }
 
+/// Axum handler for `POST /api/v1/document-upload/asset`.
+///
+/// Admin-only upload backing the guided document-upload form. Accepts multipart
+/// with a `file` field and PDF content. Mounted only when the `document_upload`
+/// feature is enabled, so it stays available even in a read-only portal where
+/// the editor upload surface is gated off.
+#[cfg(feature = "ssr")]
+pub async fn admin_upload_asset_handler(
+    axum::extract::State(state): axum::extract::State<crate::app::AppState>,
+    crate::auth::extractor::RequiredAuthUser(user): crate::auth::extractor::RequiredAuthUser,
+    mut multipart: axum::extract::Multipart,
+) -> Result<axum::Json<EditorUploadResponse>, AppError> {
+    if !user.is_admin {
+        return Err(AppError::Forbidden("Admin privileges required".into()));
+    }
+
+    let mut file_data = None;
+    let mut file_name = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(format!("Multipart error: {e}")))?
+    {
+        if field.name() == Some("file") {
+            file_name = Some(field.file_name().unwrap_or("upload.pdf").to_string());
+            file_data = Some(
+                field
+                    .bytes()
+                    .await
+                    .map_err(|e| AppError::BadRequest(format!("Failed to read file: {e}")))?
+                    .to_vec(),
+            );
+        }
+    }
+
+    let data = file_data.ok_or_else(|| AppError::BadRequest("Missing file field".into()))?;
+    let file_name = file_name.unwrap_or_else(|| "upload.pdf".to_string());
+    let content_type = safe_content_type_from_filename(&file_name).to_string();
+    if !content_type.starts_with("application/pdf") {
+        return Err(AppError::BadRequest("Only PDF files are supported".into()));
+    }
+
+    let response = process_editor_upload(
+        state.asset_repo.as_ref(),
+        state.storage_client.as_ref(),
+        &file_name,
+        &content_type,
+        data,
+        &user.email,
+    )
+    .await?;
+
+    if let Some(queue) = &state.attachment_queue {
+        queue.enqueue(&response.key);
+    }
+
+    Ok(axum::Json(response))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

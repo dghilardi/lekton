@@ -120,6 +120,7 @@ pub async fn get_doc_html(
                 headings: vec![],
                 last_updated: chrono::Utc::now().format("%B %d, %Y").to_string(),
                 tags: vec![],
+                is_upload_doc: false,
             }));
         }
 
@@ -171,6 +172,7 @@ pub async fn get_doc_html(
             headings: vec![],
             last_updated: chrono::Utc::now().format("%B %d, %Y").to_string(),
             tags: vec![],
+            is_upload_doc: false,
         }));
     };
 
@@ -222,6 +224,7 @@ pub async fn get_doc_html(
 
     let headings = extract_headings(&raw);
     let last_updated = doc.last_updated.format("%B %d, %Y").to_string();
+    let is_upload_doc = doc.service_owner == "document-upload";
 
     Ok(Some(crate::pages::DocPageData {
         title: doc.title,
@@ -229,5 +232,6 @@ pub async fn get_doc_html(
         headings,
         last_updated,
         tags: doc.tags,
+        is_upload_doc,
     }))
 }

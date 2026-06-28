@@ -6,6 +6,7 @@ use crate::app::CreateTokenResult;
 
 mod access_levels;
 mod custom_css;
+mod document_upload;
 mod documentation_feedback;
 mod navigation_order;
 mod pats;
@@ -15,6 +16,7 @@ mod users;
 
 use access_levels::AccessLevelManager;
 use custom_css::CustomCssEditor;
+use document_upload::DocumentUploadManager;
 use documentation_feedback::DocumentationFeedbackAdminPanel;
 use navigation_order::NavigationOrderEditor;
 use pats::AdminPatManager;
@@ -99,6 +101,7 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
                            "rag" => "Index Management",
                            "access-levels" => "Access Levels",
                            "users" => "User Management",
+                           "upload" => "Upload Document",
                            _ => "Administration",
                        };
                        let subtitle = match current_section.as_str() {
@@ -106,6 +109,7 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
                            "access-levels" => "Manage content access levels and their inheritance hierarchy.",
                            "users" => "Assign access levels and permissions to registered users.",
                            "rag" => "Rebuild derived search and retrieval indexes from the canonical document store.",
+                           "upload" => "Upload a PDF and publish it as a page with a description and download link.",
                            _ => "Manage your instance configuration, service tokens, and theming.",
                        };
                        view! {
@@ -145,6 +149,17 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
                     }
                     "access-levels" => view! { <AccessLevelManager /> }.into_any(),
                     "users" => view! { <UserManager /> }.into_any(),
+                    "upload" => {
+                        let upload_enabled = crate::app::use_feature(|f| f.document_upload);
+                        view! {
+                            <Show
+                                when=move || upload_enabled.get()
+                                fallback=|| view! { <div class="alert alert-warning">"Document upload is disabled."</div> }
+                            >
+                                <DocumentUploadManager />
+                            </Show>
+                        }.into_any()
+                    }
                     _ => view! { <div class="alert alert-warning">"Page not found"</div> }.into_any(),
                 }}
             </div>

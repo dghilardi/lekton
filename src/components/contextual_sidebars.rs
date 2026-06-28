@@ -192,6 +192,7 @@ pub fn AdminSidebar() -> impl IntoView {
     let pathname = leptos_router::hooks::use_location().pathname;
     let doc_feedback_enabled = crate::app::use_feature(|f| f.documentation_feedback);
     let indexes_enabled = crate::app::use_feature(|f| f.search || f.rag || f.schema_registry);
+    let upload_enabled = crate::app::use_feature(|f| f.document_upload);
 
     view! {
         <ul class="flex flex-col gap-1 mt-6">
@@ -213,6 +214,14 @@ pub fn AdminSidebar() -> impl IntoView {
                 <a href="/admin/documentation-feedback" aria-current=move || if pathname.get() == "/admin/documentation-feedback" { Some("page") } else { None } class="gap-3 group transition-colors">
                     <svg class="w-4 h-4 opacity-70" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path><path d="M8 10h8"></path><path d="M8 14h6"></path></svg>
                     "Documentation Feedback"
+                </a>
+            </li>
+            </Show>
+            <Show when=move || upload_enabled.get()>
+            <li>
+                <a href="/admin/upload" aria-current=move || if pathname.get() == "/admin/upload" { Some("page") } else { None } class="gap-3 group transition-colors">
+                    <svg class="w-4 h-4 opacity-70" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    "Upload Document"
                 </a>
             </li>
             </Show>

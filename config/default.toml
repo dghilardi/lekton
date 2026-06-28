@@ -22,6 +22,9 @@ prompt_library = true
 documentation_feedback = true
 # Index attachment text (PDF/text) into RAG. Requires rag = true. Off by default.
 attachment_indexing = false
+# Admin-only guided PDF upload form (creates a markdown stub linking the file).
+# Independent of `editor`; the AI-summary helper additionally needs rag. Off by default.
+document_upload = false
 
 [server]
 rate_limit_burst = 50

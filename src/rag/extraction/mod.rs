@@ -20,7 +20,7 @@ mod pdf;
 mod text;
 mod vlm;
 
-pub use pdf::PdfExtractor;
+pub use pdf::{extract_preview, PdfExtractor};
 pub use text::TextExtractor;
 pub use vlm::VlmTranscriber;
 

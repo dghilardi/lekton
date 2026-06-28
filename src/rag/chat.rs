@@ -35,6 +35,14 @@ const MAX_HISTORY_MESSAGES: usize = 20;
 /// How many extra Qdrant candidates to fetch when hybrid search or reranking
 /// is enabled (gives RRF/reranker room to reorder before truncating).
 const CANDIDATE_MULTIPLIER: usize = 3;
+/// Upper bound on characters fed to [`ChatService::summarize`], to keep the
+/// prompt within the model's context window regardless of input size.
+const SUMMARY_INPUT_CHAR_LIMIT: usize = 12_000;
+/// System prompt for [`ChatService::summarize`].
+const SUMMARY_SYSTEM_PROMPT: &str = "You write concise descriptions of documents \
+for an internal knowledge portal. Given the opening text of a document, write a \
+2-3 sentence summary of what the document is about. Reply in the same language as \
+the document. Output only the summary, with no preamble or formatting.";
 
 /// Orchestrates RAG chat: retrieval, prompt building, and LLM streaming.
 pub struct ChatService {
@@ -217,6 +225,63 @@ impl ChatService {
             query_rewriter,
             include_attachments,
         })
+    }
+
+    /// Generate a short plain-text description of `text` (typically the first
+    /// pages of an uploaded document) for use as a document summary.
+    ///
+    /// Non-streaming, single LLM call. The input is truncated to bound the
+    /// prompt; the model is asked to reply in the document's own language.
+    pub async fn summarize(&self, text: &str) -> Result<String, AppError> {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return Err(AppError::BadRequest(
+                "no text available to summarize".into(),
+            ));
+        }
+        let excerpt: String = trimmed.chars().take(SUMMARY_INPUT_CHAR_LIMIT).collect();
+
+        let messages = vec![
+            ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage {
+                content: ChatCompletionRequestSystemMessageContent::Text(
+                    SUMMARY_SYSTEM_PROMPT.to_string(),
+                ),
+                name: None,
+            }),
+            ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
+                content: ChatCompletionRequestUserMessageContent::Text(excerpt),
+                name: None,
+            }),
+        ];
+
+        let request = CreateChatCompletionRequest {
+            messages,
+            model: self.chat_model.clone(),
+            stream: Some(false),
+            ..Default::default()
+        };
+
+        let llm_client = self
+            .llm_provider
+            .get_client_with_headers(&self.chat_headers)
+            .await?;
+        let response = llm_client.chat().create(request).await.map_err(|e| {
+            AppError::Internal(format!("LLM summary failed: {}", format_llm_error(&e)))
+        })?;
+
+        let summary = response
+            .choices
+            .into_iter()
+            .next()
+            .and_then(|c| c.message.content)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+
+        if summary.is_empty() {
+            return Err(AppError::Internal("LLM returned an empty summary".into()));
+        }
+        Ok(summary)
     }
 
     /// Stream a chat response as a series of [`ChatEvent`]s.

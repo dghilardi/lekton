@@ -286,11 +286,14 @@ impl RagService for DefaultRagService {
             .collect();
 
         if points.is_empty() {
-            tracing::warn!(
-                attachment_key,
-                "RAG: no embeddable chunks for attachment; existing index left intact"
-            );
-            return Ok(0);
+            // We had text to embed but every vector came back empty (degenerate
+            // embedding run). Leave the existing index intact and report an error
+            // so the caller marks the attachment failed and retries later, rather
+            // than recording success and pinning stale chunks.
+            return Err(AppError::Internal(format!(
+                "all {} attachment chunks produced empty embeddings",
+                embedding_texts.len()
+            )));
         }
 
         // 3. Upsert then delete stale (mirrors index_document).

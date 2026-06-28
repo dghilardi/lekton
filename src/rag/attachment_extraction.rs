@@ -90,8 +90,14 @@ impl AttachmentExtractionService {
             None => return Ok(()), // deleted in the meantime
         };
 
-        // Already indexed for this exact content: nothing to do.
-        if asset.extraction_status == ExtractionStatus::Done
+        // Already processed for this exact content: nothing to do. Covers both
+        // successful indexing (Done) and unsupported types (Skipped) so an
+        // unchanged re-upload or backfill does not re-extract them.
+        let already_processed = matches!(
+            asset.extraction_status,
+            ExtractionStatus::Done | ExtractionStatus::Skipped
+        );
+        if already_processed
             && asset.content_hash.is_some()
             && asset.content_hash == asset.extracted_content_hash
         {
@@ -129,7 +135,8 @@ impl AttachmentExtractionService {
             Err(e) => return self.fail(key, &format!("extraction failed: {e}")).await,
         };
 
-        let (access_levels, tags) = self.derive_acl_and_tags(&asset.referenced_by).await?;
+        let (access_levels, tags) =
+            referencing_acl(self.document_repo.as_ref(), &asset.referenced_by).await;
         let filename = filename_from_key(key);
 
         match self
@@ -143,38 +150,6 @@ impl AttachmentExtractionService {
             }
             Err(e) => self.fail(key, &format!("indexing failed: {e}")).await,
         }
-    }
-
-    /// Access levels and tags inherited from the published, non-archived
-    /// documents that reference the attachment.
-    async fn derive_acl_and_tags(
-        &self,
-        slugs: &[String],
-    ) -> Result<(Vec<String>, Vec<String>), AppError> {
-        let mut docs = Vec::new();
-        let mut tag_set = BTreeSet::new();
-        for slug in slugs {
-            if let Some(doc) = self.document_repo.find_by_slug(slug).await? {
-                if !doc.is_draft && !doc.is_archived {
-                    for t in &doc.tags {
-                        tag_set.insert(t.clone());
-                    }
-                }
-                docs.push((doc.access_level, doc.is_draft, doc.is_archived));
-            }
-        }
-        let refs: Vec<ReferencingDoc> = docs
-            .iter()
-            .map(|(access_level, is_draft, is_archived)| ReferencingDoc {
-                access_level,
-                is_draft: *is_draft,
-                is_archived: *is_archived,
-            })
-            .collect();
-        Ok((
-            attachment_access_levels(&refs),
-            tag_set.into_iter().collect(),
-        ))
     }
 
     /// Record a terminal success/skip state.
@@ -240,26 +215,47 @@ pub async fn recompute_access_levels(
             }
         };
 
-        let mut docs = Vec::new();
-        for slug in &asset.referenced_by {
-            if let Ok(Some(doc)) = document_repo.find_by_slug(slug).await {
-                docs.push((doc.access_level, doc.is_draft, doc.is_archived));
-            }
-        }
-        let refs: Vec<ReferencingDoc> = docs
-            .iter()
-            .map(|(access_level, is_draft, is_archived)| ReferencingDoc {
-                access_level,
-                is_draft: *is_draft,
-                is_archived: *is_archived,
-            })
-            .collect();
-        let levels = attachment_access_levels(&refs);
+        let (levels, _tags) = referencing_acl(document_repo, &asset.referenced_by).await;
 
         if let Err(e) = rag.update_attachment_access_levels(key, &levels).await {
             tracing::warn!(key, "recompute attachment ACL: update failed: {e}");
         }
     }
+}
+
+/// Derive an attachment's access levels and tag union from its referencing
+/// documents. Access levels come from published, non-archived referencers (see
+/// [`attachment_access_levels`]); tags are the union over the same set. A
+/// per-document lookup error skips that document (fail-closed: the attachment
+/// ends up no more visible than what could be resolved).
+async fn referencing_acl(
+    document_repo: &dyn DocumentRepository,
+    slugs: &[String],
+) -> (Vec<String>, Vec<String>) {
+    let mut docs: Vec<(String, bool, bool)> = Vec::new();
+    let mut tag_set = BTreeSet::new();
+    for slug in slugs {
+        if let Ok(Some(doc)) = document_repo.find_by_slug(slug).await {
+            if !doc.is_draft && !doc.is_archived {
+                for t in &doc.tags {
+                    tag_set.insert(t.clone());
+                }
+            }
+            docs.push((doc.access_level, doc.is_draft, doc.is_archived));
+        }
+    }
+    let refs: Vec<ReferencingDoc> = docs
+        .iter()
+        .map(|(access_level, is_draft, is_archived)| ReferencingDoc {
+            access_level,
+            is_draft: *is_draft,
+            is_archived: *is_archived,
+        })
+        .collect();
+    (
+        attachment_access_levels(&refs),
+        tag_set.into_iter().collect(),
+    )
 }
 
 /// The last path segment of an asset key, used as the attachment's display name.

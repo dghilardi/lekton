@@ -358,16 +358,24 @@ pub async fn process_ingest(
         .await
     {
         Ok(affected) => {
-            // Recompute RAG access levels for attachments whose reference set
-            // changed, so already-indexed attachments become (in)visible without
-            // waiting for a re-extraction.
+            // Recompute RAG access levels for the assets this document currently
+            // references *and* any it just dropped. Covering the full current set
+            // (not only the changed references) means a change to this document's
+            // own access_level/draft state propagates to its attachments' chunks
+            // even when its set of referenced assets is unchanged.
             if let Some(rag) = ctx.rag {
-                if !affected.is_empty() {
+                let mut to_recompute = affected;
+                for key in &asset_keys {
+                    if !to_recompute.contains(key) {
+                        to_recompute.push(key.clone());
+                    }
+                }
+                if !to_recompute.is_empty() {
                     crate::rag::attachment_extraction::recompute_access_levels(
                         rag,
                         ctx.asset_repo,
                         ctx.repo,
-                        &affected,
+                        &to_recompute,
                     )
                     .await;
                 }

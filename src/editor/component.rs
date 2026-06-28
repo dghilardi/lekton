@@ -161,13 +161,22 @@ pub async fn save_doc_content(
     let asset_keys = crate::rendering::links::extract_asset_keys_from_html(&html_content);
     match state.asset_repo.set_references(&slug, &asset_keys).await {
         Ok(affected) => {
+            // Recompute over the full current key set (plus dropped ones) so a
+            // change to this document's access_level/draft state propagates to
+            // its attachments even when its referenced assets are unchanged.
             if let Some(rag) = &state.rag_service {
-                if !affected.is_empty() {
+                let mut to_recompute = affected;
+                for key in &asset_keys {
+                    if !to_recompute.contains(key) {
+                        to_recompute.push(key.clone());
+                    }
+                }
+                if !to_recompute.is_empty() {
                     crate::rag::attachment_extraction::recompute_access_levels(
                         rag.as_ref(),
                         state.asset_repo.as_ref(),
                         state.document_repo.as_ref(),
-                        &affected,
+                        &to_recompute,
                     )
                     .await;
                 }

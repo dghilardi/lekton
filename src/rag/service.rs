@@ -8,7 +8,18 @@ use crate::error::AppError;
 
 use super::embedding::{build_embedding_service, EmbeddingService};
 use super::splitter::split_document;
-use super::vectorstore::{ChunkPayload, QdrantVectorStore, VectorPoint, VectorStore};
+use super::vectorstore::{ChunkPayload, QdrantVectorStore, SourceKind, VectorPoint, VectorStore};
+
+// ── Data types ─────────────────────────────────────────────────────────────────
+
+/// Extracted text for one page of an attachment, produced by the extraction
+/// layer. Plain-text attachments yield a single page with `page_number = None`.
+#[derive(Debug, Clone)]
+pub struct AttachmentPage {
+    /// 1-based page number, or `None` for non-paginated sources.
+    pub page_number: Option<u32>,
+    pub text: String,
+}
 
 // ── Trait ─────────────────────────────────────────────────────────────────────
 
@@ -29,6 +40,31 @@ pub trait RagService: Send + Sync {
 
     /// Remove all chunks for a document.
     async fn delete_document(&self, slug: &str) -> Result<(), AppError>;
+
+    /// Index (or re-index) an attachment from its extracted, per-page text.
+    ///
+    /// `access_levels` is the set inherited from the attachment's referencing
+    /// (published) documents. Chunks are stored with `source_kind = Attachment`
+    /// and `is_draft = false`. Returns the number of chunks indexed.
+    async fn index_attachment(
+        &self,
+        attachment_key: &str,
+        filename: &str,
+        pages: &[AttachmentPage],
+        access_levels: &[String],
+        tags: &[String],
+    ) -> Result<usize, AppError>;
+
+    /// Remove all chunks for an attachment.
+    async fn delete_attachment(&self, attachment_key: &str) -> Result<(), AppError>;
+
+    /// Update only the access levels of an attachment's chunks (no re-embedding),
+    /// for when the referencing-document graph changes.
+    async fn update_attachment_access_levels(
+        &self,
+        attachment_key: &str,
+        access_levels: &[String],
+    ) -> Result<(), AppError>;
 }
 
 // ── Default implementation ───────────────────────────────────────────────────
@@ -131,7 +167,10 @@ impl RagService for DefaultRagService {
                         section_anchor: chunk.section_anchor,
                         document_slug: slug.to_string(),
                         document_title: title.to_string(),
-                        access_level: access_level.to_string(),
+                        source_kind: super::vectorstore::SourceKind::Document,
+                        attachment_key: None,
+                        source_page: None,
+                        access_levels: vec![access_level.to_string()],
                         is_draft,
                         tags: tags.to_vec(),
                         chunk_index: chunk.chunk_index,
@@ -167,6 +206,129 @@ impl RagService for DefaultRagService {
     async fn delete_document(&self, slug: &str) -> Result<(), AppError> {
         self.vectorstore.delete_by_slug(slug).await?;
         tracing::debug!(slug, "RAG: deleted document chunks");
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self, pages, tags), fields(attachment_key))]
+    async fn index_attachment(
+        &self,
+        attachment_key: &str,
+        filename: &str,
+        pages: &[AttachmentPage],
+        access_levels: &[String],
+        tags: &[String],
+    ) -> Result<usize, AppError> {
+        // 1. Split each page into chunks and build enriched embedding texts:
+        // "filename > p.N\n\nChunk text". A running index keeps chunk_index unique
+        // across pages.
+        let mut embedding_texts: Vec<String> = Vec::new();
+        // (display text, source_page, chunk_index)
+        let mut metas: Vec<(String, Option<u32>, u32)> = Vec::new();
+        let mut running_index: u32 = 0;
+        for page in pages {
+            let chunks = split_document(
+                &page.text,
+                self.chunk_size_tokens,
+                self.chunk_overlap_tokens,
+            );
+            for chunk in chunks {
+                let mut prefix = filename.to_string();
+                if let Some(p) = page.page_number {
+                    prefix.push_str(&format!(" > p.{p}"));
+                }
+                embedding_texts.push(format!("{}\n\n{}", prefix, chunk.text));
+                metas.push((chunk.text, page.page_number, running_index));
+                running_index += 1;
+            }
+        }
+
+        if embedding_texts.is_empty() {
+            // Nothing indexable: remove any previously indexed chunks.
+            self.vectorstore
+                .delete_by_attachment_key(attachment_key)
+                .await?;
+            return Ok(0);
+        }
+
+        // 2. Embed (cache-backed), skipping any chunk whose embedding is empty.
+        let vectors = self.embedding.embed(&embedding_texts).await?;
+        let points: Vec<VectorPoint> = metas
+            .into_iter()
+            .zip(vectors)
+            .filter_map(|((text, page, idx), vector)| {
+                if vector.is_empty() {
+                    tracing::warn!(
+                        attachment_key,
+                        idx,
+                        "RAG: embedding returned empty vector for attachment chunk, skipping"
+                    );
+                    return None;
+                }
+                Some(VectorPoint {
+                    id: Uuid::new_v4().to_string(),
+                    vector,
+                    payload: ChunkPayload {
+                        chunk_text: text,
+                        document_slug: String::new(),
+                        document_title: filename.to_string(),
+                        source_kind: SourceKind::Attachment,
+                        attachment_key: Some(attachment_key.to_string()),
+                        source_page: page,
+                        access_levels: access_levels.to_vec(),
+                        is_draft: false,
+                        tags: tags.to_vec(),
+                        chunk_index: idx,
+                        section_path: Vec::new(),
+                        section_anchor: String::new(),
+                    },
+                })
+            })
+            .collect();
+
+        if points.is_empty() {
+            // We had text to embed but every vector came back empty (degenerate
+            // embedding run). Leave the existing index intact and report an error
+            // so the caller marks the attachment failed and retries later, rather
+            // than recording success and pinning stale chunks.
+            return Err(AppError::Internal(format!(
+                "all {} attachment chunks produced empty embeddings",
+                embedding_texts.len()
+            )));
+        }
+
+        // 3. Upsert then delete stale (mirrors index_document).
+        let num_chunks = points.len();
+        let new_ids: Vec<String> = points.iter().map(|p| p.id.clone()).collect();
+        self.vectorstore.upsert_chunks(points).await?;
+        self.vectorstore
+            .delete_stale_attachment_chunks(attachment_key, &new_ids)
+            .await?;
+
+        tracing::debug!(
+            attachment_key,
+            chunks = num_chunks,
+            "RAG: indexed attachment"
+        );
+        Ok(num_chunks)
+    }
+
+    async fn delete_attachment(&self, attachment_key: &str) -> Result<(), AppError> {
+        self.vectorstore
+            .delete_by_attachment_key(attachment_key)
+            .await?;
+        tracing::debug!(attachment_key, "RAG: deleted attachment chunks");
+        Ok(())
+    }
+
+    async fn update_attachment_access_levels(
+        &self,
+        attachment_key: &str,
+        access_levels: &[String],
+    ) -> Result<(), AppError> {
+        self.vectorstore
+            .set_attachment_access_levels(attachment_key, access_levels)
+            .await?;
+        tracing::debug!(attachment_key, "RAG: updated attachment access levels");
         Ok(())
     }
 }
@@ -218,6 +380,8 @@ mod tests {
             analyzer: None,
             hyde: None,
             rewriter: None,
+            vlm: None,
+            attachment_page_text_threshold: 100,
         };
         assert!(DefaultRagService::from_rag_config(&config).await.is_err());
     }

@@ -354,6 +354,8 @@ mod tests {
             analyzer: None,
             hyde: None,
             rewriter: None,
+            vlm: None,
+            attachment_page_text_threshold: 100,
         }
     }
 

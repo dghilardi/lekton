@@ -9,6 +9,21 @@ pub struct AssetInfo {
     pub content_type: String,
     pub size_bytes: u64,
     pub uploaded_at: String,
+    /// RAG extraction state: `pending` | `in_progress` | `done` | `failed` | `skipped`.
+    pub extraction_status: String,
+}
+
+/// Map an [`ExtractionStatus`](crate::db::models::ExtractionStatus) to its label.
+#[cfg(feature = "ssr")]
+fn extraction_status_label(status: crate::db::models::ExtractionStatus) -> &'static str {
+    use crate::db::models::ExtractionStatus::*;
+    match status {
+        Pending => "pending",
+        InProgress => "in_progress",
+        Done => "done",
+        Failed => "failed",
+        Skipped => "skipped",
+    }
 }
 
 /// Server function: list all assets.
@@ -29,6 +44,7 @@ pub async fn list_all_assets() -> Result<Vec<AssetInfo>, ServerFnError> {
             content_type: a.content_type,
             size_bytes: a.size_bytes,
             uploaded_at: a.uploaded_at.to_rfc3339(),
+            extraction_status: extraction_status_label(a.extraction_status).to_string(),
         })
         .collect())
 }
@@ -57,7 +73,26 @@ pub async fn delete_asset_by_key(key: String) -> Result<(), ServerFnError> {
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
+    // Remove any RAG chunks indexed from this attachment.
+    if let Some(rag) = &state.rag_service {
+        if let Err(e) = rag.delete_attachment(&key).await {
+            tracing::warn!(key, "Failed to delete attachment chunks from RAG: {e}");
+        }
+    }
+
     Ok(())
+}
+
+/// Badge label and DaisyUI class for an extraction status string.
+fn extraction_badge(status: &str) -> Option<(&'static str, &'static str)> {
+    match status {
+        "in_progress" => Some(("Indexing…", "badge-info")),
+        "done" => Some(("Indexed", "badge-success")),
+        "failed" => Some(("Failed", "badge-error")),
+        "pending" => Some(("Queued", "badge-ghost")),
+        // "skipped" (unsupported type) and anything else: no badge.
+        _ => None,
+    }
 }
 
 /// Format file size in human-readable form.
@@ -151,6 +186,7 @@ pub fn AssetPanel(
                                                     <th>"Name"</th>
                                                     <th>"Type"</th>
                                                     <th>"Size"</th>
+                                                    <th>"Indexing"</th>
                                                     <th>"Actions"</th>
                                                 </tr>
                                             </thead>
@@ -162,6 +198,7 @@ pub fn AssetPanel(
                                                     let is_image = asset.content_type.starts_with("image/");
                                                     let size = format_size(asset.size_bytes);
                                                     let content_type = asset.content_type.clone();
+                                                    let badge = extraction_badge(&asset.extraction_status);
                                                     let delete_key = key.clone();
                                                     let insert_url = url.clone();
                                                     let insert_name = name.clone();
@@ -170,6 +207,11 @@ pub fn AssetPanel(
                                                             <td class="max-w-48 truncate" title=key.clone()>{name}</td>
                                                             <td class="text-xs text-base-content/60">{content_type}</td>
                                                             <td class="text-xs">{size}</td>
+                                                            <td>
+                                                                {badge.map(|(label, class)| view! {
+                                                                    <span class=format!("badge badge-sm {class}")>{label}</span>
+                                                                })}
+                                                            </td>
                                                             <td class="flex gap-1">
                                                                 {if is_image {
                                                                     Some(view! {

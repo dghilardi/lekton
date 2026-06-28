@@ -49,6 +49,7 @@ pub struct FeatureFlags {
     pub search: bool,
     pub prompt_library: bool,
     pub documentation_feedback: bool,
+    pub attachment_indexing: bool,
 }
 
 /// Newtype wrapper for the feature-flags signal, used as Leptos context.
@@ -125,6 +126,10 @@ pub struct AppState {
     pub auth_provider: Option<Arc<dyn crate::auth::provider::AuthProvider>>,
     pub rag_service: Option<Arc<dyn crate::rag::service::RagService>>,
     pub reindex_state: Option<Arc<crate::rag::reindex::ReindexState>>,
+    /// Handle for enqueuing attachments for RAG extraction. Present only when
+    /// RAG and the `attachment_indexing` feature are both enabled.
+    #[from_ref(skip)]
+    pub attachment_queue: Option<crate::rag::attachment_extraction::AttachmentQueue>,
     pub search_reindex_state: Option<Arc<crate::search::reindex::SearchReindexState>>,
     pub schema_endpoint_reindex_state: Arc<crate::schema::reindex::SchemaEndpointReindexState>,
     pub chat_repo: Option<Arc<dyn crate::db::chat_repository::ChatRepository>>,

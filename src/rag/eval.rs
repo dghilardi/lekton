@@ -304,6 +304,7 @@ impl RagEvalContext {
             vectorstore.clone(),
             search_service,
             reranker,
+            true, // include attachments in offline evaluation
         )
         .await?;
 
@@ -381,6 +382,7 @@ mod tests {
             section_path: Vec::new(),
             section_anchor: String::new(),
             score,
+            ..Default::default()
         }
     }
 

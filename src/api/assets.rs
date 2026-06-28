@@ -156,6 +156,11 @@ pub async fn process_upload_asset(
         uploaded_by: uploaded_by.to_string(),
         referenced_by,
         content_hash,
+        extraction_status: crate::db::models::ExtractionStatus::Pending,
+        extraction_error: None,
+        extracted_content_hash: None,
+        extracted_at: None,
+        indexed_chunks: None,
     };
 
     asset_repo.create_or_update(asset).await?;
@@ -361,6 +366,11 @@ pub async fn process_editor_upload(
         uploaded_by: uploaded_by.to_string(),
         referenced_by: vec![],
         content_hash,
+        extraction_status: crate::db::models::ExtractionStatus::Pending,
+        extraction_error: None,
+        extracted_content_hash: None,
+        extracted_at: None,
+        indexed_chunks: None,
     };
 
     asset_repo.create_or_update(asset).await?;
@@ -455,6 +465,10 @@ pub async fn upload_asset_handler(
     )
     .await?;
 
+    if let Some(queue) = &state.attachment_queue {
+        queue.enqueue(&key);
+    }
+
     Ok(axum::Json(response))
 }
 
@@ -534,6 +548,13 @@ pub async fn delete_asset_handler(
     )
     .await?;
 
+    // Remove any RAG chunks indexed from this attachment.
+    if let Some(rag) = &state.rag_service {
+        if let Err(e) = rag.delete_attachment(&key).await {
+            tracing::warn!(key, "Failed to delete attachment chunks from RAG: {e}");
+        }
+    }
+
     Ok(axum::Json(
         serde_json::json!({"message": format!("Asset '{}' deleted", key)}),
     ))
@@ -582,6 +603,10 @@ pub async fn editor_upload_asset_handler(
         &user.email,
     )
     .await?;
+
+    if let Some(queue) = &state.attachment_queue {
+        queue.enqueue(&response.key);
+    }
 
     Ok(axum::Json(response))
 }
@@ -759,6 +784,43 @@ mod tests {
                 return Err(AppError::NotFound(format!("Asset '{}' not found", key)));
             }
             Ok(())
+        }
+
+        async fn update_extraction(
+            &self,
+            key: &str,
+            update: crate::db::asset_repository::ExtractionUpdate,
+        ) -> Result<(), AppError> {
+            let mut assets = self.assets.lock().unwrap();
+            if let Some(a) = assets.iter_mut().find(|a| a.key == key) {
+                a.extraction_status = update.status;
+                a.extraction_error = update.error;
+                a.extracted_content_hash = update.extracted_content_hash;
+                a.extracted_at = update.extracted_at;
+                a.indexed_chunks = update.indexed_chunks;
+            }
+            Ok(())
+        }
+
+        async fn set_references(
+            &self,
+            source_slug: &str,
+            keys: &[String],
+        ) -> Result<Vec<String>, AppError> {
+            let mut assets = self.assets.lock().unwrap();
+            let mut affected = Vec::new();
+            for a in assets.iter_mut() {
+                let referenced = keys.contains(&a.key);
+                let has = a.referenced_by.iter().any(|s| s == source_slug);
+                if referenced && !has {
+                    a.referenced_by.push(source_slug.to_string());
+                    affected.push(a.key.clone());
+                } else if !referenced && has {
+                    a.referenced_by.retain(|s| s != source_slug);
+                    affected.push(a.key.clone());
+                }
+            }
+            Ok(affected)
         }
     }
 
@@ -1390,6 +1452,11 @@ mod tests {
             uploaded_by: uploaded_by.to_string(),
             referenced_by,
             content_hash: None,
+            extraction_status: crate::db::models::ExtractionStatus::Pending,
+            extraction_error: None,
+            extracted_content_hash: None,
+            extracted_at: None,
+            indexed_chunks: None,
         }
     }
 

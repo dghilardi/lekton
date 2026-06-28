@@ -157,6 +157,36 @@ pub async fn save_doc_content(
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
+    // Reconcile asset references so referenced assets record this document.
+    let asset_keys = crate::rendering::links::extract_asset_keys_from_html(&html_content);
+    match state.asset_repo.set_references(&slug, &asset_keys).await {
+        Ok(affected) => {
+            // Recompute over the full current key set (plus dropped ones) so a
+            // change to this document's access_level/draft state propagates to
+            // its attachments even when its referenced assets are unchanged.
+            if let Some(rag) = &state.rag_service {
+                let mut to_recompute = affected;
+                for key in &asset_keys {
+                    if !to_recompute.contains(key) {
+                        to_recompute.push(key.clone());
+                    }
+                }
+                if !to_recompute.is_empty() {
+                    crate::rag::attachment_extraction::recompute_access_levels(
+                        rag.as_ref(),
+                        state.asset_repo.as_ref(),
+                        state.document_repo.as_ref(),
+                        &to_recompute,
+                    )
+                    .await;
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!(slug = %slug, "Failed to update asset references: {e}");
+        }
+    }
+
     if let (Some(svc), Some(sdoc)) = (state.search_service.as_ref(), search_doc) {
         let _ = svc.index_document(&sdoc).await;
     }

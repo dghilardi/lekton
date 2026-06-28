@@ -1,6 +1,10 @@
 #[cfg(feature = "ssr")]
 pub mod analyzer;
 #[cfg(feature = "ssr")]
+pub mod attachment_acl;
+#[cfg(feature = "ssr")]
+pub mod attachment_extraction;
+#[cfg(feature = "ssr")]
 pub mod cached_embedding;
 #[cfg(feature = "ssr")]
 pub mod chat;
@@ -8,6 +12,8 @@ pub mod chat;
 pub mod embedding;
 #[cfg(feature = "ssr")]
 pub mod eval;
+#[cfg(feature = "ssr")]
+pub mod extraction;
 #[cfg(feature = "ssr")]
 pub mod hyde;
 #[cfg(feature = "ssr")]

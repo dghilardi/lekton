@@ -1,7 +1,19 @@
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 
-use crate::db::models::Asset;
+use crate::db::models::{Asset, ExtractionStatus};
 use crate::error::AppError;
+
+/// The extraction-tracking fields to write, leaving the rest of the asset
+/// (notably `referenced_by`) untouched. Fields left `None` are cleared.
+#[derive(Debug, Clone)]
+pub struct ExtractionUpdate {
+    pub status: ExtractionStatus,
+    pub error: Option<String>,
+    pub extracted_content_hash: Option<String>,
+    pub extracted_at: Option<DateTime<Utc>>,
+    pub indexed_chunks: Option<u32>,
+}
 
 /// Repository trait for asset operations.
 ///
@@ -22,6 +34,20 @@ pub trait AssetRepository: Send + Sync {
 
     /// Delete an asset by key.
     async fn delete(&self, key: &str) -> Result<(), AppError>;
+
+    /// Update only the extraction-tracking fields of an asset. A no-op when the
+    /// key does not exist.
+    async fn update_extraction(&self, key: &str, update: ExtractionUpdate) -> Result<(), AppError>;
+
+    /// Reconcile `referenced_by` so that `source_slug` references exactly `keys`:
+    /// add it to those assets and remove it from every other asset that still
+    /// lists it. Idempotent. Returns the keys whose reference set actually
+    /// changed (added or removed), so callers can recompute derived state.
+    async fn set_references(
+        &self,
+        source_slug: &str,
+        keys: &[String],
+    ) -> Result<Vec<String>, AppError>;
 }
 
 /// MongoDB implementation of the AssetRepository.
@@ -127,5 +153,82 @@ impl AssetRepository for MongoAssetRepository {
         }
 
         Ok(())
+    }
+
+    async fn update_extraction(&self, key: &str, update: ExtractionUpdate) -> Result<(), AppError> {
+        use mongodb::bson::{doc, to_bson, DateTime as BsonDateTime};
+
+        let status = to_bson(&update.status).map_err(|e| {
+            AppError::Internal(format!("failed to serialize extraction status: {e}"))
+        })?;
+        let extracted_at = update.extracted_at.map(BsonDateTime::from_chrono);
+
+        let set = doc! {
+            "extraction_status": status,
+            "extraction_error": update.error,
+            "extracted_content_hash": update.extracted_content_hash,
+            "extracted_at": extracted_at,
+            "indexed_chunks": update.indexed_chunks.map(|c| c as i64),
+        };
+
+        self.collection
+            .update_one(doc! { "key": key }, doc! { "$set": set })
+            .await?;
+
+        Ok(())
+    }
+
+    async fn set_references(
+        &self,
+        source_slug: &str,
+        keys: &[String],
+    ) -> Result<Vec<String>, AppError> {
+        use futures::TryStreamExt;
+        use mongodb::bson::doc;
+
+        // Keys currently referencing this slug, to compute the exact diff.
+        let mut cursor = self
+            .collection
+            .find(doc! { "referenced_by": source_slug })
+            .await?;
+        let mut current = Vec::new();
+        while let Some(asset) = cursor.try_next().await? {
+            current.push(asset.key);
+        }
+
+        let removed: Vec<String> = current
+            .iter()
+            .filter(|k| !keys.contains(k))
+            .cloned()
+            .collect();
+        let added: Vec<String> = keys
+            .iter()
+            .filter(|k| !current.contains(k))
+            .cloned()
+            .collect();
+
+        if !removed.is_empty() {
+            let removed_refs: Vec<&str> = removed.iter().map(|s| s.as_str()).collect();
+            self.collection
+                .update_many(
+                    doc! { "key": { "$in": &removed_refs } },
+                    doc! { "$pull": { "referenced_by": source_slug } },
+                )
+                .await?;
+        }
+
+        if !added.is_empty() {
+            let added_refs: Vec<&str> = added.iter().map(|s| s.as_str()).collect();
+            self.collection
+                .update_many(
+                    doc! { "key": { "$in": &added_refs } },
+                    doc! { "$addToSet": { "referenced_by": source_slug } },
+                )
+                .await?;
+        }
+
+        let mut affected = removed;
+        affected.extend(added);
+        Ok(affected)
     }
 }

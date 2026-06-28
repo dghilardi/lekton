@@ -6,6 +6,8 @@ use crate::error::AppError;
 #[cfg(feature = "ssr")]
 use crate::db::access_level_repository::AccessLevelRepository;
 #[cfg(feature = "ssr")]
+use crate::db::asset_repository::AssetRepository;
+#[cfg(feature = "ssr")]
 use crate::db::document_version_repository::DocumentVersionRepository;
 #[cfg(feature = "ssr")]
 use crate::db::models::Document;
@@ -16,7 +18,7 @@ use crate::db::service_token_repository::ServiceTokenRepository;
 #[cfg(feature = "ssr")]
 use crate::rag::service::RagService;
 #[cfg(feature = "ssr")]
-use crate::rendering::links::extract_internal_links;
+use crate::rendering::links::{extract_asset_keys, extract_internal_links};
 #[cfg(feature = "ssr")]
 use crate::search::client::SearchService;
 #[cfg(feature = "ssr")]
@@ -33,6 +35,7 @@ pub const SUMMARY_RECOMMENDED_MAX_CHARS: usize = 200;
 #[cfg(feature = "ssr")]
 pub struct IngestContext<'a> {
     pub repo: &'a dyn DocumentRepository,
+    pub asset_repo: &'a dyn AssetRepository,
     pub storage: &'a dyn StorageClient,
     pub search: Option<&'a dyn SearchService>,
     pub access_level_repo: &'a dyn AccessLevelRepository,
@@ -345,6 +348,44 @@ pub async fn process_ingest(
         .update_backlinks(&request.slug, &old_links, &links_out)
         .await?;
 
+    // 13. Reconcile asset references so each referenced asset records this
+    //     document in its `referenced_by` (and drops it where no longer linked).
+    //     This drives attachment access levels for RAG and asset-serve access.
+    let asset_keys = extract_asset_keys(&raw_content);
+    match ctx
+        .asset_repo
+        .set_references(&request.slug, &asset_keys)
+        .await
+    {
+        Ok(affected) => {
+            // Recompute RAG access levels for the assets this document currently
+            // references *and* any it just dropped. Covering the full current set
+            // (not only the changed references) means a change to this document's
+            // own access_level/draft state propagates to its attachments' chunks
+            // even when its set of referenced assets is unchanged.
+            if let Some(rag) = ctx.rag {
+                let mut to_recompute = affected;
+                for key in &asset_keys {
+                    if !to_recompute.contains(key) {
+                        to_recompute.push(key.clone());
+                    }
+                }
+                if !to_recompute.is_empty() {
+                    crate::rag::attachment_extraction::recompute_access_levels(
+                        rag,
+                        ctx.asset_repo,
+                        ctx.repo,
+                        &to_recompute,
+                    )
+                    .await;
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!(slug = %request.slug, "Failed to update asset references: {e}");
+        }
+    }
+
     Ok(IngestResponse {
         message: "Document ingested successfully".to_string(),
         slug: request.slug,
@@ -514,6 +555,7 @@ pub async fn ingest_handler(
 ) -> Result<axum::Json<IngestResponse>, AppError> {
     let ctx = IngestContext {
         repo: state.document_repo.as_ref(),
+        asset_repo: state.asset_repo.as_ref(),
         storage: state.storage_client.as_ref(),
         search: state.search_service.as_deref(),
         access_level_repo: state.access_level_repo.as_ref(),
@@ -857,6 +899,39 @@ mod tests {
         }
     }
 
+    /// Stateless no-op asset repository for ingest tests that don't assert on
+    /// asset reference maintenance.
+    struct NoopAssetRepo;
+
+    #[async_trait]
+    impl crate::db::asset_repository::AssetRepository for NoopAssetRepo {
+        async fn create_or_update(&self, _: crate::db::models::Asset) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn find_by_key(&self, _: &str) -> Result<Option<crate::db::models::Asset>, AppError> {
+            Ok(None)
+        }
+        async fn list_all(&self) -> Result<Vec<crate::db::models::Asset>, AppError> {
+            Ok(vec![])
+        }
+        async fn list_by_prefix(&self, _: &str) -> Result<Vec<crate::db::models::Asset>, AppError> {
+            Ok(vec![])
+        }
+        async fn delete(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn update_extraction(
+            &self,
+            _: &str,
+            _: crate::db::asset_repository::ExtractionUpdate,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn set_references(&self, _: &str, _: &[String]) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
+    }
+
     fn make_ctx<'a>(
         repo: &'a MockRepo,
         storage: &'a MockStorage,
@@ -865,6 +940,7 @@ mod tests {
     ) -> IngestContext<'a> {
         IngestContext {
             repo,
+            asset_repo: &NoopAssetRepo,
             storage,
             search: None,
             access_level_repo: &MockAccessLevelRepo,
@@ -893,6 +969,26 @@ mod tests {
             Err(AppError::Internal("rag down".to_string()))
         }
         async fn delete_document(&self, _slug: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn index_attachment(
+            &self,
+            _attachment_key: &str,
+            _filename: &str,
+            _pages: &[crate::rag::service::AttachmentPage],
+            _access_levels: &[String],
+            _tags: &[String],
+        ) -> Result<usize, AppError> {
+            Ok(0)
+        }
+        async fn delete_attachment(&self, _attachment_key: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn update_attachment_access_levels(
+            &self,
+            _attachment_key: &str,
+            _access_levels: &[String],
+        ) -> Result<(), AppError> {
             Ok(())
         }
     }

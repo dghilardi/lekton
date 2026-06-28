@@ -68,6 +68,10 @@ pub struct FeaturesConfig {
     /// Documentation feedback: reporting gaps and the related MCP tools.
     #[serde(default = "default_true")]
     pub documentation_feedback: bool,
+    /// Index attachment text (PDF/text files) into the RAG store. Requires
+    /// `rag`. Off by default — opt in with `LKN__FEATURES__ATTACHMENT_INDEXING=true`.
+    #[serde(default)]
+    pub attachment_indexing: bool,
 }
 
 fn default_true() -> bool {
@@ -84,6 +88,7 @@ impl Default for FeaturesConfig {
             search: true,
             prompt_library: true,
             documentation_feedback: true,
+            attachment_indexing: false,
         }
     }
 }
@@ -370,6 +375,23 @@ pub struct RagConfig {
     /// Absent = disabled (first-turn pass-through only).
     #[serde(default)]
     pub rewriter: Option<LlmStepConfig>,
+
+    /// Vision LLM used to transcribe image-heavy attachment pages (diagrams,
+    /// tables, screenshots, scans) during RAG indexing. Absent = VLM routing
+    /// disabled, native text extraction only. Uses the same Vertex/OpenAI-
+    /// compatible fallback rules as the other steps.
+    #[serde(default)]
+    pub vlm: Option<LlmStepConfig>,
+
+    /// A PDF page whose natively-extracted text is shorter than this (in chars)
+    /// is treated as image-heavy and routed to `vlm` for transcription (when
+    /// configured). Default: 100.
+    #[serde(default = "default_attachment_page_text_threshold")]
+    pub attachment_page_text_threshold: usize,
+}
+
+fn default_attachment_page_text_threshold() -> usize {
+    100
 }
 
 impl RagConfig {
@@ -553,6 +575,14 @@ impl AppConfig {
                 );
             }
             self.rag.validate()?;
+        }
+
+        if self.features.attachment_indexing && !self.features.rag {
+            return Err(
+                "features.attachment_indexing = true requires features.rag = true \
+                 (set LKN__FEATURES__RAG=true or disable attachment indexing)"
+                    .into(),
+            );
         }
 
         if self.features.search && self.search.url.is_empty() {

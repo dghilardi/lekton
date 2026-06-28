@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "ssr")]
+use crate::db::asset_repository::AssetRepository;
 use crate::error::AppError;
 #[cfg(feature = "ssr")]
 use crate::rag::service::RagService;
@@ -66,11 +68,13 @@ pub struct SyncResponse {
 
 /// Core sync logic — separated from the HTTP layer for testability.
 #[cfg(feature = "ssr")]
+#[allow(clippy::too_many_arguments)]
 pub async fn process_sync(
     repo: &dyn crate::db::repository::DocumentRepository,
     service_token_repo: &dyn crate::db::service_token_repository::ServiceTokenRepository,
     search: Option<&dyn SearchService>,
     rag: Option<&dyn RagService>,
+    asset_repo: Option<&dyn AssetRepository>,
     legacy_token: Option<&str>,
     request: SyncRequest,
 ) -> Result<SyncResponse, AppError> {
@@ -207,6 +211,23 @@ pub async fn process_sync(
                 if let Err(e) = rag_svc.delete_document(slug).await {
                     tracing::warn!("Failed to remove archived document '{slug}' from RAG: {e}");
                 }
+                // Drop the archived document from the assets it referenced and
+                // recompute their access levels, so an attachment no longer
+                // inherits an archived document's visibility.
+                if let Some(asset_repo) = asset_repo {
+                    match asset_repo.set_references(slug, &[]).await {
+                        Ok(affected) if !affected.is_empty() => {
+                            crate::rag::attachment_extraction::recompute_access_levels(
+                                rag_svc, asset_repo, repo, &affected,
+                            )
+                            .await;
+                        }
+                        Ok(_) => {}
+                        Err(e) => tracing::warn!(
+                            "Failed to update asset references for archived '{slug}': {e}"
+                        ),
+                    }
+                }
             }
         }
     }
@@ -277,6 +298,7 @@ pub async fn sync_handler(
         state.service_token_repo.as_ref(),
         state.search_service.as_deref(),
         state.rag_service.as_deref(),
+        Some(state.asset_repo.as_ref()),
         Some(&state.service_token),
         request,
     )
@@ -346,6 +368,29 @@ mod tests {
 
         async fn delete_document(&self, slug: &str) -> Result<(), AppError> {
             self.deleted.lock().unwrap().push(slug.to_string());
+            Ok(())
+        }
+
+        async fn index_attachment(
+            &self,
+            _: &str,
+            _: &str,
+            _: &[crate::rag::service::AttachmentPage],
+            _: &[String],
+            _: &[String],
+        ) -> Result<usize, AppError> {
+            Ok(0)
+        }
+
+        async fn delete_attachment(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+
+        async fn update_attachment_access_levels(
+            &self,
+            _: &str,
+            _: &[String],
+        ) -> Result<(), AppError> {
             Ok(())
         }
     }
@@ -659,9 +704,17 @@ mod tests {
             archive_missing: false,
         };
 
-        let result = process_sync(&repo, &token_repo, None, None, Some("legacy"), request)
-            .await
-            .unwrap();
+        let result = process_sync(
+            &repo,
+            &token_repo,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            request,
+        )
+        .await
+        .unwrap();
         assert_eq!(result.to_upload, vec![upload("docs/new.md", "docs/new")]);
         assert!(result.unchanged.is_empty());
         assert!(result.to_archive.is_empty());
@@ -678,9 +731,17 @@ mod tests {
             archive_missing: false,
         };
 
-        let result = process_sync(&repo, &token_repo, None, None, Some("legacy"), request)
-            .await
-            .unwrap();
+        let result = process_sync(
+            &repo,
+            &token_repo,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            request,
+        )
+        .await
+        .unwrap();
         assert!(result.to_upload.is_empty());
         assert_eq!(result.unchanged, vec!["docs/a.md"]);
         assert!(result.to_archive.is_empty());
@@ -697,9 +758,17 @@ mod tests {
             archive_missing: false,
         };
 
-        let result = process_sync(&repo, &token_repo, None, None, Some("legacy"), request)
-            .await
-            .unwrap();
+        let result = process_sync(
+            &repo,
+            &token_repo,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            request,
+        )
+        .await
+        .unwrap();
         assert_eq!(result.to_upload, vec![upload("docs/a.md", "docs/a")]);
         assert!(result.unchanged.is_empty());
     }
@@ -718,9 +787,17 @@ mod tests {
             archive_missing: false,
         };
 
-        let result = process_sync(&repo, &token_repo, None, None, Some("legacy"), request)
-            .await
-            .unwrap();
+        let result = process_sync(
+            &repo,
+            &token_repo,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            request,
+        )
+        .await
+        .unwrap();
         assert_eq!(result.unchanged, vec!["docs/a.md"]);
         assert_eq!(result.to_archive, vec!["docs/old"]);
     }
@@ -739,9 +816,17 @@ mod tests {
             archive_missing: true,
         };
 
-        process_sync(&repo, &token_repo, None, None, Some("legacy"), request)
-            .await
-            .unwrap();
+        process_sync(
+            &repo,
+            &token_repo,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            request,
+        )
+        .await
+        .unwrap();
 
         let doc = repo.find_by_slug("docs/old").await.unwrap().unwrap();
         assert!(doc.is_archived);
@@ -763,6 +848,7 @@ mod tests {
         let result = process_sync(
             &repo,
             &token_repo,
+            None,
             None,
             None,
             Some("other-legacy"),
@@ -792,6 +878,7 @@ mod tests {
         let result = process_sync(
             &repo,
             &token_repo,
+            None,
             None,
             None,
             Some("other-legacy"),
@@ -824,6 +911,7 @@ mod tests {
             &token_repo,
             Some(&search),
             None,
+            None,
             Some("legacy"),
             request,
         )
@@ -853,6 +941,7 @@ mod tests {
             &token_repo,
             None,
             Some(&rag),
+            None,
             Some("legacy"),
             request,
         )
@@ -881,6 +970,7 @@ mod tests {
             &repo,
             &token_repo,
             Some(&search),
+            None,
             None,
             Some("legacy"),
             request,
@@ -920,9 +1010,17 @@ mod tests {
             archive_missing: false,
         };
 
-        let result = process_sync(&repo, &token_repo, None, None, Some("legacy"), request)
-            .await
-            .unwrap();
+        let result = process_sync(
+            &repo,
+            &token_repo,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            request,
+        )
+        .await
+        .unwrap();
         assert!(
             result.to_upload.is_empty(),
             "should be unchanged when both hashes match"
@@ -951,9 +1049,17 @@ mod tests {
             archive_missing: false,
         };
 
-        let result = process_sync(&repo, &token_repo, None, None, Some("legacy"), request)
-            .await
-            .unwrap();
+        let result = process_sync(
+            &repo,
+            &token_repo,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            request,
+        )
+        .await
+        .unwrap();
         assert_eq!(
             result.to_upload,
             vec![upload("docs/a.md", "docs/a")],
@@ -979,9 +1085,17 @@ mod tests {
             archive_missing: false,
         };
 
-        let result = process_sync(&repo, &token_repo, None, None, Some("legacy"), request)
-            .await
-            .unwrap();
+        let result = process_sync(
+            &repo,
+            &token_repo,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            request,
+        )
+        .await
+        .unwrap();
         assert_eq!(
             result.to_upload,
             vec![upload("docs/a.md", "docs/a")],
@@ -1004,9 +1118,17 @@ mod tests {
             archive_missing: false,
         };
 
-        let result = process_sync(&repo, &token_repo, None, None, Some("legacy"), request)
-            .await
-            .unwrap();
+        let result = process_sync(
+            &repo,
+            &token_repo,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            request,
+        )
+        .await
+        .unwrap();
         assert!(
             result.to_upload.is_empty(),
             "old CLI without metadata_hash should be treated as unchanged"
@@ -1035,9 +1157,17 @@ mod tests {
             archive_missing: false,
         };
 
-        let result = process_sync(&repo, &token_repo, None, None, Some("legacy"), request)
-            .await
-            .unwrap();
+        let result = process_sync(
+            &repo,
+            &token_repo,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            request,
+        )
+        .await
+        .unwrap();
         // Server resolves via legacy_slug → actual_slug = "docs/my-guide" (preserve URL)
         // source_path not yet set → force upload
         assert_eq!(
@@ -1069,9 +1199,17 @@ mod tests {
             archive_missing: false,
         };
 
-        let result = process_sync(&repo, &token_repo, None, None, Some("legacy"), request)
-            .await
-            .unwrap();
+        let result = process_sync(
+            &repo,
+            &token_repo,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            request,
+        )
+        .await
+        .unwrap();
         // Rename detected: actual_slug = new slug, old slug is claimed (not archived)
         assert_eq!(
             result.to_upload,
@@ -1103,9 +1241,17 @@ mod tests {
             archive_missing: false,
         };
 
-        let result = process_sync(&repo, &token_repo, None, None, Some("legacy"), request)
-            .await
-            .unwrap();
+        let result = process_sync(
+            &repo,
+            &token_repo,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            request,
+        )
+        .await
+        .unwrap();
         assert!(result.to_upload.is_empty());
         assert_eq!(result.unchanged, vec!["docs/my-guide.md"]);
     }
@@ -1131,7 +1277,16 @@ mod tests {
             archive_missing: false,
         };
 
-        let result = process_sync(&repo, &token_repo, None, None, Some("legacy"), request).await;
+        let result = process_sync(
+            &repo,
+            &token_repo,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            request,
+        )
+        .await;
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::BadRequest(msg) => assert!(msg.contains("already in use")),
@@ -1159,9 +1314,17 @@ mod tests {
             archive_missing: true,
         };
 
-        process_sync(&repo, &token_repo, None, None, Some("legacy"), request)
-            .await
-            .unwrap();
+        process_sync(
+            &repo,
+            &token_repo,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            request,
+        )
+        .await
+        .unwrap();
 
         // docs/b should be archived (source-a, not in sync)
         let doc_b = repo.find_by_slug("docs/b").await.unwrap().unwrap();

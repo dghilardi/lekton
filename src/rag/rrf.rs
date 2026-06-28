@@ -54,6 +54,7 @@ mod tests {
             section_path: Vec::new(),
             section_anchor: String::new(),
             score,
+            ..Default::default()
         }
     }
 

@@ -44,8 +44,8 @@ pub fn DocumentUploadManager() -> impl IntoView {
     let query = leptos_router::hooks::use_query_map();
     let edit_slug = Memo::new(move |_| query.read().get("edit").filter(|s| !s.is_empty()));
 
-    let levels_resource = LocalResource::new(|| list_levels());
-    let nav_resource = LocalResource::new(|| crate::server::nav::get_navigation());
+    let levels_resource = LocalResource::new(list_levels);
+    let nav_resource = LocalResource::new(crate::server::nav::get_navigation);
     let edit_resource = LocalResource::new(move || {
         let slug = edit_slug.get();
         async move {

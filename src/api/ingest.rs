@@ -46,15 +46,33 @@ pub struct IngestContext<'a> {
     pub legacy_token: Option<&'a str>,
 }
 
+/// Outcome returned by [`process_ingest`].
+///
+/// The caller decides whether to recompute RAG access levels synchronously or
+/// via a background task, depending on the timeout constraints of the caller
+/// (e.g. HTTP vs. a Leptos server function inside the app process).
+#[cfg(feature = "ssr")]
+#[derive(Debug)]
+pub struct ProcessIngestOutcome {
+    pub response: IngestResponse,
+    /// Asset keys whose RAG access levels need recomputing. May be empty when
+    /// the document references no assets or RAG is disabled.
+    pub assets_to_recompute: Vec<String>,
+}
+
 /// Core ingestion logic — separated from the HTTP layer for testability.
 ///
 /// Validates the request, uploads content to S3, upserts metadata in MongoDB,
 /// and optionally indexes the document in Meilisearch.
+///
+/// Access-level recomputation for referenced assets is NOT performed here;
+/// instead the list of keys to recompute is returned in [`ProcessIngestOutcome`]
+/// so the caller can choose sync vs. async execution.
 #[cfg(feature = "ssr")]
 pub async fn process_ingest(
     ctx: &IngestContext<'_>,
     request: IngestRequest,
-) -> Result<IngestResponse, AppError> {
+) -> Result<ProcessIngestOutcome, AppError> {
     // 1. Validate the service token (legacy or scoped)
     validate_token(ctx, &request.service_token, &request.slug).await?;
 
@@ -207,12 +225,15 @@ pub async fn process_ingest(
         && !old_doc_needs_reindex
     {
         let s3_key = format!("docs/{}.md", request.slug.replace('/', "_"));
-        return Ok(IngestResponse {
-            message: "Document unchanged".to_string(),
-            slug: request.slug,
-            s3_key,
-            changed: false,
-            indexed: true,
+        return Ok(ProcessIngestOutcome {
+            response: IngestResponse {
+                message: "Document unchanged".to_string(),
+                slug: request.slug,
+                s3_key,
+                changed: false,
+                indexed: true,
+            },
+            assets_to_recompute: vec![],
         });
     }
 
@@ -352,46 +373,43 @@ pub async fn process_ingest(
     //     document in its `referenced_by` (and drops it where no longer linked).
     //     This drives attachment access levels for RAG and asset-serve access.
     let asset_keys = extract_asset_keys(&raw_content);
-    match ctx
+    let assets_to_recompute = match ctx
         .asset_repo
         .set_references(&request.slug, &asset_keys)
         .await
     {
         Ok(affected) => {
-            // Recompute RAG access levels for the assets this document currently
-            // references *and* any it just dropped. Covering the full current set
-            // (not only the changed references) means a change to this document's
-            // own access_level/draft state propagates to its attachments' chunks
-            // even when its set of referenced assets is unchanged.
-            if let Some(rag) = ctx.rag {
+            // Collect the full set of asset keys to recompute: changed references
+            // plus all currently-referenced assets (so an access_level change on
+            // the document propagates to existing attachment chunks even when the
+            // referenced set did not change). Only populate when RAG is enabled.
+            if ctx.rag.is_some() {
                 let mut to_recompute = affected;
                 for key in &asset_keys {
                     if !to_recompute.contains(key) {
                         to_recompute.push(key.clone());
                     }
                 }
-                if !to_recompute.is_empty() {
-                    crate::rag::attachment_extraction::recompute_access_levels(
-                        rag,
-                        ctx.asset_repo,
-                        ctx.repo,
-                        &to_recompute,
-                    )
-                    .await;
-                }
+                to_recompute
+            } else {
+                vec![]
             }
         }
         Err(e) => {
             tracing::warn!(slug = %request.slug, "Failed to update asset references: {e}");
+            vec![]
         }
-    }
+    };
 
-    Ok(IngestResponse {
-        message: "Document ingested successfully".to_string(),
-        slug: request.slug,
-        s3_key,
-        changed: true,
-        indexed: indexed_ok,
+    Ok(ProcessIngestOutcome {
+        response: IngestResponse {
+            message: "Document ingested successfully".to_string(),
+            slug: request.slug,
+            s3_key,
+            changed: true,
+            indexed: indexed_ok,
+        },
+        assets_to_recompute,
     })
 }
 
@@ -565,8 +583,23 @@ pub async fn ingest_handler(
         legacy_token: Some(&state.service_token),
     };
 
-    let response = process_ingest(&ctx, request).await?;
-    Ok(axum::Json(response))
+    let outcome = process_ingest(&ctx, request).await?;
+
+    // Recompute RAG access levels synchronously: server-to-server calls are not
+    // subject to the GCP Load Balancer 30-second timeout.
+    if !outcome.assets_to_recompute.is_empty() {
+        if let Some(rag) = state.rag_service.as_deref() {
+            crate::rag::attachment_extraction::recompute_access_levels(
+                rag,
+                state.asset_repo.as_ref(),
+                state.document_repo.as_ref(),
+                &outcome.assets_to_recompute,
+            )
+            .await;
+        }
+    }
+
+    Ok(axum::Json(outcome.response))
 }
 
 #[cfg(test)]
@@ -1002,12 +1035,12 @@ mod tests {
         let failing_rag = FailingRagService;
         ctx.rag = Some(&failing_rag);
 
-        let response = process_ingest(&ctx, make_request("valid-token", "docs/hello"))
+        let outcome = process_ingest(&ctx, make_request("valid-token", "docs/hello"))
             .await
             .unwrap();
 
         // The document is persisted but the caller is told indexing did not succeed.
-        assert!(!response.indexed);
+        assert!(!outcome.response.indexed);
         let doc = repo.find_by_slug("docs/hello").await.unwrap().unwrap();
         assert!(doc.needs_reindex);
     }
@@ -1031,12 +1064,12 @@ mod tests {
         // Second ingest with identical content, RAG now healthy (absent): the
         // unchanged doc is re-processed (not skipped) and the flag is cleared.
         let ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
-        let response = process_ingest(&ctx, make_request("valid-token", "docs/hello"))
+        let outcome = process_ingest(&ctx, make_request("valid-token", "docs/hello"))
             .await
             .unwrap();
 
-        assert!(response.changed);
-        assert!(response.indexed);
+        assert!(outcome.response.changed);
+        assert!(outcome.response.indexed);
         let doc = repo.find_by_slug("docs/hello").await.unwrap().unwrap();
         assert!(!doc.needs_reindex);
     }
@@ -1070,16 +1103,16 @@ mod tests {
         let result = process_ingest(&ctx, request).await;
         assert!(result.is_ok());
 
-        let response = result.unwrap();
-        assert_eq!(response.slug, "docs/hello");
-        assert!(response.s3_key.contains("docs_hello"));
+        let outcome = result.unwrap();
+        assert_eq!(outcome.response.slug, "docs/hello");
+        assert!(outcome.response.s3_key.contains("docs_hello"));
 
         // Verify content was stored
         let stored = storage
             .objects
             .lock()
             .unwrap()
-            .get(&response.s3_key)
+            .get(&outcome.response.s3_key)
             .cloned();
         assert!(stored.is_some());
         assert_eq!(
@@ -1429,7 +1462,7 @@ mod tests {
         // First ingest
         let request1 = make_request("valid-token", "docs/hello");
         let r1 = process_ingest(&ctx, request1).await.unwrap();
-        assert!(r1.changed);
+        assert!(r1.response.changed);
         assert_eq!(
             storage.put_count.load(std::sync::atomic::Ordering::Relaxed),
             1
@@ -1438,7 +1471,7 @@ mod tests {
         // Second ingest with identical content and metadata
         let request2 = make_request("valid-token", "docs/hello");
         let r2 = process_ingest(&ctx, request2).await.unwrap();
-        assert!(!r2.changed);
+        assert!(!r2.response.changed);
         // S3 upload should NOT have happened again
         assert_eq!(
             storage.put_count.load(std::sync::atomic::Ordering::Relaxed),
@@ -1461,7 +1494,7 @@ mod tests {
         let mut request2 = make_request("valid-token", "docs/hello");
         request2.content = "# Updated\nNew content".to_string();
         let r2 = process_ingest(&ctx, request2).await.unwrap();
-        assert!(r2.changed);
+        assert!(r2.response.changed);
         // 3 puts: initial upload + history copy + new upload
         assert_eq!(
             storage.put_count.load(std::sync::atomic::Ordering::Relaxed),
@@ -1484,7 +1517,7 @@ mod tests {
         let mut request2 = make_request("valid-token", "docs/hello");
         request2.title = "New Title".to_string();
         let r2 = process_ingest(&ctx, request2).await.unwrap();
-        assert!(r2.changed);
+        assert!(r2.response.changed);
         // S3 upload should NOT happen (content is the same)
         assert_eq!(
             storage.put_count.load(std::sync::atomic::Ordering::Relaxed),

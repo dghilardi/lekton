@@ -196,24 +196,50 @@ pub async fn save_document_with_attachment(
         legacy_token: Some(&state.service_token),
     };
 
-    crate::api::ingest::process_ingest(&ctx, request)
+    let outcome = crate::api::ingest::process_ingest(&ctx, request)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    // Spawn background task to recompute RAG access levels for referenced assets.
+    // Using tokio::spawn avoids blocking the Leptos server function response while
+    // Qdrant updates chunk payloads (can take >30s for large PDFs, which would
+    // trigger a GCP Load Balancer timeout).
+    if !outcome.assets_to_recompute.is_empty() {
+        if let Some(rag) = state.rag_service.clone() {
+            let asset_repo = state.asset_repo.clone();
+            let doc_repo = state.document_repo.clone();
+            let keys = outcome.assets_to_recompute;
+            tokio::spawn(async move {
+                crate::rag::attachment_extraction::recompute_access_levels(
+                    rag.as_ref(),
+                    asset_repo.as_ref(),
+                    doc_repo.as_ref(),
+                    &keys,
+                )
+                .await;
+            });
+        }
+    }
 
     // On edit, the access level may have changed while the linked asset stayed
     // the same. process_ingest only recomputes attachment ACLs when the
     // *reference set* changes, so explicitly recompute here to propagate an
-    // access-level change to the (already-indexed) PDF's chunks. Cheap: a
-    // payload update, no re-embedding. No-op when the asset isn't indexed yet.
+    // access-level change to the (already-indexed) PDF's chunks. Spawn as a
+    // background task for the same GCP LB timeout reason as above.
     if is_edit {
-        if let Some(rag) = state.rag_service.as_deref() {
-            crate::rag::attachment_extraction::recompute_access_levels(
-                rag,
-                state.asset_repo.as_ref(),
-                state.document_repo.as_ref(),
-                std::slice::from_ref(&form.asset_key),
-            )
-            .await;
+        if let Some(rag) = state.rag_service.clone() {
+            let asset_repo = state.asset_repo.clone();
+            let doc_repo = state.document_repo.clone();
+            let key = form.asset_key.clone();
+            tokio::spawn(async move {
+                crate::rag::attachment_extraction::recompute_access_levels(
+                    rag.as_ref(),
+                    asset_repo.as_ref(),
+                    doc_repo.as_ref(),
+                    std::slice::from_ref(&key),
+                )
+                .await;
+            });
         }
     }
 

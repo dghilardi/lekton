@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Document upload: `recompute_access_levels` is now fire-and-forget (`tokio::spawn`) in the Leptos server function path so large PDFs with many RAG chunks no longer cause a GCP Load Balancer 502 timeout. The HTTP ingest handler (server-to-server) still awaits synchronously.
+- Document upload: `access_levels=[]` on attachment chunks after upload is resolved as a consequence of the above fix (the recompute no longer times out before completing).
+- Document upload: "Generate with AI" now streams the summary via SSE (`GET /api/v1/document-upload/summary`) instead of a blocking Leptos server function call, keeping the connection alive even when the LLM takes longer than 30 s.
+
 ## [0.25.1] 2026-06-28
 
 ## [0.25.0] 2026-06-28

@@ -3,6 +3,8 @@ pub mod admin;
 pub mod assets;
 #[cfg(feature = "ssr")]
 pub mod auth;
+#[cfg(feature = "ssr")]
+pub mod document_upload;
 pub mod errors;
 #[cfg(feature = "ssr")]
 pub mod health;

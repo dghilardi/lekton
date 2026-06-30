@@ -15,6 +15,9 @@ use wasm_bindgen::prelude::*;
 extern "C" {
     #[wasm_bindgen(js_name = "uploadDocumentPdf")]
     fn upload_document_pdf_js() -> js_sys::Promise;
+
+    #[wasm_bindgen(js_name = "streamDocumentSummary")]
+    fn stream_document_summary_js(key: &str) -> js_sys::Promise;
 }
 
 /// Result of the JS upload helper (a JSON string).
@@ -98,10 +101,28 @@ pub fn DocumentUploadManager() -> impl IntoView {
         async move {
             set_error_msg.set(None);
             set_generating.set(true);
-            match crate::server::document_upload::generate_document_summary(key).await {
-                Ok(text) => set_summary.set(text),
-                Err(e) => set_error_msg.set(Some(clean_err(&e.to_string()))),
+            #[cfg(feature = "hydrate")]
+            {
+                let result =
+                    wasm_bindgen_futures::JsFuture::from(stream_document_summary_js(&key)).await;
+                match result {
+                    Ok(val) => {
+                        if let Some(text) = val.as_string() {
+                            set_summary.set(text);
+                        }
+                    }
+                    Err(e) => {
+                        let msg =
+                            js_sys::Reflect::get(&e, &wasm_bindgen::JsValue::from_str("message"))
+                                .ok()
+                                .and_then(|v| v.as_string())
+                                .unwrap_or_else(|| "Summary generation failed".into());
+                        set_error_msg.set(Some(msg));
+                    }
+                }
             }
+            #[cfg(not(feature = "hydrate"))]
+            let _ = key;
             set_generating.set(false);
         }
     });

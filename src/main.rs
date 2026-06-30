@@ -273,6 +273,15 @@ fn api_routes(features: &lekton::app::FeatureFlags) -> axum::Router<lekton::app:
         );
     }
 
+    // AI summary streaming for the document-upload form. Requires both
+    // document_upload and rag (needs the chat LLM).
+    if features.document_upload && features.rag {
+        router = router.route(
+            "/api/v1/document-upload/summary",
+            axum::routing::get(api::document_upload::summary_stream_handler),
+        );
+    }
+
     router
 }
 

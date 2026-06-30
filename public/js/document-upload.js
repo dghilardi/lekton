@@ -5,6 +5,57 @@
  */
 
 /**
+ * Stream an AI-generated summary for the given asset key via SSE.
+ *
+ * Connects to GET /api/v1/document-upload/summary?asset_key=<key>, accumulates
+ * tokens, and resolves to the full summary string when the server sends a "done"
+ * event. Rejects with an error message on failure.
+ *
+ * @param {string} assetKey
+ * @returns {Promise<string>} the full summary text
+ */
+export function streamDocumentSummary(assetKey) {
+    return new Promise((resolve, reject) => {
+        const url = "/api/v1/document-upload/summary?asset_key=" + encodeURIComponent(assetKey);
+        let es;
+        try {
+            es = new EventSource(url);
+        } catch (e) {
+            reject(String(e));
+            return;
+        }
+
+        let accumulated = "";
+
+        es.onmessage = (event) => {
+            accumulated += event.data;
+        };
+
+        es.addEventListener("done", () => {
+            es.close();
+            resolve(accumulated);
+        });
+
+        es.addEventListener("error", (event) => {
+            es.close();
+            const msg = event.data || "Summary generation failed";
+            reject(msg);
+        });
+
+        es.onerror = () => {
+            // onerror fires on connection close too; only reject if nothing received.
+            // The "done" listener handles the normal close path.
+            es.close();
+            if (accumulated.length === 0) {
+                reject("Connection error during summary generation");
+            } else {
+                resolve(accumulated);
+            }
+        };
+    });
+}
+
+/**
  * Opens a file picker for PDFs, uploads the selected file to the admin
  * document-upload endpoint, and returns the asset info.
  *

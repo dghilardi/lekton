@@ -284,6 +284,86 @@ impl ChatService {
         Ok(summary)
     }
 
+    /// Stream a short plain-text description of `text` as a series of token
+    /// strings. Use this instead of [`summarize`] when the caller is behind a
+    /// proxy with a short timeout (e.g. GCP Load Balancer at 30 s), because
+    /// streaming keeps the connection alive while the model generates.
+    pub async fn summarize_stream(
+        &self,
+        text: &str,
+    ) -> Result<
+        std::pin::Pin<Box<dyn futures::Stream<Item = Result<String, AppError>> + Send>>,
+        AppError,
+    > {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return Err(AppError::BadRequest(
+                "no text available to summarize".into(),
+            ));
+        }
+        let excerpt: String = trimmed.chars().take(SUMMARY_INPUT_CHAR_LIMIT).collect();
+
+        let messages = vec![
+            ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage {
+                content: ChatCompletionRequestSystemMessageContent::Text(
+                    SUMMARY_SYSTEM_PROMPT.to_string(),
+                ),
+                name: None,
+            }),
+            ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
+                content: ChatCompletionRequestUserMessageContent::Text(excerpt),
+                name: None,
+            }),
+        ];
+
+        let request = CreateChatCompletionRequest {
+            messages,
+            model: self.chat_model.clone(),
+            stream: Some(true),
+            ..Default::default()
+        };
+
+        let llm_client = self
+            .llm_provider
+            .get_client_with_headers(&self.chat_headers)
+            .await?;
+
+        let mut stream = llm_client
+            .chat()
+            .create_stream(request)
+            .await
+            .map_err(|e| {
+                AppError::Internal(format!(
+                    "LLM summary stream creation failed: {}",
+                    format_llm_error(&e)
+                ))
+            })?;
+
+        let token_stream = async_stream::stream! {
+            while let Some(chunk_result) = stream.next().await {
+                match chunk_result {
+                    Ok(chunk) => {
+                        for choice in &chunk.choices {
+                            if let Some(content) = &choice.delta.content {
+                                if !content.is_empty() {
+                                    yield Ok(content.clone());
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let msg = format_llm_error(&e);
+                        tracing::error!("LLM summary stream error: {msg}");
+                        yield Err(AppError::Internal(format!("LLM error: {msg}")));
+                        return;
+                    }
+                }
+            }
+        };
+
+        Ok(Box::pin(token_stream))
+    }
+
     /// Stream a chat response as a series of [`ChatEvent`]s.
     ///
     /// Returns a stream that the caller can forward as SSE.

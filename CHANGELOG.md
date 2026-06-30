@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.25.2] 2026-06-30
+
 ### Fixed
 - Document upload: `recompute_access_levels` is now fire-and-forget (`tokio::spawn`) in the Leptos server function path so large PDFs with many RAG chunks no longer cause a GCP Load Balancer 502 timeout. The HTTP ingest handler (server-to-server) still awaits synchronously.
 - Document upload: `access_levels=[]` on attachment chunks after upload is resolved as a consequence of the above fix (the recompute no longer times out before completing).

@@ -96,13 +96,18 @@ pub fn DocumentUploadManager() -> impl IntoView {
         }
     });
 
-    let generate_summary = Action::new(move |_: &()| {
+    // JsFuture is !Send, so we can't use Action::new (which requires Send).
+    // Mirror the on_upload pattern: plain closure + spawn_local.
+    let on_generate = move |_| {
         let key = asset_key.get();
-        async move {
-            set_error_msg.set(None);
+        if key.is_empty() {
+            return;
+        }
+        set_error_msg.set(None);
+        #[cfg(feature = "hydrate")]
+        {
             set_generating.set(true);
-            #[cfg(feature = "hydrate")]
-            {
+            leptos::task::spawn_local(async move {
                 let result =
                     wasm_bindgen_futures::JsFuture::from(stream_document_summary_js(&key)).await;
                 match result {
@@ -120,12 +125,14 @@ pub fn DocumentUploadManager() -> impl IntoView {
                         set_error_msg.set(Some(msg));
                     }
                 }
-            }
-            #[cfg(not(feature = "hydrate"))]
-            let _ = key;
-            set_generating.set(false);
+                set_generating.set(false);
+            });
         }
-    });
+        #[cfg(not(feature = "hydrate"))]
+        let _ = key;
+    };
+    #[cfg(not(feature = "hydrate"))]
+    let _ = set_generating;
 
     let save = Action::new(move |_: &()| {
         let form = DocumentUploadForm {
@@ -279,7 +286,7 @@ pub fn DocumentUploadManager() -> impl IntoView {
                             <button
                                 class="btn btn-ghost btn-xs gap-1"
                                 prop:disabled=move || generating.get() || asset_key.get().is_empty()
-                                on:click=move |_| { generate_summary.dispatch(()); }
+                                on:click=on_generate
                             >
                                 {move || if generating.get() {
                                     view! { <span class="loading loading-spinner loading-xs"></span> }.into_any()

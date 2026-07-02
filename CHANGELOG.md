@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Guided document upload now indexes the linked PDF into RAG when the document is **saved** rather than when the file is uploaded. The upload step no longer embeds the attachment, so extraction/embedding no longer competes with AI summary generation for LLM quota, and chunks are indexed with the document's access levels already known (no transient `access_levels=[]` state). Unchanged PDFs are not re-embedded on edit.
+
 ## [0.25.4] 2026-07-02
 
 ## [0.25.3] 2026-07-01

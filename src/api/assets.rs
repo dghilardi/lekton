@@ -664,9 +664,11 @@ pub async fn admin_upload_asset_handler(
     )
     .await?;
 
-    if let Some(queue) = &state.attachment_queue {
-        queue.enqueue(&response.key);
-    }
+    // Note: indexing is intentionally NOT enqueued here. For the document-upload
+    // flow the asset is indexed when the document is saved
+    // (`save_document_with_attachment`), so extraction/embedding does not compete
+    // with AI summary generation for LLM quota, and chunks are indexed with the
+    // document's access levels already known (no `access_levels=[]` pass).
 
     Ok(axum::Json(response))
 }

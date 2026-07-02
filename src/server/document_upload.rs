@@ -200,6 +200,17 @@ pub async fn save_document_with_attachment(
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
+    // Index the linked PDF into RAG now that the document (and its access level)
+    // exists — the upload endpoint no longer does this, so extraction/embedding
+    // does not compete with AI summary generation for LLM quota. Only enqueue
+    // when the PDF is new or was replaced during an edit; an unchanged PDF is
+    // already indexed and must not be re-embedded on every save.
+    if outcome.response.changed && old_asset_key.as_deref() != Some(form.asset_key.as_str()) {
+        if let Some(queue) = &state.attachment_queue {
+            queue.enqueue(&form.asset_key);
+        }
+    }
+
     // Spawn background task to recompute RAG access levels for referenced assets.
     // Using tokio::spawn avoids blocking the Leptos server function response while
     // Qdrant updates chunk payloads (can take >30s for large PDFs, which would

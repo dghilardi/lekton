@@ -529,27 +529,74 @@ async fn filter_source_references(
     let mut filtered = Vec::with_capacity(sources.len());
 
     for source in sources {
-        let Some(document) = state
-            .document_repo
-            .find_by_slug(&source.document_slug)
-            .await?
-        else {
-            continue;
+        // Attachment sources carry no slug; resolve their visibility through the
+        // asset's referencing documents (same ACL as serving the asset).
+        let accessible = match source.attachment_key.as_deref() {
+            Some(key) => {
+                attachment_ref_is_accessible(
+                    state,
+                    key,
+                    user_ctx,
+                    allowed_levels.as_deref(),
+                    include_draft,
+                )
+                .await?
+            }
+            None => match state
+                .document_repo
+                .find_by_slug(&source.document_slug)
+                .await?
+            {
+                Some(document) if !document.is_archived => crate::app::doc_is_accessible(
+                    &document.access_level,
+                    document.is_draft,
+                    allowed_levels.as_deref(),
+                    include_draft,
+                ),
+                _ => false,
+            },
         };
 
-        if document.is_archived {
-            continue;
-        }
-
-        if crate::app::doc_is_accessible(
-            &document.access_level,
-            document.is_draft,
-            allowed_levels.as_deref(),
-            include_draft,
-        ) {
+        if accessible {
             filtered.push(source);
         }
     }
 
     Ok(filtered)
+}
+
+/// Whether an attachment source may be shown to the caller. Mirrors the ACL in
+/// [`crate::api::assets::process_serve_asset`]: visible if any referencing
+/// document is accessible, or — when the asset has no referencing documents —
+/// only to the uploader or an admin.
+async fn attachment_ref_is_accessible(
+    state: &AppState,
+    key: &str,
+    user_ctx: &UserContext,
+    allowed_levels: Option<&[String]>,
+    include_draft: bool,
+) -> Result<bool, AppError> {
+    let Some(asset) = state.asset_repo.find_by_key(key).await? else {
+        return Ok(false);
+    };
+
+    if asset.referenced_by.is_empty() {
+        let is_admin = allowed_levels.is_none();
+        return Ok(is_admin || user_ctx.user.email == asset.uploaded_by);
+    }
+
+    for slug in &asset.referenced_by {
+        if let Some(doc) = state.document_repo.find_by_slug(slug).await? {
+            if crate::app::doc_is_accessible(
+                &doc.access_level,
+                doc.is_draft,
+                allowed_levels,
+                include_draft,
+            ) {
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
 }

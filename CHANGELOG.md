@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Chat source references from PDF attachments now link to the asset at the cited page (`/api/v1/assets/{key}#page={n}`, opened in a new tab) instead of a broken `/docs/` link showing "Document '' not found".
+- PDF attachment references are no longer dropped when reopening a saved chat: the session-messages loader was filtering every source through a document-slug lookup, which discarded attachment sources (no slug); attachment visibility is now resolved through the referencing asset's ACL.
+
 ## [0.25.6] 2026-07-03
 
 ### Fixed

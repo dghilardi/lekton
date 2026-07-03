@@ -83,13 +83,16 @@ pub async fn summary_stream_handler(
                 Ok(token) => yield Ok(Event::default().data(token)),
                 Err(e) => {
                     tracing::warn!("Summary stream error: {e}");
-                    // Emit an error event and stop
-                    yield Ok(Event::default().event("error").data(e.to_string()));
+                    // Named "summary_error" (not "error") so it does not collide
+                    // with EventSource's built-in connection-error event.
+                    yield Ok(Event::default().event("summary_error").data(e.to_string()));
                     return;
                 }
             }
         }
-        yield Ok(Event::default().event("done").data(""));
+        // Non-empty data: SSE drops events whose data buffer is empty, so a
+        // completion marker MUST carry a payload to be dispatched to the client.
+        yield Ok(Event::default().event("done").data("ok"));
     };
 
     Ok(Sse::new(sse_stream))

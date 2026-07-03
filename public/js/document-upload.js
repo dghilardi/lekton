@@ -26,30 +26,37 @@ export function streamDocumentSummary(assetKey) {
         }
 
         let accumulated = "";
+        let settled = false;
+        const finish = (fn, val) => {
+            if (settled) return;
+            settled = true;
+            es.close();
+            fn(val);
+        };
 
         es.onmessage = (event) => {
             accumulated += event.data;
         };
 
-        es.addEventListener("done", () => {
-            es.close();
-            resolve(accumulated);
+        // Completion marker from the server (carries non-empty data so SSE
+        // actually dispatches it).
+        es.addEventListener("done", () => finish(resolve, accumulated));
+
+        // Application error explicitly emitted by the server (carries a message).
+        // Named "summary_error" so it does not collide with EventSource's
+        // built-in connection "error" event below.
+        es.addEventListener("summary_error", (event) => {
+            finish(reject, event.data || "Summary generation failed");
         });
 
-        es.addEventListener("error", (event) => {
-            es.close();
-            const msg = event.data || "Summary generation failed";
-            reject(msg);
-        });
-
+        // Connection-level error. EventSource fires this on the *normal* close at
+        // the end of the stream too, so treat it as success when we already have
+        // content; only a genuinely empty stream is a real failure.
         es.onerror = () => {
-            // onerror fires on connection close too; only reject if nothing received.
-            // The "done" listener handles the normal close path.
-            es.close();
-            if (accumulated.length === 0) {
-                reject("Connection error during summary generation");
+            if (accumulated.length > 0) {
+                finish(resolve, accumulated);
             } else {
-                resolve(accumulated);
+                finish(reject, "Connection error during summary generation");
             }
         };
     });

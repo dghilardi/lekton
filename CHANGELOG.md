@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- AI summary generation reported "summary generation failed" even when the server streamed a valid summary. The SSE completion event carried empty data (which browsers drop, so the client never saw it) and the server's error event was named `error` (colliding with `EventSource`'s built-in connection-error event, which also fires on the normal end-of-stream close). The completion event now carries a payload, the server error event is renamed `summary_error`, and the client treats a normal stream close with received content as success.
+
 ## [0.25.5] 2026-07-02
 
 ### Changed

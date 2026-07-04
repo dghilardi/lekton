@@ -56,7 +56,8 @@ pub fn TopNavbarLinks() -> impl IntoView {
 
                     view! {
                         // ── TIER 1: xl+ — full text, max items, "Altro" overflow ──────────────
-                        <div class="hidden xl:flex items-center gap-2">
+                        <div class="hidden xl:flex w-full items-center gap-3 min-w-0">
+                            <div class="flex flex-1 items-center gap-2 min-w-0 overflow-hidden">
                             {t1_standalone.into_iter().map(|item| {
                                 view! {
                                     <a href=format!("/docs/{}", item.slug)
@@ -122,10 +123,11 @@ pub fn TopNavbarLinks() -> impl IntoView {
                             } else {
                                 view! { <span></span> }.into_any()
                             }}
+                            </div>
 
-                            // Separator
-                            <div class="w-px h-5 bg-base-300 mx-1 self-center"></div>
+                            <div class="w-px h-5 bg-base-300 self-center shrink-0"></div>
 
+                            <div class="flex items-center gap-2 shrink-0">
                             {move || if schema_enabled.get() { view! {
                             <a href="/schemas" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">
                                 "Registry"
@@ -148,10 +150,12 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                     view! { <span></span> }.into_any()
                                 }
                             }}
+                            </div>
                         </div>
 
                         // ── TIER 2: lg–xl — "Docs ▾" dropdown + text system links ─────────────
-                        <div class="hidden lg:flex xl:hidden items-center gap-2">
+                        <div class="hidden lg:flex xl:hidden w-full items-center gap-3 min-w-0">
+                            <div class="flex flex-1 items-center min-w-0 overflow-hidden">
                             <div class="dropdown dropdown-hover dropdown-bottom">
                                 <div tabindex="0" role="button"
                                      class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50 m-1">
@@ -177,10 +181,11 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                     }).collect::<Vec<_>>()}
                                 </ul>
                             </div>
+                            </div>
 
-                            // Separator
-                            <div class="w-px h-5 bg-base-300 mx-1 self-center"></div>
+                            <div class="w-px h-5 bg-base-300 self-center shrink-0"></div>
 
+                            <div class="flex items-center gap-2 shrink-0">
                             {move || if schema_enabled.get() { view! {
                             <a href="/schemas" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">
                                 "Registry"
@@ -203,6 +208,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                     view! { <span></span> }.into_any()
                                 }
                             }}
+                            </div>
                         </div>
 
                         // ── TIER 3: <lg — icons only (always visible below lg) ───────────────

@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.25.9] 2026-07-04
+
 ### Fixed
 - Kept the navbar theme toggle reachable at narrower desktop widths and aligned the upload/PDF E2E checks with the dedicated PDF document layout so GitHub Actions no longer fail on the release workflows.
 

@@ -44,10 +44,14 @@ test.describe('Document upload', () => {
     await expect(openLink).toBeVisible({ timeout: 30_000 });
     await expect(openLink).toHaveAttribute('href', `/docs/${slug}`);
 
-    // The created page shows the description and a download link to the PDF.
+    // The created page shows the upload-specific PDF layout with the summary
+    // and at least one affordance to open/download the uploaded file.
     await page.goto(`/docs/${slug}`);
-    await expect(page.locator('article')).toContainText(description, { timeout: 30_000 });
-    const download = page.locator('article a[href*="/api/v1/assets/"]');
+    await expect(
+      page.getByRole('heading', { level: 1, name: title }),
+    ).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(description)).toBeVisible({ timeout: 30_000 });
+    const download = page.locator('a[href*="/api/v1/assets/"]');
     await expect(download.first()).toBeVisible();
 
     // An admin gets an Edit affordance that points back to the upload form.

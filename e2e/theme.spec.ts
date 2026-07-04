@@ -10,6 +10,7 @@ async function clickThemeToggleUntilChange(page: Page): Promise<string> {
   const before = await page.locator('html').getAttribute('data-theme');
 
   for (let attempt = 0; attempt < 30; attempt++) {
+    await themeToggle.scrollIntoViewIfNeeded();
     await themeToggle.click();
     await page.waitForTimeout(300);
     const after = await page.locator('html').getAttribute('data-theme');
@@ -30,6 +31,7 @@ test.describe('Theme', () => {
     const afterFirst = await clickThemeToggleUntilChange(page);
 
     // Second click should cycle to the next theme
+    await themeToggle.scrollIntoViewIfNeeded();
     await themeToggle.click();
     await page.waitForTimeout(300);
     const afterSecond = await page.locator('html').getAttribute('data-theme');

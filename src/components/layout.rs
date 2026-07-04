@@ -321,14 +321,14 @@ pub fn Layout(children: Children) -> impl IntoView {
             // Navbar
             <header class="bg-base-100/80 backdrop-blur-md fixed top-0 inset-x-0 z-50 border-b border-base-200 px-4 h-16 flex items-center gap-2 shadow-sm lekton-header-enter">
                 // Left — shrinks only when space is truly exhausted
-                <div class="flex items-center gap-2 shrink-0">
+                <div class="flex items-center gap-2 min-w-0 flex-1">
                     <Show when=move || has_context_sidebar.get()>
                         <label for="sidebar-drawer" class="btn btn-square btn-ghost drawer-button lg:hidden">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="inline-block w-5 h-5 stroke-current"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
                         </label>
                     </Show>
                     <BrandedLogo />
-                    <div class="flex items-center gap-1 ml-2 pl-2 sm:ml-4 sm:pl-4 border-l border-base-300">
+                    <div class="flex items-center gap-1 min-w-0 ml-2 pl-2 sm:ml-4 sm:pl-4 border-l border-base-300 overflow-hidden">
                         <TopNavbarLinks />
                     </div>
                 </div>

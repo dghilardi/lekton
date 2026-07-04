@@ -602,6 +602,7 @@ pub async fn ingest_handler(
                 rag,
                 state.asset_repo.as_ref(),
                 state.document_repo.as_ref(),
+                state.storage_client.as_ref(),
                 &outcome.assets_to_recompute,
             )
             .await;

@@ -49,9 +49,19 @@ pub async fn trigger_rag_reindex() -> Result<String, ServerFnError> {
     let document_repo = state.document_repo.clone();
     let storage = state.storage_client.clone();
     let rag_clone = rag.clone();
+    let asset_repo = state.asset_repo.clone();
+    let attachment_service = state.attachment_service.clone();
 
     tokio::spawn(async move {
-        crate::rag::reindex::run_reindex(reindex_clone, document_repo, storage, rag_clone).await;
+        crate::rag::reindex::run_reindex(
+            reindex_clone,
+            document_repo,
+            storage,
+            rag_clone,
+            asset_repo,
+            attachment_service,
+        )
+        .await;
     });
 
     Ok("Re-index started".to_string())

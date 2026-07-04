@@ -131,6 +131,11 @@ pub struct AppState {
     /// RAG and the `attachment_indexing` feature are both enabled.
     #[from_ref(skip)]
     pub attachment_queue: Option<crate::rag::attachment_extraction::AttachmentQueue>,
+    /// The attachment extraction service backing `attachment_queue`, kept
+    /// alongside it so a full RAG re-index can force-reprocess every
+    /// attachment synchronously (bypassing the bounded background queue).
+    pub attachment_service:
+        Option<Arc<crate::rag::attachment_extraction::AttachmentExtractionService>>,
     pub search_reindex_state: Option<Arc<crate::search::reindex::SearchReindexState>>,
     pub schema_endpoint_reindex_state: Arc<crate::schema::reindex::SchemaEndpointReindexState>,
     pub chat_repo: Option<Arc<dyn crate::db::chat_repository::ChatRepository>>,

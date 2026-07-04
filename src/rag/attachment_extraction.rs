@@ -73,7 +73,7 @@ impl AttachmentExtractionService {
         let (tx, mut rx) = mpsc::channel::<String>(capacity.max(1));
         tokio::spawn(async move {
             while let Some(key) = rx.recv().await {
-                if let Err(e) = self.process_one(&key).await {
+                if let Err(e) = self.process_one(&key, false).await {
                     tracing::error!(key, "attachment extraction worker error: {e}");
                 }
             }
@@ -83,8 +83,13 @@ impl AttachmentExtractionService {
 
     /// Extract and index one attachment, updating its extraction status. Safe to
     /// call repeatedly; skips work when the content is unchanged since the last
-    /// successful run.
-    pub async fn process_one(&self, key: &str) -> Result<(), AppError> {
+    /// successful run, unless `force` is set.
+    ///
+    /// `force` bypasses the unchanged-content short-circuit so a full re-index
+    /// can pick up a changed chunking/embedding/extraction configuration, or an
+    /// attachment that was uploaded before extraction was wired up, without
+    /// requiring a no-op re-upload of the same file.
+    pub async fn process_one(&self, key: &str, force: bool) -> Result<(), AppError> {
         let asset = match self.asset_repo.find_by_key(key).await? {
             Some(a) => a,
             None => return Ok(()), // deleted in the meantime
@@ -97,7 +102,8 @@ impl AttachmentExtractionService {
             asset.extraction_status,
             ExtractionStatus::Done | ExtractionStatus::Skipped
         );
-        if already_processed
+        if !force
+            && already_processed
             && asset.content_hash.is_some()
             && asset.content_hash == asset.extracted_content_hash
         {

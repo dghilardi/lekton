@@ -794,7 +794,7 @@ async fn main() {
 
     // Spawn the attachment extraction worker when attachment indexing is enabled.
     // Bounded queue; uploads enqueue keys and a single worker drains them.
-    let attachment_queue = if let (true, Some(rag)) =
+    let (attachment_queue, attachment_service) = if let (true, Some(rag)) =
         (features.attachment_indexing, rag_service.clone())
     {
         // Optional VLM transcriber for image-heavy PDF pages, from [rag.vlm].
@@ -832,9 +832,9 @@ async fn main() {
                 extractors,
             ),
         );
-        Some(svc.spawn(256))
+        (Some(svc.clone().spawn(256)), Some(svc))
     } else {
-        None
+        (None, None)
     };
 
     // Build application state
@@ -865,6 +865,7 @@ async fn main() {
         },
         rag_service,
         attachment_queue,
+        attachment_service,
         chat_repo,
         chat_service,
         search_reindex_state,

@@ -77,6 +77,16 @@ pub trait AttachmentSearchService: Send + Sync {
     /// Remove every indexed page for an attachment.
     async fn delete_attachment(&self, attachment_key: &str) -> Result<(), AppError>;
 
+    /// Update only the `access_levels` of every indexed page for an
+    /// attachment, without re-indexing its text — for when the referencing
+    /// document's access level changes but the attachment content did not.
+    /// A no-op if the attachment has no indexed pages.
+    async fn update_access_levels(
+        &self,
+        attachment_key: &str,
+        access_levels: &[String],
+    ) -> Result<(), AppError>;
+
     /// Search attachment pages visible to the caller.
     ///
     /// `allowed_levels`: the access level names the caller can read. `None`
@@ -221,6 +231,62 @@ impl AttachmentSearchService for MeilisearchAttachmentService {
                 "Meilisearch attachment delete error: {e}"
             ))),
         }
+    }
+
+    async fn update_access_levels(
+        &self,
+        attachment_key: &str,
+        access_levels: &[String],
+    ) -> Result<(), AppError> {
+        use meilisearch_sdk::documents::DocumentsQuery;
+
+        #[derive(Deserialize)]
+        struct IdOnly {
+            id: String,
+        }
+
+        #[derive(Serialize)]
+        struct PartialAcl<'a> {
+            id: &'a str,
+            access_levels: &'a [String],
+        }
+
+        let index = self.index();
+        let filter = format!("attachment_key = \"{attachment_key}\"");
+        let mut query = DocumentsQuery::new(&index);
+        query.with_filter(&filter);
+        query.with_limit(1000);
+        query.with_fields(["id"]);
+
+        let results: meilisearch_sdk::documents::DocumentsResults<IdOnly> =
+            index.get_documents_with(&query).await.map_err(|e| {
+                AppError::Internal(format!("Meilisearch attachment ACL fetch error: {e}"))
+            })?;
+
+        if results.results.is_empty() {
+            return Ok(());
+        }
+
+        let updates: Vec<PartialAcl> = results
+            .results
+            .iter()
+            .map(|d| PartialAcl {
+                id: &d.id,
+                access_levels,
+            })
+            .collect();
+
+        // `add_or_update` merges by id (only `access_levels` is overwritten,
+        // every other field is left untouched), unlike `add_documents` which
+        // replaces the whole document.
+        self.index()
+            .add_or_update(&updates, Some("id"))
+            .await
+            .map_err(|e| {
+                AppError::Internal(format!("Meilisearch attachment ACL update error: {e}"))
+            })?;
+
+        Ok(())
     }
 
     async fn search(

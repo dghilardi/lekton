@@ -416,6 +416,7 @@ mod tests {
             asset_repo.clone(),
             doc_repo.clone(),
             rag.clone(),
+            None,
             extractors,
         ));
 

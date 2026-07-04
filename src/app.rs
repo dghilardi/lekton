@@ -136,6 +136,10 @@ pub struct AppState {
     /// attachment synchronously (bypassing the bounded background queue).
     pub attachment_service:
         Option<Arc<crate::rag::attachment_extraction::AttachmentExtractionService>>,
+    /// Keyword search over PDF attachment content, backed by a dedicated
+    /// Meilisearch index. Present only when the `search` feature is enabled.
+    pub attachment_search_service:
+        Option<Arc<dyn crate::search::attachment_search::AttachmentSearchService>>,
     pub search_reindex_state: Option<Arc<crate::search::reindex::SearchReindexState>>,
     pub schema_endpoint_reindex_state: Arc<crate::schema::reindex::SchemaEndpointReindexState>,
     pub chat_repo: Option<Arc<dyn crate::db::chat_repository::ChatRepository>>,

@@ -224,6 +224,7 @@ pub async fn save_document_with_attachment(
             let asset_repo = state.asset_repo.clone();
             let doc_repo = state.document_repo.clone();
             let storage = state.storage_client.clone();
+            let attachment_search = state.attachment_search_service.clone();
             let keys = outcome.assets_to_recompute;
             tokio::spawn(async move {
                 crate::rag::attachment_extraction::recompute_access_levels(
@@ -231,6 +232,7 @@ pub async fn save_document_with_attachment(
                     asset_repo.as_ref(),
                     doc_repo.as_ref(),
                     storage.as_ref(),
+                    attachment_search.as_deref(),
                     &keys,
                 )
                 .await;
@@ -248,6 +250,7 @@ pub async fn save_document_with_attachment(
             let asset_repo = state.asset_repo.clone();
             let doc_repo = state.document_repo.clone();
             let storage = state.storage_client.clone();
+            let attachment_search = state.attachment_search_service.clone();
             let key = form.asset_key.clone();
             tokio::spawn(async move {
                 crate::rag::attachment_extraction::recompute_access_levels(
@@ -255,6 +258,7 @@ pub async fn save_document_with_attachment(
                     asset_repo.as_ref(),
                     doc_repo.as_ref(),
                     storage.as_ref(),
+                    attachment_search.as_deref(),
                     std::slice::from_ref(&key),
                 )
                 .await;
@@ -379,6 +383,7 @@ pub async fn archive_document(slug: String) -> Result<(), ServerFnError> {
                     state.asset_repo.as_ref(),
                     state.document_repo.as_ref(),
                     state.storage_client.as_ref(),
+                    state.attachment_search_service.as_deref(),
                     &affected,
                 )
                 .await;

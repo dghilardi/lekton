@@ -19,6 +19,7 @@ use crate::error::AppError;
 use crate::rag::attachment_acl::{attachment_access_levels, ReferencingDoc};
 use crate::rag::extraction::{AttachmentExtractors, ExtractionOutcome};
 use crate::rag::service::RagService;
+use crate::search::attachment_search::AttachmentSearchService;
 use crate::storage::client::StorageClient;
 
 /// Handle for enqueuing attachment keys for (re)extraction. Cloneable and cheap.
@@ -47,6 +48,10 @@ pub struct AttachmentExtractionService {
     asset_repo: Arc<dyn AssetRepository>,
     document_repo: Arc<dyn DocumentRepository>,
     rag: Arc<dyn RagService>,
+    /// Keyword search over attachment page text, indexed alongside RAG.
+    /// `None` when Meilisearch is disabled — attachment content then remains
+    /// searchable only through RAG (semantic), not keyword search.
+    attachment_search: Option<Arc<dyn AttachmentSearchService>>,
     extractors: Arc<AttachmentExtractors>,
 }
 
@@ -56,6 +61,7 @@ impl AttachmentExtractionService {
         asset_repo: Arc<dyn AssetRepository>,
         document_repo: Arc<dyn DocumentRepository>,
         rag: Arc<dyn RagService>,
+        attachment_search: Option<Arc<dyn AttachmentSearchService>>,
         extractors: Arc<AttachmentExtractors>,
     ) -> Self {
         Self {
@@ -63,6 +69,7 @@ impl AttachmentExtractionService {
             asset_repo,
             document_repo,
             rag,
+            attachment_search,
             extractors,
         }
     }
@@ -134,6 +141,9 @@ impl AttachmentExtractionService {
             Ok(ExtractionOutcome::Unsupported) => {
                 // Not indexable: drop any stale chunks and record it as skipped.
                 let _ = self.rag.delete_attachment(key).await;
+                if let Some(search) = &self.attachment_search {
+                    let _ = search.delete_attachment(key).await;
+                }
                 return self
                     .finish(key, ExtractionStatus::Skipped, &asset.content_hash, 0)
                     .await;
@@ -151,6 +161,36 @@ impl AttachmentExtractionService {
             .await
         {
             Ok(n) => {
+                // Keyword search over the page text, alongside RAG. Linked to
+                // the first referencing document — attachments are almost
+                // always referenced by exactly one (the admin upload flow
+                // links a PDF to a single stub document); a shared attachment
+                // simply shows up under that first document's page.
+                if let Some(search) = &self.attachment_search {
+                    if let Some(doc_slug) = asset.referenced_by.first() {
+                        let doc_title = self
+                            .document_repo
+                            .find_by_slug(doc_slug)
+                            .await
+                            .ok()
+                            .flatten()
+                            .map(|d| d.title)
+                            .unwrap_or_else(|| doc_slug.clone());
+                        if let Err(e) = search
+                            .index_pages(
+                                key,
+                                &filename,
+                                doc_slug,
+                                &doc_title,
+                                &pages,
+                                &access_levels,
+                            )
+                            .await
+                        {
+                            tracing::warn!(key, "attachment keyword-search indexing failed: {e}");
+                        }
+                    }
+                }
                 self.finish(key, ExtractionStatus::Done, &asset.content_hash, n as u32)
                     .await
             }
@@ -217,6 +257,7 @@ pub async fn recompute_access_levels(
     asset_repo: &dyn AssetRepository,
     document_repo: &dyn DocumentRepository,
     storage: &dyn StorageClient,
+    attachment_search: Option<&dyn AttachmentSearchService>,
     keys: &[String],
 ) {
     for key in keys {
@@ -242,6 +283,11 @@ pub async fn recompute_access_levels(
             if let Err(e) = rag.delete_attachment(key).await {
                 tracing::warn!(key, "delete orphaned attachment: RAG delete failed: {e}");
             }
+            if let Some(search) = attachment_search {
+                if let Err(e) = search.delete_attachment(key).await {
+                    tracing::warn!(key, "delete orphaned attachment: search delete failed: {e}");
+                }
+            }
             continue;
         }
 
@@ -249,6 +295,11 @@ pub async fn recompute_access_levels(
 
         if let Err(e) = rag.update_attachment_access_levels(key, &levels).await {
             tracing::warn!(key, "recompute attachment ACL: update failed: {e}");
+        }
+        if let Some(search) = attachment_search {
+            if let Err(e) = search.update_access_levels(key, &levels).await {
+                tracing::warn!(key, "recompute attachment ACL: search update failed: {e}");
+            }
         }
     }
 }
@@ -488,6 +539,7 @@ mod tests {
             &asset_repo,
             &document_repo,
             &storage,
+            None,
             &["pdfs/a.pdf".to_string()],
         )
         .await;
@@ -526,6 +578,7 @@ mod tests {
             &asset_repo,
             &document_repo,
             &storage,
+            None,
             &["pdfs/b.pdf".to_string()],
         )
         .await;
@@ -536,5 +589,106 @@ mod tests {
         // None), so the recomputed access level list is empty — but the
         // attachment itself is not deleted, since it is still referenced.
         assert_eq!(*rag.updated_acl.lock().unwrap(), Some(vec![]));
+    }
+
+    #[derive(Default)]
+    struct RecordingAttachmentSearchService {
+        deleted: Mutex<Vec<String>>,
+        updated_acl: Mutex<Option<(String, Vec<String>)>>,
+    }
+
+    #[async_trait]
+    impl crate::search::attachment_search::AttachmentSearchService
+        for RecordingAttachmentSearchService
+    {
+        async fn index_pages(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &[crate::rag::service::AttachmentPage],
+            _: &[String],
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn delete_attachment(&self, attachment_key: &str) -> Result<(), AppError> {
+            self.deleted
+                .lock()
+                .unwrap()
+                .push(attachment_key.to_string());
+            Ok(())
+        }
+        async fn update_access_levels(
+            &self,
+            attachment_key: &str,
+            access_levels: &[String],
+        ) -> Result<(), AppError> {
+            *self.updated_acl.lock().unwrap() =
+                Some((attachment_key.to_string(), access_levels.to_vec()));
+            Ok(())
+        }
+        async fn search(
+            &self,
+            _: &str,
+            _: Option<&[String]>,
+        ) -> Result<Vec<crate::search::attachment_search::AttachmentSearchHit>, AppError> {
+            Ok(vec![])
+        }
+        async fn configure_index(&self) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn recompute_access_levels_also_updates_attachment_search() {
+        let asset_repo = FakeAssetRepo::new(vec![make_asset(
+            "pdfs/c.pdf",
+            vec!["docs/still-linking".to_string()],
+        )]);
+        let document_repo = NoopDocumentRepo;
+        let rag = RecordingRagService::default();
+        let storage = MockStorage::new();
+        let attachment_search = RecordingAttachmentSearchService::default();
+
+        recompute_access_levels(
+            &rag,
+            &asset_repo,
+            &document_repo,
+            &storage,
+            Some(&attachment_search),
+            &["pdfs/c.pdf".to_string()],
+        )
+        .await;
+
+        assert_eq!(
+            *attachment_search.updated_acl.lock().unwrap(),
+            Some(("pdfs/c.pdf".to_string(), vec![]))
+        );
+        assert!(attachment_search.deleted.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn recompute_access_levels_deletes_from_attachment_search_when_orphaned() {
+        let asset_repo = FakeAssetRepo::new(vec![make_asset("pdfs/d.pdf", vec![])]);
+        let document_repo = NoopDocumentRepo;
+        let rag = RecordingRagService::default();
+        let storage = MockStorage::new();
+        let attachment_search = RecordingAttachmentSearchService::default();
+
+        recompute_access_levels(
+            &rag,
+            &asset_repo,
+            &document_repo,
+            &storage,
+            Some(&attachment_search),
+            &["pdfs/d.pdf".to_string()],
+        )
+        .await;
+
+        assert_eq!(
+            *attachment_search.deleted.lock().unwrap(),
+            vec!["pdfs/d.pdf".to_string()]
+        );
     }
 }

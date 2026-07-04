@@ -197,6 +197,7 @@ pub async fn save_doc_content(
                         state.asset_repo.as_ref(),
                         state.document_repo.as_ref(),
                         state.storage_client.as_ref(),
+                        state.attachment_search_service.as_deref(),
                         &to_recompute,
                     )
                     .await;

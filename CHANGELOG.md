@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- `GET /api/v1/search` now derives document visibility from the authenticated user context instead of trusting client-supplied `access_levels`, closing an ACL bypass for restricted document and attachment search results.
+
 ## [0.25.9] 2026-07-04
 
 ### Fixed

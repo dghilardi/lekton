@@ -39,7 +39,7 @@ async fn ingest_with_custom_access_level_then_search() {
     let response = server
         .get("/api/v1/search")
         .add_query_param("q", "classified")
-        .add_query_param("access_levels", "secret")
+        .add_cookie(env.auth_cookie(&admin))
         .await;
 
     let hits: Vec<serde_json::Value> = response.json();
@@ -49,7 +49,6 @@ async fn ingest_with_custom_access_level_then_search() {
     let response = server
         .get("/api/v1/search")
         .add_query_param("q", "classified")
-        .add_query_param("access_levels", "public")
         .await;
 
     let hits: Vec<serde_json::Value> = response.json();
@@ -67,7 +66,7 @@ async fn admin_creates_level_assigns_permission_user_sees_doc() {
     let admin = env
         .create_test_user("admin-1", "admin@test.com", true)
         .await;
-    env.create_test_user("user-1", "user@test.com", false).await;
+    let user = env.create_test_user("user-1", "user@test.com", false).await;
 
     // 1. Create custom access level
     server
@@ -108,7 +107,7 @@ async fn admin_creates_level_assigns_permission_user_sees_doc() {
     let response = server
         .get("/api/v1/search")
         .add_query_param("q", "Alpha team")
-        .add_query_param("access_levels", "team-alpha")
+        .add_cookie(env.auth_cookie(&user))
         .await;
 
     let hits: Vec<serde_json::Value> = response.json();
@@ -205,7 +204,6 @@ async fn ingest_doc_then_update_content() {
     let response = server
         .get("/api/v1/search")
         .add_query_param("q", "Updated content")
-        .add_query_param("access_levels", "public")
         .await;
 
     let hits: Vec<serde_json::Value> = response.json();

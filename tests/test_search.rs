@@ -21,7 +21,6 @@ async fn search_returns_matching_documents() {
     let response = server
         .get("/api/v1/search")
         .add_query_param("q", "Kubernetes Deployment")
-        .add_query_param("access_levels", "public")
         .await;
 
     response.assert_status_ok();
@@ -37,6 +36,12 @@ async fn search_returns_matching_documents() {
 async fn search_respects_access_level_filtering() {
     let env = common::TestEnv::start().await;
     let server = env.server();
+    let architect = env
+        .create_test_user("architect-1", "architect@test.com", false)
+        .await;
+    let admin = env
+        .create_test_user("search-admin", "admin@test.com", true)
+        .await;
 
     let public_slug = format!("search-rbac-public-{}", uuid::Uuid::new_v4());
     let arch_slug = format!("search-rbac-arch-{}", uuid::Uuid::new_v4());
@@ -61,13 +66,24 @@ async fn search_respects_access_level_filtering() {
     )
     .await;
 
+    server
+        .put("/api/v1/admin/users/architect-1/access-levels")
+        .add_cookie(env.auth_cookie(&admin))
+        .json(&serde_json::json!({
+            "assigned_access_levels": ["architect"],
+            "can_write": false,
+            "can_read_draft": false,
+            "can_write_draft": false
+        }))
+        .await
+        .assert_status_ok();
+
     env.wait_for_search_indexing().await;
 
-    // Search as public user — should only see public doc
+    // Search as anonymous user — should only see the public doc.
     let response = server
         .get("/api/v1/search")
         .add_query_param("q", &keyword)
-        .add_query_param("access_levels", "public")
         .await;
 
     let results: Vec<serde_json::Value> = response.json();
@@ -84,11 +100,11 @@ async fn search_respects_access_level_filtering() {
         "Architect doc should NOT appear in public search"
     );
 
-    // Search with all levels — should see both
+    // Search as an authenticated architect — should see both.
     let response = server
         .get("/api/v1/search")
         .add_query_param("q", &keyword)
-        .add_query_param("access_levels", "public,internal,developer,architect")
+        .add_cookie(env.auth_cookie(&architect))
         .await;
 
     let results: Vec<serde_json::Value> = response.json();
@@ -107,6 +123,39 @@ async fn search_respects_access_level_filtering() {
 }
 
 #[tokio::test]
+async fn search_ignores_client_supplied_access_levels() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+
+    let slug = format!("search-hidden-{}", uuid::Uuid::new_v4());
+    let keyword = format!("hiddenkw{}", uuid::Uuid::new_v4().simple());
+
+    env.ingest(
+        &server,
+        &slug,
+        &format!("Hidden {keyword}"),
+        &format!("# Hidden {keyword}\n\nRestricted content."),
+        "architect",
+    )
+    .await;
+
+    env.wait_for_search_indexing().await;
+
+    let response = server
+        .get("/api/v1/search")
+        .add_query_param("q", &keyword)
+        .add_query_param("access_levels", "architect")
+        .await;
+
+    response.assert_status_ok();
+    let results: Vec<serde_json::Value> = response.json();
+    assert!(
+        results.is_empty(),
+        "Anonymous callers must not escalate visibility via query params"
+    );
+}
+
+#[tokio::test]
 async fn search_returns_empty_for_no_match() {
     let env = common::TestEnv::start().await;
     let server = env.server();
@@ -114,7 +163,6 @@ async fn search_returns_empty_for_no_match() {
     let response = server
         .get("/api/v1/search")
         .add_query_param("q", "xyznonexistent99999")
-        .add_query_param("access_levels", "public,internal,developer,architect")
         .await;
 
     response.assert_status_ok();
@@ -149,7 +197,6 @@ async fn search_returns_content_preview() {
     let response = server
         .get("/api/v1/search")
         .add_query_param("q", &keyword)
-        .add_query_param("access_levels", "public")
         .await;
 
     let results: Vec<serde_json::Value> = response.json();
@@ -190,7 +237,6 @@ async fn search_excludes_archived_documents() {
     let response = server
         .get("/api/v1/search")
         .add_query_param("q", &keyword)
-        .add_query_param("access_levels", "public")
         .await;
     let results: Vec<serde_json::Value> = response.json();
     assert!(
@@ -216,7 +262,6 @@ async fn search_excludes_archived_documents() {
     let response = server
         .get("/api/v1/search")
         .add_query_param("q", &keyword)
-        .add_query_param("access_levels", "public")
         .await;
     let results: Vec<serde_json::Value> = response.json();
     assert!(

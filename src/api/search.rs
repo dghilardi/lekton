@@ -10,29 +10,18 @@ pub struct SearchReindexStatusResponse {
 
 /// Query parameters for the search endpoint.
 ///
-/// NOTE: Once the auth extractor is wired up (task 11) the `access_levels`
-/// parameter will be ignored in favour of the authenticated user's permissions.
-/// For now it is kept for backward compatibility with the demo setup.
 #[cfg(feature = "ssr")]
 #[derive(Debug, serde::Deserialize)]
 pub struct SearchQuery {
     /// The search query string.
     pub q: String,
-    /// Comma-separated access level names to filter by (e.g. `"public,internal"`).
-    /// Defaults to `"public"` (anonymous access).
-    #[serde(default = "default_access_level")]
-    pub access_levels: String,
 }
 
-#[cfg(feature = "ssr")]
-fn default_access_level() -> String {
-    "public".to_string()
-}
-
-/// Axum handler for `GET /api/v1/search?q=<query>&access_levels=<levels>`.
+/// Axum handler for `GET /api/v1/search?q=<query>`.
 #[cfg(feature = "ssr")]
 pub async fn search_handler(
     axum::extract::State(state): axum::extract::State<crate::app::AppState>,
+    crate::auth::extractor::OptionalAuthUser(user): crate::auth::extractor::OptionalAuthUser,
     axum::extract::Query(params): axum::extract::Query<SearchQuery>,
 ) -> Result<axum::Json<Vec<SearchHit>>, crate::error::AppError> {
     let search_service = state
@@ -40,21 +29,16 @@ pub async fn search_handler(
         .as_ref()
         .ok_or_else(|| crate::error::AppError::Internal("Search service not available".into()))?;
 
-    // Parse the comma-separated level list.
-    let levels: Vec<String> = params
-        .access_levels
-        .split(',')
-        .map(|s| s.trim().to_lowercase())
-        .filter(|s| !s.is_empty())
-        .collect();
+    let (allowed_levels, include_draft) =
+        crate::app::resolve_user_visibility(&state, user.as_ref()).await?;
 
     let mut results = search_service
-        .search(&params.q, Some(levels.as_slice()), false)
+        .search(&params.q, allowed_levels.as_deref(), include_draft)
         .await?;
 
     if let Some(attachment_search) = &state.attachment_search_service {
         match attachment_search
-            .search(&params.q, Some(levels.as_slice()))
+            .search(&params.q, allowed_levels.as_deref())
             .await
         {
             Ok(hits) => results.extend(hits.into_iter().map(|h| SearchHit {

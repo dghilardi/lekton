@@ -79,6 +79,11 @@ pub async fn delete_asset_by_key(key: String) -> Result<(), ServerFnError> {
             tracing::warn!(key, "Failed to delete attachment chunks from RAG: {e}");
         }
     }
+    if let Some(search) = &state.attachment_search_service {
+        if let Err(e) = search.delete_attachment(&key).await {
+            tracing::warn!(key, "Failed to delete attachment chunks from search: {e}");
+        }
+    }
 
     Ok(())
 }

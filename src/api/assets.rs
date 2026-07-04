@@ -554,6 +554,11 @@ pub async fn delete_asset_handler(
             tracing::warn!(key, "Failed to delete attachment chunks from RAG: {e}");
         }
     }
+    if let Some(search) = &state.attachment_search_service {
+        if let Err(e) = search.delete_attachment(&key).await {
+            tracing::warn!(key, "Failed to delete attachment chunks from search: {e}");
+        }
+    }
 
     Ok(axum::Json(
         serde_json::json!({"message": format!("Asset '{}' deleted", key)}),

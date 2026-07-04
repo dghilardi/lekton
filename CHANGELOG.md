@@ -11,6 +11,10 @@ All notable changes to this project will be documented in this file.
 - Guided document upload no longer indexes its markdown stub into RAG: the stub only holds the AI summary and a link, while the linked PDF is already indexed as an attachment, so indexing the stub duplicated content. Documents now carry a `skip_rag` flag (default off) that excludes them from the RAG vector store while keeping them in Meilisearch keyword search, so the page stays discoverable.
 - Uploaded PDF documents now render with a dedicated page layout — a prominent open/download card for the PDF plus the AI summary — instead of the bare markdown stub with an inline link.
 
+### Fixed
+- A PDF attachment dereferenced by a document (via a plain markdown edit, `lekton-sync`, or document archiving — not just the admin upload form's own edit flow) was left permanently orphaned in S3, MongoDB, and Qdrant instead of being cleaned up; it is now deleted as soon as no document references it anymore.
+- Attachment indexing was marked fully `Failed` (forcing a wasteful full re-embed on retry) whenever stale-chunk cleanup failed after a successful upsert, even though the new content was already indexed correctly; that cleanup failure is now logged and treated as non-fatal.
+
 ## [0.25.7] 2026-07-03
 
 ### Fixed

@@ -33,6 +33,11 @@ pub struct SearchHit {
     pub title: String,
     pub tags: Vec<String>,
     pub content_preview: String,
+    /// Set when this hit came from a PDF attachment's page rather than the
+    /// document's own title/summary/tags — the match is inside the linked
+    /// PDF, on this page. `None` for ordinary document hits.
+    #[serde(default)]
+    pub page: Option<u32>,
 }
 
 /// Trait for search operations, enabling mock testing.
@@ -172,6 +177,7 @@ impl SearchService for MeilisearchService {
                 title: hit.result.title,
                 tags: hit.result.tags,
                 content_preview: hit.result.content_preview,
+                page: None,
             })
             .collect();
 

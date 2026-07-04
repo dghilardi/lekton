@@ -422,6 +422,7 @@ async fn main() {
     use lekton::db::settings_repository::MongoSettingsRepository;
     use lekton::db::user_prompt_preference_repository::MongoUserPromptPreferenceRepository;
     use lekton::db::user_repository::MongoUserRepository;
+    use lekton::search::attachment_search::AttachmentSearchService as _;
     use lekton::search::client::{MeilisearchService, SearchService as _};
     use lekton::storage::client::S3StorageClient;
     use leptos::prelude::*;
@@ -608,6 +609,33 @@ async fn main() {
             tracing::info!("Search not configured — feature disabled");
             None
         };
+    // Keyword search over PDF attachment content: a second Meilisearch index,
+    // same instance/credentials as `search_service`. Only useful together
+    // with attachment extraction, but its own availability only depends on
+    // the search feature — it's threaded into AttachmentExtractionService
+    // below regardless of whether attachment_indexing ends up enabled.
+    let attachment_search_service: Option<
+        Arc<dyn lekton::search::attachment_search::AttachmentSearchService>,
+    > = if config.features.search {
+        match lekton::search::attachment_search::MeilisearchAttachmentService::from_app_config(
+            &config.search,
+        ) {
+            Ok(service) => {
+                if let Err(e) = service.configure_index().await {
+                    tracing::warn!("Failed to configure Meilisearch attachment index: {e}");
+                }
+                Some(Arc::new(service))
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Meilisearch not available for attachment search: {e} — attachment keyword search disabled"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
     let search_reindex_state = if search_service.is_some() {
         Some(Arc::new(
             lekton::search::reindex::SearchReindexState::default(),
@@ -829,6 +857,7 @@ async fn main() {
                 asset_repo.clone(),
                 document_repo.clone(),
                 rag,
+                attachment_search_service.clone(),
                 extractors,
             ),
         );
@@ -866,6 +895,7 @@ async fn main() {
         rag_service,
         attachment_queue,
         attachment_service,
+        attachment_search_service,
         chat_repo,
         chat_service,
         search_reindex_state,

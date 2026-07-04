@@ -89,6 +89,8 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                                     let preview = hit.content_preview.clone();
                                                     let tags = hit.tags.clone();
                                                     let has_tags = !tags.is_empty();
+                                                    let has_page = hit.page.is_some();
+                                                    let page_badge = hit.page.map(|p| format!("PDF · page {p}")).unwrap_or_default();
 
                                                     view! {
                                                         <a
@@ -96,7 +98,14 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                                             class="block p-4 hover:bg-base-200 transition-colors"
                                                             on:click=move |_| set_is_open.set(false)
                                                         >
-                                                            <div class="font-semibold text-lg mb-1">{title}</div>
+                                                            <div class="flex items-center gap-2 mb-1">
+                                                                <div class="font-semibold text-lg">{title}</div>
+                                                                <Show when=move || has_page>
+                                                                    <span class="badge badge-sm badge-ghost text-base-content/60">
+                                                                        {page_badge.clone()}
+                                                                    </span>
+                                                                </Show>
+                                                            </div>
                                                             <div class="text-sm text-base-content/70 mb-2">{preview}</div>
                                                             <Show when=move || has_tags>
                                                                 <div class="flex gap-2 flex-wrap">
@@ -190,10 +199,16 @@ pub fn SearchBar() -> impl IntoView {
                                     view! {
                                         {hits.into_iter().map(|hit| {
                                             let slug = hit.slug.clone();
+                                            let page_badge = hit.page.map(|p| format!(" · PDF p.{p}"));
                                             view! {
                                                 <li>
                                                     <a href=format!("/docs/{}", slug) class="flex flex-col items-start">
-                                                        <span class="font-semibold">{hit.title}</span>
+                                                        <span class="font-semibold">
+                                                            {hit.title}
+                                                            {page_badge.map(|b| view! {
+                                                                <span class="text-xs font-normal text-base-content/50">{b}</span>
+                                                            })}
+                                                        </span>
                                                         <span class="text-xs text-base-content/50 truncate w-full">
                                                             {hit.content_preview}
                                                         </span>

@@ -16,10 +16,28 @@ pub async fn search_docs(query: String) -> Result<Vec<SearchHit>, ServerFnError>
         .ok_or_else(|| ServerFnError::new("Search not available"))?;
 
     let (allowed_levels, include_draft) = request_document_visibility(&state).await?;
-    let results = search_service
+    let mut results = search_service
         .search(&query, allowed_levels.as_deref(), include_draft)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    // Keyword hits inside PDF attachments, appended after document hits so
+    // ordinary documents (matched on title/summary/tags) stay primary.
+    if let Some(attachment_search) = &state.attachment_search_service {
+        match attachment_search
+            .search(&query, allowed_levels.as_deref())
+            .await
+        {
+            Ok(hits) => results.extend(hits.into_iter().map(|h| SearchHit {
+                slug: h.document_slug,
+                title: h.document_title,
+                tags: vec![],
+                content_preview: h.content_preview,
+                page: h.page,
+            })),
+            Err(e) => tracing::warn!("Attachment search failed: {e}"),
+        }
+    }
 
     Ok(results)
 }

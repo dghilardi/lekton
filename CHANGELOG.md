@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Admins can now archive an uploaded PDF document from its page (button next to Edit, with a confirmation dialog). Archiving de-indexes it from Meilisearch and RAG and unlinks the PDF asset, without deleting the underlying file.
+
 ### Changed
 - Guided document upload no longer indexes its markdown stub into RAG: the stub only holds the AI summary and a link, while the linked PDF is already indexed as an attachment, so indexing the stub duplicated content. Documents now carry a `skip_rag` flag (default off) that excludes them from the RAG vector store while keeping them in Meilisearch keyword search, so the page stays discoverable.
 - Uploaded PDF documents now render with a dedicated page layout — a prominent open/download card for the PDF plus the AI summary — instead of the bare markdown stub with an inline link.

@@ -336,6 +336,71 @@ pub async fn get_document_for_edit(slug: String) -> Result<DocumentEditData, Ser
     })
 }
 
+/// Archive an upload document: sets `is_archived`, removes it from Meilisearch
+/// and RAG, and unlinks the PDF it referenced (so the attachment's access
+/// levels are recomputed once nothing references it, mirroring sync's
+/// archive-missing behavior at `src/api/sync.rs`). The underlying PDF asset
+/// and content are not deleted, only unreferenced.
+#[server(ArchiveDocument, "/api")]
+pub async fn archive_document(slug: String) -> Result<(), ServerFnError> {
+    let state = expect_context::<AppState>();
+    require_admin_user(&state).await?;
+
+    if !state.features.document_upload {
+        return Err(ServerFnError::new("Document upload is disabled"));
+    }
+
+    let doc = state
+        .document_repo
+        .find_by_slug(&slug)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+        .filter(|d| !d.is_archived)
+        .ok_or_else(|| ServerFnError::new("Document not found"))?;
+
+    if doc.service_owner != "document-upload" {
+        return Err(ServerFnError::new(
+            "Only documents created via upload can be archived here",
+        ));
+    }
+
+    state
+        .document_repo
+        .set_archived(&slug, true)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    if let Some(search_svc) = &state.search_service {
+        if let Err(e) = search_svc.delete_document(&slug).await {
+            tracing::warn!("Failed to deindex archived document '{slug}' from search: {e}");
+        }
+    }
+
+    if let Some(rag_svc) = &state.rag_service {
+        if let Err(e) = rag_svc.delete_document(&slug).await {
+            tracing::warn!("Failed to remove archived document '{slug}' from RAG: {e}");
+        }
+
+        match state.asset_repo.set_references(&slug, &[]).await {
+            Ok(affected) if !affected.is_empty() => {
+                crate::rag::attachment_extraction::recompute_access_levels(
+                    rag_svc.as_ref(),
+                    state.asset_repo.as_ref(),
+                    state.document_repo.as_ref(),
+                    &affected,
+                )
+                .await;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!("Failed to update asset references for archived '{slug}': {e}")
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Build the markdown body for an uploaded document: the description followed by
 /// a download link to the asset. The link target is `/api/v1/assets/{key}` so
 /// the ingest pipeline records the document as referencing the asset.

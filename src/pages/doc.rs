@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::app::get_doc_html;
 use crate::auth::refresh_client::with_auth_retry;
 use crate::components::MarkdownContent;
+use crate::server::document_upload::archive_document;
 
 /// Data returned for rendering a document page.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -206,6 +207,11 @@ pub fn DocPage() -> impl IntoView {
         with_auth_retry(move || get_doc_html(slug.clone()))
     });
 
+    let show_archive_confirm = RwSignal::new(false);
+    let archiving = RwSignal::new(false);
+    let archive_error = RwSignal::new(Option::<String>::None);
+    let navigate = leptos_router::hooks::use_navigate();
+
     view! {
         <Suspense fallback=move || view! {
             <div class="flex justify-center py-12">
@@ -309,6 +315,20 @@ pub fn DocPage() -> impl IntoView {
                                                 "Edit"
                                             </a>
                                         </Show>
+                                        <Show when=can_edit_upload>
+                                            <button
+                                                type="button"
+                                                on:click=move |_| show_archive_confirm.set(true)
+                                                class="btn btn-ghost btn-sm flex-shrink-0 gap-1.5 text-base-content/60 hover:text-error"
+                                            >
+                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16">
+                                                    </path>
+                                                </svg>
+                                                "Archive"
+                                            </button>
+                                        </Show>
                                     </div>
                                     {content}
                                     // Last Updated footer
@@ -343,5 +363,59 @@ pub fn DocPage() -> impl IntoView {
                 })
             }}
         </Suspense>
+        <Show when=move || show_archive_confirm.get()>
+            {
+                let navigate = navigate.clone();
+                view! {
+                    <div class="modal modal-open">
+                        <div class="modal-box">
+                            <h3 class="font-bold text-lg">"Archive this document?"</h3>
+                            <p class="py-4 text-sm text-base-content/70">
+                                "The page will no longer be listed or searchable. The linked PDF is kept and can be re-linked from a new upload. This can be undone by re-uploading with the same slug."
+                            </p>
+                            <Show when=move || archive_error.get().is_some()>
+                                <div class="alert alert-error text-sm mb-2">
+                                    <span>{move || archive_error.get().unwrap_or_default()}</span>
+                                </div>
+                            </Show>
+                            <div class="modal-action">
+                                <button
+                                    type="button"
+                                    class="btn btn-ghost"
+                                    disabled=move || archiving.get()
+                                    on:click=move |_| show_archive_confirm.set(false)
+                                >
+                                    "Cancel"
+                                </button>
+                                <button
+                                    type="button"
+                                    class="btn btn-error"
+                                    disabled=move || archiving.get()
+                                    on:click=move |_| {
+                                        let current_slug = slug();
+                                        let navigate = navigate.clone();
+                                        archiving.set(true);
+                                        archive_error.set(None);
+                                        leptos::task::spawn_local(async move {
+                                            match with_auth_retry(move || archive_document(current_slug.clone())).await {
+                                                Ok(()) => {
+                                                    navigate("/", Default::default());
+                                                }
+                                                Err(e) => {
+                                                    archiving.set(false);
+                                                    archive_error.set(Some(e.to_string()));
+                                                }
+                                            }
+                                        });
+                                    }
+                                >
+                                    {move || if archiving.get() { "Archiving…" } else { "Archive" }}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                }
+            }
+        </Show>
     }
 }

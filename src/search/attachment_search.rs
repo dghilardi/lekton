@@ -50,6 +50,7 @@ pub struct AttachmentChunkDocument {
 pub struct AttachmentSearchHit {
     pub document_slug: String,
     pub document_title: String,
+    pub attachment_key: String,
     pub filename: String,
     pub page: Option<u32>,
     pub content_preview: String,
@@ -324,6 +325,7 @@ impl AttachmentSearchService for MeilisearchAttachmentService {
             .map(|hit| AttachmentSearchHit {
                 document_slug: hit.result.document_slug,
                 document_title: hit.result.document_title,
+                attachment_key: hit.result.attachment_key,
                 filename: hit.result.filename,
                 page: hit.result.page,
                 content_preview: hit.result.content_preview,

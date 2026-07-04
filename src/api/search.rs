@@ -46,6 +46,7 @@ pub async fn search_handler(
                 title: h.document_title,
                 tags: vec![],
                 content_preview: h.content_preview,
+                attachment_key: Some(h.attachment_key),
                 page: h.page,
             })),
             Err(e) => tracing::warn!("Attachment search failed: {e}"),

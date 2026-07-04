@@ -33,6 +33,10 @@ pub struct SearchHit {
     pub title: String,
     pub tags: Vec<String>,
     pub content_preview: String,
+    /// Asset key when this hit came from an attachment page. `None` for
+    /// ordinary document hits.
+    #[serde(default)]
+    pub attachment_key: Option<String>,
     /// Set when this hit came from a PDF attachment's page rather than the
     /// document's own title/summary/tags — the match is inside the linked
     /// PDF, on this page. `None` for ordinary document hits.
@@ -177,6 +181,7 @@ impl SearchService for MeilisearchService {
                 title: hit.result.title,
                 tags: hit.result.tags,
                 content_preview: hit.result.content_preview,
+                attachment_key: None,
                 page: None,
             })
             .collect();

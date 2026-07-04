@@ -2,6 +2,25 @@ use leptos::prelude::*;
 
 use crate::app::search_docs;
 use crate::auth::refresh_client::with_auth_retry;
+use crate::search::client::SearchHit;
+
+fn search_hit_href(hit: &SearchHit) -> String {
+    match hit.attachment_key.as_deref() {
+        Some(key) => match hit.page {
+            Some(page) => format!("/api/v1/assets/{key}#page={page}"),
+            None => format!("/api/v1/assets/{key}"),
+        },
+        None => format!("/docs/{}", hit.slug),
+    }
+}
+
+fn search_hit_target(hit: &SearchHit) -> &'static str {
+    if hit.attachment_key.is_some() {
+        "_blank"
+    } else {
+        "_self"
+    }
+}
 
 /// Global search modal triggered by Ctrl+K (or Cmd+K on Mac).
 #[component]
@@ -84,7 +103,8 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                         view! {
                                             <div class="divide-y divide-base-300">
                                                 {hits.into_iter().map(|hit| {
-                                                    let slug = hit.slug.clone();
+                                                    let href = search_hit_href(&hit);
+                                                    let target = search_hit_target(&hit);
                                                     let title = hit.title.clone();
                                                     let preview = hit.content_preview.clone();
                                                     let tags = hit.tags.clone();
@@ -94,7 +114,8 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
 
                                                     view! {
                                                         <a
-                                                            href=format!("/docs/{}", slug)
+                                                            href=href
+                                                            target=target
                                                             class="block p-4 hover:bg-base-200 transition-colors"
                                                             on:click=move |_| set_is_open.set(false)
                                                         >
@@ -198,11 +219,12 @@ pub fn SearchBar() -> impl IntoView {
                                 Ok(hits) => {
                                     view! {
                                         {hits.into_iter().map(|hit| {
-                                            let slug = hit.slug.clone();
+                                            let href = search_hit_href(&hit);
+                                            let target = search_hit_target(&hit);
                                             let page_badge = hit.page.map(|p| format!(" · PDF p.{p}"));
                                             view! {
                                                 <li>
-                                                    <a href=format!("/docs/{}", slug) class="flex flex-col items-start">
+                                                    <a href=href target=target class="flex flex-col items-start">
                                                         <span class="font-semibold">
                                                             {hit.title}
                                                             {page_badge.map(|b| view! {
@@ -229,5 +251,43 @@ pub fn SearchBar() -> impl IntoView {
                 </ul>
             </Show>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn search_hit_href_points_pdf_hits_to_asset_page() {
+        let hit = SearchHit {
+            slug: "manual".into(),
+            title: "Manual".into(),
+            tags: vec![],
+            content_preview: "preview".into(),
+            attachment_key: Some("files/manual.pdf".into()),
+            page: Some(7),
+        };
+
+        assert_eq!(
+            search_hit_href(&hit),
+            "/api/v1/assets/files/manual.pdf#page=7"
+        );
+        assert_eq!(search_hit_target(&hit), "_blank");
+    }
+
+    #[test]
+    fn search_hit_href_points_document_hits_to_docs_page() {
+        let hit = SearchHit {
+            slug: "manual".into(),
+            title: "Manual".into(),
+            tags: vec![],
+            content_preview: "preview".into(),
+            attachment_key: None,
+            page: None,
+        };
+
+        assert_eq!(search_hit_href(&hit), "/docs/manual");
+        assert_eq!(search_hit_target(&hit), "_self");
     }
 }

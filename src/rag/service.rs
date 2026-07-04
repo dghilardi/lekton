@@ -300,9 +300,23 @@ impl RagService for DefaultRagService {
         let num_chunks = points.len();
         let new_ids: Vec<String> = points.iter().map(|p| p.id.clone()).collect();
         self.vectorstore.upsert_chunks(points).await?;
-        self.vectorstore
+        // The new chunks are already indexed at this point, so a failure here is
+        // non-fatal: log and continue rather than marking the whole attachment
+        // Failed (which would force a wasteful full re-embed on retry). Leftover
+        // stale chunks self-heal on the next successful run, since that run's
+        // delete_stale call supersedes everything not in its own new_ids set —
+        // including chunks left behind by this failure.
+        if let Err(e) = self
+            .vectorstore
             .delete_stale_attachment_chunks(attachment_key, &new_ids)
-            .await?;
+            .await
+        {
+            tracing::warn!(
+                attachment_key,
+                "RAG: failed to delete stale attachment chunks after a successful upsert, \
+                 leaving duplicate/stale chunks until the next successful index: {e}"
+            );
+        }
 
         tracing::debug!(
             attachment_key,
@@ -337,6 +351,108 @@ impl RagService for DefaultRagService {
 mod tests {
     use super::*;
     use crate::config::{ChatStepConfig, LlmConfig};
+    use crate::rag::vectorstore::VectorSearchResult;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
+
+    struct FakeEmbedding;
+
+    #[async_trait]
+    impl EmbeddingService for FakeEmbedding {
+        async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, AppError> {
+            Ok(texts.iter().map(|_| vec![0.1, 0.2, 0.3]).collect())
+        }
+    }
+
+    /// A vector store whose `delete_stale_attachment_chunks` always fails, to
+    /// exercise the partial-failure path in `index_attachment` (upsert
+    /// succeeds, stale cleanup fails).
+    #[derive(Default)]
+    struct FailingDeleteStaleStore {
+        upserted: Mutex<Vec<VectorPoint>>,
+        delete_stale_called: AtomicBool,
+    }
+
+    #[async_trait]
+    impl VectorStore for FailingDeleteStaleStore {
+        async fn ensure_collection(&self, _: u32) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn upsert_chunks(&self, points: Vec<VectorPoint>) -> Result<(), AppError> {
+            self.upserted.lock().unwrap().extend(points);
+            Ok(())
+        }
+        async fn delete_by_slug(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn delete_stale_chunks(&self, _: &str, _: &[String]) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn delete_by_attachment_key(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn delete_stale_attachment_chunks(
+            &self,
+            _: &str,
+            _: &[String],
+        ) -> Result<(), AppError> {
+            self.delete_stale_called.store(true, Ordering::SeqCst);
+            Err(AppError::Internal("qdrant unavailable".to_string()))
+        }
+        async fn set_attachment_access_levels(
+            &self,
+            _: &str,
+            _: &[String],
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn search(
+            &self,
+            _: Vec<f32>,
+            _: usize,
+            _: Option<&[String]>,
+            _: bool,
+        ) -> Result<Vec<VectorSearchResult>, AppError> {
+            Ok(vec![])
+        }
+        async fn get_section_chunks(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<&[String]>,
+            _: bool,
+        ) -> Result<Vec<VectorSearchResult>, AppError> {
+            Ok(vec![])
+        }
+    }
+
+    #[tokio::test]
+    async fn index_attachment_succeeds_despite_stale_cleanup_failure() {
+        let vectorstore = Arc::new(FailingDeleteStaleStore::default());
+        let service = DefaultRagService::new(Arc::new(FakeEmbedding), vectorstore.clone(), 256, 32);
+
+        let pages = vec![AttachmentPage {
+            page_number: Some(1),
+            text: "some extracted PDF text long enough to form a chunk".to_string(),
+        }];
+
+        let result = service
+            .index_attachment("pdfs/a.pdf", "a.pdf", &pages, &["public".to_string()], &[])
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "a stale-cleanup failure after a successful upsert must not fail the whole index: {result:?}"
+        );
+        assert!(
+            !vectorstore.upserted.lock().unwrap().is_empty(),
+            "new chunks should still have been upserted"
+        );
+        assert!(
+            vectorstore.delete_stale_called.load(Ordering::SeqCst),
+            "stale cleanup should still have been attempted"
+        );
+    }
 
     #[tokio::test]
     async fn from_rag_config_fails_when_not_configured() {

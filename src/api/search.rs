@@ -48,9 +48,25 @@ pub async fn search_handler(
         .filter(|s| !s.is_empty())
         .collect();
 
-    let results = search_service
+    let mut results = search_service
         .search(&params.q, Some(levels.as_slice()), false)
         .await?;
+
+    if let Some(attachment_search) = &state.attachment_search_service {
+        match attachment_search
+            .search(&params.q, Some(levels.as_slice()))
+            .await
+        {
+            Ok(hits) => results.extend(hits.into_iter().map(|h| SearchHit {
+                slug: h.document_slug,
+                title: h.document_title,
+                tags: vec![],
+                content_preview: h.content_preview,
+                page: h.page,
+            })),
+            Err(e) => tracing::warn!("Attachment search failed: {e}"),
+        }
+    }
 
     Ok(axum::Json(results))
 }

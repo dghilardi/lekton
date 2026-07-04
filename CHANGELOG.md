@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Startup migrations now add the missing MongoDB unique/index coverage for `service_tokens`, `prompts`, chat history, feedback, version-history, settings, navigation ordering, and user prompt preferences, eliminating key collection scans and blocking duplicate logical keys before startup continues.
 - RAG parent-expansion now skips attachment hits instead of treating every attachment chunk as the same empty `(document_slug, section_anchor)` parent, preventing unrelated attachment text from being merged into a single chat context block.
 - The legacy image upload endpoint now requires an authenticated session, derives the served content type from the filename instead of client headers, and adds `Content-Disposition`/`nosniff` hardening when serving uploaded images.
 - `GET /api/v1/search` now derives document visibility from the authenticated user context instead of trusting client-supplied `access_levels`, closing an ACL bypass for restricted document and attachment search results.

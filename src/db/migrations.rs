@@ -5,6 +5,7 @@
 #[cfg(feature = "ssr")]
 mod inner {
     use crate::db::migration::MigrationPlan;
+    use futures::TryStreamExt;
     use mongodb::Database;
 
     pub fn build_plan() -> MigrationPlan {
@@ -59,6 +60,53 @@ mod inner {
                 "davide.ghilardi@comelit.it",
                 add_embedding_cache_index,
             )
+            .register(
+                "011_add_remaining_collection_indexes",
+                "davide.ghilardi@comelit.it",
+                add_remaining_collection_indexes,
+            )
+    }
+
+    fn format_duplicate_group_id(id: &bson::Bson) -> String {
+        match id {
+            bson::Bson::Document(doc) => serde_json::to_string(doc)
+                .unwrap_or_else(|_| format!("{doc:?}"))
+                .replace("\\\"", "\""),
+            other => other.to_string(),
+        }
+    }
+
+    async fn fail_on_duplicate_keys(
+        collection: &mongodb::Collection<bson::Document>,
+        change_id: &str,
+        label: &str,
+        group_id: bson::Bson,
+    ) -> Result<(), mongodb::error::Error> {
+        let pipeline = vec![
+            bson::doc! { "$group": { "_id": group_id, "count": { "$sum": 1 } } },
+            bson::doc! { "$match": { "count": { "$gt": 1 } } },
+            bson::doc! { "$sort": { "_id": 1 } },
+        ];
+
+        let mut cursor = collection.aggregate(pipeline).await?;
+        let mut duplicates = Vec::new();
+        while let Some(doc) = cursor.try_next().await? {
+            duplicates.push(format_duplicate_group_id(
+                doc.get("_id").unwrap_or(&bson::Bson::Null),
+            ));
+        }
+
+        if duplicates.is_empty() {
+            return Ok(());
+        }
+
+        Err(mongodb::error::Error::custom(format!(
+            "Migration {change_id} pre-flight failed: {} duplicate key(s) found in the \
+             '{label}' collection. Resolve them before restarting, then retry.\n\
+             Duplicate keys: {}",
+            duplicates.len(),
+            duplicates.join(", ")
+        )))
     }
 
     /// Backfills `created_at` on AccessLevelEntity documents created before the
@@ -184,7 +232,6 @@ mod inner {
     /// BUG-3), the migration fails with a clear message listing the offending slugs
     /// instead of an opaque MongoDB E11000 error.
     async fn add_documents_indexes(db: Database) -> Result<(), mongodb::error::Error> {
-        use futures::TryStreamExt;
         use mongodb::options::IndexOptions;
         use mongodb::IndexModel;
 
@@ -278,6 +325,339 @@ mod inner {
             )
             .await?;
         Ok(())
+    }
+
+    /// Creates missing indexes for repositories that still rely on collection scans
+    /// or race-prone logical keys.
+    async fn add_remaining_collection_indexes(db: Database) -> Result<(), mongodb::error::Error> {
+        use mongodb::options::IndexOptions;
+        use mongodb::IndexModel;
+
+        let service_tokens = db.collection::<bson::Document>("service_tokens");
+        fail_on_duplicate_keys(
+            &service_tokens,
+            "011",
+            "service_tokens",
+            bson::Bson::String("$id".to_string()),
+        )
+        .await?;
+        fail_on_duplicate_keys(
+            &service_tokens,
+            "011",
+            "service_tokens",
+            bson::Bson::String("$name".to_string()),
+        )
+        .await?;
+        fail_on_duplicate_keys(
+            &service_tokens,
+            "011",
+            "service_tokens",
+            bson::Bson::String("$token_hash".to_string()),
+        )
+        .await?;
+        service_tokens
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "id": 1 })
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+            )
+            .await?;
+        service_tokens
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "name": 1 })
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+            )
+            .await?;
+        service_tokens
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "token_hash": 1 })
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+            )
+            .await?;
+        service_tokens
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "user_id": 1, "token_type": 1, "created_at": -1 })
+                    .build(),
+            )
+            .await?;
+        service_tokens
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "token_type": 1, "created_at": -1 })
+                    .build(),
+            )
+            .await?;
+
+        let prompts = db.collection::<bson::Document>("prompts");
+        fail_on_duplicate_keys(
+            &prompts,
+            "011",
+            "prompts",
+            bson::Bson::String("$slug".to_string()),
+        )
+        .await?;
+        prompts
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "slug": 1 })
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+            )
+            .await?;
+        prompts
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! {
+                        "access_level": 1,
+                        "status": 1,
+                        "is_archived": 1,
+                        "name": 1,
+                        "slug": 1
+                    })
+                    .build(),
+            )
+            .await?;
+
+        let document_versions = db.collection::<bson::Document>("document_versions");
+        fail_on_duplicate_keys(
+            &document_versions,
+            "011",
+            "document_versions",
+            bson::Bson::Document(bson::doc! { "slug": "$slug", "version": "$version" }),
+        )
+        .await?;
+        document_versions
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "slug": 1, "version": 1 })
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+            )
+            .await?;
+        document_versions
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "slug": 1, "version": -1 })
+                    .build(),
+            )
+            .await?;
+
+        let prompt_versions = db.collection::<bson::Document>("prompt_versions");
+        fail_on_duplicate_keys(
+            &prompt_versions,
+            "011",
+            "prompt_versions",
+            bson::Bson::Document(bson::doc! { "slug": "$slug", "version": "$version" }),
+        )
+        .await?;
+        prompt_versions
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "slug": 1, "version": 1 })
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+            )
+            .await?;
+        prompt_versions
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "slug": 1, "version": -1 })
+                    .build(),
+            )
+            .await?;
+
+        let message_feedback = db.collection::<bson::Document>("message_feedback");
+        fail_on_duplicate_keys(
+            &message_feedback,
+            "011",
+            "message_feedback",
+            bson::Bson::Document(bson::doc! { "message_id": "$message_id", "user_id": "$user_id" }),
+        )
+        .await?;
+        message_feedback
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "message_id": 1, "user_id": 1 })
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+            )
+            .await?;
+        message_feedback
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "session_id": 1, "user_id": 1 })
+                    .build(),
+            )
+            .await?;
+        message_feedback
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "user_id": 1, "created_at": -1 })
+                    .build(),
+            )
+            .await?;
+        message_feedback
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "rating": 1, "created_at": -1 })
+                    .build(),
+            )
+            .await?;
+
+        let access_levels = db.collection::<bson::Document>("access_levels");
+        fail_on_duplicate_keys(
+            &access_levels,
+            "011",
+            "access_levels",
+            bson::Bson::String("$name".to_string()),
+        )
+        .await?;
+        access_levels
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "name": 1 })
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+            )
+            .await?;
+        access_levels
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "is_system": -1, "name": 1 })
+                    .build(),
+            )
+            .await?;
+
+        let chat_sessions = db.collection::<bson::Document>("chat_sessions");
+        fail_on_duplicate_keys(
+            &chat_sessions,
+            "011",
+            "chat_sessions",
+            bson::Bson::String("$id".to_string()),
+        )
+        .await?;
+        chat_sessions
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "id": 1 })
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+            )
+            .await?;
+        chat_sessions
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "user_id": 1, "updated_at": -1 })
+                    .build(),
+            )
+            .await?;
+
+        let chat_messages = db.collection::<bson::Document>("chat_messages");
+        fail_on_duplicate_keys(
+            &chat_messages,
+            "011",
+            "chat_messages",
+            bson::Bson::String("$id".to_string()),
+        )
+        .await?;
+        chat_messages
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "id": 1 })
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+            )
+            .await?;
+        chat_messages
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "session_id": 1, "created_at": -1 })
+                    .build(),
+            )
+            .await?;
+
+        let user_prompt_preferences = db.collection::<bson::Document>("user_prompt_preferences");
+        fail_on_duplicate_keys(
+            &user_prompt_preferences,
+            "011",
+            "user_prompt_preferences",
+            bson::Bson::Document(
+                bson::doc! { "user_id": "$user_id", "prompt_slug": "$prompt_slug" },
+            ),
+        )
+        .await?;
+        user_prompt_preferences
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "user_id": 1, "prompt_slug": 1 })
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+            )
+            .await?;
+
+        let settings = db.collection::<bson::Document>("settings");
+        fail_on_duplicate_keys(
+            &settings,
+            "011",
+            "settings",
+            bson::Bson::String("$key".to_string()),
+        )
+        .await?;
+        settings
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "key": 1 })
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+            )
+            .await?;
+
+        let navigation_order = db.collection::<bson::Document>("navigation_order");
+        fail_on_duplicate_keys(
+            &navigation_order,
+            "011",
+            "navigation_order",
+            bson::Bson::String("$slug".to_string()),
+        )
+        .await?;
+        navigation_order
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "slug": 1 })
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+            )
+            .await?;
+        navigation_order
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "weight": 1 })
+                    .build(),
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn format_duplicate_group_id_renders_compound_keys_readably() {
+            let rendered = format_duplicate_group_id(&bson::Bson::Document(
+                bson::doc! { "slug": "docs/a", "version": 3 },
+            ));
+
+            assert!(rendered.contains("\"slug\":\"docs/a\""));
+            assert!(rendered.contains("\"version\":3"));
+        }
     }
 }
 

@@ -669,6 +669,7 @@ mod tests {
             source_path: Some(format!("{slug}.md")),
             source_id: Some("test-source".to_string()),
             needs_reindex: false,
+            skip_rag: false,
         }
     }
 

@@ -180,6 +180,10 @@ pub async fn save_document_with_attachment(
         parent_slug: form.parent_slug.filter(|s| !s.trim().is_empty()),
         order: form.order,
         is_hidden: false,
+        // The stub body is just the summary + PDF link; the PDF itself is
+        // indexed as an attachment, so keep the stub out of RAG (it stays in
+        // Meilisearch, so the page remains discoverable by keyword search).
+        skip_rag: true,
         source_path: format!("document-upload/{slug}.md"),
         source_id: "document-upload".to_string(),
     };

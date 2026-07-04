@@ -20,6 +20,11 @@ pub struct DocPageData {
     /// lekton-sync). Such pages are read-only in the portal — editing them would
     /// be overwritten on the next sync — so no edit affordance is shown.
     pub is_sync_doc: bool,
+    /// Asset key of the linked PDF for upload documents. When present (together
+    /// with `is_upload_doc`), the page renders a specialized PDF layout with a
+    /// prominent download card and the summary, instead of the bare stub body.
+    /// `html` then holds only the rendered summary. `None` for other documents.
+    pub pdf_asset_key: Option<String>,
 }
 
 /// Breadcrumbs component to show document hierarchy based on slug.
@@ -112,6 +117,84 @@ fn TableOfContents(headings: Vec<crate::rendering::markdown::TocHeading>) -> imp
     .into_any()
 }
 
+/// Specialized layout for upload documents backed by a PDF: a prominent
+/// open/download card plus the AI-generated summary, in place of the bare
+/// markdown stub. Used when the document has a linked PDF asset.
+#[component]
+fn PdfDocContent(
+    title: String,
+    /// Pre-rendered, sanitized HTML of the summary (may be empty).
+    summary_html: String,
+    /// Asset key of the linked PDF (served at `/api/v1/assets/{key}`).
+    asset_key: String,
+    tags: Vec<String>,
+) -> impl IntoView {
+    let has_tags = !tags.is_empty();
+    let has_summary = !summary_html.trim().is_empty();
+    let asset_url = format!("/api/v1/assets/{asset_key}");
+    let download_url = asset_url.clone();
+
+    view! {
+        <header class="mb-6">
+            <h1 class="text-3xl font-bold mb-3 break-words">{title}</h1>
+            <Show when=move || has_tags>
+                <div class="flex flex-wrap gap-2">
+                    {tags.iter().map(|tag| {
+                        let tag_text = tag.clone();
+                        view! { <span class="badge badge-outline badge-sm">{tag_text}</span> }
+                    }).collect::<Vec<_>>()}
+                </div>
+            </Show>
+        </header>
+
+        // Prominent PDF card — the primary affordance for this page.
+        <div class="card bg-base-200/60 border border-base-300 mb-8">
+            <div class="card-body flex-row items-center gap-4 py-4">
+                <div class="flex items-center justify-center w-11 h-11 rounded-lg bg-error/10 text-error flex-shrink-0">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                    </svg>
+                </div>
+                <div class="flex-1 min-w-0">
+                    <div class="font-semibold leading-tight">"PDF document"</div>
+                    <div class="text-sm text-base-content/60">"View the full source file"</div>
+                </div>
+                <div class="flex gap-2 flex-shrink-0">
+                    <a href=asset_url target="_blank" rel="noopener"
+                        class="btn btn-primary btn-sm gap-1.5">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                        </svg>
+                        "Open"
+                    </a>
+                    <a href=download_url download
+                        class="btn btn-ghost btn-sm gap-1.5">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                        "Download"
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        // AI-generated summary of the document.
+        <Show when=move || has_summary>
+            <section>
+                <h2 class="text-xs font-semibold uppercase tracking-wider text-base-content/50 mb-3">
+                    "Summary"
+                </h2>
+                <div class="prose prose-lg max-w-none">
+                    <MarkdownContent html=summary_html.clone() />
+                </div>
+            </section>
+        </Show>
+    }
+}
+
 /// Document viewer page — renders markdown content fetched from S3.
 #[component]
 pub fn DocPage() -> impl IntoView {
@@ -155,6 +238,45 @@ pub fn DocPage() -> impl IntoView {
                         };
                         let edit_href = format!("/edit/{current_slug}");
                         let upload_edit_href = format!("/admin/upload?edit={current_slug}");
+
+                        // Upload documents backed by a PDF get a specialized layout
+                        // (download card + summary, no table of contents); everything
+                        // else renders the full markdown body with its ToC.
+                        let render_pdf = is_upload_doc && data.pdf_asset_key.is_some();
+                        let content = if render_pdf {
+                            let asset_key = data.pdf_asset_key.clone().unwrap_or_default();
+                            view! {
+                                <PdfDocContent
+                                    title=data.title.clone()
+                                    summary_html=data.html.clone()
+                                    asset_key=asset_key
+                                    tags=tags.clone()
+                                />
+                            }.into_any()
+                        } else {
+                            view! {
+                                // Tags — shown between breadcrumb and content
+                                <Show when=move || has_tags>
+                                    <div class="flex flex-wrap gap-2 mb-6">
+                                        {tags.iter().map(|tag| {
+                                            let tag_text = tag.clone();
+                                            view! {
+                                                <span class="badge badge-outline badge-sm">{tag_text}</span>
+                                            }
+                                        }).collect::<Vec<_>>()}
+                                    </div>
+                                </Show>
+                                // The markdown H1 serves as the page title — no separate h1 here
+                                <article class="prose prose-lg max-w-none">
+                                    <MarkdownContent html=data.html />
+                                </article>
+                            }.into_any()
+                        };
+                        let toc = if render_pdf {
+                            ().into_any()
+                        } else {
+                            view! { <TableOfContents headings=data.headings /> }.into_any()
+                        };
                         view! {
                             <div class="flex gap-8 items-start">
                                 <div class="flex-1 min-w-0">
@@ -188,21 +310,7 @@ pub fn DocPage() -> impl IntoView {
                                             </a>
                                         </Show>
                                     </div>
-                                    // Tags — shown between breadcrumb and content
-                                    <Show when=move || has_tags>
-                                        <div class="flex flex-wrap gap-2 mb-6">
-                                            {tags.iter().map(|tag| {
-                                                let tag_text = tag.clone();
-                                                view! {
-                                                    <span class="badge badge-outline badge-sm">{tag_text}</span>
-                                                }
-                                            }).collect::<Vec<_>>()}
-                                        </div>
-                                    </Show>
-                                    // The markdown H1 serves as the page title — no separate h1 here
-                                    <article class="prose prose-lg max-w-none">
-                                        <MarkdownContent html=data.html />
-                                    </article>
+                                    {content}
                                     // Last Updated footer
                                     <div class="divider mt-12"></div>
                                     <div class="flex items-center gap-2 text-sm text-base-content/50 pb-4">
@@ -214,7 +322,7 @@ pub fn DocPage() -> impl IntoView {
                                         <span>"Last updated: " {data.last_updated}</span>
                                     </div>
                                 </div>
-                                <TableOfContents headings=data.headings />
+                                {toc}
                             </div>
                         }.into_any()
                     }

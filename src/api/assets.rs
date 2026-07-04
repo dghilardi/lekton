@@ -1501,6 +1501,7 @@ mod tests {
             source_path: None,
             source_id: None,
             needs_reindex: false,
+            skip_rag: false,
         }
     }
 

@@ -122,6 +122,7 @@ pub async fn get_doc_html(
                 tags: vec![],
                 is_upload_doc: false,
                 is_sync_doc: false,
+                pdf_asset_key: None,
             }));
         }
 
@@ -175,6 +176,7 @@ pub async fn get_doc_html(
             tags: vec![],
             is_upload_doc: false,
             is_sync_doc: false,
+            pdf_asset_key: None,
         }));
     };
 
@@ -203,33 +205,49 @@ pub async fn get_doc_html(
 
     let raw = String::from_utf8(content_bytes).map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    let base_html = render_markdown(&raw);
-
-    let html = if let Some(ref source_id) = doc.source_id {
-        use crate::rendering::link_transform::{
-            build_siblings_map, rewrite_links_in_html, LinkContext, TransformTarget,
-        };
-        let siblings_docs = state
-            .document_repo
-            .find_all_by_source_id(source_id)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-        let siblings = build_siblings_map(&siblings_docs);
-        let ctx = LinkContext {
-            source_path: doc.source_path.as_deref(),
-            siblings: &siblings,
-        };
-        rewrite_links_in_html(&base_html, &ctx, TransformTarget::Web)
-    } else {
-        base_html
-    };
-
-    let headings = extract_headings(&raw);
     let last_updated = doc.last_updated.format("%B %d, %Y").to_string();
     let is_upload_doc = doc.service_owner == "document-upload";
     // Externally managed (ingest API / lekton-sync) when it carries a source id
     // and isn't an upload-form document.
     let is_sync_doc = !is_upload_doc && doc.source_id.as_deref().is_some_and(|s| !s.is_empty());
+
+    // Body rendering diverges by provenance:
+    // - Upload documents get a specialized PDF layout, so `html` holds only the
+    //   rendered summary (the PDF link is shown as a native download card) and
+    //   there is no table of contents. The asset key drives that card.
+    // - Everything else renders the full markdown body, with sync link-rewriting.
+    let (html, headings, pdf_asset_key) = if is_upload_doc {
+        let summary_html = doc
+            .summary
+            .as_deref()
+            .map(render_markdown)
+            .unwrap_or_default();
+        let pdf_asset_key = crate::rendering::links::extract_asset_keys(&raw)
+            .into_iter()
+            .next();
+        (summary_html, Vec::new(), pdf_asset_key)
+    } else {
+        let base_html = render_markdown(&raw);
+        let html = if let Some(ref source_id) = doc.source_id {
+            use crate::rendering::link_transform::{
+                build_siblings_map, rewrite_links_in_html, LinkContext, TransformTarget,
+            };
+            let siblings_docs = state
+                .document_repo
+                .find_all_by_source_id(source_id)
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))?;
+            let siblings = build_siblings_map(&siblings_docs);
+            let ctx = LinkContext {
+                source_path: doc.source_path.as_deref(),
+                siblings: &siblings,
+            };
+            rewrite_links_in_html(&base_html, &ctx, TransformTarget::Web)
+        } else {
+            base_html
+        };
+        (html, extract_headings(&raw), None)
+    };
 
     Ok(Some(crate::pages::DocPageData {
         title: doc.title,
@@ -239,5 +257,6 @@ pub async fn get_doc_html(
         tags: doc.tags,
         is_upload_doc,
         is_sync_doc,
+        pdf_asset_key,
     }))
 }

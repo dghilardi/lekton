@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.25.10] 2026-07-04
+
 ### Fixed
 - PDF keyword-search hits now open the underlying asset at `#page=N` like RAG attachment citations instead of routing through the document page.
 - Restored the top navbar admin entry on narrower desktop widths by preventing the docs-link cluster from clipping the system links.

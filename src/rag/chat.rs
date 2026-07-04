@@ -650,8 +650,13 @@ impl ChatService {
             return Ok(results);
         }
 
+        let (expandable_results, passthrough_results) = partition_parent_expansion_results(results);
+        if expandable_results.is_empty() {
+            return Ok(passthrough_results);
+        }
+
         let (allowed_levels, include_draft) = user_ctx.document_visibility();
-        let parents = unique_parents_in_order(&results);
+        let parents = unique_parents_in_order(&expandable_results);
         tracing::debug!(
             session_id = %session_id,
             parents = parents.len(),
@@ -667,7 +672,8 @@ impl ChatService {
             )
         });
         let fetched = futures::future::join_all(section_fetches).await;
-        let merged = merge_parent_sections(results, parents, fetched)?;
+        let mut merged = merge_parent_sections(expandable_results, parents, fetched)?;
+        merged.extend(passthrough_results);
 
         tracing::debug!(
             session_id = %session_id,
@@ -1067,6 +1073,14 @@ fn take_with_guarantee(
     }
 
     result
+}
+
+fn partition_parent_expansion_results(
+    results: Vec<VectorSearchResult>,
+) -> (Vec<VectorSearchResult>, Vec<VectorSearchResult>) {
+    results
+        .into_iter()
+        .partition(|result| result.source_kind != SourceKind::Attachment)
 }
 
 fn unique_parents_in_order(results: &[VectorSearchResult]) -> Vec<(String, String)> {
@@ -1511,6 +1525,36 @@ mod tests {
             "## Storage\n\nPart one.\n\nPart two."
         );
         assert_eq!(expanded[1].chunk_text, "## Usage\n\nOnly chunk.");
+    }
+
+    #[test]
+    fn partition_parent_expansion_results_keeps_attachments_out_of_parent_fetch() {
+        let document_hit = VectorSearchResult {
+            point_id: "doc-1".into(),
+            document_slug: "docs/a".into(),
+            section_anchor: "intro".into(),
+            source_kind: SourceKind::Document,
+            ..Default::default()
+        };
+        let attachment_hit = VectorSearchResult {
+            point_id: "att-1".into(),
+            document_slug: String::new(),
+            section_anchor: String::new(),
+            source_kind: SourceKind::Attachment,
+            attachment_key: Some("files/a.pdf".into()),
+            source_page: Some(3),
+            ..Default::default()
+        };
+
+        let (expandable, passthrough) =
+            partition_parent_expansion_results(vec![document_hit.clone(), attachment_hit.clone()]);
+
+        assert_eq!(expandable.len(), 1);
+        assert_eq!(expandable[0].point_id, document_hit.point_id);
+        assert_eq!(passthrough.len(), 1);
+        assert_eq!(passthrough[0].point_id, attachment_hit.point_id);
+        assert_eq!(passthrough[0].attachment_key, attachment_hit.attachment_key);
+        assert_eq!(passthrough[0].source_page, attachment_hit.source_page);
     }
 
     fn make_chunk(id: &str, score: f32) -> VectorSearchResult {

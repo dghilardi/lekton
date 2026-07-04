@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Guided document upload no longer indexes its markdown stub into RAG: the stub only holds the AI summary and a link, while the linked PDF is already indexed as an attachment, so indexing the stub duplicated content. Documents now carry a `skip_rag` flag (default off) that excludes them from the RAG vector store while keeping them in Meilisearch keyword search, so the page stays discoverable.
+
 ## [0.25.7] 2026-07-03
 
 ### Fixed

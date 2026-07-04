@@ -319,6 +319,7 @@ pub async fn process_ingest(
         source_path: Some(request.source_path.clone()),
         source_id: Some(request.source_id.clone()),
         needs_reindex: false,
+        skip_rag: request.skip_rag,
     };
 
     // 10. (Re)index in Meilisearch + RAG *before* persisting, so the stored
@@ -340,7 +341,15 @@ pub async fn process_ingest(
     }
 
     if let Some(rag) = ctx.rag {
-        if let Err(e) = rag
+        if doc.skip_rag {
+            // Deliberately excluded from RAG (e.g. PDF upload stub — the linked
+            // attachment is indexed instead). Delete any chunks a previous
+            // ingest may have left, so opting out cleans up stale vectors.
+            if let Err(e) = rag.delete_document(&doc.slug).await {
+                tracing::warn!(slug = %doc.slug, "Failed to remove RAG chunks for skip_rag document: {e}");
+                indexed_ok = false;
+            }
+        } else if let Err(e) = rag
             .index_document(
                 &doc.slug,
                 &doc.title,
@@ -900,6 +909,7 @@ mod tests {
             parent_slug: None,
             order: 0,
             is_hidden: false,
+            skip_rag: false,
         }
     }
 
@@ -1043,6 +1053,87 @@ mod tests {
         assert!(!outcome.response.indexed);
         let doc = repo.find_by_slug("docs/hello").await.unwrap().unwrap();
         assert!(doc.needs_reindex);
+    }
+
+    /// A RAG service that records whether each method was invoked, so tests can
+    /// assert that `skip_rag` documents bypass indexing.
+    #[derive(Default)]
+    struct RecordingRagService {
+        indexed: std::sync::atomic::AtomicBool,
+        deleted: std::sync::atomic::AtomicBool,
+    }
+
+    #[async_trait]
+    impl crate::rag::service::RagService for RecordingRagService {
+        async fn index_document(
+            &self,
+            _slug: &str,
+            _title: &str,
+            _content: &str,
+            _access_level: &str,
+            _is_draft: bool,
+            _tags: &[String],
+        ) -> Result<(), AppError> {
+            self.indexed
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+        async fn delete_document(&self, _slug: &str) -> Result<(), AppError> {
+            self.deleted
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+        async fn index_attachment(
+            &self,
+            _attachment_key: &str,
+            _filename: &str,
+            _pages: &[crate::rag::service::AttachmentPage],
+            _access_levels: &[String],
+            _tags: &[String],
+        ) -> Result<usize, AppError> {
+            Ok(0)
+        }
+        async fn delete_attachment(&self, _attachment_key: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn update_attachment_access_levels(
+            &self,
+            _attachment_key: &str,
+            _access_levels: &[String],
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ingest_skip_rag_bypasses_rag_indexing() {
+        use std::sync::atomic::Ordering::SeqCst;
+
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let mut ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+        let rag = RecordingRagService::default();
+        ctx.rag = Some(&rag);
+
+        let mut request = make_request("valid-token", "docs/hello");
+        request.skip_rag = true;
+        let outcome = process_ingest(&ctx, request).await.unwrap();
+
+        // RAG indexing is skipped; any pre-existing chunks are cleaned up instead.
+        assert!(
+            !rag.indexed.load(SeqCst),
+            "skip_rag must not index the document in RAG"
+        );
+        assert!(
+            rag.deleted.load(SeqCst),
+            "skip_rag should delete any pre-existing RAG chunks"
+        );
+        // Skipping RAG is intentional, not a failure, so the doc stays in sync.
+        assert!(outcome.response.indexed);
+        let doc = repo.find_by_slug("docs/hello").await.unwrap().unwrap();
+        assert!(!doc.needs_reindex);
+        assert!(doc.skip_rag);
     }
 
     #[tokio::test]

@@ -314,6 +314,7 @@ mod tests {
             source_path: None,
             source_id: None,
             needs_reindex: false,
+            skip_rag: false,
         };
 
         let search_doc = build_search_document(&doc, "# Getting Started\n\nWelcome to Lekton.");
@@ -349,6 +350,7 @@ mod tests {
             source_path: None,
             source_id: None,
             needs_reindex: false,
+            skip_rag: false,
         };
 
         let search_doc = build_search_document(&doc, "# WIP content");

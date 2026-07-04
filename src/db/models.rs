@@ -79,6 +79,14 @@ pub struct Document {
     /// search/embedding outage instead of the drift being silent.
     #[serde(default)]
     pub needs_reindex: bool,
+    /// When `true`, this document is deliberately excluded from the RAG vector
+    /// store (Qdrant). Used for stub documents whose useful content lives
+    /// elsewhere and is already indexed — e.g. the markdown stub created by the
+    /// admin PDF upload, where the linked PDF is indexed as an attachment.
+    /// The document is still indexed in Meilisearch (keyword search) so the
+    /// page stays discoverable. Defaults to `false` (indexed in RAG).
+    #[serde(default)]
+    pub skip_rag: bool,
 }
 
 /// Represents an API schema entry stored in MongoDB.
@@ -339,6 +347,10 @@ pub struct IngestRequest {
     /// Whether to hide from navigation (defaults to false).
     #[serde(default)]
     pub is_hidden: bool,
+    /// When `true`, exclude this document from the RAG vector store while still
+    /// indexing it in Meilisearch. Defaults to `false`. Not sent by the CLI.
+    #[serde(default)]
+    pub skip_rag: bool,
     /// The relative path of the source file within the repository (e.g.,
     /// `docs/guides/intro.md`). Required for stable slug tracking across
     /// title changes. Used by the server to resolve the canonical slug for
@@ -401,6 +413,7 @@ mod tests {
             source_path: Some("engineering/deployment-guide.md".to_string()),
             source_id: Some("test-source".to_string()),
             needs_reindex: false,
+            skip_rag: false,
         };
 
         let json = serde_json::to_string(&doc).unwrap();
@@ -494,6 +507,7 @@ mod tests {
             source_path: None,
             source_id: None,
             needs_reindex: false,
+            skip_rag: false,
         };
 
         let json = serde_json::to_string(&doc).unwrap();

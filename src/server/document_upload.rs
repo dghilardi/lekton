@@ -223,12 +223,14 @@ pub async fn save_document_with_attachment(
         if let Some(rag) = state.rag_service.clone() {
             let asset_repo = state.asset_repo.clone();
             let doc_repo = state.document_repo.clone();
+            let storage = state.storage_client.clone();
             let keys = outcome.assets_to_recompute;
             tokio::spawn(async move {
                 crate::rag::attachment_extraction::recompute_access_levels(
                     rag.as_ref(),
                     asset_repo.as_ref(),
                     doc_repo.as_ref(),
+                    storage.as_ref(),
                     &keys,
                 )
                 .await;
@@ -245,12 +247,14 @@ pub async fn save_document_with_attachment(
         if let Some(rag) = state.rag_service.clone() {
             let asset_repo = state.asset_repo.clone();
             let doc_repo = state.document_repo.clone();
+            let storage = state.storage_client.clone();
             let key = form.asset_key.clone();
             tokio::spawn(async move {
                 crate::rag::attachment_extraction::recompute_access_levels(
                     rag.as_ref(),
                     asset_repo.as_ref(),
                     doc_repo.as_ref(),
+                    storage.as_ref(),
                     std::slice::from_ref(&key),
                 )
                 .await;
@@ -258,24 +262,11 @@ pub async fn save_document_with_attachment(
         }
     }
 
-    // If the PDF was replaced during an edit, clean up the now-unreferenced old
-    // asset (S3 object, metadata, and RAG chunks). process_ingest has already
-    // unlinked this document from it; only delete when nothing else references
-    // it, so a PDF shared by several documents is left intact.
-    if let Some(old_key) = old_asset_key {
-        if old_key != form.asset_key && !old_key.is_empty() {
-            match state.asset_repo.find_by_key(&old_key).await {
-                Ok(Some(old_asset)) if old_asset.referenced_by.is_empty() => {
-                    let _ = state.storage_client.delete_object(&old_asset.s3_key).await;
-                    let _ = state.asset_repo.delete(&old_key).await;
-                    if let Some(rag) = state.rag_service.as_deref() {
-                        let _ = rag.delete_attachment(&old_key).await;
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
+    // A PDF replaced during this edit is cleaned up by the recompute_access_levels
+    // call further up (the `assets_to_recompute` block): process_ingest already
+    // unlinked this document from the old asset and included it there, so once
+    // nothing else references it, that call deletes its S3 object, MongoDB
+    // record, and RAG chunks (see src/rag/attachment_extraction.rs).
 
     Ok(slug)
 }
@@ -387,6 +378,7 @@ pub async fn archive_document(slug: String) -> Result<(), ServerFnError> {
                     rag_svc.as_ref(),
                     state.asset_repo.as_ref(),
                     state.document_repo.as_ref(),
+                    state.storage_client.as_ref(),
                     &affected,
                 )
                 .await;

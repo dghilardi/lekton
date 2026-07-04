@@ -75,6 +75,7 @@ pub async fn process_sync(
     search: Option<&dyn SearchService>,
     rag: Option<&dyn RagService>,
     asset_repo: Option<&dyn AssetRepository>,
+    storage: Option<&dyn crate::storage::client::StorageClient>,
     legacy_token: Option<&str>,
     request: SyncRequest,
 ) -> Result<SyncResponse, AppError> {
@@ -214,11 +215,11 @@ pub async fn process_sync(
                 // Drop the archived document from the assets it referenced and
                 // recompute their access levels, so an attachment no longer
                 // inherits an archived document's visibility.
-                if let Some(asset_repo) = asset_repo {
+                if let (Some(asset_repo), Some(storage)) = (asset_repo, storage) {
                     match asset_repo.set_references(slug, &[]).await {
                         Ok(affected) if !affected.is_empty() => {
                             crate::rag::attachment_extraction::recompute_access_levels(
-                                rag_svc, asset_repo, repo, &affected,
+                                rag_svc, asset_repo, repo, storage, &affected,
                             )
                             .await;
                         }
@@ -299,6 +300,7 @@ pub async fn sync_handler(
         state.search_service.as_deref(),
         state.rag_service.as_deref(),
         Some(state.asset_repo.as_ref()),
+        Some(state.storage_client.as_ref()),
         Some(&state.service_token),
         request,
     )
@@ -711,6 +713,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             Some("legacy"),
             request,
         )
@@ -738,6 +741,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             Some("legacy"),
             request,
         )
@@ -762,6 +766,7 @@ mod tests {
         let result = process_sync(
             &repo,
             &token_repo,
+            None,
             None,
             None,
             None,
@@ -794,6 +799,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             Some("legacy"),
             request,
         )
@@ -820,6 +826,7 @@ mod tests {
         process_sync(
             &repo,
             &token_repo,
+            None,
             None,
             None,
             None,
@@ -852,6 +859,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             Some("other-legacy"),
             request,
         )
@@ -879,6 +887,7 @@ mod tests {
         let result = process_sync(
             &repo,
             &token_repo,
+            None,
             None,
             None,
             None,
@@ -913,6 +922,7 @@ mod tests {
             Some(&search),
             None,
             None,
+            None,
             Some("legacy"),
             request,
         )
@@ -943,6 +953,7 @@ mod tests {
             None,
             Some(&rag),
             None,
+            None,
             Some("legacy"),
             request,
         )
@@ -971,6 +982,7 @@ mod tests {
             &repo,
             &token_repo,
             Some(&search),
+            None,
             None,
             None,
             Some("legacy"),
@@ -1017,6 +1029,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             Some("legacy"),
             request,
         )
@@ -1056,6 +1069,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             Some("legacy"),
             request,
         )
@@ -1092,6 +1106,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             Some("legacy"),
             request,
         )
@@ -1122,6 +1137,7 @@ mod tests {
         let result = process_sync(
             &repo,
             &token_repo,
+            None,
             None,
             None,
             None,
@@ -1161,6 +1177,7 @@ mod tests {
         let result = process_sync(
             &repo,
             &token_repo,
+            None,
             None,
             None,
             None,
@@ -1206,6 +1223,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             Some("legacy"),
             request,
         )
@@ -1248,6 +1266,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             Some("legacy"),
             request,
         )
@@ -1281,6 +1300,7 @@ mod tests {
         let result = process_sync(
             &repo,
             &token_repo,
+            None,
             None,
             None,
             None,
@@ -1318,6 +1338,7 @@ mod tests {
         process_sync(
             &repo,
             &token_repo,
+            None,
             None,
             None,
             None,

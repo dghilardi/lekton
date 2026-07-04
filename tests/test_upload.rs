@@ -6,6 +6,9 @@ use axum_test::multipart::{MultipartForm, Part};
 async fn upload_image_success() {
     let env = common::TestEnv::start().await;
     let server = env.server();
+    let user = env
+        .create_test_user("upload-user", "upload@test.com", false)
+        .await;
 
     // Create a minimal 1x1 PNG
     let png_bytes: Vec<u8> = vec![
@@ -27,7 +30,11 @@ async fn upload_image_success() {
             .mime_type("image/png"),
     );
 
-    let response = server.post("/api/v1/upload-image").multipart(form).await;
+    let response = server
+        .post("/api/v1/upload-image")
+        .add_cookie(env.auth_cookie(&user))
+        .multipart(form)
+        .await;
 
     response.assert_status_ok();
 
@@ -49,6 +56,9 @@ async fn upload_image_success() {
 async fn upload_rejects_non_image() {
     let env = common::TestEnv::start().await;
     let server = env.server_permissive();
+    let user = env
+        .create_test_user("upload-user", "upload@test.com", false)
+        .await;
 
     let form = MultipartForm::new().add_part(
         "file",
@@ -57,7 +67,11 @@ async fn upload_rejects_non_image() {
             .mime_type("text/plain"),
     );
 
-    let response = server.post("/api/v1/upload-image").multipart(form).await;
+    let response = server
+        .post("/api/v1/upload-image")
+        .add_cookie(env.auth_cookie(&user))
+        .multipart(form)
+        .await;
 
     response.assert_status_bad_request();
 }
@@ -66,6 +80,9 @@ async fn upload_rejects_non_image() {
 async fn upload_missing_file_field() {
     let env = common::TestEnv::start().await;
     let server = env.server_permissive();
+    let user = env
+        .create_test_user("upload-user", "upload@test.com", false)
+        .await;
 
     let form = MultipartForm::new().add_part(
         "wrong_field",
@@ -74,7 +91,52 @@ async fn upload_missing_file_field() {
             .mime_type("image/png"),
     );
 
+    let response = server
+        .post("/api/v1/upload-image")
+        .add_cookie(env.auth_cookie(&user))
+        .multipart(form)
+        .await;
+
+    response.assert_status_bad_request();
+}
+
+#[tokio::test]
+async fn upload_requires_authentication() {
+    let env = common::TestEnv::start().await;
+    let server = env.server_permissive();
+
+    let form = MultipartForm::new().add_part(
+        "file",
+        Part::bytes(vec![0x89, 0x50, 0x4E, 0x47])
+            .file_name("test.png")
+            .mime_type("image/png"),
+    );
+
     let response = server.post("/api/v1/upload-image").multipart(form).await;
+
+    response.assert_status_unauthorized();
+}
+
+#[tokio::test]
+async fn upload_rejects_disguised_html_extension() {
+    let env = common::TestEnv::start().await;
+    let server = env.server_permissive();
+    let user = env
+        .create_test_user("upload-user", "upload@test.com", false)
+        .await;
+
+    let form = MultipartForm::new().add_part(
+        "file",
+        Part::bytes(b"<html><script>alert(1)</script></html>".to_vec())
+            .file_name("evil.html")
+            .mime_type("image/png"),
+    );
+
+    let response = server
+        .post("/api/v1/upload-image")
+        .add_cookie(env.auth_cookie(&user))
+        .multipart(form)
+        .await;
 
     response.assert_status_bad_request();
 }
@@ -83,6 +145,9 @@ async fn upload_missing_file_field() {
 async fn serve_image_returns_correct_content_type() {
     let env = common::TestEnv::start().await;
     let server = env.server();
+    let user = env
+        .create_test_user("upload-user", "upload@test.com", false)
+        .await;
 
     // Upload a PNG
     let png_bytes: Vec<u8> = vec![
@@ -100,7 +165,11 @@ async fn serve_image_returns_correct_content_type() {
             .mime_type("image/png"),
     );
 
-    let upload_response = server.post("/api/v1/upload-image").multipart(form).await;
+    let upload_response = server
+        .post("/api/v1/upload-image")
+        .add_cookie(env.auth_cookie(&user))
+        .multipart(form)
+        .await;
 
     let body: serde_json::Value = upload_response.json();
     let url = body["url"].as_str().unwrap();
@@ -116,6 +185,62 @@ async fn serve_image_returns_correct_content_type() {
         .to_str()
         .unwrap();
     assert_eq!(content_type, "image/png");
+    assert_eq!(
+        response
+            .headers()
+            .get("x-content-type-options")
+            .expect("X-Content-Type-Options header should be present")
+            .to_str()
+            .unwrap(),
+        "nosniff"
+    );
+}
+
+#[tokio::test]
+async fn serve_svg_forces_attachment_disposition() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+    let user = env
+        .create_test_user("upload-user", "upload@test.com", false)
+        .await;
+
+    let form = MultipartForm::new().add_part(
+        "file",
+        Part::bytes(b"<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>".to_vec())
+            .file_name("serve_test.svg")
+            .mime_type("image/svg+xml"),
+    );
+
+    let upload_response = server
+        .post("/api/v1/upload-image")
+        .add_cookie(env.auth_cookie(&user))
+        .multipart(form)
+        .await;
+    upload_response.assert_status_ok();
+
+    let body: serde_json::Value = upload_response.json();
+    let url = body["url"].as_str().unwrap();
+
+    let response = server.get(url).await;
+    response.assert_status_ok();
+    assert_eq!(
+        response
+            .headers()
+            .get("content-disposition")
+            .expect("Content-Disposition header should be present")
+            .to_str()
+            .unwrap(),
+        "attachment"
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get("x-content-type-options")
+            .expect("X-Content-Type-Options header should be present")
+            .to_str()
+            .unwrap(),
+        "nosniff"
+    );
 }
 
 #[tokio::test]

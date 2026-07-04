@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- The legacy image upload endpoint now requires an authenticated session, derives the served content type from the filename instead of client headers, and adds `Content-Disposition`/`nosniff` hardening when serving uploaded images.
 - `GET /api/v1/search` now derives document visibility from the authenticated user context instead of trusting client-supplied `access_levels`, closing an ACL bypass for restricted document and attachment search results.
 
 ## [0.25.9] 2026-07-04

@@ -16,6 +16,7 @@ pub struct UploadResponse {
 /// Uploads the image to S3 under the `images/` prefix.
 pub async fn upload_image_handler(
     axum::extract::State(state): axum::extract::State<crate::app::AppState>,
+    crate::auth::extractor::RequiredAuthUser(_user): crate::auth::extractor::RequiredAuthUser,
     mut multipart: Multipart,
 ) -> Result<axum::Json<UploadResponse>, AppError> {
     while let Some(field) = multipart
@@ -29,13 +30,9 @@ pub async fn upload_image_handler(
         }
 
         let file_name = field.file_name().unwrap_or("upload.bin").to_string();
+        let content_type =
+            crate::api::assets::safe_content_type_from_filename(&file_name).to_string();
 
-        let content_type = field
-            .content_type()
-            .unwrap_or("application/octet-stream")
-            .to_string();
-
-        // Only allow image types
         if !content_type.starts_with("image/") {
             return Err(AppError::BadRequest("Only image files are allowed".into()));
         }
@@ -92,20 +89,16 @@ pub async fn serve_image_handler(
         .await?
         .ok_or_else(|| AppError::NotFound("Image not found".into()))?;
 
-    // Infer content type from extension
-    let content_type = if filename.ends_with(".png") {
-        "image/png"
-    } else if filename.ends_with(".jpg") || filename.ends_with(".jpeg") {
-        "image/jpeg"
-    } else if filename.ends_with(".gif") {
-        "image/gif"
-    } else if filename.ends_with(".webp") {
-        "image/webp"
-    } else if filename.ends_with(".svg") {
-        "image/svg+xml"
-    } else {
-        "application/octet-stream"
-    };
+    let content_type = crate::api::assets::safe_content_type_from_filename(&filename);
+    let disposition = crate::api::assets::content_disposition_for(content_type);
 
-    Ok(([(axum::http::header::CONTENT_TYPE, content_type)], data).into_response())
+    Ok((
+        [
+            (axum::http::header::CONTENT_TYPE, content_type),
+            (axum::http::header::CONTENT_DISPOSITION, disposition),
+            (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        data,
+    )
+        .into_response())
 }

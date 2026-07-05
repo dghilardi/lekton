@@ -37,6 +37,10 @@ max_attachment_size_mb = 25
 [database]
 uri = "mongodb://localhost:27017"
 name = "lekton"
+app_name = "lekton"
+server_selection_timeout_ms = 5000
+connect_timeout_ms = 10000
+max_pool_size = 20
 
 [storage]
 # Required. Set via LKN__STORAGE__BUCKET or config/lekton.toml.

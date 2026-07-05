@@ -128,10 +128,41 @@ pub struct DatabaseConfig {
     pub uri: String,
     /// MongoDB database name.
     pub name: String,
+    /// Driver app name shown in MongoDB diagnostics.
+    #[serde(default = "default_database_app_name")]
+    pub app_name: String,
+    /// Server selection timeout in milliseconds.
+    #[serde(default = "default_server_selection_timeout_ms")]
+    pub server_selection_timeout_ms: u64,
+    /// TCP/connect timeout in milliseconds.
+    #[serde(default = "default_database_connect_timeout_ms")]
+    pub connect_timeout_ms: u64,
+    /// Maximum MongoDB connection pool size.
+    #[serde(default = "default_database_max_pool_size")]
+    pub max_pool_size: u32,
+    /// Optional minimum MongoDB connection pool size.
+    #[serde(default)]
+    pub min_pool_size: Option<u32>,
     /// Optional username — injected into the URI when set.
     pub username: Option<String>,
     /// Optional password — injected into the URI when set.
     pub password: Option<String>,
+}
+
+fn default_database_app_name() -> String {
+    "lekton".to_string()
+}
+
+fn default_server_selection_timeout_ms() -> u64 {
+    5_000
+}
+
+fn default_database_connect_timeout_ms() -> u64 {
+    10_000
+}
+
+fn default_database_max_pool_size() -> u32 {
+    20
 }
 
 // ── Storage ───────────────────────────────────────────────────────────────────

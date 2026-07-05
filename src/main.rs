@@ -505,9 +505,21 @@ async fn main() {
         _ => config.database.uri.clone(),
     };
 
-    let mongo_client = mongodb::Client::with_uri_str(&mongo_uri)
+    let mut mongo_options = mongodb::options::ClientOptions::parse(&mongo_uri)
         .await
-        .expect("Failed to connect to MongoDB");
+        .expect("Failed to parse MongoDB URI");
+    mongo_options.app_name = Some(config.database.app_name.clone());
+    mongo_options.server_selection_timeout = Some(std::time::Duration::from_millis(
+        config.database.server_selection_timeout_ms,
+    ));
+    mongo_options.connect_timeout = Some(std::time::Duration::from_millis(
+        config.database.connect_timeout_ms,
+    ));
+    mongo_options.max_pool_size = Some(config.database.max_pool_size);
+    mongo_options.min_pool_size = config.database.min_pool_size;
+
+    let mongo_client =
+        mongodb::Client::with_options(mongo_options).expect("Failed to connect to MongoDB");
     let mongo_db = mongo_client.database(&config.database.name);
     let document_repo: Arc<dyn lekton::db::repository::DocumentRepository> =
         Arc::new(MongoDocumentRepository::new(&mongo_db));

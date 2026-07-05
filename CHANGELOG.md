@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Surface chat session deletion failures in the UI instead of failing silently.
 - Added accessible labels to icon-only navigation and chat controls so navbar, user menu, send, and session-delete actions remain screen-reader discoverable.
 
 ### Fixed

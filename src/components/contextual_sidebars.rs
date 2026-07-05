@@ -290,13 +290,20 @@ pub fn ChatSidebar() -> impl IntoView {
                             use leptos::task::spawn_local;
                             let current_sid = session_id.get_untracked();
                             spawn_local(async move {
-                                if fetch_delete_session(&sid).await.is_ok() {
-                                    sessions.update(|sessions| {
-                                        sessions.retain(|s| s.id != sid);
-                                    });
-                                    if current_sid.as_deref() == Some(&sid) {
-                                        session_id.set(None);
-                                        messages.set(Vec::new());
+                                match fetch_delete_session(&sid).await {
+                                    Ok(()) => {
+                                        sessions.update(|sessions| {
+                                            sessions.retain(|s| s.id != sid);
+                                        });
+                                        if current_sid.as_deref() == Some(&sid) {
+                                            session_id.set(None);
+                                            messages.set(Vec::new());
+                                        }
+                                    }
+                                    Err(err) => {
+                                        error_msg.set(Some(format!(
+                                            "Failed to delete chat session: {err}"
+                                        )));
                                     }
                                 }
                             });

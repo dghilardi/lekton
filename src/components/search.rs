@@ -5,6 +5,7 @@ use crate::auth::refresh_client::with_auth_retry;
 use crate::search::client::SearchHit;
 
 const SEARCH_DEBOUNCE_MS: u32 = 250;
+const SEARCH_RESULTS_LIST_ID: &str = "global-search-results";
 
 fn search_hit_href(hit: &SearchHit) -> String {
     match hit.attachment_key.as_deref() {
@@ -22,6 +23,10 @@ fn search_hit_target(hit: &SearchHit) -> &'static str {
     } else {
         "_self"
     }
+}
+
+fn search_result_id(index: usize) -> String {
+    format!("global-search-result-{index}")
 }
 
 fn schedule_debounced_query(
@@ -45,6 +50,7 @@ fn schedule_debounced_query(
 pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) -> impl IntoView {
     let (query, set_query) = signal(String::new());
     let (debounced_query, set_debounced_query) = signal(String::new());
+    let (active_index, set_active_index) = signal(None::<usize>);
     let debounce_version = RwSignal::new(0_u64);
     let input_ref = NodeRef::<leptos::html::Input>::new();
 
@@ -58,20 +64,78 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
         }
     });
 
-    let on_keydown = move |ev: leptos::web_sys::KeyboardEvent| {
-        if ev.key() == "Escape" {
-            set_is_open.set(false);
+    let search_hits = Signal::derive(move || match search_resource.get() {
+        Some(Ok(hits)) => hits,
+        _ => vec![],
+    });
+
+    let on_keydown = move |ev: leptos::web_sys::KeyboardEvent| match ev.key().as_str() {
+        "Escape" => set_is_open.set(false),
+        "ArrowDown" => {
+            let hits = search_hits.get_untracked();
+            if !hits.is_empty() {
+                ev.prevent_default();
+                set_active_index.update(|current| {
+                    *current = Some(match *current {
+                        Some(index) => (index + 1).min(hits.len().saturating_sub(1)),
+                        None => 0,
+                    });
+                });
+            }
         }
+        "ArrowUp" => {
+            let hits = search_hits.get_untracked();
+            if !hits.is_empty() {
+                ev.prevent_default();
+                set_active_index.update(|current| {
+                    *current = Some(match *current {
+                        Some(index) if index > 0 => index - 1,
+                        _ => 0,
+                    });
+                });
+            }
+        }
+        "Enter" => {
+            if let Some(index) = active_index.get_untracked() {
+                let hits = search_hits.get_untracked();
+                if hits.get(index).is_some() {
+                    ev.prevent_default();
+                    set_is_open.set(false);
+                    #[cfg(feature = "hydrate")]
+                    if let (Some(window), Some(hit)) = (web_sys::window(), hits.get(index)) {
+                        let href = search_hit_href(hit);
+                        if search_hit_target(hit) == "_blank" {
+                            let _ = window.open_with_url_and_target(&href, "_blank");
+                        } else {
+                            let _ = window.location().set_href(&href);
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
     };
 
     Effect::new(move || {
         if is_open.get() {
+            set_active_index.set(None);
             #[cfg(feature = "hydrate")]
             if let Some(input) = input_ref.get() {
                 let _ = input.focus();
                 let _ = input.select();
             }
         }
+    });
+
+    Effect::new(move || {
+        let hits = search_hits.get();
+        set_active_index.update(|current| {
+            *current = match (*current, hits.is_empty()) {
+                (_, true) => None,
+                (Some(index), false) if index < hits.len() => Some(index),
+                _ => Some(0),
+            };
+        });
     });
 
     view! {
@@ -103,9 +167,17 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                 node_ref=input_ref
                                 prop:value=query
                                 aria-label="Search documentation"
+                                aria-controls=SEARCH_RESULTS_LIST_ID
+                                aria-activedescendant=move || {
+                                    active_index
+                                        .get()
+                                        .map(search_result_id)
+                                        .unwrap_or_default()
+                                }
                                 on:input=move |ev| {
                                     let value = event_target_value(&ev);
                                     set_query.set(value.clone());
+                                    set_active_index.set(None);
                                     if value.len() < 2 {
                                         set_debounced_query.set(value);
                                     } else {
@@ -150,8 +222,8 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                     }
                                     Ok(hits) => {
                                         view! {
-                                            <div class="divide-y divide-base-300">
-                                                {hits.into_iter().map(|hit| {
+                                            <div id=SEARCH_RESULTS_LIST_ID role="listbox" class="divide-y divide-base-300">
+                                                {hits.into_iter().enumerate().map(|(idx, hit)| {
                                                     let href = search_hit_href(&hit);
                                                     let target = search_hit_target(&hit);
                                                     let title = hit.title.clone();
@@ -160,13 +232,25 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                                     let has_tags = !tags.is_empty();
                                                     let has_page = hit.page.is_some();
                                                     let page_badge = hit.page.map(|p| format!("PDF · page {p}")).unwrap_or_default();
+                                                    let result_id = search_result_id(idx);
 
                                                     view! {
                                                         <a
+                                                            id=result_id
                                                             href=href
                                                             target=target
-                                                            class="block p-4 hover:bg-base-200 transition-colors"
+                                                            role="option"
+                                                            aria-selected=move || active_index.get() == Some(idx)
+                                                            class=move || format!(
+                                                                "block p-4 transition-colors {}",
+                                                                if active_index.get() == Some(idx) {
+                                                                    "bg-base-200"
+                                                                } else {
+                                                                    "hover:bg-base-200"
+                                                                }
+                                                            )
                                                             on:click=move |_| set_is_open.set(false)
+                                                            on:mouseenter=move |_| set_active_index.set(Some(idx))
                                                         >
                                                             <div class="flex items-center gap-2 mb-1">
                                                                 <div class="font-semibold text-lg">{title}</div>

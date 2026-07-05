@@ -5,6 +5,9 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Added accessible labels to icon-only navigation and chat controls so navbar, user menu, send, and session-delete actions remain screen-reader discoverable.
+
+### Fixed
 - The global search modal now supports keyboard result navigation: arrow keys move through results and `Enter` opens the currently highlighted match while the input retains focus.
 - The top navbar now renders a stable SSR placeholder instead of appearing only after hydration, reducing the visible pop-in of the docs/system links area on first paint.
 - Streaming chat responses now throttle markdown re-rendering while tokens arrive, avoiding full reprocessing of the accumulated assistant text on every delta.

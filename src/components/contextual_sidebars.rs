@@ -357,6 +357,7 @@ pub fn ChatSidebar() -> impl IntoView {
                                         </button>
                                         <button
                                             class="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover/session:opacity-100 hover:text-error hover:bg-error/10 transition-all"
+                                            aria-label="Delete chat session"
                                             on:click={
                                                 let sid = sid_delete.clone();
                                                 move |_| delete_session(sid.clone())

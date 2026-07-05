@@ -347,7 +347,11 @@ pub fn Layout(children: Children) -> impl IntoView {
                 // Left — shrinks only when space is truly exhausted
                 <div class="flex items-center gap-2 min-w-0 flex-1">
                     <Show when=move || has_context_sidebar.get()>
-                        <label for="sidebar-drawer" class="btn btn-square btn-ghost drawer-button lg:hidden">
+                        <label
+                            for="sidebar-drawer"
+                            aria-label="Open navigation menu"
+                            class="btn btn-square btn-ghost drawer-button lg:hidden"
+                        >
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="inline-block w-5 h-5 stroke-current"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
                         </label>
                     </Show>
@@ -379,7 +383,11 @@ pub fn Layout(children: Children) -> impl IntoView {
                 <div class="flex items-center gap-2 flex-nowrap shrink-0">
                     // Search icon — shown when full search bar is hidden
                     <Show when=move || search_enabled.get()>
-                    <button class="btn btn-circle btn-ghost 2xl:hidden" on:click=move |_| set_search_modal_open.set(true)>
+                    <button
+                        class="btn btn-circle btn-ghost 2xl:hidden"
+                        aria-label="Open search"
+                        on:click=move |_| set_search_modal_open.set(true)
+                    >
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                     </button>
                     </Show>

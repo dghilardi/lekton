@@ -434,6 +434,13 @@ fn ChatContent() -> impl IntoView {
                                     "btn btn-primary btn-square h-9 w-9 min-h-0 rounded-lg flex-shrink-0 transition-all {}",
                                     if is_loading.get() || input.get().trim().is_empty() { "opacity-40 grayscale" } else { "shadow-md shadow-primary/20" }
                                 )
+                                aria-label=move || {
+                                    if is_loading.get() {
+                                        "Sending message"
+                                    } else {
+                                        "Send message"
+                                    }
+                                }
                                 on:click=move |_| send_message()
                                 prop:disabled=move || is_loading.get() || input.get().trim().is_empty()
                             >

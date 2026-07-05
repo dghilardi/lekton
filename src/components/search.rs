@@ -46,6 +46,7 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
     let (query, set_query) = signal(String::new());
     let (debounced_query, set_debounced_query) = signal(String::new());
     let debounce_version = RwSignal::new(0_u64);
+    let input_ref = NodeRef::<leptos::html::Input>::new();
 
     let search_resource = LocalResource::new(move || {
         let q = debounced_query.get();
@@ -63,6 +64,16 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
         }
     };
 
+    Effect::new(move || {
+        if is_open.get() {
+            #[cfg(feature = "hydrate")]
+            if let Some(input) = input_ref.get() {
+                let _ = input.focus();
+                let _ = input.select();
+            }
+        }
+    });
+
     view! {
         <Show when=move || is_open.get()>
             <div
@@ -72,7 +83,13 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                 <div
                     class="bg-base-100 rounded-lg shadow-2xl w-full max-w-2xl mx-4"
                     on:click=move |ev: leptos::web_sys::MouseEvent| ev.stop_propagation()
+                    on:keydown=on_keydown
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="global-search-title"
+                    tabindex="-1"
                 >
+                    <h2 id="global-search-title" class="sr-only">"Search documentation"</h2>
                     // Search input
                     <div class="p-4 border-b border-base-200 bg-base-100/50 rounded-t-lg">
                         <div class="flex items-center gap-3">
@@ -83,7 +100,9 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                 type="text"
                                 placeholder="Search documentation..."
                                 class="w-full bg-transparent focus:outline-none text-xl placeholder:text-base-content/30"
+                                node_ref=input_ref
                                 prop:value=query
+                                aria-label="Search documentation"
                                 on:input=move |ev| {
                                     let value = event_target_value(&ev);
                                     set_query.set(value.clone());

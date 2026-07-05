@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- The global search modal now exposes proper dialog semantics (`role="dialog"`, `aria-modal`, labelled title) and reliably restores keyboard focus to the search field when opened.
 - The global search modal and navbar search bar now debounce server-side search requests, so typing a query no longer fires a request for every keystroke.
 - Asset serving and chat source filtering now batch document ACL lookups by slug instead of issuing one document query per referenced slug, reducing N+1 latency on assets and cited sources with many backlinks.
 - RAG chat prompts now enforce bounded history and retrieved-context sizes before sending the final LLM request, keeping parent-expanded sections and long conversations from inflating context windows and cost unpredictably.

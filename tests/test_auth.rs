@@ -1,5 +1,7 @@
 mod common;
 
+use axum_extra::extract::cookie;
+
 #[tokio::test]
 async fn login_success_sets_cookie() {
     let env = common::TestEnv::start().await;
@@ -150,4 +152,35 @@ async fn full_auth_flow() {
     // 5. Session destroyed
     let response = server.get("/api/auth/me").await;
     response.assert_status_unauthorized();
+}
+
+#[tokio::test]
+async fn forged_demo_cookie_does_not_grant_admin_access() {
+    let env = common::TestEnv::start().await;
+    let server = env.server_permissive();
+
+    let forged_cookie = cookie::Cookie::build((
+        "lekton_demo_user",
+        serde_json::json!({
+            "user_id": "demo-admin",
+            "email": "attacker@example.com",
+            "name": "Attacker",
+            "is_admin": true
+        })
+        .to_string(),
+    ))
+    .path("/")
+    .build();
+
+    server
+        .get("/api/auth/me")
+        .add_cookie(forged_cookie.clone())
+        .await
+        .assert_status_unauthorized();
+
+    server
+        .get("/api/v1/assets")
+        .add_cookie(forged_cookie)
+        .await
+        .assert_status_unauthorized();
 }

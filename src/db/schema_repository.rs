@@ -178,8 +178,23 @@ impl SchemaRepository for MongoSchemaRepository {
     async fn add_version(&self, schema_name: &str, version: SchemaVersion) -> Result<(), AppError> {
         use mongodb::bson::{doc, to_bson};
 
-        // Check if the schema exists
-        let existing = self.find_by_name(schema_name).await?;
+        let version_bson = to_bson(&version)?;
+        let result = self
+            .collection
+            .update_one(
+                doc! {
+                    "name": schema_name,
+                    "versions.version": { "$ne": &version.version },
+                },
+                doc! { "$push": { "versions": version_bson } },
+            )
+            .await?;
+
+        if result.matched_count > 0 {
+            return Ok(());
+        }
+
+        let existing = self.find_by_name_summary(schema_name).await?;
         let Some(existing) = existing else {
             return Err(AppError::NotFound(format!(
                 "Schema '{}' not found",
@@ -187,7 +202,6 @@ impl SchemaRepository for MongoSchemaRepository {
             )));
         };
 
-        // Check if version already exists
         if existing
             .versions
             .iter()
@@ -199,16 +213,10 @@ impl SchemaRepository for MongoSchemaRepository {
             )));
         }
 
-        let version_bson = to_bson(&version)?;
-
-        self.collection
-            .update_one(
-                doc! { "name": schema_name },
-                doc! { "$push": { "versions": version_bson } },
-            )
-            .await?;
-
-        Ok(())
+        Err(AppError::Internal(format!(
+            "Failed to add version '{}' to schema '{}'",
+            version.version, schema_name
+        )))
     }
 
     async fn set_version_archived(
@@ -217,24 +225,50 @@ impl SchemaRepository for MongoSchemaRepository {
         version: &str,
         archived: bool,
     ) -> Result<(), AppError> {
-        let mut schema = self
-            .find_by_name(schema_name)
-            .await?
-            .ok_or_else(|| AppError::NotFound(format!("Schema '{}' not found", schema_name)))?;
+        use mongodb::bson::doc;
+        use mongodb::options::UpdateOptions;
 
-        let schema_version = schema
-            .versions
-            .iter_mut()
-            .find(|v| v.version == version)
-            .ok_or_else(|| {
-                AppError::NotFound(format!(
-                    "Version '{}' not found for schema '{}'",
-                    version, schema_name
-                ))
-            })?;
+        let result = self
+            .collection
+            .update_one(
+                doc! {
+                    "name": schema_name,
+                    "versions.version": version,
+                },
+                doc! {
+                    "$set": { "versions.$[target].is_archived": archived }
+                },
+            )
+            .with_options(
+                UpdateOptions::builder()
+                    .array_filters(vec![doc! { "target.version": version }])
+                    .build(),
+            )
+            .await?;
 
-        schema_version.is_archived = archived;
-        self.create_or_update(schema).await
+        if result.matched_count > 0 {
+            return Ok(());
+        }
+
+        let existing = self.find_by_name_summary(schema_name).await?;
+        let Some(existing) = existing else {
+            return Err(AppError::NotFound(format!(
+                "Schema '{}' not found",
+                schema_name
+            )));
+        };
+
+        if existing.versions.iter().any(|v| v.version == version) {
+            return Err(AppError::Internal(format!(
+                "Failed to update archived flag for version '{}' in schema '{}'",
+                version, schema_name
+            )));
+        }
+
+        Err(AppError::NotFound(format!(
+            "Version '{}' not found for schema '{}'",
+            version, schema_name
+        )))
     }
 
     async fn delete(&self, name: &str) -> Result<(), AppError> {

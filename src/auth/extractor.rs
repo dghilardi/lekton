@@ -17,6 +17,7 @@ use axum_extra::extract::CookieJar;
 use std::convert::Infallible;
 use std::sync::Arc;
 
+use crate::auth::demo_auth::resolve_demo_session_user;
 use crate::auth::models::AuthenticatedUser;
 use crate::auth::token_service::TokenService;
 
@@ -81,7 +82,7 @@ where
         // Fall back to demo session cookie when demo mode is active
         if demo_mode {
             if let Some(cookie) = jar.get(DEMO_USER_COOKIE) {
-                if let Ok(user) = serde_json::from_str::<AuthenticatedUser>(cookie.value()) {
+                if let Some(user) = resolve_demo_session_user(cookie.value()) {
                     return Ok(OptionalAuthUser(Some(user)));
                 }
             }
@@ -136,7 +137,7 @@ where
         // Fall back to demo session cookie when demo mode is active
         if demo_mode {
             if let Some(cookie) = jar.get(DEMO_USER_COOKIE) {
-                if let Ok(user) = serde_json::from_str::<AuthenticatedUser>(cookie.value()) {
+                if let Some(user) = resolve_demo_session_user(cookie.value()) {
                     return Ok(RequiredAuthUser(user));
                 }
             }

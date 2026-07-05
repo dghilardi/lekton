@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::db::asset_repository::AssetRepository;
 use crate::db::models::Asset;
@@ -201,20 +202,22 @@ pub async fn process_serve_asset(
             return Err(AppError::Forbidden("Asset access denied".into()));
         }
     } else {
-        let mut accessible = false;
-        for slug in &asset.referenced_by {
-            if let Some(doc) = document_repo.find_by_slug(slug).await? {
-                if crate::app::doc_is_accessible(
+        let documents: HashMap<_, _> = document_repo
+            .find_by_slugs(&asset.referenced_by)
+            .await?
+            .into_iter()
+            .map(|doc| (doc.slug.clone(), doc))
+            .collect();
+        let accessible = asset.referenced_by.iter().any(|slug| {
+            documents.get(slug).is_some_and(|doc| {
+                crate::app::doc_is_accessible(
                     &doc.access_level,
                     doc.is_draft,
                     allowed_levels,
                     include_draft,
-                ) {
-                    accessible = true;
-                    break;
-                }
-            }
-        }
+                )
+            })
+        });
         if !accessible {
             return Err(AppError::Forbidden("Asset access denied".into()));
         }
@@ -265,10 +268,11 @@ pub async fn process_delete_asset(
     )
     .await?;
 
-    let asset = asset_repo
-        .find_by_key(key)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("Asset '{}' not found", key)))?;
+    let asset = asset_repo.find_by_key(key).await?;
+
+    let Some(asset) = asset else {
+        return Ok(());
+    };
 
     storage.delete_object(&asset.s3_key).await?;
     asset_repo.delete(key).await?;
@@ -747,15 +751,33 @@ mod tests {
 
     struct MockDocumentRepo {
         docs: Vec<Document>,
+        single_lookups: Mutex<usize>,
+        batch_lookups: Mutex<usize>,
     }
 
     impl MockDocumentRepo {
         fn empty() -> Self {
-            Self { docs: vec![] }
+            Self {
+                docs: vec![],
+                single_lookups: Mutex::new(0),
+                batch_lookups: Mutex::new(0),
+            }
         }
 
         fn with(docs: Vec<Document>) -> Self {
-            Self { docs }
+            Self {
+                docs,
+                single_lookups: Mutex::new(0),
+                batch_lookups: Mutex::new(0),
+            }
+        }
+
+        fn single_lookup_count(&self) -> usize {
+            *self.single_lookups.lock().unwrap()
+        }
+
+        fn batch_lookup_count(&self) -> usize {
+            *self.batch_lookups.lock().unwrap()
         }
     }
 
@@ -765,7 +787,17 @@ mod tests {
             unimplemented!()
         }
         async fn find_by_slug(&self, slug: &str) -> Result<Option<Document>, AppError> {
+            *self.single_lookups.lock().unwrap() += 1;
             Ok(self.docs.iter().find(|d| d.slug == slug).cloned())
+        }
+        async fn find_by_slugs(&self, slugs: &[String]) -> Result<Vec<Document>, AppError> {
+            *self.batch_lookups.lock().unwrap() += 1;
+            Ok(self
+                .docs
+                .iter()
+                .filter(|doc| slugs.iter().any(|slug| slug == &doc.slug))
+                .cloned()
+                .collect())
         }
         async fn list_all(&self) -> Result<Vec<Document>, AppError> {
             Ok(self.docs.clone())
@@ -1126,6 +1158,97 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_serve_asset_batches_referenced_document_lookup() {
+        let repo = MockAssetRepo::new();
+        let storage = MockStorage::new();
+        let doc_repo = MockDocumentRepo::with(vec![
+            Document {
+                slug: "docs/a".to_string(),
+                title: "Doc A".to_string(),
+                summary: None,
+                s3_key: "docs_a.md".to_string(),
+                access_level: "public".to_string(),
+                is_draft: false,
+                service_owner: "team-a".to_string(),
+                last_updated: Utc::now(),
+                tags: vec![],
+                links_out: vec![],
+                backlinks: vec![],
+                parent_slug: None,
+                order: 0,
+                is_hidden: false,
+                content_hash: None,
+                metadata_hash: None,
+                is_archived: false,
+                source_path: None,
+                source_id: None,
+                needs_reindex: false,
+                skip_rag: false,
+            },
+            Document {
+                slug: "docs/b".to_string(),
+                title: "Doc B".to_string(),
+                summary: None,
+                s3_key: "docs_b.md".to_string(),
+                access_level: "internal".to_string(),
+                is_draft: false,
+                service_owner: "team-b".to_string(),
+                last_updated: Utc::now(),
+                tags: vec![],
+                links_out: vec![],
+                backlinks: vec![],
+                parent_slug: None,
+                order: 0,
+                is_hidden: false,
+                content_hash: None,
+                metadata_hash: None,
+                is_archived: false,
+                source_path: None,
+                source_id: None,
+                needs_reindex: false,
+                skip_rag: false,
+            },
+        ]);
+
+        repo.create_or_update(Asset {
+            key: "docs/shared.pdf".to_string(),
+            content_type: "application/pdf".to_string(),
+            size_bytes: 3,
+            s3_key: "assets/docs/shared.pdf".to_string(),
+            uploaded_at: Utc::now(),
+            uploaded_by: "ci-bot".to_string(),
+            referenced_by: vec!["docs/a".to_string(), "docs/b".to_string()],
+            content_hash: None,
+            extraction_status: crate::db::models::ExtractionStatus::Pending,
+            extraction_error: None,
+            extracted_content_hash: None,
+            extracted_at: None,
+            indexed_chunks: None,
+        })
+        .await
+        .unwrap();
+        storage
+            .put_object("assets/docs/shared.pdf", b"pdf".to_vec())
+            .await
+            .unwrap();
+
+        let result = process_serve_asset(
+            &repo,
+            &doc_repo,
+            &storage,
+            "docs/shared.pdf",
+            Some(&["internal".to_string()]),
+            false,
+            Some("reader@example.com"),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(doc_repo.single_lookup_count(), 0);
+        assert_eq!(doc_repo.batch_lookup_count(), 1);
+    }
+
+    #[tokio::test]
     async fn test_serve_asset_not_found() {
         let repo = MockAssetRepo::new();
         let storage = MockStorage::new();
@@ -1252,7 +1375,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_asset_not_found() {
+    async fn test_delete_asset_missing_asset_is_idempotent() {
         let repo = MockAssetRepo::new();
         let storage = MockStorage::new();
 
@@ -1266,11 +1389,7 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            AppError::NotFound(msg) => assert!(msg.contains("nonexistent.txt")),
-            other => panic!("Expected NotFound error, got: {:?}", other),
-        }
+        assert!(result.is_ok());
     }
 
     #[tokio::test]

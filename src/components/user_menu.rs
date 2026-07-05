@@ -40,7 +40,12 @@ pub fn UserMenu() -> impl IntoView {
                     let is_admin = user.is_admin;
                     view! {
                         <div class="dropdown dropdown-end">
-                            <div tabindex="0" role="button" class="btn btn-ghost btn-sm gap-2 font-medium">
+                            <div
+                                tabindex="0"
+                                role="button"
+                                aria-label="Open user menu"
+                                class="btn btn-ghost btn-sm gap-2 font-medium"
+                            >
                                 // Icon on small screens, name on sm+
                                 <svg class="sm:hidden w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>
                                 <span class="hidden sm:inline truncate max-w-[120px]">{display}</span>
@@ -93,7 +98,12 @@ pub fn UserMenu() -> impl IntoView {
                     let href = if is_demo { "/login" } else { "/auth/login" };
                     let rel = if is_demo { "" } else { "external" };
                     view! {
-                        <a href=href rel=rel class="btn btn-ghost btn-sm font-medium whitespace-nowrap">
+                        <a
+                            href=href
+                            rel=rel
+                            aria-label="Log in"
+                            class="btn btn-ghost btn-sm font-medium whitespace-nowrap"
+                        >
                             <svg class="sm:hidden w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>
                             <span class="hidden sm:inline">"Log In"</span>
                         </a>

@@ -32,6 +32,12 @@ use crate::search::client::SearchService;
 const MAX_CONTEXT_CHUNKS: usize = 5;
 /// Maximum number of conversation history messages to include in the prompt.
 const MAX_HISTORY_MESSAGES: usize = 20;
+/// Upper bound on conversation-history characters forwarded to the LLM prompt.
+/// Keeps the most recent turns and drops older context first.
+const MAX_HISTORY_PROMPT_CHARS: usize = 8_000;
+/// Upper bound on retrieved-document characters forwarded to the LLM prompt.
+/// Prevents parent expansion and large chunks from blowing up prompt size.
+const MAX_CONTEXT_PROMPT_CHARS: usize = 12_000;
 /// How many extra Qdrant candidates to fetch when hybrid search or reranking
 /// is enabled (gives RRF/reranker room to reorder before truncating).
 const CANDIDATE_MULTIPLIER: usize = 3;
@@ -441,16 +447,7 @@ impl ChatService {
         // mitigates prompt-injection carried inside the corpus ("ignore previous
         // instructions…"). The default system template instructs the model not
         // to follow directives found between these markers.
-        let context = search_results
-            .iter()
-            .map(|r| {
-                format!(
-                    "--- BEGIN DOCUMENT: {} ({}) ---\n{}\n--- END DOCUMENT ---",
-                    r.document_title, r.document_slug, r.chunk_text
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n");
+        let context = build_context_prompt(&search_results, MAX_CONTEXT_PROMPT_CHARS);
 
         // 8. Render system prompt via Tera
         let mut tera_ctx = tera::Context::new();
@@ -472,7 +469,7 @@ impl ChatService {
 
         // history was fetched before the current user message was saved, so it
         // contains only prior turns — include all of it.
-        for msg in &history {
+        for msg in select_history_for_prompt(&history, MAX_HISTORY_PROMPT_CHARS) {
             match msg.role.as_str() {
                 "user" => {
                     messages.push(ChatCompletionRequestMessage::User(
@@ -1323,6 +1320,75 @@ fn preview_text(text: &str, max_chars: usize) -> String {
     }
 }
 
+fn build_context_prompt(
+    results: &[crate::rag::vectorstore::VectorSearchResult],
+    max_chars: usize,
+) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+
+    let mut context = String::new();
+    let mut used = 0usize;
+
+    for result in results {
+        if used >= max_chars {
+            break;
+        }
+
+        let header = format!(
+            "--- BEGIN DOCUMENT: {} ({}) ---\n",
+            result.document_title, result.document_slug
+        );
+        let footer = "\n--- END DOCUMENT ---";
+        let separator = if context.is_empty() { "" } else { "\n\n" };
+        let fixed_chars =
+            separator.chars().count() + header.chars().count() + footer.chars().count();
+        if fixed_chars >= max_chars.saturating_sub(used) {
+            break;
+        }
+
+        let remaining_for_body = max_chars - used - fixed_chars;
+        let body = take_chars(&result.chunk_text, remaining_for_body);
+
+        context.push_str(separator);
+        context.push_str(&header);
+        context.push_str(&body);
+        context.push_str(footer);
+
+        used += fixed_chars + body.chars().count();
+    }
+
+    context
+}
+
+fn select_history_for_prompt(history: &[ChatMessage], max_chars: usize) -> &[ChatMessage] {
+    if history.is_empty() || max_chars == 0 {
+        return &[];
+    }
+
+    let mut used = 0usize;
+    let mut start = history.len();
+
+    for idx in (0..history.len()).rev() {
+        let message_chars = history[idx].content.chars().count();
+        if start == history.len() && message_chars >= max_chars {
+            return &history[idx..];
+        }
+        if used + message_chars > max_chars {
+            break;
+        }
+        used += message_chars;
+        start = idx;
+    }
+
+    &history[start..]
+}
+
+fn take_chars(text: &str, max_chars: usize) -> String {
+    text.chars().take(max_chars).collect()
+}
+
 /// Truncate a message to use as a session title.
 fn truncate_title(message: &str) -> String {
     let first_line = message.lines().next().unwrap_or(message);
@@ -1669,5 +1735,56 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].point_id, "c1");
         assert_eq!(result[1].point_id, "c2");
+    }
+
+    #[test]
+    fn select_history_for_prompt_keeps_most_recent_suffix_within_budget() {
+        let history = vec![
+            ChatMessage {
+                id: "m1".into(),
+                session_id: "s1".into(),
+                role: "user".into(),
+                content: "12345".into(),
+                sources: None,
+                created_at: Utc::now(),
+            },
+            ChatMessage {
+                id: "m2".into(),
+                session_id: "s1".into(),
+                role: "assistant".into(),
+                content: "6789".into(),
+                sources: None,
+                created_at: Utc::now(),
+            },
+            ChatMessage {
+                id: "m3".into(),
+                session_id: "s1".into(),
+                role: "user".into(),
+                content: "abc".into(),
+                sources: None,
+                created_at: Utc::now(),
+            },
+        ];
+
+        let trimmed = select_history_for_prompt(&history, 7);
+        let ids: Vec<_> = trimmed.iter().map(|msg| msg.id.as_str()).collect();
+
+        assert_eq!(ids, vec!["m2", "m3"]);
+    }
+
+    #[test]
+    fn build_context_prompt_truncates_to_budget_and_preserves_markers() {
+        let results = vec![VectorSearchResult {
+            document_slug: "docs/a".into(),
+            document_title: "Doc A".into(),
+            chunk_text: "abcdefghijklmnopqrstuvwxyz".into(),
+            ..Default::default()
+        }];
+
+        let context = build_context_prompt(&results, 80);
+
+        assert!(context.chars().count() <= 80);
+        assert!(context.starts_with("--- BEGIN DOCUMENT: Doc A (docs/a) ---\n"));
+        assert!(context.ends_with("\n--- END DOCUMENT ---"));
     }
 }

@@ -18,6 +18,7 @@ pub(crate) use helpers::{request_document_visibility, require_admin_user, requir
 #[cfg(feature = "ssr")]
 mod helpers {
     use crate::app::AppState;
+    use crate::auth::demo_auth::resolve_demo_session_user;
     use leptos::prelude::*;
 
     pub(crate) async fn request_document_visibility(
@@ -59,9 +60,7 @@ mod helpers {
 
         if state.demo_mode {
             if let Some(cookie) = jar.get("lekton_demo_user") {
-                if let Ok(demo_user) =
-                    serde_json::from_str::<crate::auth::models::AuthenticatedUser>(cookie.value())
-                {
+                if let Some(demo_user) = resolve_demo_session_user(cookie.value()) {
                     if demo_user.is_admin {
                         return Ok((None, true));
                     } else {
@@ -102,9 +101,7 @@ mod helpers {
 
         if state.demo_mode {
             if let Some(cookie) = jar.get("lekton_demo_user") {
-                if let Ok(user) =
-                    serde_json::from_str::<crate::auth::models::AuthenticatedUser>(cookie.value())
-                {
+                if let Some(user) = resolve_demo_session_user(cookie.value()) {
                     if user.is_admin {
                         return Ok(user);
                     }
@@ -137,9 +134,7 @@ mod helpers {
 
         if state.demo_mode {
             if let Some(cookie) = jar.get("lekton_demo_user") {
-                if let Ok(user) =
-                    serde_json::from_str::<crate::auth::models::AuthenticatedUser>(cookie.value())
-                {
+                if let Some(user) = resolve_demo_session_user(cookie.value()) {
                     return Ok(user);
                 }
             }

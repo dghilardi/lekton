@@ -4,11 +4,33 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Derive the home "Get Started" link from the actual navigation and point the schemas CTA to the stable `/schemas` route to avoid fresh-install 404s.
+- Made `DELETE /api/v1/assets/{key}` idempotent so repeated deletes of missing assets now succeed cleanly.
+- Close the desktop search dropdown when focus leaves the search control.
+- Show the actual demo login failure message instead of always rendering a generic invalid-credentials error.
+- Surface chat session deletion failures in the UI instead of failing silently.
+- Added accessible labels to icon-only navigation and chat controls so navbar, user menu, send, and session-delete actions remain screen-reader discoverable.
+
+### Fixed
+- The global search modal now supports keyboard result navigation: arrow keys move through results and `Enter` opens the currently highlighted match while the input retains focus.
+- The top navbar now renders a stable SSR placeholder instead of appearing only after hydration, reducing the visible pop-in of the docs/system links area on first paint.
+- Streaming chat responses now throttle markdown re-rendering while tokens arrive, avoiding full reprocessing of the accumulated assistant text on every delta.
+- The global search modal now exposes proper dialog semantics (`role="dialog"`, `aria-modal`, labelled title) and reliably restores keyboard focus to the search field when opened.
+- The global search modal and navbar search bar now debounce server-side search requests, so typing a query no longer fires a request for every keystroke.
+- Asset serving and chat source filtering now batch document ACL lookups by slug instead of issuing one document query per referenced slug, reducing N+1 latency on assets and cited sources with many backlinks.
+- RAG chat prompts now enforce bounded history and retrieved-context sizes before sending the final LLM request, keeping parent-expanded sections and long conversations from inflating context windows and cost unpredictably.
+- `POST /api/v1/ingest` no longer waits for attachment ACL recomputes before responding; the recompute is now scheduled in background like the document-upload flow, avoiding long-lived service-to-service requests on large or numerous PDFs.
+- Attachment extraction uploads no longer drop queued reprocessing silently when the bounded worker channel is full; full queues now retry asynchronously, and a closed worker marks the asset as failed instead of leaving it stuck in `Pending`.
+- Attachment ACL recomputes now fail closed: if Qdrant or attachment-keyword-search ACL updates fail, the attachment is deindexed and marked for reprocessing instead of remaining searchable with stale permissions.
+- Demo-mode sessions now store only the selected demo account identifier in `lekton_demo_user`; all demo privileges are re-derived server-side so a forged cookie JSON payload cannot self-assign admin access.
+
 ## [0.25.11] 2026-07-05
 
 ## [0.25.10] 2026-07-04
 
 ### Fixed
+- Schema version updates now avoid read-modify-write races: adding a version uses a guarded atomic `$push`, and archiving a version updates only the targeted array entry instead of replacing the whole schema document.
 - MongoDB startup now uses explicit typed client options (`app_name`, server-selection timeout, connect timeout, pool sizing) instead of the driver defaults.
 - Startup migrations now enforce a unique `__migrations.change_id` index and refuse to proceed when a migration is already marked `STARTED`, preventing concurrent instances from applying the same migration twice.
 - Attachment search ACL refresh now paginates through every indexed page for a file instead of updating only the first 1000 Meilisearch documents.

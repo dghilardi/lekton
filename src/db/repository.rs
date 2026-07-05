@@ -14,6 +14,12 @@ pub trait DocumentRepository: Send + Sync {
     /// Find a document by its slug.
     async fn find_by_slug(&self, slug: &str) -> Result<Option<Document>, AppError>;
 
+    /// Find all documents whose slug is in `slugs`.
+    ///
+    /// Missing slugs are ignored. Callers that need lookup-by-slug semantics can
+    /// index the returned vector into a map.
+    async fn find_by_slugs(&self, slugs: &[String]) -> Result<Vec<Document>, AppError>;
+
     /// List every document regardless of access level, draft, hidden, or archive state.
     ///
     /// This is intended for administrative maintenance jobs that must reconcile
@@ -114,6 +120,28 @@ impl DocumentRepository for MongoDocumentRepository {
         use mongodb::bson::doc;
 
         Ok(self.collection.find_one(doc! { "slug": slug }).await?)
+    }
+
+    async fn find_by_slugs(&self, slugs: &[String]) -> Result<Vec<Document>, AppError> {
+        use futures::TryStreamExt;
+        use mongodb::bson::{doc, Bson};
+
+        if slugs.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let bson_slugs: Vec<Bson> = slugs.iter().cloned().map(Bson::String).collect();
+        let mut cursor = self
+            .collection
+            .find(doc! { "slug": { "$in": bson_slugs } })
+            .await?;
+
+        let mut documents = Vec::new();
+        while let Some(document) = cursor.try_next().await? {
+            documents.push(document);
+        }
+
+        Ok(documents)
     }
 
     async fn list_all(&self) -> Result<Vec<Document>, AppError> {

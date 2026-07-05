@@ -12,6 +12,7 @@
 //! | POST   | `/api/v1/rag/messages/{id}/feedback`      | Submit or update message feedback    |
 //! | DELETE | `/api/v1/rag/messages/{id}/feedback`      | Remove message feedback              |
 
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::atomic::Ordering;
 
@@ -536,6 +537,18 @@ async fn filter_source_references(
     sources: Vec<SourceReference>,
 ) -> Result<Vec<SourceReference>, AppError> {
     let (allowed_levels, include_draft) = user_ctx.document_visibility();
+    let document_slugs: Vec<String> = sources
+        .iter()
+        .filter(|source| source.attachment_key.is_none())
+        .map(|source| source.document_slug.clone())
+        .collect();
+    let direct_documents: HashMap<_, _> = state
+        .document_repo
+        .find_by_slugs(&document_slugs)
+        .await?
+        .into_iter()
+        .map(|document| (document.slug.clone(), document))
+        .collect();
     let mut filtered = Vec::with_capacity(sources.len());
 
     for source in sources {
@@ -552,11 +565,7 @@ async fn filter_source_references(
                 )
                 .await?
             }
-            None => match state
-                .document_repo
-                .find_by_slug(&source.document_slug)
-                .await?
-            {
+            None => match direct_documents.get(&source.document_slug) {
                 Some(document) if !document.is_archived => crate::app::doc_is_accessible(
                     &document.access_level,
                     document.is_draft,
@@ -595,18 +604,22 @@ async fn attachment_ref_is_accessible(
         return Ok(is_admin || user_ctx.user.email == asset.uploaded_by);
     }
 
-    for slug in &asset.referenced_by {
-        if let Some(doc) = state.document_repo.find_by_slug(slug).await? {
-            if crate::app::doc_is_accessible(
+    let documents: HashMap<_, _> = state
+        .document_repo
+        .find_by_slugs(&asset.referenced_by)
+        .await?
+        .into_iter()
+        .map(|document| (document.slug.clone(), document))
+        .collect();
+
+    Ok(asset.referenced_by.iter().any(|slug| {
+        documents.get(slug).is_some_and(|doc| {
+            crate::app::doc_is_accessible(
                 &doc.access_level,
                 doc.is_draft,
                 allowed_levels,
                 include_draft,
-            ) {
-                return Ok(true);
-            }
-        }
-    }
-
-    Ok(false)
+            )
+        })
+    }))
 }

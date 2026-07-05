@@ -218,6 +218,7 @@ ssr = [
     "dep:text-splitter",
     "dep:tiktoken-rs",
     "dep:tera",
+    "dep:gloo-timers",
     "dep:rmcp",
     "dep:schemars",
     "dep:clap",

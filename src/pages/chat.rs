@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 /// Monotonic counter for generating stable client-side message IDs.
 /// Prevents key collisions when the same text is sent more than once in a session.
 static CLIENT_MSG_COUNTER: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "hydrate")]
+const STREAM_RENDER_THROTTLE_MS: u32 = 50;
 
 fn next_client_msg_id() -> String {
     format!(
@@ -141,9 +143,39 @@ fn ChatContent() -> impl IntoView {
     let streaming_content = context.streaming_content;
     let streaming_sources = context.streaming_sources;
     let error_msg = context.error_msg;
+    let (streaming_html, set_streaming_html) = signal(String::new());
+    #[cfg(feature = "hydrate")]
+    let stream_render_version = RwSignal::new(0_u64);
 
     let (input, set_input) = signal(String::new());
     let textarea_ref = NodeRef::<leptos::html::Textarea>::new();
+
+    Effect::new(move || {
+        let content = streaming_content.get();
+        if content.is_empty() {
+            set_streaming_html.set(String::new());
+            return;
+        }
+
+        #[cfg(not(feature = "hydrate"))]
+        {
+            set_streaming_html.set(render_markdown(&content));
+            return;
+        }
+
+        #[cfg(feature = "hydrate")]
+        {
+            let version = stream_render_version.get_untracked().wrapping_add(1);
+            stream_render_version.set(version);
+
+            leptos::task::spawn_local(async move {
+                gloo_timers::future::TimeoutFuture::new(STREAM_RENDER_THROTTLE_MS).await;
+                if stream_render_version.get_untracked() == version {
+                    set_streaming_html.set(render_markdown(&content));
+                }
+            });
+        }
+    });
 
     let send_message = move || {
         let msg = input.get_untracked().trim().to_string();
@@ -349,7 +381,7 @@ fn ChatContent() -> impl IntoView {
                                                 // streaming: a partially-received mermaid block would fail the mermaid
                                                 // parser. Mermaid rendering is triggered once the message commits via
                                                 // MarkdownContent in the history view above.
-                                                view! { <div inner_html=render_markdown(&content)></div> }.into_any()
+                                                view! { <div inner_html=streaming_html.get()></div> }.into_any()
                                             }
                                         }}
                                     </div>
@@ -413,6 +445,13 @@ fn ChatContent() -> impl IntoView {
                                     "btn btn-primary btn-square h-9 w-9 min-h-0 rounded-lg flex-shrink-0 transition-all {}",
                                     if is_loading.get() || input.get().trim().is_empty() { "opacity-40 grayscale" } else { "shadow-md shadow-primary/20" }
                                 )
+                                aria-label=move || {
+                                    if is_loading.get() {
+                                        "Sending message"
+                                    } else {
+                                        "Send message"
+                                    }
+                                }
                                 on:click=move |_| send_message()
                                 prop:disabled=move || is_loading.get() || input.get().trim().is_empty()
                             >

@@ -293,7 +293,7 @@ async fn delete_asset_removes_from_storage_and_db() {
 }
 
 #[tokio::test]
-async fn delete_asset_not_found() {
+async fn delete_asset_is_idempotent_when_missing() {
     let env = common::TestEnv::start().await;
     let server = env.server_permissive();
 
@@ -301,7 +301,7 @@ async fn delete_asset_not_found() {
         .delete("/api/v1/assets/nonexistent.txt")
         .json(&serde_json::json!({"service_token": "test-token"}))
         .await;
-    response.assert_status_not_found();
+    response.assert_status_ok();
 }
 
 #[tokio::test]

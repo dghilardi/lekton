@@ -268,10 +268,11 @@ pub async fn process_delete_asset(
     )
     .await?;
 
-    let asset = asset_repo
-        .find_by_key(key)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("Asset '{}' not found", key)))?;
+    let asset = asset_repo.find_by_key(key).await?;
+
+    let Some(asset) = asset else {
+        return Ok(());
+    };
 
     storage.delete_object(&asset.s3_key).await?;
     asset_repo.delete(key).await?;
@@ -1374,7 +1375,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_asset_not_found() {
+    async fn test_delete_asset_missing_asset_is_idempotent() {
         let repo = MockAssetRepo::new();
         let storage = MockStorage::new();
 
@@ -1388,11 +1389,7 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            AppError::NotFound(msg) => assert!(msg.contains("nonexistent.txt")),
-            other => panic!("Expected NotFound error, got: {:?}", other),
-        }
+        assert!(result.is_ok());
     }
 
     #[tokio::test]

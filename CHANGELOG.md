@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Derive the home "Get Started" link from the actual navigation and point the schemas CTA to the stable `/schemas` route to avoid fresh-install 404s.
 - Made `DELETE /api/v1/assets/{key}` idempotent so repeated deletes of missing assets now succeed cleanly.
 - Close the desktop search dropdown when focus leaves the search control.
 - Show the actual demo login failure message instead of always rendering a generic invalid-credentials error.

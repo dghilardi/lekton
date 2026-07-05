@@ -246,7 +246,10 @@ async fn asset_lifecycle_with_document() {
     assert_eq!(body, "asset-content-here");
 
     // List assets
-    let response = server.get("/api/v1/assets").await;
+    let response = server
+        .get("/api/v1/assets")
+        .add_cookie(env.auth_cookie(&admin))
+        .await;
     response.assert_status_ok();
     let assets: Vec<serde_json::Value> = response.json();
     assert!(!assets.is_empty());

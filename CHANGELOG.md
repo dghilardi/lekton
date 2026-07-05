@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ## [0.25.10] 2026-07-04
 
 ### Fixed
+- `GET /api/v1/assets` now requires an authenticated admin session instead of exposing the full asset inventory to anonymous callers.
 - PDF keyword-search hits now open the underlying asset at `#page=N` like RAG attachment citations instead of routing through the document page.
 - Restored the top navbar admin entry on narrower desktop widths by preventing the docs-link cluster from clipping the system links.
 - Startup migrations now add the missing MongoDB unique/index coverage for `service_tokens`, `prompts`, chat history, feedback, version-history, settings, navigation ordering, and user prompt preferences, eliminating key collection scans and blocking duplicate logical keys before startup continues.

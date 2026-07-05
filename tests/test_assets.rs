@@ -186,12 +186,18 @@ async fn serve_asset_not_found() {
 async fn list_assets_returns_all() {
     let env = common::TestEnv::start().await;
     let server = env.server();
+    let admin = env
+        .create_test_user("assets-admin", "assets-admin@example.com", true)
+        .await;
 
     for name in &["a/file1.txt", "b/file2.txt", "c/file3.txt"] {
         upload_asset(&server, name, b"data", "text/plain", "test-token").await;
     }
 
-    let response = server.get("/api/v1/assets").await;
+    let response = server
+        .get("/api/v1/assets")
+        .add_cookie(env.auth_cookie(&admin))
+        .await;
     response.assert_status_ok();
     let list: Vec<serde_json::Value> = response.json();
     assert_eq!(list.len(), 3);
@@ -201,6 +207,9 @@ async fn list_assets_returns_all() {
 async fn list_assets_with_prefix_filter() {
     let env = common::TestEnv::start().await;
     let server = env.server();
+    let admin = env
+        .create_test_user("assets-admin", "assets-admin@example.com", true)
+        .await;
 
     for name in &[
         "project-a/config.yaml",
@@ -212,11 +221,38 @@ async fn list_assets_with_prefix_filter() {
 
     let response = server
         .get("/api/v1/assets")
+        .add_cookie(env.auth_cookie(&admin))
         .add_query_param("prefix", "project-a/")
         .await;
     response.assert_status_ok();
     let list: Vec<serde_json::Value> = response.json();
     assert_eq!(list.len(), 2);
+}
+
+#[tokio::test]
+async fn list_assets_requires_authentication() {
+    let env = common::TestEnv::start().await;
+    let server = env.server_permissive();
+
+    let response = server.get("/api/v1/assets").await;
+
+    response.assert_status_unauthorized();
+}
+
+#[tokio::test]
+async fn list_assets_forbids_non_admin_users() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+    let user = env
+        .create_test_user("assets-user", "assets-user@example.com", false)
+        .await;
+
+    let response = server
+        .get("/api/v1/assets")
+        .add_cookie(env.auth_cookie(&user))
+        .await;
+
+    response.assert_status_forbidden();
 }
 
 #[tokio::test]

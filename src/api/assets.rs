@@ -518,8 +518,13 @@ pub async fn serve_asset_handler(
 #[cfg(feature = "ssr")]
 pub async fn list_assets_handler(
     axum::extract::State(state): axum::extract::State<crate::app::AppState>,
+    crate::auth::extractor::RequiredAuthUser(user): crate::auth::extractor::RequiredAuthUser,
     axum::extract::Query(query): axum::extract::Query<ListAssetsQuery>,
 ) -> Result<axum::Json<Vec<AssetListItem>>, AppError> {
+    if !user.is_admin {
+        return Err(AppError::Forbidden("Admin privileges required".into()));
+    }
+
     let items = process_list_assets(state.asset_repo.as_ref(), query.prefix.as_deref()).await?;
 
     Ok(axum::Json(items))

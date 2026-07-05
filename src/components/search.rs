@@ -4,6 +4,8 @@ use crate::app::search_docs;
 use crate::auth::refresh_client::with_auth_retry;
 use crate::search::client::SearchHit;
 
+const SEARCH_DEBOUNCE_MS: u32 = 250;
+
 fn search_hit_href(hit: &SearchHit) -> String {
     match hit.attachment_key.as_deref() {
         Some(key) => match hit.page {
@@ -22,13 +24,31 @@ fn search_hit_target(hit: &SearchHit) -> &'static str {
     }
 }
 
+fn schedule_debounced_query(
+    value: String,
+    debounce_version: RwSignal<u64>,
+    set_debounced_query: WriteSignal<String>,
+) {
+    let version = debounce_version.get_untracked().wrapping_add(1);
+    debounce_version.set(version);
+
+    leptos::task::spawn_local(async move {
+        gloo_timers::future::TimeoutFuture::new(SEARCH_DEBOUNCE_MS).await;
+        if debounce_version.get_untracked() == version {
+            set_debounced_query.set(value);
+        }
+    });
+}
+
 /// Global search modal triggered by Ctrl+K (or Cmd+K on Mac).
 #[component]
 pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) -> impl IntoView {
     let (query, set_query) = signal(String::new());
+    let (debounced_query, set_debounced_query) = signal(String::new());
+    let debounce_version = RwSignal::new(0_u64);
 
     let search_resource = LocalResource::new(move || {
-        let q = query.get();
+        let q = debounced_query.get();
         async move {
             if q.len() < 2 {
                 return Ok(vec![]);
@@ -65,7 +85,17 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                 class="w-full bg-transparent focus:outline-none text-xl placeholder:text-base-content/30"
                                 prop:value=query
                                 on:input=move |ev| {
-                                    set_query.set(event_target_value(&ev));
+                                    let value = event_target_value(&ev);
+                                    set_query.set(value.clone());
+                                    if value.len() < 2 {
+                                        set_debounced_query.set(value);
+                                    } else {
+                                        schedule_debounced_query(
+                                            value,
+                                            debounce_version,
+                                            set_debounced_query,
+                                        );
+                                    }
                                 }
                                 on:keydown=on_keydown
                                 autofocus
@@ -174,10 +204,12 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
 #[component]
 pub fn SearchBar() -> impl IntoView {
     let (query, set_query) = signal(String::new());
+    let (debounced_query, set_debounced_query) = signal(String::new());
     let (show_results, set_show_results) = signal(false);
+    let debounce_version = RwSignal::new(0_u64);
 
     let search_resource = LocalResource::new(move || {
-        let q = query.get();
+        let q = debounced_query.get();
         async move {
             if q.len() < 2 {
                 return Ok(vec![]);
@@ -198,6 +230,15 @@ pub fn SearchBar() -> impl IntoView {
                         let val = event_target_value(&ev);
                         set_query.set(val.clone());
                         set_show_results.set(val.len() >= 2);
+                        if val.len() < 2 {
+                            set_debounced_query.set(val);
+                        } else {
+                            schedule_debounced_query(
+                                val,
+                                debounce_version,
+                                set_debounced_query,
+                            );
+                        }
                     }
                     on:focus=move |_| {
                         if query.get().len() >= 2 {

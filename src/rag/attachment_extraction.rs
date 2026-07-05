@@ -572,6 +572,9 @@ mod tests {
         async fn find_by_slug(&self, _: &str) -> Result<Option<Document>, AppError> {
             Ok(None)
         }
+        async fn find_by_slugs(&self, _: &[String]) -> Result<Vec<Document>, AppError> {
+            Ok(vec![])
+        }
         async fn list_all(&self) -> Result<Vec<Document>, AppError> {
             Ok(vec![])
         }

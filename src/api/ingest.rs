@@ -810,6 +810,17 @@ mod tests {
                 .cloned())
         }
 
+        async fn find_by_slugs(&self, slugs: &[String]) -> Result<Vec<Document>, AppError> {
+            Ok(self
+                .documents
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|d| slugs.iter().any(|slug| slug == &d.slug))
+                .cloned()
+                .collect())
+        }
+
         async fn list_all(&self) -> Result<Vec<Document>, AppError> {
             Ok(self.documents.lock().unwrap().clone())
         }

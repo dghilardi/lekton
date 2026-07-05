@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Asset serving and chat source filtering now batch document ACL lookups by slug instead of issuing one document query per referenced slug, reducing N+1 latency on assets and cited sources with many backlinks.
 - RAG chat prompts now enforce bounded history and retrieved-context sizes before sending the final LLM request, keeping parent-expanded sections and long conversations from inflating context windows and cost unpredictably.
 - `POST /api/v1/ingest` no longer waits for attachment ACL recomputes before responding; the recompute is now scheduled in background like the document-upload flow, avoiding long-lived service-to-service requests on large or numerous PDFs.
 - Attachment extraction uploads no longer drop queued reprocessing silently when the bounded worker channel is full; full queues now retry asynchronously, and a closed worker marks the asset as failed instead of leaving it stuck in `Pending`.

@@ -20,11 +20,15 @@ use crate::rag::service::RagService;
 #[cfg(feature = "ssr")]
 use crate::rendering::links::{extract_asset_keys, extract_internal_links};
 #[cfg(feature = "ssr")]
+use crate::search::attachment_search::AttachmentSearchService;
+#[cfg(feature = "ssr")]
 use crate::search::client::SearchService;
 #[cfg(feature = "ssr")]
 use crate::storage::client::StorageClient;
 #[cfg(feature = "ssr")]
 use chrono::Utc;
+#[cfg(feature = "ssr")]
+use std::sync::Arc;
 
 #[cfg(feature = "ssr")]
 pub const SUMMARY_RECOMMENDED_MIN_CHARS: usize = 50;
@@ -58,6 +62,35 @@ pub struct ProcessIngestOutcome {
     /// Asset keys whose RAG access levels need recomputing. May be empty when
     /// the document references no assets or RAG is disabled.
     pub assets_to_recompute: Vec<String>,
+}
+
+#[cfg(feature = "ssr")]
+fn spawn_attachment_acl_recompute(
+    rag: Option<Arc<dyn RagService>>,
+    asset_repo: Arc<dyn AssetRepository>,
+    document_repo: Arc<dyn DocumentRepository>,
+    storage: Arc<dyn StorageClient>,
+    attachment_search: Option<Arc<dyn AttachmentSearchService>>,
+    keys: Vec<String>,
+) {
+    if keys.is_empty() {
+        return;
+    }
+    let Some(rag) = rag else {
+        return;
+    };
+
+    tokio::spawn(async move {
+        crate::rag::attachment_extraction::recompute_access_levels(
+            rag.as_ref(),
+            asset_repo.as_ref(),
+            document_repo.as_ref(),
+            storage.as_ref(),
+            attachment_search.as_deref(),
+            &keys,
+        )
+        .await;
+    });
 }
 
 /// Core ingestion logic — separated from the HTTP layer for testability.
@@ -594,21 +627,14 @@ pub async fn ingest_handler(
 
     let outcome = process_ingest(&ctx, request).await?;
 
-    // Recompute RAG access levels synchronously: server-to-server calls are not
-    // subject to the GCP Load Balancer 30-second timeout.
-    if !outcome.assets_to_recompute.is_empty() {
-        if let Some(rag) = state.rag_service.as_deref() {
-            crate::rag::attachment_extraction::recompute_access_levels(
-                rag,
-                state.asset_repo.as_ref(),
-                state.document_repo.as_ref(),
-                state.storage_client.as_ref(),
-                state.attachment_search_service.as_deref(),
-                &outcome.assets_to_recompute,
-            )
-            .await;
-        }
-    }
+    spawn_attachment_acl_recompute(
+        state.rag_service.clone(),
+        state.asset_repo.clone(),
+        state.document_repo.clone(),
+        state.storage_client.clone(),
+        state.attachment_search_service.clone(),
+        outcome.assets_to_recompute,
+    );
 
     Ok(axum::Json(outcome.response))
 }
@@ -617,10 +643,14 @@ pub async fn ingest_handler(
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
+    use tokio::sync::Notify;
+    use tokio::time::{timeout, Duration};
 
     use crate::db::access_level_repository::AccessLevelRepository;
+    use crate::db::asset_repository::ExtractionUpdate;
     use crate::db::auth_models::AccessLevelEntity;
+    use crate::db::models::{Asset, ExtractionStatus};
     use crate::db::service_token_models::ServiceToken;
     use crate::db::service_token_repository::ServiceTokenRepository;
     use crate::test_utils::MockStorage;
@@ -977,6 +1007,63 @@ mod tests {
         }
     }
 
+    struct StaticAssetRepo {
+        asset: Mutex<Option<Asset>>,
+    }
+
+    impl StaticAssetRepo {
+        fn new(asset: Asset) -> Self {
+            Self {
+                asset: Mutex::new(Some(asset)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl crate::db::asset_repository::AssetRepository for StaticAssetRepo {
+        async fn create_or_update(&self, _: Asset) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn find_by_key(&self, key: &str) -> Result<Option<Asset>, AppError> {
+            Ok(self
+                .asset
+                .lock()
+                .unwrap()
+                .clone()
+                .filter(|asset| asset.key == key))
+        }
+        async fn list_all(&self) -> Result<Vec<Asset>, AppError> {
+            Ok(self.asset.lock().unwrap().clone().into_iter().collect())
+        }
+        async fn list_by_prefix(&self, prefix: &str) -> Result<Vec<Asset>, AppError> {
+            Ok(self
+                .asset
+                .lock()
+                .unwrap()
+                .clone()
+                .into_iter()
+                .filter(|asset| asset.key.starts_with(prefix))
+                .collect())
+        }
+        async fn delete(&self, key: &str) -> Result<(), AppError> {
+            let mut guard = self.asset.lock().unwrap();
+            if guard.as_ref().map(|asset| asset.key.as_str()) == Some(key) {
+                *guard = None;
+            }
+            Ok(())
+        }
+        async fn update_extraction(
+            &self,
+            _key: &str,
+            _update: ExtractionUpdate,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn set_references(&self, _: &str, _: &[String]) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
+    }
+
     fn make_ctx<'a>(
         repo: &'a MockRepo,
         storage: &'a MockStorage,
@@ -1103,6 +1190,51 @@ mod tests {
             _attachment_key: &str,
             _access_levels: &[String],
         ) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+
+    struct BlockingAclRagService {
+        started: Arc<Notify>,
+        release: Arc<Notify>,
+    }
+
+    #[async_trait]
+    impl crate::rag::service::RagService for BlockingAclRagService {
+        async fn index_document(
+            &self,
+            _slug: &str,
+            _title: &str,
+            _content: &str,
+            _access_level: &str,
+            _is_draft: bool,
+            _tags: &[String],
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn delete_document(&self, _slug: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn index_attachment(
+            &self,
+            _attachment_key: &str,
+            _filename: &str,
+            _pages: &[crate::rag::service::AttachmentPage],
+            _access_levels: &[String],
+            _tags: &[String],
+        ) -> Result<usize, AppError> {
+            Ok(0)
+        }
+        async fn delete_attachment(&self, _attachment_key: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn update_attachment_access_levels(
+            &self,
+            _attachment_key: &str,
+            _access_levels: &[String],
+        ) -> Result<(), AppError> {
+            self.started.notify_one();
+            self.release.notified().await;
             Ok(())
         }
     }
@@ -1235,6 +1367,72 @@ mod tests {
 
         let doc = repo.find_by_slug("docs/wip").await.unwrap().unwrap();
         assert!(doc.is_draft);
+    }
+
+    #[tokio::test]
+    async fn spawn_attachment_acl_recompute_returns_before_blocking_acl_update_finishes() {
+        let repo = Arc::new(MockRepo::new());
+        repo.create_or_update(Document {
+            slug: "docs/hello".to_string(),
+            title: "Hello".to_string(),
+            summary: None,
+            s3_key: "docs_hello.md".to_string(),
+            access_level: "internal".to_string(),
+            is_draft: false,
+            service_owner: "test-team".to_string(),
+            last_updated: Utc::now(),
+            tags: vec![],
+            links_out: vec![],
+            backlinks: vec![],
+            parent_slug: None,
+            order: 0,
+            is_hidden: false,
+            content_hash: None,
+            metadata_hash: None,
+            is_archived: false,
+            source_path: Some("docs/hello.md".to_string()),
+            source_id: Some("test-source-id".to_string()),
+            needs_reindex: false,
+            skip_rag: false,
+        })
+        .await
+        .unwrap();
+        let asset_repo = Arc::new(StaticAssetRepo::new(Asset {
+            key: "pdfs/hello.pdf".to_string(),
+            content_type: "application/pdf".to_string(),
+            size_bytes: 42,
+            s3_key: "assets/pdfs/hello.pdf".to_string(),
+            uploaded_at: Utc::now(),
+            uploaded_by: "tester@example.com".to_string(),
+            referenced_by: vec!["docs/hello".to_string()],
+            content_hash: None,
+            extraction_status: ExtractionStatus::Done,
+            extraction_error: None,
+            extracted_content_hash: None,
+            extracted_at: None,
+            indexed_chunks: Some(1),
+        }));
+        let storage = Arc::new(MockStorage::new());
+        let started = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let rag = Arc::new(BlockingAclRagService {
+            started: started.clone(),
+            release: release.clone(),
+        });
+
+        spawn_attachment_acl_recompute(
+            Some(rag),
+            asset_repo,
+            repo,
+            storage,
+            None,
+            vec!["pdfs/hello.pdf".to_string()],
+        );
+
+        timeout(Duration::from_millis(50), started.notified())
+            .await
+            .expect("background recompute should start promptly");
+        release.notify_waiters();
     }
 
     #[tokio::test]

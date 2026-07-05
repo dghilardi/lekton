@@ -310,6 +310,7 @@ pub fn SearchBar() -> impl IntoView {
     let (debounced_query, set_debounced_query) = signal(String::new());
     let (show_results, set_show_results) = signal(false);
     let debounce_version = RwSignal::new(0_u64);
+    let root_ref = NodeRef::<leptos::html::Div>::new();
 
     let search_resource = LocalResource::new(move || {
         let q = debounced_query.get();
@@ -322,7 +323,29 @@ pub fn SearchBar() -> impl IntoView {
     });
 
     view! {
-        <div class="dropdown dropdown-end">
+        <div
+            class="dropdown dropdown-end"
+            node_ref=root_ref
+            on:focusout=move |_ev| {
+                #[cfg(feature = "hydrate")]
+                {
+                    use wasm_bindgen::JsCast;
+
+                    let next_target = _ev.related_target().and_then(|target| target.dyn_into::<web_sys::Node>().ok());
+                    let contains_focus = root_ref
+                        .get()
+                        .map(|root| match next_target.as_ref() {
+                            Some(next) => root.contains(Some(next)),
+                            None => false,
+                        })
+                        .unwrap_or(false);
+
+                    if !contains_focus {
+                        set_show_results.set(false);
+                    }
+                }
+            }
+        >
             <div class="form-control">
                 <input
                     type="text"
@@ -368,7 +391,12 @@ pub fn SearchBar() -> impl IntoView {
                                             let page_badge = hit.page.map(|p| format!(" · PDF p.{p}"));
                                             view! {
                                                 <li>
-                                                    <a href=href target=target class="flex flex-col items-start">
+                                                    <a
+                                                        href=href
+                                                        target=target
+                                                        class="flex flex-col items-start"
+                                                        on:click=move |_| set_show_results.set(false)
+                                                    >
                                                         <span class="font-semibold">
                                                             {hit.title}
                                                             {page_badge.map(|b| view! {

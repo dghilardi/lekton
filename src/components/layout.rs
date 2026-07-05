@@ -12,6 +12,24 @@ use crate::auth::refresh_client::with_auth_retry;
 const MAX_DOCS_ITEMS: usize = 5;
 
 #[component]
+fn TopNavbarLinksSkeleton() -> impl IntoView {
+    view! {
+        <div class="flex w-full items-center gap-3 min-w-0 animate-pulse">
+            <div class="flex flex-1 items-center gap-2 min-w-0 overflow-hidden">
+                <span class="h-8 w-20 rounded-md bg-base-200/80"></span>
+                <span class="h-8 w-24 rounded-md bg-base-200/80"></span>
+                <span class="h-8 w-16 rounded-md bg-base-200/80 hidden xl:inline-flex"></span>
+            </div>
+            <div class="w-px h-5 bg-base-300 self-center shrink-0"></div>
+            <div class="flex items-center gap-2 shrink-0">
+                <span class="h-8 w-16 rounded-md bg-base-200/80"></span>
+                <span class="h-8 w-14 rounded-md bg-base-200/80 hidden lg:inline-flex"></span>
+            </div>
+        </div>
+    }
+}
+
+#[component]
 pub fn TopNavbarLinks() -> impl IntoView {
     let nav_resource = LocalResource::new(|| with_auth_retry(get_navigation));
     let groups_resource = Resource::new(|| (), |_| get_navbar_groups());
@@ -20,7 +38,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
     let schema_enabled = crate::app::use_feature(|f| f.schema_registry);
 
     view! {
-        <Suspense fallback=move || view! { <span class="loading loading-spinner loading-sm"></span> }>
+        <Suspense fallback=move || view! { <TopNavbarLinksSkeleton /> }>
             {move || {
                 let nav_res = nav_resource.get();
                 let groups_res = groups_resource.get();
@@ -287,7 +305,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                         </div>
                     }.into_any()
                 } else {
-                    view! { <span></span> }.into_any()
+                    view! { <TopNavbarLinksSkeleton /> }.into_any()
                 }
             }}
         </Suspense>

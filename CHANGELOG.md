@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Attachment extraction uploads no longer drop queued reprocessing silently when the bounded worker channel is full; full queues now retry asynchronously, and a closed worker marks the asset as failed instead of leaving it stuck in `Pending`.
 - Attachment ACL recomputes now fail closed: if Qdrant or attachment-keyword-search ACL updates fail, the attachment is deindexed and marked for reprocessing instead of remaining searchable with stale permissions.
 - Demo-mode sessions now store only the selected demo account identifier in `lekton_demo_user`; all demo privileges are re-derived server-side so a forged cookie JSON payload cannot self-assign admin access.
 

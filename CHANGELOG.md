@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 ## [0.25.10] 2026-07-04
 
 ### Fixed
+- Schema version updates now avoid read-modify-write races: adding a version uses a guarded atomic `$push`, and archiving a version updates only the targeted array entry instead of replacing the whole schema document.
 - MongoDB startup now uses explicit typed client options (`app_name`, server-selection timeout, connect timeout, pool sizing) instead of the driver defaults.
 - Startup migrations now enforce a unique `__migrations.change_id` index and refuse to proceed when a migration is already marked `STARTED`, preventing concurrent instances from applying the same migration twice.
 - Attachment search ACL refresh now paginates through every indexed page for a file instead of updating only the first 1000 Meilisearch documents.

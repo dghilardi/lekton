@@ -9,6 +9,7 @@ mod inner {
     use chrono::{DateTime, Utc};
     use futures::StreamExt as _;
     use mongodb::Database;
+    use mongodb::{options::IndexOptions, IndexModel};
     use serde::{Deserialize, Serialize};
     use std::collections::HashSet;
     use std::future::Future;
@@ -47,6 +48,8 @@ mod inner {
     pub enum MigrationError {
         Db(mongodb::error::Error),
         ChangelogHasFailure(String),
+        ChangelogHasInProgress(String),
+        ConcurrentMigration(String),
     }
 
     impl std::fmt::Display for MigrationError {
@@ -57,6 +60,18 @@ mod inner {
                     write!(
                         f,
                         "Migration '{id}' previously failed — resolve it and restart"
+                    )
+                }
+                Self::ChangelogHasInProgress(id) => {
+                    write!(
+                        f,
+                        "Migration '{id}' is marked STARTED — another instance may be running or a previous run was interrupted"
+                    )
+                }
+                Self::ConcurrentMigration(id) => {
+                    write!(
+                        f,
+                        "Migration '{id}' is already being started by another instance"
                     )
                 }
             }
@@ -113,6 +128,8 @@ mod inner {
 
         /// Execute all pending migrations against the given database.
         pub async fn run(self, db: Database) -> Result<(), MigrationError> {
+            ensure_changelog_indexes(&db).await?;
+
             let entries: Vec<MigrationEntry> = db
                 .collection::<MigrationEntry>(CHANGELOG)
                 .find(bson::doc! {})
@@ -133,7 +150,20 @@ mod inner {
                 ));
             }
 
-            let performed: HashSet<String> = entries.into_iter().map(|e| e.change_id).collect();
+            if let Some(started) = entries
+                .iter()
+                .find(|e| matches!(e.state, MigrationState::Started))
+            {
+                return Err(MigrationError::ChangelogHasInProgress(
+                    started.change_id.clone(),
+                ));
+            }
+
+            let performed: HashSet<String> = entries
+                .into_iter()
+                .filter(|e| matches!(e.state, MigrationState::Executed))
+                .map(|e| e.change_id)
+                .collect();
 
             for def in self.migrations {
                 if performed.contains(def.change_id) {
@@ -158,7 +188,12 @@ mod inner {
             state: MigrationState::Started,
             execution_millis: 0,
         };
-        coll.insert_one(&entry).await.map_err(MigrationError::Db)?;
+        if let Err(err) = coll.insert_one(&entry).await {
+            if is_duplicate_key(&err) {
+                return Err(MigrationError::ConcurrentMigration(entry.change_id.clone()));
+            }
+            return Err(MigrationError::Db(err));
+        }
 
         let result = (def.run)(db.clone()).await;
 
@@ -189,6 +224,34 @@ mod inner {
                 );
                 Ok(())
             }
+        }
+    }
+
+    async fn ensure_changelog_indexes(db: &Database) -> Result<(), MigrationError> {
+        db.collection::<MigrationEntry>(CHANGELOG)
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "change_id": 1 })
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+            )
+            .await
+            .map_err(MigrationError::Db)?;
+        Ok(())
+    }
+
+    fn is_duplicate_key(err: &mongodb::error::Error) -> bool {
+        err.to_string().contains("E11000")
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn duplicate_key_detection_matches_mongo_error_strings() {
+            let err = mongodb::error::Error::custom("E11000 duplicate key error");
+            assert!(is_duplicate_key(&err));
         }
     }
 }

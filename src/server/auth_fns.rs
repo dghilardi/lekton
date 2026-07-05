@@ -31,6 +31,7 @@ fn logout_cookies(demo_mode: bool) -> Vec<axum_extra::extract::cookie::Cookie<'s
 #[server(GetCurrentUser, "/api")]
 pub async fn get_current_user(
 ) -> Result<Option<crate::auth::models::AuthenticatedUser>, ServerFnError> {
+    use crate::auth::demo_auth::resolve_demo_session_user;
     use crate::auth::extractor::{ACCESS_TOKEN_COOKIE, LOGGED_IN_COOKIE};
     use crate::auth::token_service::TokenService;
     use axum_extra::extract::CookieJar;
@@ -49,9 +50,7 @@ pub async fn get_current_user(
 
     if state.demo_mode {
         if let Some(cookie) = jar.get("lekton_demo_user") {
-            if let Ok(user) =
-                serde_json::from_str::<crate::auth::models::AuthenticatedUser>(cookie.value())
-            {
+            if let Some(user) = resolve_demo_session_user(cookie.value()) {
                 return Ok(Some(user));
             }
         }

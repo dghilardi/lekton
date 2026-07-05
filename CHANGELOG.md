@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Demo-mode sessions now store only the selected demo account identifier in `lekton_demo_user`; all demo privileges are re-derived server-side so a forged cookie JSON payload cannot self-assign admin access.
+
 ## [0.25.11] 2026-07-05
 
 ## [0.25.10] 2026-07-04

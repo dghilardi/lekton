@@ -1,8 +1,9 @@
 //! Built-in demo authentication used when `DEMO_MODE=true`.
 //!
 //! Provides a simple username/password login that issues a session cookie
-//! (`lekton_demo_user`) carrying a serialized [`AuthenticatedUser`].
-//! This mechanism is intentionally simple and is **not** for production use.
+//! (`lekton_demo_user`) carrying the selected demo account identifier.
+//! The cookie never stores role-bearing user JSON so privileges are always
+//! resolved server-side from the built-in demo account table.
 
 use serde::{Deserialize, Serialize};
 
@@ -58,6 +59,26 @@ pub struct LoginResponse {
     pub user: AuthenticatedUser,
 }
 
+fn demo_user_to_authenticated_user(user: &DemoUser) -> AuthenticatedUser {
+    AuthenticatedUser {
+        user_id: format!("demo-{}", user.username),
+        email: user.email.to_string(),
+        name: Some(user.name.to_string()),
+        is_admin: user.is_admin,
+    }
+}
+
+fn find_demo_user(username: &str) -> Option<&'static DemoUser> {
+    DEMO_USERS.iter().find(|user| user.username == username)
+}
+
+/// Resolve a demo session cookie value to the corresponding authenticated user.
+///
+/// The cookie value is a stable demo username, not a serialized user object.
+pub fn resolve_demo_session_user(session_value: &str) -> Option<AuthenticatedUser> {
+    find_demo_user(session_value).map(demo_user_to_authenticated_user)
+}
+
 /// Validate demo credentials and return the corresponding [`AuthenticatedUser`].
 pub fn authenticate_demo_user(
     username: &str,
@@ -66,12 +87,7 @@ pub fn authenticate_demo_user(
     DEMO_USERS
         .iter()
         .find(|u| u.username == username && u.password == password)
-        .map(|u| AuthenticatedUser {
-            user_id: format!("demo-{}", u.username),
-            email: u.email.to_string(),
-            name: Some(u.name.to_string()),
-            is_admin: u.is_admin,
-        })
+        .map(demo_user_to_authenticated_user)
         .ok_or_else(|| AppError::Auth("Invalid username or password".into()))
 }
 
@@ -86,16 +102,17 @@ pub async fn login_handler(
     axum::Json(req): axum::Json<LoginRequest>,
 ) -> Result<(axum_extra::extract::CookieJar, axum::Json<LoginResponse>), AppError> {
     let user = authenticate_demo_user(&req.username, &req.password)?;
+    let session_value = find_demo_user(&req.username)
+        .map(|demo_user| demo_user.username)
+        .ok_or_else(|| AppError::Auth("Invalid username or password".into()))?;
 
-    let user_json = serde_json::to_string(&user)
-        .map_err(|e| AppError::Internal(format!("Failed to serialize user: {}", e)))?;
-
-    let cookie = axum_extra::extract::cookie::Cookie::build(("lekton_demo_user", user_json))
-        .path("/")
-        .http_only(true)
-        .secure(!state.insecure_cookies)
-        .same_site(axum_extra::extract::cookie::SameSite::Strict)
-        .build();
+    let cookie =
+        axum_extra::extract::cookie::Cookie::build(("lekton_demo_user", session_value.to_string()))
+            .path("/")
+            .http_only(true)
+            .secure(!state.insecure_cookies)
+            .same_site(axum_extra::extract::cookie::SameSite::Strict)
+            .build();
 
     // Also set the logged-in indicator cookie for consistency with the
     // production OAuth flow.  Use a session cookie (no max-age) to match
@@ -128,8 +145,8 @@ pub async fn me_handler(
         .get("lekton_demo_user")
         .ok_or_else(|| AppError::Auth("Not logged in".into()))?;
 
-    let user: AuthenticatedUser = serde_json::from_str(cookie.value())
-        .map_err(|e| AppError::Auth(format!("Invalid session: {}", e)))?;
+    let user = resolve_demo_session_user(cookie.value())
+        .ok_or_else(|| AppError::Auth("Invalid session".into()))?;
 
     Ok(axum::Json(user))
 }
@@ -182,5 +199,26 @@ mod tests {
     fn test_unknown_user() {
         let result = authenticate_demo_user("nobody", "nothing");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_demo_session_user_rejects_forged_json_payload() {
+        let forged = serde_json::json!({
+            "user_id": "demo-admin",
+            "email": "attacker@example.com",
+            "name": "Attacker",
+            "is_admin": true
+        })
+        .to_string();
+
+        assert!(resolve_demo_session_user(&forged).is_none());
+    }
+
+    #[test]
+    fn resolve_demo_session_user_maps_known_username() {
+        let user = resolve_demo_session_user("admin").unwrap();
+
+        assert_eq!(user.user_id, "demo-admin");
+        assert!(user.is_admin);
     }
 }

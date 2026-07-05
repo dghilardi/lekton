@@ -157,12 +157,6 @@ fn ChatContent() -> impl IntoView {
             return;
         }
 
-        #[cfg(not(feature = "hydrate"))]
-        {
-            set_streaming_html.set(render_markdown(&content));
-            return;
-        }
-
         #[cfg(feature = "hydrate")]
         {
             let version = stream_render_version.get_untracked().wrapping_add(1);
@@ -174,6 +168,11 @@ fn ChatContent() -> impl IntoView {
                     set_streaming_html.set(render_markdown(&content));
                 }
             });
+        }
+
+        #[cfg(not(feature = "hydrate"))]
+        {
+            set_streaming_html.set(render_markdown(&content));
         }
     });
 

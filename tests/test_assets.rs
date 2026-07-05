@@ -242,7 +242,7 @@ async fn list_assets_requires_authentication() {
 #[tokio::test]
 async fn list_assets_forbids_non_admin_users() {
     let env = common::TestEnv::start().await;
-    let server = env.server();
+    let server = env.server_permissive();
     let user = env
         .create_test_user("assets-user", "assets-user@example.com", false)
         .await;

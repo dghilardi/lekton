@@ -35,13 +35,6 @@ fn schedule_debounced_query(
     debounce_version: RwSignal<u64>,
     set_debounced_query: WriteSignal<String>,
 ) {
-    #[cfg(not(feature = "hydrate"))]
-    {
-        let _ = debounce_version;
-        set_debounced_query.set(value);
-        return;
-    }
-
     #[cfg(feature = "hydrate")]
     {
         let version = debounce_version.get_untracked().wrapping_add(1);
@@ -53,6 +46,12 @@ fn schedule_debounced_query(
                 set_debounced_query.set(value);
             }
         });
+    }
+
+    #[cfg(not(feature = "hydrate"))]
+    {
+        let _ = debounce_version;
+        set_debounced_query.set(value);
     }
 }
 

@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Attachment ACL recomputes now fail closed: if Qdrant or attachment-keyword-search ACL updates fail, the attachment is deindexed and marked for reprocessing instead of remaining searchable with stale permissions.
 - Demo-mode sessions now store only the selected demo account identifier in `lekton_demo_user`; all demo privileges are re-derived server-side so a forged cookie JSON payload cannot self-assign admin access.
 
 ## [0.25.11] 2026-07-05

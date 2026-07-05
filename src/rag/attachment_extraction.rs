@@ -293,14 +293,68 @@ pub async fn recompute_access_levels(
 
         let (levels, _tags) = referencing_acl(document_repo, &asset.referenced_by).await;
 
+        let mut failures = Vec::new();
+
         if let Err(e) = rag.update_attachment_access_levels(key, &levels).await {
             tracing::warn!(key, "recompute attachment ACL: update failed: {e}");
+            failures.push(format!("RAG ACL update failed: {e}"));
         }
         if let Some(search) = attachment_search {
             if let Err(e) = search.update_access_levels(key, &levels).await {
                 tracing::warn!(key, "recompute attachment ACL: search update failed: {e}");
+                failures.push(format!("search ACL update failed: {e}"));
             }
         }
+
+        if !failures.is_empty() {
+            fail_closed_attachment_acl(key, asset_repo, rag, attachment_search, &failures).await;
+        }
+    }
+}
+
+async fn fail_closed_attachment_acl(
+    key: &str,
+    asset_repo: &dyn AssetRepository,
+    rag: &dyn RagService,
+    attachment_search: Option<&dyn AttachmentSearchService>,
+    failures: &[String],
+) {
+    let error = format!(
+        "{}. Attachment deindexed until a successful reprocess refreshes ACLs.",
+        failures.join("; ")
+    );
+
+    if let Err(e) = rag.delete_attachment(key).await {
+        tracing::warn!(
+            key,
+            "recompute attachment ACL: fail-closed RAG delete failed: {e}"
+        );
+    }
+    if let Some(search) = attachment_search {
+        if let Err(e) = search.delete_attachment(key).await {
+            tracing::warn!(
+                key,
+                "recompute attachment ACL: fail-closed search delete failed: {e}"
+            );
+        }
+    }
+    if let Err(e) = asset_repo
+        .update_extraction(
+            key,
+            ExtractionUpdate {
+                status: ExtractionStatus::Failed,
+                error: Some(error),
+                extracted_content_hash: None,
+                extracted_at: None,
+                indexed_chunks: None,
+            },
+        )
+        .await
+    {
+        tracing::warn!(
+            key,
+            "recompute attachment ACL: failed to mark asset for reprocessing: {e}"
+        );
     }
 }
 
@@ -394,6 +448,15 @@ mod tests {
             }
         }
 
+        fn find_local(&self, key: &str) -> Option<Asset> {
+            self.assets
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|a| a.key == key)
+                .cloned()
+        }
+
         fn still_has(&self, key: &str) -> bool {
             self.assets.lock().unwrap().iter().any(|a| a.key == key)
         }
@@ -423,7 +486,24 @@ mod tests {
             self.assets.lock().unwrap().retain(|a| a.key != key);
             Ok(())
         }
-        async fn update_extraction(&self, _: &str, _: ExtractionUpdate) -> Result<(), AppError> {
+        async fn update_extraction(
+            &self,
+            key: &str,
+            update: ExtractionUpdate,
+        ) -> Result<(), AppError> {
+            if let Some(asset) = self
+                .assets
+                .lock()
+                .unwrap()
+                .iter_mut()
+                .find(|asset| asset.key == key)
+            {
+                asset.extraction_status = update.status;
+                asset.extraction_error = update.error;
+                asset.extracted_content_hash = update.extracted_content_hash;
+                asset.extracted_at = update.extracted_at;
+                asset.indexed_chunks = update.indexed_chunks;
+            }
             Ok(())
         }
         async fn set_references(&self, _: &str, _: &[String]) -> Result<Vec<String>, AppError> {
@@ -480,6 +560,7 @@ mod tests {
     struct RecordingRagService {
         deleted_attachment: AtomicBool,
         updated_acl: Mutex<Option<Vec<String>>>,
+        fail_update: AtomicBool,
     }
 
     #[async_trait]
@@ -517,6 +598,9 @@ mod tests {
             _: &str,
             access_levels: &[String],
         ) -> Result<(), AppError> {
+            if self.fail_update.load(Ordering::SeqCst) {
+                return Err(AppError::Internal("simulated rag acl failure".to_string()));
+            }
             *self.updated_acl.lock().unwrap() = Some(access_levels.to_vec());
             Ok(())
         }
@@ -595,6 +679,7 @@ mod tests {
     struct RecordingAttachmentSearchService {
         deleted: Mutex<Vec<String>>,
         updated_acl: Mutex<Option<(String, Vec<String>)>>,
+        fail_update: AtomicBool,
     }
 
     #[async_trait]
@@ -624,6 +709,11 @@ mod tests {
             attachment_key: &str,
             access_levels: &[String],
         ) -> Result<(), AppError> {
+            if self.fail_update.load(Ordering::SeqCst) {
+                return Err(AppError::Internal(
+                    "simulated search acl failure".to_string(),
+                ));
+            }
             *self.updated_acl.lock().unwrap() =
                 Some((attachment_key.to_string(), access_levels.to_vec()));
             Ok(())
@@ -690,5 +780,86 @@ mod tests {
             *attachment_search.deleted.lock().unwrap(),
             vec!["pdfs/d.pdf".to_string()]
         );
+    }
+
+    #[tokio::test]
+    async fn recompute_access_levels_deindexes_attachment_when_rag_acl_update_fails() {
+        let asset_repo = FakeAssetRepo::new(vec![make_asset(
+            "pdfs/e.pdf",
+            vec!["docs/still-linking".to_string()],
+        )]);
+        let document_repo = NoopDocumentRepo;
+        let rag = RecordingRagService::default();
+        rag.fail_update.store(true, Ordering::SeqCst);
+        let storage = MockStorage::new();
+        let attachment_search = RecordingAttachmentSearchService::default();
+
+        recompute_access_levels(
+            &rag,
+            &asset_repo,
+            &document_repo,
+            &storage,
+            Some(&attachment_search),
+            &["pdfs/e.pdf".to_string()],
+        )
+        .await;
+
+        assert!(
+            rag.deleted_attachment.load(Ordering::SeqCst),
+            "attachments with uncertain ACLs should be removed from RAG"
+        );
+        assert_eq!(
+            *attachment_search.deleted.lock().unwrap(),
+            vec!["pdfs/e.pdf".to_string()]
+        );
+
+        let asset = asset_repo.find_local("pdfs/e.pdf").unwrap();
+        assert_eq!(asset.extraction_status, ExtractionStatus::Failed);
+        assert!(asset
+            .extraction_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("RAG ACL update failed"));
+        assert!(asset.extracted_content_hash.is_none());
+    }
+
+    #[tokio::test]
+    async fn recompute_access_levels_deindexes_attachment_when_search_acl_update_fails() {
+        let asset_repo = FakeAssetRepo::new(vec![make_asset(
+            "pdfs/f.pdf",
+            vec!["docs/still-linking".to_string()],
+        )]);
+        let document_repo = NoopDocumentRepo;
+        let rag = RecordingRagService::default();
+        let storage = MockStorage::new();
+        let attachment_search = RecordingAttachmentSearchService::default();
+        attachment_search.fail_update.store(true, Ordering::SeqCst);
+
+        recompute_access_levels(
+            &rag,
+            &asset_repo,
+            &document_repo,
+            &storage,
+            Some(&attachment_search),
+            &["pdfs/f.pdf".to_string()],
+        )
+        .await;
+
+        assert!(
+            rag.deleted_attachment.load(Ordering::SeqCst),
+            "attachments with uncertain search ACLs should be removed from indexes"
+        );
+        assert_eq!(
+            *attachment_search.deleted.lock().unwrap(),
+            vec!["pdfs/f.pdf".to_string()]
+        );
+
+        let asset = asset_repo.find_local("pdfs/f.pdf").unwrap();
+        assert_eq!(asset.extraction_status, ExtractionStatus::Failed);
+        assert!(asset
+            .extraction_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("search ACL update failed"));
     }
 }

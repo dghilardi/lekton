@@ -241,6 +241,8 @@ impl AttachmentSearchService for MeilisearchAttachmentService {
     ) -> Result<(), AppError> {
         use meilisearch_sdk::documents::DocumentsQuery;
 
+        const PAGE_SIZE: usize = 1000;
+
         #[derive(Deserialize)]
         struct IdOnly {
             id: String,
@@ -254,40 +256,49 @@ impl AttachmentSearchService for MeilisearchAttachmentService {
 
         let index = self.index();
         let filter = format!("attachment_key = \"{attachment_key}\"");
-        let mut query = DocumentsQuery::new(&index);
-        query.with_filter(&filter);
-        query.with_limit(1000);
-        query.with_fields(["id"]);
+        let mut offset = 0usize;
 
-        let results: meilisearch_sdk::documents::DocumentsResults<IdOnly> =
-            index.get_documents_with(&query).await.map_err(|e| {
-                AppError::Internal(format!("Meilisearch attachment ACL fetch error: {e}"))
-            })?;
+        loop {
+            let mut query = DocumentsQuery::new(&index);
+            query.with_filter(&filter);
+            query.with_limit(PAGE_SIZE);
+            query.with_offset(offset);
+            query.with_fields(["id"]);
 
-        if results.results.is_empty() {
-            return Ok(());
+            let results: meilisearch_sdk::documents::DocumentsResults<IdOnly> =
+                index.get_documents_with(&query).await.map_err(|e| {
+                    AppError::Internal(format!("Meilisearch attachment ACL fetch error: {e}"))
+                })?;
+
+            if results.results.is_empty() {
+                return Ok(());
+            }
+
+            let updates: Vec<PartialAcl> = results
+                .results
+                .iter()
+                .map(|d| PartialAcl {
+                    id: &d.id,
+                    access_levels,
+                })
+                .collect();
+
+            // `add_or_update` merges by id (only `access_levels` is overwritten,
+            // every other field is left untouched), unlike `add_documents` which
+            // replaces the whole document.
+            self.index()
+                .add_or_update(&updates, Some("id"))
+                .await
+                .map_err(|e| {
+                    AppError::Internal(format!("Meilisearch attachment ACL update error: {e}"))
+                })?;
+
+            if results.results.len() < PAGE_SIZE {
+                return Ok(());
+            }
+
+            offset += results.results.len();
         }
-
-        let updates: Vec<PartialAcl> = results
-            .results
-            .iter()
-            .map(|d| PartialAcl {
-                id: &d.id,
-                access_levels,
-            })
-            .collect();
-
-        // `add_or_update` merges by id (only `access_levels` is overwritten,
-        // every other field is left untouched), unlike `add_documents` which
-        // replaces the whole document.
-        self.index()
-            .add_or_update(&updates, Some("id"))
-            .await
-            .map_err(|e| {
-                AppError::Internal(format!("Meilisearch attachment ACL update error: {e}"))
-            })?;
-
-        Ok(())
     }
 
     async fn search(

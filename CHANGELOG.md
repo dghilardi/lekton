@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ## [0.25.10] 2026-07-04
 
 ### Fixed
+- Attachment search ACL refresh now paginates through every indexed page for a file instead of updating only the first 1000 Meilisearch documents.
 - `GET /api/v1/assets` now requires an authenticated admin session instead of exposing the full asset inventory to anonymous callers.
 - PDF keyword-search hits now open the underlying asset at `#page=N` like RAG attachment citations instead of routing through the document page.
 - Restored the top navbar admin entry on narrower desktop widths by preventing the docs-link cluster from clipping the system links.

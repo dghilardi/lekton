@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 /// Monotonic counter for generating stable client-side message IDs.
 /// Prevents key collisions when the same text is sent more than once in a session.
 static CLIENT_MSG_COUNTER: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "hydrate")]
 const STREAM_RENDER_THROTTLE_MS: u32 = 50;
 
 fn next_client_msg_id() -> String {
@@ -143,6 +144,7 @@ fn ChatContent() -> impl IntoView {
     let streaming_sources = context.streaming_sources;
     let error_msg = context.error_msg;
     let (streaming_html, set_streaming_html) = signal(String::new());
+    #[cfg(feature = "hydrate")]
     let stream_render_version = RwSignal::new(0_u64);
 
     let (input, set_input) = signal(String::new());
@@ -155,15 +157,24 @@ fn ChatContent() -> impl IntoView {
             return;
         }
 
-        let version = stream_render_version.get_untracked().wrapping_add(1);
-        stream_render_version.set(version);
+        #[cfg(not(feature = "hydrate"))]
+        {
+            set_streaming_html.set(render_markdown(&content));
+            return;
+        }
 
-        leptos::task::spawn_local(async move {
-            gloo_timers::future::TimeoutFuture::new(STREAM_RENDER_THROTTLE_MS).await;
-            if stream_render_version.get_untracked() == version {
-                set_streaming_html.set(render_markdown(&content));
-            }
-        });
+        #[cfg(feature = "hydrate")]
+        {
+            let version = stream_render_version.get_untracked().wrapping_add(1);
+            stream_render_version.set(version);
+
+            leptos::task::spawn_local(async move {
+                gloo_timers::future::TimeoutFuture::new(STREAM_RENDER_THROTTLE_MS).await;
+                if stream_render_version.get_untracked() == version {
+                    set_streaming_html.set(render_markdown(&content));
+                }
+            });
+        }
     });
 
     let send_message = move || {

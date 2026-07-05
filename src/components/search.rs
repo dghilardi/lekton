@@ -4,6 +4,7 @@ use crate::app::search_docs;
 use crate::auth::refresh_client::with_auth_retry;
 use crate::search::client::SearchHit;
 
+#[cfg(feature = "hydrate")]
 const SEARCH_DEBOUNCE_MS: u32 = 250;
 const SEARCH_RESULTS_LIST_ID: &str = "global-search-results";
 
@@ -34,15 +35,25 @@ fn schedule_debounced_query(
     debounce_version: RwSignal<u64>,
     set_debounced_query: WriteSignal<String>,
 ) {
-    let version = debounce_version.get_untracked().wrapping_add(1);
-    debounce_version.set(version);
+    #[cfg(not(feature = "hydrate"))]
+    {
+        let _ = debounce_version;
+        set_debounced_query.set(value);
+        return;
+    }
 
-    leptos::task::spawn_local(async move {
-        gloo_timers::future::TimeoutFuture::new(SEARCH_DEBOUNCE_MS).await;
-        if debounce_version.get_untracked() == version {
-            set_debounced_query.set(value);
-        }
-    });
+    #[cfg(feature = "hydrate")]
+    {
+        let version = debounce_version.get_untracked().wrapping_add(1);
+        debounce_version.set(version);
+
+        leptos::task::spawn_local(async move {
+            gloo_timers::future::TimeoutFuture::new(SEARCH_DEBOUNCE_MS).await;
+            if debounce_version.get_untracked() == version {
+                set_debounced_query.set(value);
+            }
+        });
+    }
 }
 
 /// Global search modal triggered by Ctrl+K (or Cmd+K on Mac).

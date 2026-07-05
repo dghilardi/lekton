@@ -94,8 +94,8 @@ fn DemoLoginForm() -> impl IntoView {
                                     required
                                 />
                             </div>
-                            <div id="login-error" class="alert alert-error mt-4 hidden">
-                                <span>"Invalid credentials"</span>
+                            <div id="login-error" class="alert alert-error mt-4 hidden" role="alert">
+                                <span id="login-error-message">"Unable to sign in"</span>
                             </div>
                             <div class="form-control mt-6">
                                 <button type="submit" class="btn btn-primary">"Sign In"</button>

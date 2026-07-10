@@ -510,7 +510,7 @@ fn normalize_summary(summary: Option<&str>) -> Option<String> {
 }
 
 #[cfg(feature = "ssr")]
-fn normalize_parent_slug(parent_slug: Option<&str>) -> Result<Option<String>, AppError> {
+pub(crate) fn normalize_parent_slug(parent_slug: Option<&str>) -> Result<Option<String>, AppError> {
     let Some(parent_slug) = parent_slug
         .map(str::trim)
         .filter(|parent| !parent.is_empty())

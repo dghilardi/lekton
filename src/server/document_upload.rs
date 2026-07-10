@@ -145,12 +145,19 @@ pub async fn save_document_with_attachment(
             s
         }
         None => {
-            let slug = slugify(title);
-            if slug.is_empty() {
+            let title_slug = slugify(title);
+            if title_slug.is_empty() {
                 return Err(ServerFnError::new(
                     "Title must contain at least one alphanumeric character",
                 ));
             }
+            let parent_slug =
+                crate::api::ingest::normalize_parent_slug(form.parent_slug.as_deref())
+                    .map_err(|e| ServerFnError::new(e.to_string()))?;
+            let slug = match parent_slug {
+                Some(parent) => format!("{parent}/{title_slug}"),
+                None => title_slug,
+            };
             let existing = state
                 .document_repo
                 .find_by_slug(&slug)

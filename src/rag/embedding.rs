@@ -15,6 +15,8 @@ use crate::rag::{build_oai_client, client::format_llm_error};
 
 const DEFAULT_VERTEX_LOCATION: &str = "us-central1";
 const GCP_SCOPE_CLOUD_PLATFORM: &str = "https://www.googleapis.com/auth/cloud-platform";
+/// Most OpenAI-compatible embedding APIs (e.g. OpenAI itself) cap batch requests at 100 inputs.
+const OPENAI_EMBEDDING_BATCH_SIZE: usize = 100;
 
 // ── Trait ─────────────────────────────────────────────────────────────────────
 
@@ -57,31 +59,36 @@ impl EmbeddingService for OpenAICompatibleEmbedding {
             return Ok(Vec::new());
         }
 
-        let request = CreateEmbeddingRequest {
-            model: self.model.clone(),
-            input: EmbeddingInput::StringArray(texts.to_vec()),
-            encoding_format: None,
-            user: None,
-            dimensions: None,
-        };
+        let mut result = Vec::with_capacity(texts.len());
 
-        let response = self
-            .client
-            .embeddings()
-            .create(request)
-            .await
-            .map_err(|e| {
-                AppError::Internal(format!(
-                    "embedding request failed: {}",
-                    format_llm_error(&e)
-                ))
-            })?;
+        for batch in texts.chunks(OPENAI_EMBEDDING_BATCH_SIZE) {
+            let request = CreateEmbeddingRequest {
+                model: self.model.clone(),
+                input: EmbeddingInput::StringArray(batch.to_vec()),
+                encoding_format: None,
+                user: None,
+                dimensions: None,
+            };
 
-        // Sort by index to guarantee ordering matches input
-        let mut embeddings = response.data;
-        embeddings.sort_by_key(|e| e.index);
+            let response = self
+                .client
+                .embeddings()
+                .create(request)
+                .await
+                .map_err(|e| {
+                    AppError::Internal(format!(
+                        "embedding request failed: {}",
+                        format_llm_error(&e)
+                    ))
+                })?;
 
-        let result: Vec<Vec<f32>> = embeddings.into_iter().map(|e| e.embedding).collect();
+            // Sort by index to guarantee ordering matches input
+            let mut embeddings = response.data;
+            embeddings.sort_by_key(|e| e.index);
+
+            result.extend(embeddings.into_iter().map(|e| e.embedding));
+        }
+
         tracing::info!(
             sent = texts.len(),
             received = result.len(),

@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+# Fixed
+- limit embedding batch size to 100 items
 
 ## [0.25.13] 2026-07-05
 

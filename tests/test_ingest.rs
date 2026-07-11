@@ -1,8 +1,5 @@
 mod common;
 
-use lekton::db::repository::DocumentRepository;
-use lekton::storage::client::StorageClient;
-
 #[tokio::test]
 async fn ingest_creates_document() {
     let env = common::TestEnv::start().await;

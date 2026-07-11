@@ -1,9 +1,7 @@
 mod common;
 
 use lekton::auth::token_service::TokenService;
-use lekton::db::service_token_models::{scopes_overlap, ServiceToken};
-use lekton::db::service_token_repository::ServiceTokenRepository;
-
+use lekton::db::service_token_models::ServiceToken;
 // ── Repository CRUD ──────────────────────────────────────────────────────────
 
 #[tokio::test]

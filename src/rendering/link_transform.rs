@@ -264,13 +264,6 @@ fn is_api_asset_link(url: &str) -> bool {
 mod tests {
     use super::*;
 
-    fn ctx_with_siblings(
-        source_path: &str,
-        siblings: HashMap<String, String>,
-    ) -> (String, HashMap<String, String>) {
-        (source_path.to_string(), siblings)
-    }
-
     #[test]
     fn test_external_links_unchanged() {
         let siblings = HashMap::new();

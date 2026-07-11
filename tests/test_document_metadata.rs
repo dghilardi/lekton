@@ -1,7 +1,5 @@
 mod common;
 
-use lekton::db::repository::DocumentRepository;
-
 #[tokio::test]
 async fn document_stores_and_returns_tags() {
     let env = common::TestEnv::start().await;

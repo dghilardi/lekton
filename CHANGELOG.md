@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Restored the migration duplicate-key regression test and made the full Clippy quality gate pass.
+
 ## [0.25.15] 2026-07-10
 
 ## [0.25.14] 2026-07-10

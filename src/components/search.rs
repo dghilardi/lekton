@@ -132,7 +132,7 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
             #[cfg(feature = "hydrate")]
             if let Some(input) = input_ref.get() {
                 let _ = input.focus();
-                let _ = input.select();
+                input.select();
             }
         }
     });

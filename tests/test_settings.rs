@@ -1,7 +1,5 @@
 mod common;
 
-use lekton::db::settings_repository::SettingsRepository;
-
 #[tokio::test]
 async fn settings_default_returns_empty_css() {
     let env = common::TestEnv::start().await;

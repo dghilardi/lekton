@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 - OIDC `id_token`s are now cryptographically verified (JWKS signature selected by `kid`, issuer, audience, expiry and nonce) instead of decoded without verification; symmetric/`none` algorithms are rejected and the JWKS is refetched on key rotation. OIDC now always performs discovery to obtain the issuer and JWKS URI.
 
 ### Fixed
+- The WYSIWYG editor now indexes the document into search before persisting it, records `needs_reindex` when indexing fails (mirroring the ingest API), and reports partial success in the save message instead of always claiming success while search or asset-reference reconciliation silently failed.
 - Orphaned-attachment cleanup now deindexes RAG/search and deletes the blob before removing the canonical asset record, keeping the record (marked failed) for retry if any step fails, instead of stranding indexed chunks with stale ACLs and no anchor to reconcile them.
 
 ## [0.25.16] 2026-07-11

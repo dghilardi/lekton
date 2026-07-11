@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.25.16] 2026-07-11
+
 ### Fixed
 - Restored the migration duplicate-key regression test and made the full Clippy quality gate pass.
 - Mark attachment extraction as retryable when keyword-search indexing fails instead of reporting a false success.

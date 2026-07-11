@@ -7,6 +7,9 @@ All notable changes to this project will be documented in this file.
 ### Security
 - OIDC `id_token`s are now cryptographically verified (JWKS signature selected by `kid`, issuer, audience, expiry and nonce) instead of decoded without verification; symmetric/`none` algorithms are rejected and the JWKS is refetched on key rotation. OIDC now always performs discovery to obtain the issuer and JWKS URI.
 
+### Fixed
+- Orphaned-attachment cleanup now deindexes RAG/search and deletes the blob before removing the canonical asset record, keeping the record (marked failed) for retry if any step fails, instead of stranding indexed chunks with stale ACLs and no anchor to reconcile them.
+
 ## [0.25.16] 2026-07-11
 
 ### Fixed

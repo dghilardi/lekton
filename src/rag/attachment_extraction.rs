@@ -323,22 +323,37 @@ pub async fn recompute_access_levels(
         };
 
         if asset.referenced_by.is_empty() {
+            // Deindex first, delete the blob, and remove the canonical Mongo
+            // record only once every dependent store is confirmed clear. The
+            // record is the sole anchor a future reconcile could use, so if any
+            // step fails we keep it (marked failed) and retry later instead of
+            // stranding indexed chunks with stale ACLs and no asset to drive
+            // their cleanup. All deletes are idempotent, so a retry is safe.
+            let mut failures = Vec::new();
+            if let Err(e) = rag.delete_attachment(key).await {
+                tracing::warn!(key, "delete orphaned attachment: RAG delete failed: {e}");
+                failures.push(format!("RAG delete failed: {e}"));
+            }
+            if let Some(search) = attachment_search {
+                if let Err(e) = search.delete_attachment(key).await {
+                    tracing::warn!(key, "delete orphaned attachment: search delete failed: {e}");
+                    failures.push(format!("search delete failed: {e}"));
+                }
+            }
             if let Err(e) = storage.delete_object(&asset.s3_key).await {
                 tracing::warn!(
                     key,
                     "delete orphaned attachment: storage delete failed: {e}"
                 );
+                failures.push(format!("storage delete failed: {e}"));
             }
-            if let Err(e) = asset_repo.delete(key).await {
-                tracing::warn!(key, "delete orphaned attachment: asset delete failed: {e}");
-            }
-            if let Err(e) = rag.delete_attachment(key).await {
-                tracing::warn!(key, "delete orphaned attachment: RAG delete failed: {e}");
-            }
-            if let Some(search) = attachment_search {
-                if let Err(e) = search.delete_attachment(key).await {
-                    tracing::warn!(key, "delete orphaned attachment: search delete failed: {e}");
+
+            if failures.is_empty() {
+                if let Err(e) = asset_repo.delete(key).await {
+                    tracing::warn!(key, "delete orphaned attachment: asset delete failed: {e}");
                 }
+            } else {
+                mark_orphan_cleanup_failure(key, asset_repo, &failures).await;
             }
             continue;
         }
@@ -406,6 +421,39 @@ async fn fail_closed_attachment_acl(
         tracing::warn!(
             key,
             "recompute attachment ACL: failed to mark asset for reprocessing: {e}"
+        );
+    }
+}
+
+/// Mark an orphaned attachment whose cleanup partially failed as `Failed`,
+/// keeping the record so a later reconcile retries the delete. Without this the
+/// record would either vanish (stranding indexed chunks) or stay silently
+/// `Done`.
+async fn mark_orphan_cleanup_failure(
+    key: &str,
+    asset_repo: &dyn AssetRepository,
+    failures: &[String],
+) {
+    let error = format!(
+        "orphaned attachment cleanup incomplete: {}. Record kept for retry.",
+        failures.join("; ")
+    );
+    if let Err(e) = asset_repo
+        .update_extraction(
+            key,
+            ExtractionUpdate {
+                status: ExtractionStatus::Failed,
+                error: Some(error),
+                extracted_content_hash: None,
+                extracted_at: None,
+                indexed_chunks: None,
+            },
+        )
+        .await
+    {
+        tracing::warn!(
+            key,
+            "delete orphaned attachment: failed to mark record for retry: {e}"
         );
     }
 }
@@ -617,6 +665,7 @@ mod tests {
         deleted_attachment: AtomicBool,
         updated_acl: Mutex<Option<Vec<String>>>,
         fail_update: AtomicBool,
+        fail_delete: AtomicBool,
     }
 
     #[async_trait]
@@ -646,6 +695,11 @@ mod tests {
             Ok(0)
         }
         async fn delete_attachment(&self, _: &str) -> Result<(), AppError> {
+            if self.fail_delete.load(Ordering::SeqCst) {
+                return Err(AppError::Internal(
+                    "simulated rag delete failure".to_string(),
+                ));
+            }
             self.deleted_attachment.store(true, Ordering::SeqCst);
             Ok(())
         }
@@ -701,6 +755,46 @@ mod tests {
             "orphaned asset's S3 object should be deleted"
         );
         assert!(rag.updated_acl.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn recompute_access_levels_keeps_orphan_record_when_deindex_fails() {
+        // When deindexing an orphaned attachment fails, the canonical Mongo
+        // record must survive as the only anchor a future reconcile can use;
+        // deleting it would strand the indexed chunks with stale ACLs forever.
+        let asset_repo = FakeAssetRepo::new(vec![make_asset("pdfs/orphan.pdf", vec![])]);
+        let document_repo = NoopDocumentRepo;
+        let rag = RecordingRagService::default();
+        rag.fail_delete.store(true, Ordering::SeqCst);
+        let storage = MockStorage::new();
+        storage
+            .objects
+            .lock()
+            .unwrap()
+            .insert("assets/pdfs/orphan.pdf".to_string(), vec![1, 2, 3]);
+        let attachment_search = RecordingAttachmentSearchService::default();
+
+        recompute_access_levels(
+            &rag,
+            &asset_repo,
+            &document_repo,
+            &storage,
+            Some(&attachment_search),
+            &["pdfs/orphan.pdf".to_string()],
+        )
+        .await;
+
+        assert!(
+            asset_repo.still_has("pdfs/orphan.pdf"),
+            "orphan record must be kept as a retry anchor when deindexing fails"
+        );
+        let asset = asset_repo.find_local("pdfs/orphan.pdf").unwrap();
+        assert_eq!(asset.extraction_status, ExtractionStatus::Failed);
+        assert!(asset
+            .extraction_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("RAG delete failed"));
     }
 
     #[tokio::test]

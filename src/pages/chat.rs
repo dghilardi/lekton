@@ -581,11 +581,11 @@ fn MessageFeedbackBar(
     view! {
         <div class="flex flex-col gap-1.5 mt-0.5">
             // Feedback buttons row
-            <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                 // Thumbs up
                 <button
                     class=move || format!(
-                        "btn btn-ghost btn-xs h-6 min-h-0 px-1.5 rounded-md gap-1 text-xs {}",
+                        "btn btn-ghost btn-xs h-11 min-h-11 w-11 min-w-11 px-1.5 rounded-md gap-1 text-xs {}",
                         if feedback.get().as_ref().map(|f| f.rating == "positive").unwrap_or(false) {
                             "text-success bg-success/10"
                         } else {
@@ -620,6 +620,8 @@ fn MessageFeedbackBar(
                         }
                     }
                     title="Helpful"
+                    aria-label="Mark response as helpful"
+                    aria-pressed=move || feedback.get().as_ref().map(|f| f.rating == "positive").unwrap_or(false)
                 >
                     <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14Z"/>
@@ -630,7 +632,7 @@ fn MessageFeedbackBar(
                 // Thumbs down
                 <button
                     class=move || format!(
-                        "btn btn-ghost btn-xs h-6 min-h-0 px-1.5 rounded-md gap-1 text-xs {}",
+                        "btn btn-ghost btn-xs h-11 min-h-11 w-11 min-w-11 px-1.5 rounded-md gap-1 text-xs {}",
                         if feedback.get().as_ref().map(|f| f.rating == "negative").unwrap_or(false) {
                             "text-error bg-error/10"
                         } else {
@@ -659,6 +661,8 @@ fn MessageFeedbackBar(
                         }
                     }
                     title="Not helpful"
+                    aria-label="Mark response as not helpful"
+                    aria-pressed=move || feedback.get().as_ref().map(|f| f.rating == "negative").unwrap_or(false)
                 >
                     <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3H10Z"/>
@@ -695,6 +699,7 @@ fn MessageFeedbackBar(
                                         }
                                     }
                                     title="Remove feedback"
+                                    aria-label="Remove feedback"
                                 >
                                     <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                                 </button>

@@ -1,8 +1,5 @@
 mod common;
 
-use lekton::db::repository::DocumentRepository;
-use lekton::storage::client::StorageClient;
-
 #[tokio::test]
 async fn ingest_then_search_then_retrieve() {
     let env = common::TestEnv::start().await;

@@ -237,7 +237,9 @@ impl AttachmentExtractionService {
                             )
                             .await
                         {
-                            tracing::warn!(key, "attachment keyword-search indexing failed: {e}");
+                            return self
+                                .fail(key, &format!("keyword-search indexing failed: {e}"))
+                                .await;
                         }
                     }
                 }
@@ -733,6 +735,7 @@ mod tests {
     struct RecordingAttachmentSearchService {
         deleted: Mutex<Vec<String>>,
         updated_acl: Mutex<Option<(String, Vec<String>)>>,
+        fail_index: AtomicBool,
         fail_update: AtomicBool,
     }
 
@@ -749,6 +752,11 @@ mod tests {
             _: &[crate::rag::service::AttachmentPage],
             _: &[String],
         ) -> Result<(), AppError> {
+            if self.fail_index.load(Ordering::SeqCst) {
+                return Err(AppError::Internal(
+                    "simulated search indexing failure".to_string(),
+                ));
+            }
             Ok(())
         }
         async fn delete_attachment(&self, attachment_key: &str) -> Result<(), AppError> {
@@ -782,6 +790,44 @@ mod tests {
         async fn configure_index(&self) -> Result<(), AppError> {
             Ok(())
         }
+    }
+
+    #[tokio::test]
+    async fn keyword_index_failure_marks_attachment_for_retry() {
+        let key = "notes/retry.txt";
+        let mut asset = make_asset(key, vec!["docs/guide".to_string()]);
+        asset.content_type = "text/plain".to_string();
+        asset.content_hash = Some("sha256:content".to_string());
+
+        let asset_repo = Arc::new(FakeAssetRepo::new(vec![asset]));
+        let storage = Arc::new(MockStorage::new());
+        storage
+            .put_object("assets/notes/retry.txt", b"retryable attachment".to_vec())
+            .await
+            .unwrap();
+        let rag = Arc::new(RecordingRagService::default());
+        let search = Arc::new(RecordingAttachmentSearchService::default());
+        search.fail_index.store(true, Ordering::SeqCst);
+
+        let service = AttachmentExtractionService::new(
+            storage,
+            asset_repo.clone(),
+            Arc::new(NoopDocumentRepo),
+            rag,
+            Some(search),
+            Arc::new(AttachmentExtractors::new(100, None)),
+        );
+
+        service.process_one(key, true).await.unwrap();
+
+        let asset = asset_repo.find_local(key).unwrap();
+        assert_eq!(asset.extraction_status, ExtractionStatus::Failed);
+        assert!(asset
+            .extraction_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("keyword-search indexing failed"));
+        assert!(asset.extracted_content_hash.is_none());
     }
 
     #[tokio::test]

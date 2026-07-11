@@ -1,9 +1,5 @@
 mod common;
 
-use lekton::db::document_version_repository::DocumentVersionRepository;
-use lekton::db::repository::DocumentRepository;
-use lekton::storage::client::StorageClient;
-
 // ── Content hash integration tests ───────────────────────────────────────────
 
 #[tokio::test]

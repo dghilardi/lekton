@@ -241,7 +241,11 @@ mod inner {
     }
 
     fn is_duplicate_key(err: &mongodb::error::Error) -> bool {
-        err.to_string().contains("E11000")
+        is_duplicate_key_message(&err.to_string())
+    }
+
+    fn is_duplicate_key_message(message: &str) -> bool {
+        message.contains("E11000")
     }
 
     #[cfg(test)]
@@ -249,9 +253,15 @@ mod inner {
         use super::*;
 
         #[test]
-        fn duplicate_key_detection_matches_mongo_error_strings() {
-            let err = mongodb::error::Error::custom("E11000 duplicate key error");
-            assert!(is_duplicate_key(&err));
+        fn duplicate_key_detection_matches_mongo_server_messages() {
+            assert!(is_duplicate_key_message(
+                "E11000 duplicate key error collection: lekton.__migrations index: change_id_1 dup key"
+            ));
+        }
+
+        #[test]
+        fn duplicate_key_detection_rejects_other_database_errors() {
+            assert!(!is_duplicate_key_message("connection reset by peer"));
         }
     }
 }

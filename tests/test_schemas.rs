@@ -1,9 +1,6 @@
 mod common;
 
 use lekton::api::schemas::{IngestSchemaResponse, SchemaDetail, SchemaListItem};
-use lekton::db::schema_repository::SchemaRepository;
-use lekton::storage::client::StorageClient;
-
 fn openapi_spec() -> String {
     r#"{"openapi": "3.0.0", "info": {"title": "Test API", "version": "1.0.0"}, "paths": {}}"#
         .to_string()

@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Each integration-test crate compiles this shared fixture independently.
+
 use std::sync::Arc;
 
 use axum::routing::{get, post};

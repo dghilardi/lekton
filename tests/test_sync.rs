@@ -1,7 +1,5 @@
 mod common;
 
-use lekton::db::repository::DocumentRepository;
-
 #[tokio::test]
 async fn sync_identifies_new_docs_to_upload() {
     let env = common::TestEnv::start().await;

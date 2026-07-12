@@ -65,6 +65,11 @@ mod inner {
                 "davide.ghilardi@comelit.it",
                 add_remaining_collection_indexes,
             )
+            .register(
+                "012_add_refresh_tokens_ttl_and_family",
+                "davide.ghilardi@comelit.it",
+                add_refresh_tokens_ttl_and_family,
+            )
     }
 
     fn format_duplicate_group_id(id: &bson::Bson) -> String {
@@ -639,6 +644,48 @@ mod inner {
                 IndexModel::builder()
                     .keys(bson::doc! { "weight": 1 })
                     .build(),
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    /// Refresh-token lifecycle hardening:
+    /// - a TTL index on `expires_at` so expired/revoked tokens are pruned by
+    ///   MongoDB instead of accumulating forever;
+    /// - backfills `family_id` (added for rotation reuse-detection) to each
+    ///   legacy token's own `id`, so every pre-existing token is its own family.
+    async fn add_refresh_tokens_ttl_and_family(db: Database) -> Result<(), mongodb::error::Error> {
+        use mongodb::options::IndexOptions;
+        use mongodb::IndexModel;
+        use std::time::Duration;
+
+        let refresh_tokens = db.collection::<bson::Document>("refresh_tokens");
+
+        // expireAfterSeconds: 0 → delete each document once `expires_at` passes.
+        refresh_tokens
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "expires_at": 1 })
+                    .options(
+                        IndexOptions::builder()
+                            .expire_after(Duration::from_secs(0))
+                            .build(),
+                    )
+                    .build(),
+            )
+            .await?;
+
+        // Backfill family_id = id for records missing it or with an empty value.
+        refresh_tokens
+            .update_many(
+                bson::doc! {
+                    "$or": [
+                        { "family_id": { "$exists": false } },
+                        { "family_id": "" },
+                    ]
+                },
+                vec![bson::doc! { "$set": { "family_id": "$id" } }],
             )
             .await?;
 

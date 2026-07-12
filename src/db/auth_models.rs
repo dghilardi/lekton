@@ -122,6 +122,12 @@ pub struct RefreshToken {
     pub user_id: String,
     /// SHA-256 (base64url, no padding) of the raw token string.
     pub token_hash: String,
+    /// Identifies the rotation chain this token belongs to. All tokens minted
+    /// from one login share a `family_id`; presenting an already-rotated token
+    /// (reuse) revokes the whole family as a theft signal. Older records may
+    /// lack it (backfilled by migration); empty is treated as its own family.
+    #[serde(default)]
+    pub family_id: String,
     /// Token expiry; after this instant the token is no longer valid.
     #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub expires_at: DateTime<Utc>,
@@ -227,6 +233,7 @@ mod tests {
             id: "tok-1".to_string(),
             user_id: "user-1".to_string(),
             token_hash: "some-hash".to_string(),
+            family_id: "fam-1".to_string(),
             expires_at: Utc::now() + chrono::Duration::days(30),
             revoked_at: None,
             created_at: Utc::now(),
@@ -240,6 +247,7 @@ mod tests {
             id: "tok-2".to_string(),
             user_id: "user-1".to_string(),
             token_hash: "some-hash".to_string(),
+            family_id: "fam-2".to_string(),
             expires_at: Utc::now() - chrono::Duration::seconds(1),
             revoked_at: None,
             created_at: Utc::now() - chrono::Duration::days(31),
@@ -253,6 +261,7 @@ mod tests {
             id: "tok-3".to_string(),
             user_id: "user-1".to_string(),
             token_hash: "some-hash".to_string(),
+            family_id: "fam-3".to_string(),
             expires_at: Utc::now() + chrono::Duration::days(30),
             revoked_at: Some(Utc::now() - chrono::Duration::hours(1)),
             created_at: Utc::now() - chrono::Duration::hours(2),

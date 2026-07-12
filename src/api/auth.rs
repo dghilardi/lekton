@@ -105,6 +105,7 @@ pub async fn issue_token_pair(
     user_repo: &dyn crate::db::user_repository::UserRepository,
     token_service: &TokenService,
     user: &AuthenticatedUser,
+    family_id: String,
 ) -> Result<(String, String), AppError> {
     let access_token = token_service.generate_access_token(user)?;
     let (refresh_raw, refresh_hash) = token_service.generate_refresh_token();
@@ -117,6 +118,7 @@ pub async fn issue_token_pair(
             id: uuid::Uuid::new_v4().to_string(),
             user_id: user.user_id.clone(),
             token_hash: refresh_hash,
+            family_id,
             expires_at,
             revoked_at: None,
             created_at: chrono::Utc::now(),
@@ -124,6 +126,11 @@ pub async fn issue_token_pair(
         .await?;
 
     Ok((access_token, refresh_raw))
+}
+
+/// Start a new refresh-token rotation family (fresh login).
+pub fn new_token_family() -> String {
+    uuid::Uuid::new_v4().to_string()
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
@@ -191,11 +198,12 @@ pub async fn callback_handler(
     )
     .await?;
 
-    // Issue tokens
+    // Issue tokens for a fresh rotation family.
     let (access_token, refresh_token) = issue_token_pair(
         app_state.user_repo.as_ref(),
         &app_state.token_service,
         &auth_user,
+        new_token_family(),
     )
     .await?;
 
@@ -250,44 +258,90 @@ async fn refresh_handler_inner(
             )
         })?;
 
-    let hash = TokenService::hash_token(&raw_token);
-
-    let stored = app_state
-        .user_repo
-        .find_refresh_token_by_hash(&hash)
-        .await
-        .map_err(|e| (jar.clone(), e))?
-        .ok_or_else(|| {
-            // Token not found in DB — clear all session cookies.
-            let jar = jar
-                .clone()
-                .remove(clear_refresh_token_cookie())
-                .remove(clear_legacy_refresh_token_cookie())
-                .remove(clear_logged_in_cookie())
-                .remove(clear_access_token_cookie());
-            (jar, AppError::Auth("Refresh token not found".into()))
-        })?;
-
-    if !stored.is_valid() {
-        // Session is gone — clean up all session cookies so the browser stops
-        // thinking the user is logged in.
-        let jar = jar
-            .remove(clear_refresh_token_cookie())
+    let clear_all = |jar: CookieJar| {
+        jar.remove(clear_refresh_token_cookie())
             .remove(clear_legacy_refresh_token_cookie())
             .remove(clear_logged_in_cookie())
-            .remove(clear_access_token_cookie());
-        return Err((
-            jar,
+            .remove(clear_access_token_cookie())
+    };
+
+    match rotate_refresh_token(
+        app_state.user_repo.as_ref(),
+        &app_state.token_service,
+        &raw_token,
+    )
+    .await
+    {
+        Ok((auth_user, access_token, new_refresh)) => {
+            let ttl_secs = app_state.token_service.access_token_ttl_secs();
+            let ttl_days = app_state.token_service.refresh_token_ttl_days();
+            let secure = !app_state.insecure_cookies;
+            let jar = jar
+                .remove(clear_legacy_refresh_token_cookie())
+                .add(access_token_cookie(access_token, ttl_secs, secure))
+                .add(refresh_token_cookie(new_refresh, ttl_days, secure))
+                .add(logged_in_cookie(ttl_days, secure));
+            Ok((jar, axum::Json(RefreshResponse { user: auth_user })))
+        }
+        Err(RefreshError::Internal(e)) => Err((jar.clone(), e)),
+        Err(RefreshError::NotFound) => Err((
+            clear_all(jar),
+            AppError::Auth("Refresh token not found".into()),
+        )),
+        Err(RefreshError::InvalidOrReused) => Err((
+            clear_all(jar),
             AppError::Auth("Refresh token is expired or revoked".into()),
-        ));
+        )),
+    }
+}
+
+/// Failure modes of a refresh-token rotation.
+enum RefreshError {
+    /// Token hash was not found in the store.
+    NotFound,
+    /// Token was expired, revoked-and-reused (family revoked), or its user is gone.
+    InvalidOrReused,
+    /// A database/internal error while rotating.
+    Internal(AppError),
+}
+
+/// Verify and rotate a refresh token, returning the identity and a fresh
+/// `(access, refresh)` pair minted in the same rotation family.
+///
+/// If an already-revoked token is presented (reuse), the entire family is
+/// revoked: rotation means a valid token is single-use, so a second use of a
+/// rotated token signals theft and every session in that chain is killed.
+async fn rotate_refresh_token(
+    user_repo: &dyn crate::db::user_repository::UserRepository,
+    token_service: &TokenService,
+    raw_token: &str,
+) -> Result<(AuthenticatedUser, String, String), RefreshError> {
+    let hash = TokenService::hash_token(raw_token);
+
+    let stored = user_repo
+        .find_refresh_token_by_hash(&hash)
+        .await
+        .map_err(RefreshError::Internal)?
+        .ok_or(RefreshError::NotFound)?;
+
+    if stored.revoked_at.is_some() {
+        // Reuse of a rotated/revoked token — revoke the whole family.
+        user_repo
+            .revoke_refresh_token_family(&stored.family_id)
+            .await
+            .map_err(RefreshError::Internal)?;
+        return Err(RefreshError::InvalidOrReused);
     }
 
-    let user_record = app_state
-        .user_repo
+    if stored.expires_at <= chrono::Utc::now() {
+        return Err(RefreshError::InvalidOrReused);
+    }
+
+    let user_record = user_repo
         .find_user_by_id(&stored.user_id)
         .await
-        .map_err(|e| (jar.clone(), e))?
-        .ok_or_else(|| (jar.clone(), AppError::Auth("User not found".into())))?;
+        .map_err(RefreshError::Internal)?
+        .ok_or(RefreshError::InvalidOrReused)?;
 
     let auth_user = AuthenticatedUser {
         user_id: user_record.id.clone(),
@@ -296,31 +350,21 @@ async fn refresh_handler_inner(
         is_admin: user_record.is_admin,
     };
 
-    // Revoke old token and issue new pair
-    app_state
-        .user_repo
+    // Rotate: revoke the used token, mint a replacement in the same family.
+    user_repo
         .revoke_refresh_token(&stored.id)
         .await
-        .map_err(|e| (jar.clone(), e))?;
+        .map_err(RefreshError::Internal)?;
     let (access_token, new_refresh) = issue_token_pair(
-        app_state.user_repo.as_ref(),
-        &app_state.token_service,
+        user_repo,
+        token_service,
         &auth_user,
+        stored.family_id.clone(),
     )
     .await
-    .map_err(|e| (jar.clone(), e))?;
+    .map_err(RefreshError::Internal)?;
 
-    let ttl_secs = app_state.token_service.access_token_ttl_secs();
-    let ttl_days = app_state.token_service.refresh_token_ttl_days();
-
-    let secure = !app_state.insecure_cookies;
-    let jar = jar
-        .remove(clear_legacy_refresh_token_cookie())
-        .add(access_token_cookie(access_token, ttl_secs, secure))
-        .add(refresh_token_cookie(new_refresh, ttl_days, secure))
-        .add(logged_in_cookie(ttl_days, secure));
-
-    Ok((jar, axum::Json(RefreshResponse { user: auth_user })))
+    Ok((auth_user, access_token, new_refresh))
 }
 
 /// `POST /auth/logout` — Revoke the refresh token and clear all auth cookies.
@@ -427,7 +471,9 @@ mod tests {
             is_admin: false,
         };
 
-        let (access, refresh_raw) = issue_token_pair(&repo, &svc, &user).await.unwrap();
+        let (access, refresh_raw) = issue_token_pair(&repo, &svc, &user, new_token_family())
+            .await
+            .unwrap();
 
         // Access token should be a valid JWT
         assert!(svc.validate_access_token(&access).is_ok());
@@ -437,6 +483,45 @@ mod tests {
         let stored = repo.find_refresh_token_by_hash(&hash).await.unwrap();
         assert!(stored.is_some());
         assert!(stored.unwrap().is_valid());
+    }
+
+    #[tokio::test]
+    async fn test_reused_refresh_token_revokes_whole_family() {
+        let repo = MockRepo::default();
+        let svc = make_svc();
+        let user = upsert_user_after_login(&repo, "sub-1", "u@test.com", None, "oidc")
+            .await
+            .unwrap();
+
+        // Fresh login, then one legitimate rotation r1 -> r2.
+        let family = new_token_family();
+        let (_, r1) = issue_token_pair(&repo, &svc, &user, family.clone())
+            .await
+            .unwrap();
+        let (_, _, r2) = match rotate_refresh_token(&repo, &svc, &r1).await {
+            Ok(t) => t,
+            Err(_) => panic!("first rotation should succeed"),
+        };
+
+        // r2 stays in the same family.
+        let h2 = TokenService::hash_token(&r2);
+        assert_eq!(
+            repo.find_refresh_token_by_hash(&h2)
+                .await
+                .unwrap()
+                .unwrap()
+                .family_id,
+            family
+        );
+
+        // Reusing the already-rotated r1 is rejected and revokes the family.
+        assert!(rotate_refresh_token(&repo, &svc, &r1).await.is_err());
+
+        let stored2 = repo.find_refresh_token_by_hash(&h2).await.unwrap().unwrap();
+        assert!(
+            stored2.revoked_at.is_some(),
+            "reuse of a rotated token must revoke the whole family, including the current token"
+        );
     }
 
     #[tokio::test]
@@ -450,7 +535,9 @@ mod tests {
             is_admin: false,
         };
 
-        let (_, refresh_raw) = issue_token_pair(&repo, &svc, &user).await.unwrap();
+        let (_, refresh_raw) = issue_token_pair(&repo, &svc, &user, new_token_family())
+            .await
+            .unwrap();
         let hash = TokenService::hash_token(&refresh_raw);
 
         // Manually expire the stored token

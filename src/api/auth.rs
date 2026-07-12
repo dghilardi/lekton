@@ -143,10 +143,11 @@ pub async fn login_handler(
 
     let (url, flow_state) = provider.login_url()?;
 
-    let state_json = serde_json::to_string(&flow_state)
-        .map_err(|e| AppError::Internal(format!("Failed to serialize auth state: {e}")))?;
+    // Sign the flow state so the cookie carrying the CSRF token / nonce across
+    // the redirect cannot be forged or tampered with by the browser.
+    let state_token = state.token_service.sign_flow_state(&flow_state)?;
 
-    let jar = jar.add(auth_state_cookie(state_json, !state.insecure_cookies));
+    let jar = jar.add(auth_state_cookie(state_token, !state.insecure_cookies));
 
     Ok((jar, axum::response::Redirect::temporary(&url)))
 }
@@ -165,14 +166,13 @@ pub async fn callback_handler(
         .as_ref()
         .ok_or_else(|| AppError::Auth("Auth provider not configured".into()))?;
 
-    // Read + clear the CSRF state cookie
-    let state_json = jar
+    // Read + clear the CSRF state cookie, verifying its signature.
+    let state_token = jar
         .get(AUTH_STATE_COOKIE)
         .map(|c| c.value().to_string())
         .ok_or_else(|| AppError::Auth("Missing auth state cookie".into()))?;
 
-    let flow_state: AuthFlowState = serde_json::from_str(&state_json)
-        .map_err(|_| AppError::Auth("Invalid auth state cookie".into()))?;
+    let flow_state: AuthFlowState = app_state.token_service.verify_flow_state(&state_token)?;
 
     let jar = jar.remove(clear_auth_state_cookie());
 

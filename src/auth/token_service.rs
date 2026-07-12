@@ -23,6 +23,26 @@ const OPAQUE_TOKEN_LENGTH: usize = 43;
 /// random bytes).
 #[cfg(feature = "ssr")]
 const MIN_JWT_SECRET_BYTES: usize = 32;
+/// Issuer/audience marker for the signed OAuth/OIDC flow-state token, distinct
+/// from access tokens so the two cannot be confused despite sharing a secret.
+#[cfg(feature = "ssr")]
+const FLOW_STATE_MARKER: &str = "lekton:auth-flow";
+/// Lifetime of a signed flow-state token — long enough for a login roundtrip.
+#[cfg(feature = "ssr")]
+const FLOW_STATE_TTL_SECS: u64 = 600;
+
+/// Claims for the signed OAuth/OIDC flow-state token (CSRF token + optional
+/// nonce), so the cookie carrying them is tamper-proof and expires.
+#[cfg(feature = "ssr")]
+#[derive(Debug, Serialize, Deserialize)]
+struct FlowStateClaims {
+    iss: String,
+    aud: String,
+    csrf_token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    nonce: Option<String>,
+    exp: u64,
+}
 
 /// Claims embedded in the JWT access token.
 #[derive(Debug, Serialize, Deserialize)]
@@ -154,6 +174,52 @@ impl TokenService {
             })
     }
 
+    /// Sign the OAuth/OIDC flow state (CSRF token + optional nonce) as a
+    /// short-lived HS256 JWT, so the cookie carrying it across the login
+    /// redirect cannot be forged or tampered with by the browser.
+    pub fn sign_flow_state(
+        &self,
+        state: &crate::auth::provider::AuthFlowState,
+    ) -> Result<String, AppError> {
+        let now = Utc::now().timestamp() as u64;
+        let claims = FlowStateClaims {
+            iss: FLOW_STATE_MARKER.to_string(),
+            aud: FLOW_STATE_MARKER.to_string(),
+            csrf_token: state.csrf_token.clone(),
+            nonce: state.nonce.clone(),
+            exp: now + FLOW_STATE_TTL_SECS,
+        };
+        jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &claims,
+            &self.encoding_key,
+        )
+        .map_err(|e| AppError::Internal(format!("Failed to sign auth flow state: {e}")))
+    }
+
+    /// Verify and decode a signed flow-state token, rejecting tampered, expired,
+    /// or wrong-purpose tokens.
+    pub fn verify_flow_state(
+        &self,
+        token: &str,
+    ) -> Result<crate::auth::provider::AuthFlowState, AppError> {
+        let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
+        validation.validate_exp = true;
+        validation.leeway = 0;
+        validation.set_issuer(&[FLOW_STATE_MARKER]);
+        validation.set_audience(&[FLOW_STATE_MARKER]);
+
+        let claims =
+            jsonwebtoken::decode::<FlowStateClaims>(token, &self.decoding_key, &validation)
+                .map(|d| d.claims)
+                .map_err(|e| AppError::Auth(format!("Invalid auth flow state: {e}")))?;
+
+        Ok(crate::auth::provider::AuthFlowState {
+            csrf_token: claims.csrf_token,
+            nonce: claims.nonce,
+        })
+    }
+
     /// Generate a fresh refresh token pair: `(raw_token, hash)`.
     ///
     /// The raw token is a 43-character alphanumeric secret (~256 bits of
@@ -270,6 +336,63 @@ mod tests {
     fn from_app_config_rejects_missing_secret() {
         let auth = make_auth_config(None);
         assert!(TokenService::from_app_config(&auth).is_err());
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn flow_state_signed_roundtrip() {
+        use crate::auth::provider::AuthFlowState;
+        let svc = make_service();
+        let token = svc
+            .sign_flow_state(&AuthFlowState::new_oidc("csrf-1".into(), "nonce-1".into()))
+            .unwrap();
+        let out = svc.verify_flow_state(&token).unwrap();
+        assert_eq!(out.csrf_token, "csrf-1");
+        assert_eq!(out.nonce.as_deref(), Some("nonce-1"));
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn flow_state_rejects_tampered_token() {
+        use crate::auth::provider::AuthFlowState;
+        let svc = make_service();
+        let token = svc
+            .sign_flow_state(&AuthFlowState::new_oauth2("csrf-1".into()))
+            .unwrap();
+        // Flip the first character of the signature segment.
+        let parts: Vec<&str> = token.split('.').collect();
+        let sig = parts[2];
+        let flipped = if sig.starts_with('A') { 'B' } else { 'A' };
+        let tampered = format!("{}.{}.{}{}", parts[0], parts[1], flipped, &sig[1..]);
+        assert!(
+            svc.verify_flow_state(&tampered).is_err(),
+            "a tampered flow-state token must be rejected"
+        );
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn flow_state_rejects_token_from_other_secret() {
+        use crate::auth::provider::AuthFlowState;
+        let signer = TokenService::new("another-secret-key-32-bytes-long!", 3600, 30);
+        let verifier = make_service();
+        let token = signer
+            .sign_flow_state(&AuthFlowState::new_oauth2("csrf-1".into()))
+            .unwrap();
+        assert!(
+            verifier.verify_flow_state(&token).is_err(),
+            "a flow-state token signed with a different secret must be rejected"
+        );
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn flow_state_verify_rejects_access_token() {
+        // An access token shares the secret but has a different audience; it
+        // must not be accepted as flow state.
+        let svc = make_service();
+        let access = svc.generate_access_token(&make_user(false)).unwrap();
+        assert!(svc.verify_flow_state(&access).is_err());
     }
 
     #[cfg(feature = "ssr")]

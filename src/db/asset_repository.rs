@@ -26,6 +26,11 @@ pub trait AssetRepository: Send + Sync {
     /// Find an asset by its key.
     async fn find_by_key(&self, key: &str) -> Result<Option<Asset>, AppError>;
 
+    /// Fetch every asset whose key is in `keys`, in a single query. Lets
+    /// callers batch lookups (e.g. `check-hashes`) instead of issuing one query
+    /// per key.
+    async fn find_by_keys(&self, keys: &[String]) -> Result<Vec<Asset>, AppError>;
+
     /// List all assets, sorted by key.
     async fn list_all(&self) -> Result<Vec<Asset>, AppError>;
 
@@ -93,6 +98,24 @@ impl AssetRepository for MongoAssetRepository {
         use mongodb::bson::doc;
 
         Ok(self.collection.find_one(doc! { "key": key }).await?)
+    }
+
+    async fn find_by_keys(&self, keys: &[String]) -> Result<Vec<Asset>, AppError> {
+        use futures::TryStreamExt;
+        use mongodb::bson::doc;
+
+        if keys.is_empty() {
+            return Ok(vec![]);
+        }
+        let mut cursor = self
+            .collection
+            .find(doc! { "key": { "$in": keys } })
+            .await?;
+        let mut assets = Vec::new();
+        while let Some(asset) = cursor.try_next().await? {
+            assets.push(asset);
+        }
+        Ok(assets)
     }
 
     async fn list_all(&self) -> Result<Vec<Asset>, AppError> {

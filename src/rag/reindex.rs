@@ -434,6 +434,16 @@ mod tests {
                 .find(|a| a.key == key)
                 .cloned())
         }
+        async fn find_by_keys(&self, keys: &[String]) -> Result<Vec<Asset>, AppError> {
+            Ok(self
+                .assets
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|a| keys.contains(&a.key))
+                .cloned()
+                .collect())
+        }
         async fn list_all(&self) -> Result<Vec<Asset>, AppError> {
             Ok(self.assets.lock().unwrap().clone())
         }

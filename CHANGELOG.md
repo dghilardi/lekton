@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.25.17] 2026-07-12
+
 ### Security
 - Refresh tokens now belong to a rotation family: reusing an already-rotated token revokes the whole family (theft detection), and a TTL index prunes expired/revoked tokens instead of letting them accumulate forever.
 - The OAuth/OIDC login flow state (CSRF token and OIDC nonce) is now carried in a signed, short-lived token instead of a plaintext cookie, so it can no longer be forged or tampered with by the browser.

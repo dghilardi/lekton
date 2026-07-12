@@ -184,7 +184,10 @@ pub fn AccessLevelManager() -> impl IntoView {
                                                                             on:click=move |_| {
                                                                                 let n = del_name.clone();
                                                                                 leptos::task::spawn_local(async move {
-                                                                                    let _ = with_auth_retry(|| delete_admin_access_level(n.clone())).await;
+                                                                                    match with_auth_retry(|| delete_admin_access_level(n.clone())).await {
+                                                                                        Ok(_) => error_msg.set(None),
+                                                                                        Err(e) => error_msg.set(Some(e.to_string())),
+                                                                                    }
                                                                                     set_refresh.update(|c| *c += 1);
                                                                                 });
                                                                             }

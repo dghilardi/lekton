@@ -13,6 +13,12 @@ pub struct SearchReindexState {
     pub progress: AtomicU32,
 }
 
+impl crate::jobs::RunningFlag for SearchReindexState {
+    fn is_running(&self) -> &AtomicBool {
+        &self.is_running
+    }
+}
+
 /// Run a full reconciliation of the Meilisearch `documents` index.
 ///
 /// Active, visible documents are indexed from the canonical MongoDB metadata and
@@ -24,6 +30,10 @@ pub async fn run_reindex(
     storage: Arc<dyn StorageClient>,
     search: Arc<dyn SearchService>,
 ) {
+    // Reset `is_running` unconditionally when this task ends, even on an early
+    // return or panic, so a crashed reindex cannot block all future runs.
+    let _guard = crate::jobs::RunningGuard::new(reindex.clone());
+
     reindex.progress.store(0, Ordering::Relaxed);
 
     if let Err(e) = search.configure_index().await {
@@ -34,7 +44,6 @@ pub async fn run_reindex(
         Ok(docs) => docs,
         Err(e) => {
             tracing::error!("Search reindex: failed to list documents: {e}");
-            reindex.is_running.store(false, Ordering::Release);
             return;
         }
     };
@@ -43,7 +52,6 @@ pub async fn run_reindex(
     if total == 0 {
         tracing::info!("Search reindex: no documents to index");
         reindex.progress.store(100, Ordering::Relaxed);
-        reindex.is_running.store(false, Ordering::Release);
         return;
     }
 
@@ -82,7 +90,6 @@ pub async fn run_reindex(
 
     tracing::info!(total, "Search reindex: complete");
     reindex.progress.store(100, Ordering::Relaxed);
-    reindex.is_running.store(false, Ordering::Release);
 }
 
 fn update_progress(reindex: &SearchReindexState, index: usize, total: usize) {
@@ -278,5 +285,57 @@ mod tests {
 
         let deleted = search.deleted.lock().unwrap();
         assert_eq!(&*deleted, &vec![hidden.slug.clone(), archived.slug.clone()]);
+    }
+
+    #[tokio::test]
+    async fn reindex_resets_running_flag_even_when_it_panics() {
+        // A reindex that panics mid-run must not leave `is_running` stuck true,
+        // which would permanently block every future reindex.
+        struct PanickingSearch;
+        #[async_trait]
+        impl SearchService for PanickingSearch {
+            async fn index_document(&self, _: &SearchDocument) -> Result<(), AppError> {
+                panic!("simulated indexing panic");
+            }
+            async fn delete_document(&self, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            async fn search(
+                &self,
+                _: &str,
+                _: Option<&[String]>,
+                _: bool,
+            ) -> Result<Vec<SearchHit>, AppError> {
+                Ok(vec![])
+            }
+            async fn configure_index(&self) -> Result<(), AppError> {
+                Ok(())
+            }
+        }
+
+        let doc = make_doc("a", false, false);
+        let repo = Arc::new(MockDocumentRepo {
+            documents: vec![doc.clone()],
+        });
+        let storage = Arc::new(MockStorage::default());
+        storage
+            .put_object(&doc.s3_key, b"# A".to_vec())
+            .await
+            .unwrap();
+        let state = Arc::new(SearchReindexState {
+            is_running: AtomicBool::new(true),
+            progress: AtomicU32::new(0),
+        });
+
+        let state_in_task = state.clone();
+        let handle = tokio::spawn(async move {
+            run_reindex(state_in_task, repo, storage, Arc::new(PanickingSearch)).await;
+        });
+        let _ = handle.await; // JoinError from the panic; ignore it.
+
+        assert!(
+            !state.is_running.load(Ordering::Acquire),
+            "a panicked reindex must reset is_running"
+        );
     }
 }

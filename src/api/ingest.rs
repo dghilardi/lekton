@@ -1016,6 +1016,11 @@ mod tests {
         async fn set_references(&self, _: &str, _: &[String]) -> Result<Vec<String>, AppError> {
             Ok(vec![])
         }
+        async fn list_unfinished_extractions(
+            &self,
+        ) -> Result<Vec<crate::db::models::Asset>, AppError> {
+            Ok(vec![])
+        }
     }
 
     struct StaticAssetRepo {
@@ -1071,6 +1076,11 @@ mod tests {
             Ok(())
         }
         async fn set_references(&self, _: &str, _: &[String]) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
+        async fn list_unfinished_extractions(
+            &self,
+        ) -> Result<Vec<crate::db::models::Asset>, AppError> {
             Ok(vec![])
         }
     }

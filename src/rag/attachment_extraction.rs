@@ -91,6 +91,34 @@ async fn mark_enqueue_failure(asset_repo: &dyn AssetRepository, key: &str, error
     }
 }
 
+/// Re-enqueue attachments whose extraction was left unfinished (`Pending` or
+/// `InProgress`) so a process restart does not silently lose queued work.
+///
+/// The extraction queue is in-memory, so without this sweep any asset that was
+/// persisted but not yet processed before a restart would never be indexed.
+/// Safe to run on startup: `process_one` skips already-indexed content.
+pub async fn resume_unfinished_extractions(
+    asset_repo: &dyn AssetRepository,
+    queue: &AttachmentQueue,
+) {
+    match asset_repo.list_unfinished_extractions().await {
+        Ok(assets) => {
+            if !assets.is_empty() {
+                tracing::info!(
+                    count = assets.len(),
+                    "re-enqueuing unfinished attachment extractions at startup"
+                );
+            }
+            for asset in assets {
+                queue.enqueue(&asset.key);
+            }
+        }
+        Err(e) => {
+            tracing::warn!("startup attachment extraction sweep failed: {e}");
+        }
+    }
+}
+
 /// Owns the dependencies needed to extract and index a single attachment.
 pub struct AttachmentExtractionService {
     storage: Arc<dyn StorageClient>,
@@ -323,22 +351,37 @@ pub async fn recompute_access_levels(
         };
 
         if asset.referenced_by.is_empty() {
+            // Deindex first, delete the blob, and remove the canonical Mongo
+            // record only once every dependent store is confirmed clear. The
+            // record is the sole anchor a future reconcile could use, so if any
+            // step fails we keep it (marked failed) and retry later instead of
+            // stranding indexed chunks with stale ACLs and no asset to drive
+            // their cleanup. All deletes are idempotent, so a retry is safe.
+            let mut failures = Vec::new();
+            if let Err(e) = rag.delete_attachment(key).await {
+                tracing::warn!(key, "delete orphaned attachment: RAG delete failed: {e}");
+                failures.push(format!("RAG delete failed: {e}"));
+            }
+            if let Some(search) = attachment_search {
+                if let Err(e) = search.delete_attachment(key).await {
+                    tracing::warn!(key, "delete orphaned attachment: search delete failed: {e}");
+                    failures.push(format!("search delete failed: {e}"));
+                }
+            }
             if let Err(e) = storage.delete_object(&asset.s3_key).await {
                 tracing::warn!(
                     key,
                     "delete orphaned attachment: storage delete failed: {e}"
                 );
+                failures.push(format!("storage delete failed: {e}"));
             }
-            if let Err(e) = asset_repo.delete(key).await {
-                tracing::warn!(key, "delete orphaned attachment: asset delete failed: {e}");
-            }
-            if let Err(e) = rag.delete_attachment(key).await {
-                tracing::warn!(key, "delete orphaned attachment: RAG delete failed: {e}");
-            }
-            if let Some(search) = attachment_search {
-                if let Err(e) = search.delete_attachment(key).await {
-                    tracing::warn!(key, "delete orphaned attachment: search delete failed: {e}");
+
+            if failures.is_empty() {
+                if let Err(e) = asset_repo.delete(key).await {
+                    tracing::warn!(key, "delete orphaned attachment: asset delete failed: {e}");
                 }
+            } else {
+                mark_orphan_cleanup_failure(key, asset_repo, &failures).await;
             }
             continue;
         }
@@ -406,6 +449,39 @@ async fn fail_closed_attachment_acl(
         tracing::warn!(
             key,
             "recompute attachment ACL: failed to mark asset for reprocessing: {e}"
+        );
+    }
+}
+
+/// Mark an orphaned attachment whose cleanup partially failed as `Failed`,
+/// keeping the record so a later reconcile retries the delete. Without this the
+/// record would either vanish (stranding indexed chunks) or stay silently
+/// `Done`.
+async fn mark_orphan_cleanup_failure(
+    key: &str,
+    asset_repo: &dyn AssetRepository,
+    failures: &[String],
+) {
+    let error = format!(
+        "orphaned attachment cleanup incomplete: {}. Record kept for retry.",
+        failures.join("; ")
+    );
+    if let Err(e) = asset_repo
+        .update_extraction(
+            key,
+            ExtractionUpdate {
+                status: ExtractionStatus::Failed,
+                error: Some(error),
+                extracted_content_hash: None,
+                extracted_at: None,
+                indexed_chunks: None,
+            },
+        )
+        .await
+    {
+        tracing::warn!(
+            key,
+            "delete orphaned attachment: failed to mark record for retry: {e}"
         );
     }
 }
@@ -562,6 +638,21 @@ mod tests {
         async fn set_references(&self, _: &str, _: &[String]) -> Result<Vec<String>, AppError> {
             Ok(vec![])
         }
+        async fn list_unfinished_extractions(&self) -> Result<Vec<Asset>, AppError> {
+            Ok(self
+                .assets
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|a| {
+                    matches!(
+                        a.extraction_status,
+                        ExtractionStatus::Pending | ExtractionStatus::InProgress
+                    )
+                })
+                .cloned()
+                .collect())
+        }
     }
 
     struct NoopDocumentRepo;
@@ -617,6 +708,7 @@ mod tests {
         deleted_attachment: AtomicBool,
         updated_acl: Mutex<Option<Vec<String>>>,
         fail_update: AtomicBool,
+        fail_delete: AtomicBool,
     }
 
     #[async_trait]
@@ -646,6 +738,11 @@ mod tests {
             Ok(0)
         }
         async fn delete_attachment(&self, _: &str) -> Result<(), AppError> {
+            if self.fail_delete.load(Ordering::SeqCst) {
+                return Err(AppError::Internal(
+                    "simulated rag delete failure".to_string(),
+                ));
+            }
             self.deleted_attachment.store(true, Ordering::SeqCst);
             Ok(())
         }
@@ -701,6 +798,79 @@ mod tests {
             "orphaned asset's S3 object should be deleted"
         );
         assert!(rag.updated_acl.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn startup_sweep_reenqueues_only_unfinished_extractions() {
+        let mut pending = make_asset("pdfs/pending.pdf", vec!["docs/x".to_string()]);
+        pending.extraction_status = ExtractionStatus::Pending;
+        let mut in_progress = make_asset("pdfs/inprogress.pdf", vec!["docs/y".to_string()]);
+        in_progress.extraction_status = ExtractionStatus::InProgress;
+        let mut done = make_asset("pdfs/done.pdf", vec!["docs/z".to_string()]);
+        done.extraction_status = ExtractionStatus::Done;
+
+        let asset_repo = Arc::new(FakeAssetRepo::new(vec![pending, in_progress, done]));
+        let (tx, mut rx) = mpsc::channel(16);
+        let queue = AttachmentQueue {
+            tx,
+            asset_repo: asset_repo.clone(),
+        };
+
+        resume_unfinished_extractions(asset_repo.as_ref(), &queue).await;
+
+        let mut got = Vec::new();
+        while let Ok(key) = rx.try_recv() {
+            got.push(key);
+        }
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                "pdfs/inprogress.pdf".to_string(),
+                "pdfs/pending.pdf".to_string(),
+            ],
+            "only Pending/InProgress assets should be re-enqueued at startup"
+        );
+    }
+
+    #[tokio::test]
+    async fn recompute_access_levels_keeps_orphan_record_when_deindex_fails() {
+        // When deindexing an orphaned attachment fails, the canonical Mongo
+        // record must survive as the only anchor a future reconcile can use;
+        // deleting it would strand the indexed chunks with stale ACLs forever.
+        let asset_repo = FakeAssetRepo::new(vec![make_asset("pdfs/orphan.pdf", vec![])]);
+        let document_repo = NoopDocumentRepo;
+        let rag = RecordingRagService::default();
+        rag.fail_delete.store(true, Ordering::SeqCst);
+        let storage = MockStorage::new();
+        storage
+            .objects
+            .lock()
+            .unwrap()
+            .insert("assets/pdfs/orphan.pdf".to_string(), vec![1, 2, 3]);
+        let attachment_search = RecordingAttachmentSearchService::default();
+
+        recompute_access_levels(
+            &rag,
+            &asset_repo,
+            &document_repo,
+            &storage,
+            Some(&attachment_search),
+            &["pdfs/orphan.pdf".to_string()],
+        )
+        .await;
+
+        assert!(
+            asset_repo.still_has("pdfs/orphan.pdf"),
+            "orphan record must be kept as a retry anchor when deindexing fails"
+        );
+        let asset = asset_repo.find_local("pdfs/orphan.pdf").unwrap();
+        assert_eq!(asset.extraction_status, ExtractionStatus::Failed);
+        assert!(asset
+            .extraction_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("RAG delete failed"));
     }
 
     #[tokio::test]

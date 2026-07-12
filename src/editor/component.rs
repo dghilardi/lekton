@@ -160,31 +160,72 @@ pub async fn save_doc_content(
         skip_rag: false,
     };
 
-    let search_doc = state
-        .search_service
-        .as_ref()
-        .map(|_| crate::search::client::build_search_document(&doc, &html_content));
+    finalize_document_save(
+        state.document_repo.as_ref(),
+        state.asset_repo.as_ref(),
+        state.search_service.as_deref(),
+        state.rag_service.as_deref(),
+        state.attachment_search_service.as_deref(),
+        state.storage_client.as_ref(),
+        doc,
+        &html_content,
+        &old_links,
+    )
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))
+}
 
-    state
-        .document_repo
-        .create_or_update(doc)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+/// Index the document into search, persist it, reconcile backlinks and asset
+/// references, and report the outcome.
+///
+/// Indexing runs *before* the metadata upsert so the stored document records
+/// whether it is in sync: a search-indexing failure leaves a durable
+/// `needs_reindex` flag (mirroring the ingest API) instead of silently
+/// reporting success. Any sink failure (search or asset reconcile) is surfaced
+/// in the returned message rather than swallowed.
+#[cfg(feature = "ssr")]
+#[allow(clippy::too_many_arguments)]
+async fn finalize_document_save(
+    document_repo: &dyn crate::db::repository::DocumentRepository,
+    asset_repo: &dyn crate::db::asset_repository::AssetRepository,
+    search_service: Option<&dyn crate::search::client::SearchService>,
+    rag_service: Option<&dyn crate::rag::service::RagService>,
+    attachment_search: Option<&dyn crate::search::attachment_search::AttachmentSearchService>,
+    storage: &dyn crate::storage::client::StorageClient,
+    mut doc: crate::db::models::Document,
+    html_content: &str,
+    old_links: &[String],
+) -> Result<String, crate::error::AppError> {
+    let slug = doc.slug.clone();
+    let links_out = doc.links_out.clone();
 
-    state
-        .document_repo
-        .update_backlinks(&slug, &old_links, &links_out)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let search_doc =
+        search_service.map(|_| crate::search::client::build_search_document(&doc, html_content));
+
+    // Index into search before persisting so `needs_reindex` records whether
+    // the stored document is in sync with the index.
+    let mut warnings = Vec::new();
+    if let (Some(svc), Some(sdoc)) = (search_service, search_doc) {
+        if let Err(e) = svc.index_document(&sdoc).await {
+            tracing::warn!(slug = %slug, "Failed to index document in search: {e}");
+            warnings.push(format!("search indexing failed: {e}"));
+        }
+    }
+    doc.needs_reindex = !warnings.is_empty();
+
+    document_repo.create_or_update(doc).await?;
+    document_repo
+        .update_backlinks(&slug, old_links, &links_out)
+        .await?;
 
     // Reconcile asset references so referenced assets record this document.
-    let asset_keys = crate::rendering::links::extract_asset_keys_from_html(&html_content);
-    match state.asset_repo.set_references(&slug, &asset_keys).await {
+    let asset_keys = crate::rendering::links::extract_asset_keys_from_html(html_content);
+    match asset_repo.set_references(&slug, &asset_keys).await {
         Ok(affected) => {
             // Recompute over the full current key set (plus dropped ones) so a
             // change to this document's access_level/draft state propagates to
             // its attachments even when its referenced assets are unchanged.
-            if let Some(rag) = &state.rag_service {
+            if let Some(rag) = rag_service {
                 let mut to_recompute = affected;
                 for key in &asset_keys {
                     if !to_recompute.contains(key) {
@@ -193,11 +234,11 @@ pub async fn save_doc_content(
                 }
                 if !to_recompute.is_empty() {
                     crate::rag::attachment_extraction::recompute_access_levels(
-                        rag.as_ref(),
-                        state.asset_repo.as_ref(),
-                        state.document_repo.as_ref(),
-                        state.storage_client.as_ref(),
-                        state.attachment_search_service.as_deref(),
+                        rag,
+                        asset_repo,
+                        document_repo,
+                        storage,
+                        attachment_search,
                         &to_recompute,
                     )
                     .await;
@@ -206,14 +247,19 @@ pub async fn save_doc_content(
         }
         Err(e) => {
             tracing::warn!(slug = %slug, "Failed to update asset references: {e}");
+            warnings.push(format!("asset reference update failed: {e}"));
         }
     }
 
-    if let (Some(svc), Some(sdoc)) = (state.search_service.as_ref(), search_doc) {
-        let _ = svc.index_document(&sdoc).await;
+    if warnings.is_empty() {
+        Ok(format!("Document '{slug}' saved successfully"))
+    } else {
+        Ok(format!(
+            "Document '{slug}' saved, but some indexing did not complete: {}. \
+             It will be reconciled on the next reindex.",
+            warnings.join("; ")
+        ))
     }
-
-    Ok(format!("Document '{}' saved successfully", slug))
 }
 
 /// The editor page component.
@@ -411,5 +457,263 @@ pub fn EditorPage() -> impl IntoView {
                 })
             }}
         </Suspense>
+    }
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod tests {
+    use super::*;
+    use crate::db::asset_repository::{AssetRepository, ExtractionUpdate};
+    use crate::db::models::{Asset, Document};
+    use crate::db::repository::DocumentRepository;
+    use crate::error::AppError;
+    use crate::search::client::{SearchDocument, SearchHit, SearchService};
+    use crate::test_utils::MockStorage;
+    use async_trait::async_trait;
+    use chrono::Utc;
+    use std::sync::Mutex;
+
+    /// Document repo that records the last persisted document so tests can
+    /// assert what was written (in particular `needs_reindex`).
+    #[derive(Default)]
+    struct CapturingDocumentRepo {
+        saved: Mutex<Option<Document>>,
+    }
+
+    #[async_trait]
+    impl DocumentRepository for CapturingDocumentRepo {
+        async fn create_or_update(&self, doc: Document) -> Result<(), AppError> {
+            *self.saved.lock().unwrap() = Some(doc);
+            Ok(())
+        }
+        async fn find_by_slug(&self, _: &str) -> Result<Option<Document>, AppError> {
+            Ok(None)
+        }
+        async fn find_by_slugs(&self, _: &[String]) -> Result<Vec<Document>, AppError> {
+            Ok(vec![])
+        }
+        async fn list_all(&self) -> Result<Vec<Document>, AppError> {
+            Ok(vec![])
+        }
+        async fn list_by_access_levels(
+            &self,
+            _: Option<&[String]>,
+            _: bool,
+        ) -> Result<Vec<Document>, AppError> {
+            Ok(vec![])
+        }
+        async fn update_backlinks(
+            &self,
+            _: &str,
+            _: &[String],
+            _: &[String],
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn find_by_slug_prefix(&self, _: &str) -> Result<Vec<Document>, AppError> {
+            Ok(vec![])
+        }
+        async fn set_archived(&self, _: &str, _: bool) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn rename_slug(&self, _: &str, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn find_by_source_path(&self, _: &str) -> Result<Option<Document>, AppError> {
+            Ok(None)
+        }
+        async fn find_all_by_source_id(&self, _: &str) -> Result<Vec<Document>, AppError> {
+            Ok(vec![])
+        }
+    }
+
+    /// Asset repo whose `set_references` result is configurable.
+    #[derive(Default)]
+    struct StubAssetRepo {
+        fail_set_references: bool,
+    }
+
+    #[async_trait]
+    impl AssetRepository for StubAssetRepo {
+        async fn create_or_update(&self, _: Asset) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn find_by_key(&self, _: &str) -> Result<Option<Asset>, AppError> {
+            Ok(None)
+        }
+        async fn list_all(&self) -> Result<Vec<Asset>, AppError> {
+            Ok(vec![])
+        }
+        async fn list_by_prefix(&self, _: &str) -> Result<Vec<Asset>, AppError> {
+            Ok(vec![])
+        }
+        async fn delete(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn update_extraction(&self, _: &str, _: ExtractionUpdate) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn set_references(&self, _: &str, _: &[String]) -> Result<Vec<String>, AppError> {
+            if self.fail_set_references {
+                Err(AppError::Database(
+                    "simulated set_references failure".to_string(),
+                ))
+            } else {
+                Ok(vec![])
+            }
+        }
+        async fn list_unfinished_extractions(&self) -> Result<Vec<Asset>, AppError> {
+            Ok(vec![])
+        }
+    }
+
+    /// Search service whose `index_document` result is configurable.
+    #[derive(Default)]
+    struct StubSearchService {
+        fail_index: bool,
+    }
+
+    #[async_trait]
+    impl SearchService for StubSearchService {
+        async fn index_document(&self, _: &SearchDocument) -> Result<(), AppError> {
+            if self.fail_index {
+                Err(AppError::Internal(
+                    "simulated search index failure".to_string(),
+                ))
+            } else {
+                Ok(())
+            }
+        }
+        async fn delete_document(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn search(
+            &self,
+            _: &str,
+            _: Option<&[String]>,
+            _: bool,
+        ) -> Result<Vec<SearchHit>, AppError> {
+            Ok(vec![])
+        }
+        async fn configure_index(&self) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+
+    fn make_doc() -> Document {
+        Document {
+            slug: "guide".to_string(),
+            title: "Guide".to_string(),
+            summary: None,
+            s3_key: "docs/guide.md".to_string(),
+            access_level: "public".to_string(),
+            is_draft: false,
+            service_owner: "web-editor".to_string(),
+            last_updated: Utc::now(),
+            tags: vec![],
+            links_out: vec![],
+            backlinks: vec![],
+            parent_slug: None,
+            order: 0,
+            is_hidden: false,
+            content_hash: None,
+            metadata_hash: None,
+            is_archived: false,
+            source_path: None,
+            source_id: None,
+            needs_reindex: false,
+            skip_rag: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn save_flags_needs_reindex_and_warns_when_search_index_fails() {
+        let doc_repo = CapturingDocumentRepo::default();
+        let asset_repo = StubAssetRepo::default();
+        let search = StubSearchService { fail_index: true };
+        let storage = MockStorage::new();
+
+        let msg = finalize_document_save(
+            &doc_repo,
+            &asset_repo,
+            Some(&search),
+            None,
+            None,
+            &storage,
+            make_doc(),
+            "<p>body</p>",
+            &[],
+        )
+        .await
+        .unwrap();
+
+        let saved = doc_repo.saved.lock().unwrap().clone().unwrap();
+        assert!(
+            saved.needs_reindex,
+            "a failed search index must leave needs_reindex set"
+        );
+        assert!(
+            msg.contains("search indexing failed"),
+            "message must surface the failure, got: {msg}"
+        );
+        assert!(
+            msg.contains("reindex"),
+            "message must be actionable, got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn save_warns_when_asset_reconcile_fails() {
+        let doc_repo = CapturingDocumentRepo::default();
+        let asset_repo = StubAssetRepo {
+            fail_set_references: true,
+        };
+        let search = StubSearchService::default();
+        let storage = MockStorage::new();
+
+        let msg = finalize_document_save(
+            &doc_repo,
+            &asset_repo,
+            Some(&search),
+            None,
+            None,
+            &storage,
+            make_doc(),
+            "<p>body</p>",
+            &[],
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            msg.contains("asset reference update failed"),
+            "message must surface the asset failure, got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn save_reports_success_when_all_sinks_ok() {
+        let doc_repo = CapturingDocumentRepo::default();
+        let asset_repo = StubAssetRepo::default();
+        let search = StubSearchService::default();
+        let storage = MockStorage::new();
+
+        let msg = finalize_document_save(
+            &doc_repo,
+            &asset_repo,
+            Some(&search),
+            None,
+            None,
+            &storage,
+            make_doc(),
+            "<p>body</p>",
+            &[],
+        )
+        .await
+        .unwrap();
+
+        let saved = doc_repo.saved.lock().unwrap().clone().unwrap();
+        assert!(!saved.needs_reindex);
+        assert!(msg.contains("saved successfully"), "got: {msg}");
     }
 }

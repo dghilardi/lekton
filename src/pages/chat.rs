@@ -563,6 +563,9 @@ fn MessageFeedbackBar(
     let feedback = RwSignal::new(initial_feedback);
     let show_comment_box = RwSignal::new(false);
     let comment_input = RwSignal::new(String::new());
+    // Error surfaced when a feedback write to the server fails; the optimistic
+    // UI state is rolled back so it never diverges from what was persisted.
+    let feedback_error = RwSignal::new(Option::<String>::None);
 
     // StoredValue<String> is Copy so it can be used in multiple Fn closures.
     #[allow(unused_variables)]
@@ -574,6 +577,26 @@ fn MessageFeedbackBar(
         messages.update(|msgs| {
             if let Some(m) = msgs.get_mut(msg_index) {
                 m.feedback = new_fb;
+            }
+        });
+    };
+
+    // Run a feedback write to the server after an optimistic UI update: on
+    // failure, roll the UI back to `prior` and surface the error instead of
+    // silently leaving the UI out of sync with the server.
+    #[cfg(feature = "hydrate")]
+    let run_feedback = move |prior: Option<UiFeedback>,
+                             fut: std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<(), String>>>,
+    >| {
+        leptos::task::spawn_local(async move {
+            match fut.await {
+                Ok(()) => feedback_error.set(None),
+                Err(e) => {
+                    feedback.set(prior.clone());
+                    update_message_feedback(prior);
+                    feedback_error.set(Some(e));
+                }
             }
         });
     };
@@ -602,9 +625,7 @@ fn MessageFeedbackBar(
                             #[cfg(feature = "hydrate")]
                             {
                                 let m = mid.get_value();
-                                leptos::task::spawn_local(async move {
-                                    let _ = fetch_delete_feedback(&m).await;
-                                });
+                                run_feedback(current.clone(), Box::pin(async move { fetch_delete_feedback(&m).await }));
                             }
                         } else {
                             let fb = UiFeedback { rating: "positive".into(), comment: None };
@@ -613,9 +634,7 @@ fn MessageFeedbackBar(
                             #[cfg(feature = "hydrate")]
                             {
                                 let m = mid.get_value();
-                                leptos::task::spawn_local(async move {
-                                    let _ = fetch_submit_feedback(&m, "positive", None).await;
-                                });
+                                run_feedback(current.clone(), Box::pin(async move { fetch_submit_feedback(&m, "positive", None).await }));
                             }
                         }
                     }
@@ -649,9 +668,7 @@ fn MessageFeedbackBar(
                             #[cfg(feature = "hydrate")]
                             {
                                 let m = mid.get_value();
-                                leptos::task::spawn_local(async move {
-                                    let _ = fetch_delete_feedback(&m).await;
-                                });
+                                run_feedback(current.clone(), Box::pin(async move { fetch_delete_feedback(&m).await }));
                             }
                         } else {
                             show_comment_box.set(true);
@@ -686,6 +703,8 @@ fn MessageFeedbackBar(
                                 <button
                                     class="ml-0.5 opacity-60 hover:opacity-100"
                                     on:click=move |_| {
+                                        #[cfg(feature = "hydrate")]
+                                        let prior = feedback.get_untracked();
                                         feedback.set(None);
                                         update_message_feedback(None);
                                         show_comment_box.set(false);
@@ -693,9 +712,7 @@ fn MessageFeedbackBar(
                                         #[cfg(feature = "hydrate")]
                                         {
                                             let m = mid.get_value();
-                                            leptos::task::spawn_local(async move {
-                                                let _ = fetch_delete_feedback(&m).await;
-                                            });
+                                            run_feedback(prior, Box::pin(async move { fetch_delete_feedback(&m).await }));
                                         }
                                     }
                                     title="Remove feedback"
@@ -708,6 +725,15 @@ fn MessageFeedbackBar(
                     })}
                 </Show>
             </div>
+
+            // Feedback write error — the optimistic state was rolled back.
+            <Show when=move || feedback_error.get().is_some() fallback=|| ()>
+                {move || feedback_error.get().map(|e| view! {
+                    <p class="text-[11px] text-error" role="alert">
+                        {format!("Couldn't save feedback: {e}")}
+                    </p>
+                })}
+            </Show>
 
             // Negative comment box (shown when thumbs-down clicked and no feedback set yet)
             <Show when=move || show_comment_box.get() fallback=|| ()>
@@ -730,6 +756,8 @@ fn MessageFeedbackBar(
                         <button
                             class="btn btn-error btn-xs"
                             on:click=move |_| {
+                                #[cfg(feature = "hydrate")]
+                                let prior = feedback.get_untracked();
                                 let comment_val = comment_input.get_untracked();
                                 let comment = if comment_val.trim().is_empty() {
                                     None
@@ -745,9 +773,7 @@ fn MessageFeedbackBar(
                                 {
                                     let m = mid.get_value();
                                     let c = comment;
-                                    leptos::task::spawn_local(async move {
-                                        let _ = fetch_submit_feedback(&m, "negative", c.as_deref()).await;
-                                    });
+                                    run_feedback(prior, Box::pin(async move { fetch_submit_feedback(&m, "negative", c.as_deref()).await }));
                                 }
                             }
                         >

@@ -541,6 +541,9 @@ mod tests {
         async fn find_by_key(&self, _: &str) -> Result<Option<Asset>, AppError> {
             Ok(None)
         }
+        async fn find_by_keys(&self, _: &[String]) -> Result<Vec<Asset>, AppError> {
+            Ok(vec![])
+        }
         async fn list_all(&self) -> Result<Vec<Asset>, AppError> {
             Ok(vec![])
         }

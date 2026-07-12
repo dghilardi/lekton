@@ -997,6 +997,12 @@ mod tests {
         async fn find_by_key(&self, _: &str) -> Result<Option<crate::db::models::Asset>, AppError> {
             Ok(None)
         }
+        async fn find_by_keys(
+            &self,
+            _: &[String],
+        ) -> Result<Vec<crate::db::models::Asset>, AppError> {
+            Ok(vec![])
+        }
         async fn list_all(&self) -> Result<Vec<crate::db::models::Asset>, AppError> {
             Ok(vec![])
         }
@@ -1047,6 +1053,16 @@ mod tests {
                 .unwrap()
                 .clone()
                 .filter(|asset| asset.key == key))
+        }
+        async fn find_by_keys(&self, keys: &[String]) -> Result<Vec<Asset>, AppError> {
+            Ok(self
+                .asset
+                .lock()
+                .unwrap()
+                .clone()
+                .filter(|asset| keys.contains(&asset.key))
+                .into_iter()
+                .collect())
         }
         async fn list_all(&self) -> Result<Vec<Asset>, AppError> {
             Ok(self.asset.lock().unwrap().clone().into_iter().collect())

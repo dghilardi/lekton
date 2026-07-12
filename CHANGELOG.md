@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file.
 - A local-first accessibility test suite (`e2e/a11y.spec.ts`) runs axe over the home, search, chat and admin flows plus keyboard-operability checks, and the Playwright config now includes WebKit and a mobile profile for local multi-browser runs (both kept out of CI until pre-existing violations are triaged).
 
 ### Fixed
+- `POST /api/v1/assets/check-hashes` now caps the number of entries per request and looks them up in a single batched `$in` query instead of one sequential query per entry.
 - The MCP `list_schemas` and `get_index` tools now paginate (`limit`/`offset`, bounded page sizes) and wrap results with pagination metadata, instead of serialising the entire schema registry / document tree into a single response.
 - Navbar dropdown triggers now advertise `aria-haspopup`, and icon-only navbar controls (Docs, Registry, Chat, Admin) carry accessible names, so screen-reader users can tell they open menus and what they do.
 - Chat feedback (thumbs up/down, comment, remove) now rolls back its optimistic UI state and shows an inline error when the write to the server fails, and admin access-level deletion surfaces failures instead of silently swallowing them.

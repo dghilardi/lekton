@@ -89,6 +89,10 @@ pub struct ListAssetsQuery {
 /// Default maximum attachment size in bytes (25 MB).
 pub const DEFAULT_MAX_ATTACHMENT_SIZE: u64 = 25 * 1024 * 1024;
 
+/// Maximum number of entries accepted in a single `check-hashes` request, so a
+/// client cannot force an unbounded batch of lookups.
+pub const MAX_CHECK_HASHES_ENTRIES: usize = 1000;
+
 /// Core upload logic — separated from HTTP layer for testability.
 #[cfg(feature = "ssr")]
 #[allow(clippy::too_many_arguments)]
@@ -328,17 +332,30 @@ pub async fn process_check_hashes(
     )
     .await?;
 
+    if entries.len() > MAX_CHECK_HASHES_ENTRIES {
+        return Err(AppError::BadRequest(format!(
+            "check-hashes accepts at most {MAX_CHECK_HASHES_ENTRIES} entries per request; got {}",
+            entries.len()
+        )));
+    }
+
+    // Batch the lookup with a single `$in` query instead of one per entry.
+    let keys: Vec<String> = entries.iter().map(|e| e.key.clone()).collect();
+    let stored = asset_repo.find_by_keys(&keys).await?;
+    let stored_hashes: std::collections::HashMap<&str, Option<&str>> = stored
+        .iter()
+        .map(|a| (a.key.as_str(), a.content_hash.as_deref()))
+        .collect();
+
     let mut to_upload = Vec::new();
     for entry in entries {
-        match asset_repo.find_by_key(&entry.key).await? {
-            Some(asset) => {
-                if asset.content_hash.as_deref() != Some(&entry.content_hash) {
-                    to_upload.push(entry.key.clone());
-                }
-            }
-            None => {
-                to_upload.push(entry.key.clone());
-            }
+        // Upload when the key is unknown or its stored hash differs.
+        let up_to_date = matches!(
+            stored_hashes.get(entry.key.as_str()),
+            Some(&Some(hash)) if hash == entry.content_hash
+        );
+        if !up_to_date {
+            to_upload.push(entry.key.clone());
         }
     }
 
@@ -892,6 +909,17 @@ mod tests {
                 .iter()
                 .find(|a| a.key == key)
                 .cloned())
+        }
+
+        async fn find_by_keys(&self, keys: &[String]) -> Result<Vec<Asset>, AppError> {
+            Ok(self
+                .assets
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|a| keys.contains(&a.key))
+                .cloned()
+                .collect())
         }
 
         async fn list_all(&self) -> Result<Vec<Asset>, AppError> {
@@ -1682,6 +1710,67 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.to_upload, vec!["missing.txt".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn check_hashes_flags_changed_hash_for_upload() {
+        let repo = MockAssetRepo::new();
+        let storage = MockStorage::new();
+        process_upload_asset(
+            &repo,
+            &storage,
+            "doc.txt",
+            "text/plain",
+            b"v1".to_vec(),
+            "ci-bot",
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+            "valid-token",
+            DEFAULT_MAX_ATTACHMENT_SIZE,
+        )
+        .await
+        .unwrap();
+
+        let entries = vec![CheckHashEntry {
+            key: "doc.txt".to_string(),
+            content_hash: "sha256:stale".to_string(),
+        }];
+        let result = process_check_hashes(
+            &repo,
+            &entries,
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+            "valid-token",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.to_upload, vec!["doc.txt".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn check_hashes_rejects_too_many_entries() {
+        let repo = MockAssetRepo::new();
+        let entries: Vec<CheckHashEntry> = (0..=MAX_CHECK_HASHES_ENTRIES)
+            .map(|i| CheckHashEntry {
+                key: format!("k{i}"),
+                content_hash: "sha256:x".to_string(),
+            })
+            .collect();
+
+        let result = process_check_hashes(
+            &repo,
+            &entries,
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+            "valid-token",
+        )
+        .await;
+
+        match result {
+            Err(AppError::BadRequest(msg)) => assert!(msg.contains("at most")),
+            other => panic!("expected BadRequest for oversized batch, got {other:?}"),
+        }
     }
 
     #[tokio::test]

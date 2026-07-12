@@ -94,7 +94,7 @@ fn TokenTable(
                     </svg>
                 </div>
                 <h3 class="font-bold text-lg text-base-content/70">"No service tokens yet"</h3>
-                <p class="text-sm text-base-content/50 max-w-xs mt-1">"Create your first token below to start automating document updates."</p>
+                <p class="text-sm text-base-content/65 max-w-xs mt-1">"Create your first token below to start automating document updates."</p>
             </div>
         }
         .into_any();
@@ -168,7 +168,7 @@ fn TokenRow(
                         view! { <span class="badge badge-outline badge-xs px-2 py-2 font-mono">{scope}</span> }
                     }).collect::<Vec<_>>()}
                     {if token.allowed_scopes.len() > 3 {
-                        view! { <span class="text-[10px] text-base-content/40 ml-1">" + "{token.allowed_scopes.len() - 3}" more"</span> }.into_any()
+                        view! { <span class="text-[10px] text-base-content/65 ml-1">" + "{token.allowed_scopes.len() - 3}" more"</span> }.into_any()
                     } else {
                         view! { <span></span> }.into_any()
                     }}
@@ -258,7 +258,7 @@ fn CreateTokenForm(
         <div class="flex flex-col gap-6">
             <div>
                 <h3 class="font-bold text-lg">"Create New Token"</h3>
-                <p class="text-sm text-base-content/50">"Configure a new scoped access token."</p>
+                <p class="text-sm text-base-content/65">"Configure a new scoped access token."</p>
             </div>
 
             <Show when=move || error.get().is_some()>
@@ -281,7 +281,7 @@ fn CreateTokenForm(
                         on:input=move |ev| set_name.set(event_target_value(&ev))
                     />
                     <label class="label">
-                      <span class="label-text-alt text-base-content/40 italic">"A descriptive name for identification."</span>
+                      <span class="label-text-alt text-base-content/65 italic">"A descriptive name for identification."</span>
                     </label>
                 </div>
 
@@ -299,12 +299,12 @@ fn CreateTokenForm(
                           />
                           <div>
                             <span class="label-text font-bold block mb-0.5">"Allow Write Access"</span>
-                            <span class="label-text-alt text-base-content/40">"Permit updates and deletions via API."</span>
+                            <span class="label-text-alt text-base-content/65">"Permit updates and deletions via API."</span>
                           </div>
                       </label>
                     </div>
                     <label class="label">
-                      <span class="label-text-alt text-base-content/40 italic">"Controls write permissions for this token."</span>
+                      <span class="label-text-alt text-base-content/65 italic">"Controls write permissions for this token."</span>
                     </label>
                 </div>
             </div>
@@ -320,7 +320,7 @@ fn CreateTokenForm(
                     on:input=move |ev| set_scopes.set(event_target_value(&ev))
                 ></textarea>
                 <label class="label">
-                    <span class="label-text-alt text-base-content/50 bg-base-300/30 px-2 py-1 rounded inline-flex items-center gap-1.5">
+                    <span class="label-text-alt text-base-content/65 bg-base-300/30 px-2 py-1 rounded inline-flex items-center gap-1.5">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                         "Enter one path prefix per line."
                     </span>

@@ -185,7 +185,7 @@ fn PdfDocContent(
         // AI-generated summary of the document.
         <Show when=move || has_summary>
             <section>
-                <h2 class="text-xs font-semibold uppercase tracking-wider text-base-content/50 mb-3">
+                <h2 class="text-xs font-semibold uppercase tracking-wider text-base-content/65 mb-3">
                     "Summary"
                 </h2>
                 <div class="prose prose-lg max-w-none">
@@ -333,7 +333,7 @@ pub fn DocPage() -> impl IntoView {
                                     {content}
                                     // Last Updated footer
                                     <div class="divider mt-12"></div>
-                                    <div class="flex items-center gap-2 text-sm text-base-content/50 pb-4">
+                                    <div class="flex items-center gap-2 text-sm text-base-content/65 pb-4">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                                 d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z">

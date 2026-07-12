@@ -260,7 +260,7 @@ pub fn NavigationOrderEditor() -> impl IntoView {
                                             </svg>
                                         </div>
                                         <h3 class="font-bold text-lg text-base-content/70">"No sections found"</h3>
-                                        <p class="text-sm text-base-content/50 max-w-xs mt-1">"Sections will appear here once documents with hierarchical slugs are ingested."</p>
+                                        <p class="text-sm text-base-content/65 max-w-xs mt-1">"Sections will appear here once documents with hierarchical slugs are ingested."</p>
                                     </div>
                                 }.into_any();
                             }
@@ -296,7 +296,7 @@ pub fn NavigationOrderEditor() -> impl IntoView {
                                                         <span class="font-medium text-sm truncate">{title}</span>
                                                         <span class="badge badge-ghost badge-xs text-[10px] uppercase">{level_label}</span>
                                                     </div>
-                                                    <span class="text-xs text-base-content/40 font-mono truncate block">{slug}</span>
+                                                    <span class="text-xs text-base-content/65 font-mono truncate block">{slug}</span>
                                                 </div>
 
                                                 // Move buttons

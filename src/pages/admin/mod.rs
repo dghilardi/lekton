@@ -214,7 +214,7 @@ fn CreatedTokenModal(
                         view! {
                             <div class="space-y-6">
                                 <div class="form-control">
-                                    <label class="label pt-0"><span class="label-text font-bold text-xs uppercase tracking-widest text-base-content/50">"Generated Token"</span></label>
+                                    <label class="label pt-0"><span class="label-text font-bold text-xs uppercase tracking-widest text-base-content/65">"Generated Token"</span></label>
                                     <div class="relative group">
                                         <input
                                             type="text"
@@ -247,11 +247,11 @@ fn CreatedTokenModal(
 
                                 <div class="grid grid-cols-2 gap-8 py-6 border-y border-base-200">
                                     <div>
-                                      <p class="text-[10px] font-black uppercase text-base-content/40 tracking-widest mb-1">"Internal Name"</p>
+                                      <p class="text-[10px] font-black uppercase text-base-content/65 tracking-widest mb-1">"Internal Name"</p>
                                       <p class="font-bold text-base">{name}</p>
                                     </div>
                                     <div>
-                                      <p class="text-[10px] font-black uppercase text-base-content/40 tracking-widest mb-1">"Scopes"</p>
+                                      <p class="text-[10px] font-black uppercase text-base-content/65 tracking-widest mb-1">"Scopes"</p>
                                       <p class="font-mono text-xs truncate" title=scopes_str.clone()>{scopes_str.clone()}</p>
                                     </div>
                                 </div>

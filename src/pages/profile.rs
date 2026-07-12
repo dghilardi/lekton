@@ -138,7 +138,7 @@ fn PatSection() -> impl IntoView {
                     let tokens = pats.get();
                     if tokens.is_empty() {
                         view! {
-                            <div class="text-center py-8 text-base-content/50">
+                            <div class="text-center py-8 text-base-content/65">
                                 <p>"No personal access tokens yet."</p>
                             </div>
                         }.into_any()
@@ -274,7 +274,7 @@ fn FeedbackSection() -> impl IntoView {
                 match feedback.get() {
                     None => view! { <div class="skeleton h-32 w-full rounded-xl" /> }.into_any(),
                     Some(result) if result.items.is_empty() => view! {
-                        <div class="text-center py-8 text-base-content/50 border border-dashed border-base-300 rounded-xl">
+                        <div class="text-center py-8 text-base-content/65 border border-dashed border-base-300 rounded-xl">
                             <p>"No feedback submitted yet."</p>
                         </div>
                     }.into_any(),
@@ -296,7 +296,7 @@ fn FeedbackSection() -> impl IntoView {
                             {if total_pages > 1 {
                                 view! {
                                     <div class="flex items-center justify-between mt-4">
-                                        <span class="text-sm text-base-content/50">
+                                        <span class="text-sm text-base-content/65">
                                             {format!("{total} item{}", if total == 1 { "" } else { "s" })}
                                         </span>
                                         <div class="join">
@@ -387,7 +387,7 @@ fn FeedbackRow(
                     )>
                         {if is_positive { "Helpful" } else { "Not helpful" }}
                     </span>
-                    <span class="text-xs text-base-content/40">{fb.created_at.clone()}</span>
+                    <span class="text-xs text-base-content/65">{fb.created_at.clone()}</span>
                     <a
                         href=format!("/chat?session={}", fb.session_id)
                         class="text-xs text-primary hover:underline"

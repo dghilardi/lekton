@@ -153,7 +153,7 @@ fn DocumentationFeedbackList(
         return view! {
             <div class="flex flex-col items-center justify-center py-10 px-4 text-center border-2 border-dashed border-base-300 rounded-xl bg-base-200/20">
                 <h3 class="font-bold text-lg text-base-content/70">"No matching feedback items"</h3>
-                <p class="text-sm text-base-content/50 max-w-xl mt-1">
+                <p class="text-sm text-base-content/65 max-w-xl mt-1">
                     "The registry is empty for the selected filters. MCP agents will populate it through the documentation feedback tools."
                 </p>
             </div>
@@ -353,7 +353,7 @@ fn DocumentationFeedbackCard(
                             )>
                                 {item.status.clone()}
                             </span>
-                            <span class="text-xs text-base-content/50 font-mono break-all">{item.id.clone()}</span>
+                            <span class="text-xs text-base-content/65 font-mono break-all">{item.id.clone()}</span>
                         </div>
                         <h3 class="text-lg font-bold">{item.title.clone()}</h3>
                         <p class="text-sm text-base-content/70 break-words">{item.summary.clone()}</p>
@@ -433,7 +433,7 @@ fn documentation_feedback_detail_view(title: &'static str, values: Vec<String>) 
 
     Some(view! {
         <div class="space-y-2">
-            <div class="text-xs font-bold uppercase tracking-wider text-base-content/50">{title}</div>
+            <div class="text-xs font-bold uppercase tracking-wider text-base-content/65">{title}</div>
             {if multiline {
                 view! {
                     <div class="space-y-2">
@@ -465,7 +465,7 @@ fn documentation_feedback_optional_view(
 
     Some(view! {
         <div class="space-y-2">
-            <div class="text-xs font-bold uppercase tracking-wider text-base-content/50">{title}</div>
+            <div class="text-xs font-bold uppercase tracking-wider text-base-content/65">{title}</div>
             <div class="rounded-xl bg-base-200/40 px-4 py-3 whitespace-pre-wrap break-words">{value}</div>
         </div>
     }.into_any())

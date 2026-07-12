@@ -131,7 +131,7 @@ fn SchemaCard(schema: SchemaListItem) -> impl IntoView {
                 </h2>
                 <div class="flex items-center gap-2 mt-2">
                     <span class=format!("badge {} badge-sm font-semibold", badge_class)>{type_label.to_string()}</span>
-                    <span class="text-sm text-base-content/50">
+                    <span class="text-sm text-base-content/65">
                         {format!("{} version{}", schema.version_count, if schema.version_count == 1 { "" } else { "s" })}
                     </span>
                 </div>

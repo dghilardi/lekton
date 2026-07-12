@@ -263,7 +263,7 @@ fn ChatContent() -> impl IntoView {
                                 </div>
                                 <div class="space-y-2">
                                     <h2 class="text-2xl font-bold tracking-tight">"AI Assistant"</h2>
-                                    <p class="text-base-content/50">"Ask me anything about the documentation and codebase."</p>
+                                    <p class="text-base-content/65">"Ask me anything about the documentation and codebase."</p>
                                 </div>
                                 <div class="grid grid-cols-1 gap-2">
                                     <button class="btn btn-outline btn-sm font-normal normal-case border-base-300 hover:bg-base-200 hover:border-base-300 text-base-content/70"
@@ -407,7 +407,7 @@ fn ChatContent() -> impl IntoView {
                         <div class="absolute -inset-0.5 bg-gradient-to-r from-primary/20 to-secondary/20 rounded-2xl blur opacity-0 group-focus-within:opacity-100 transition duration-300"></div>
                         <div class="relative flex items-end gap-3 bg-base-100 border border-base-200 shadow-xl rounded-2xl px-4 py-3 transition-all group-focus-within:border-primary/50 group-focus-within:ring-2 group-focus-within:ring-primary/10">
                             <textarea
-                                class="w-full bg-transparent outline-none border-0 resize-none text-sm text-base-content placeholder:text-base-content/40 leading-6 overflow-y-hidden"
+                                class="w-full bg-transparent outline-none border-0 resize-none text-sm text-base-content placeholder:text-base-content/65 leading-6 overflow-y-hidden"
                                 style="height: 24px; min-height: 24px;"
                                 placeholder="Type your message..."
                                 node_ref=textarea_ref
@@ -532,7 +532,7 @@ fn SourceReferencesBlock(sources: Vec<SourceReference>) -> impl IntoView {
                                         <Show when=move || show_document_title fallback=|| ()>
                                             <div class="text-xs text-base-content/60">{document_title.clone()}</div>
                                         </Show>
-                                        <div class="text-xs text-base-content/50 break-all">{source_ref_label}</div>
+                                        <div class="text-xs text-base-content/65 break-all">{source_ref_label}</div>
                                     </div>
                                     <div class="shrink-0 text-[11px] font-mono text-base-content/45">
                                         {format!("{:.2}", score)}
@@ -612,7 +612,7 @@ fn MessageFeedbackBar(
                         if feedback.get().as_ref().map(|f| f.rating == "positive").unwrap_or(false) {
                             "text-success bg-success/10"
                         } else {
-                            "text-base-content/40 hover:text-success hover:bg-success/10"
+                            "text-base-content/65 hover:text-success hover:bg-success/10"
                         }
                     )
                     on:click=move |_| {
@@ -655,7 +655,7 @@ fn MessageFeedbackBar(
                         if feedback.get().as_ref().map(|f| f.rating == "negative").unwrap_or(false) {
                             "text-error bg-error/10"
                         } else {
-                            "text-base-content/40 hover:text-error hover:bg-error/10"
+                            "text-base-content/65 hover:text-error hover:bg-error/10"
                         }
                     )
                     on:click=move |_| {

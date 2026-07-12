@@ -150,7 +150,7 @@ pub fn AccessLevelManager() -> impl IntoView {
                                                                     let chips = level.inherits_from.clone();
                                                                     view! {
                                                                         <div class="flex gap-1 mt-1 flex-wrap">
-                                                                            <span class="text-xs text-base-content/50">"inherits:"</span>
+                                                                            <span class="text-xs text-base-content/65">"inherits:"</span>
                                                                             {chips.into_iter().map(|p| view! {
                                                                                 <span class="badge badge-ghost badge-xs">{p}</span>
                                                                             }).collect::<Vec<_>>()}

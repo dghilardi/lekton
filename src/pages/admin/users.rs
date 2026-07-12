@@ -112,7 +112,7 @@ pub fn UserManager() -> impl IntoView {
                                                             </div>
                                                             <div class="flex gap-1 mt-1 flex-wrap">
                                                                 {if user.assigned_access_levels.is_empty() {
-                                                                    view! { <span class="text-xs text-base-content/40 italic">"no levels assigned"</span> }.into_any()
+                                                                    view! { <span class="text-xs text-base-content/65 italic">"no levels assigned"</span> }.into_any()
                                                                 } else {
                                                                     view! {
                                                                         <>{user.assigned_access_levels.iter().map(|l| view! {
@@ -124,7 +124,7 @@ pub fn UserManager() -> impl IntoView {
                                                             {if !user.effective_access_levels.is_empty() && user.effective_access_levels != user.assigned_access_levels {
                                                                 let eff = user.effective_access_levels.clone();
                                                                 view! {
-                                                                    <div class="text-xs text-base-content/50 mt-1">
+                                                                    <div class="text-xs text-base-content/65 mt-1">
                                                                         "effective: "
                                                                         {eff.join(", ")}
                                                                     </div>

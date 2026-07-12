@@ -78,7 +78,7 @@ pub fn AdminPatManager() -> impl IntoView {
                                         {if pats.is_empty() {
                                             view! {
                                                 <tr>
-                                                    <td colspan="6" class="text-center py-8 text-base-content/40">"No PATs found."</td>
+                                                    <td colspan="6" class="text-center py-8 text-base-content/65">"No PATs found."</td>
                                                 </tr>
                                             }.into_any()
                                         } else {

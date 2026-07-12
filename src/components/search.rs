@@ -218,7 +218,7 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                 let q = query.get();
                                 if q.len() < 2 {
                                     return Some(view! {
-                                        <div class="p-8 text-center text-base-content/50">
+                                        <div class="p-8 text-center text-base-content/65">
                                             "Type at least 2 characters to search..."
                                         </div>
                                     }.into_any());
@@ -227,7 +227,7 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                 search_resource.get().map(|result| match result {
                                     Ok(hits) if hits.is_empty() => {
                                         view! {
-                                            <div class="p-8 text-center text-base-content/50">
+                                            <div class="p-8 text-center text-base-content/65">
                                                 "No results found for \"" {q.clone()} "\""
                                             </div>
                                         }.into_any()
@@ -303,7 +303,7 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
 
                     // Footer with keyboard hints
                     <div class="p-3 border-t border-base-300 bg-base-200/50 rounded-b-lg">
-                        <div class="flex items-center justify-between text-xs text-base-content/50">
+                        <div class="flex items-center justify-between text-xs text-base-content/65">
                             <div class="flex items-center gap-4">
                                 <span>"Press ESC to close"</span>
                             </div>
@@ -393,7 +393,7 @@ pub fn SearchBar() -> impl IntoView {
                             search_resource.get().map(|result| match result {
                                 Ok(hits) if hits.is_empty() => {
                                     view! {
-                                        <li class="text-base-content/50 p-2">"No results found"</li>
+                                        <li class="text-base-content/65 p-2">"No results found"</li>
                                     }.into_any()
                                 }
                                 Ok(hits) => {
@@ -413,10 +413,10 @@ pub fn SearchBar() -> impl IntoView {
                                                         <span class="font-semibold">
                                                             {hit.title}
                                                             {page_badge.map(|b| view! {
-                                                                <span class="text-xs font-normal text-base-content/50">{b}</span>
+                                                                <span class="text-xs font-normal text-base-content/65">{b}</span>
                                                             })}
                                                         </span>
-                                                        <span class="text-xs text-base-content/50 truncate w-full">
+                                                        <span class="text-xs text-base-content/65 truncate w-full">
                                                             {hit.content_preview}
                                                         </span>
                                                     </a>

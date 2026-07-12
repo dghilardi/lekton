@@ -767,6 +767,9 @@ mod tests {
             *self.updated_acl.lock().unwrap() = Some(access_levels.to_vec());
             Ok(())
         }
+        async fn health_check(&self) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     #[tokio::test]

@@ -601,6 +601,9 @@ mod tests {
         async fn configure_index(&self) -> Result<(), AppError> {
             Ok(())
         }
+        async fn health_check(&self) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     fn make_doc() -> Document {

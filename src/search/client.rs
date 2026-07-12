@@ -68,6 +68,11 @@ pub trait SearchService: Send + Sync {
     /// Configure the search index (filterable/searchable attributes).
     /// Should be called once on startup.
     async fn configure_index(&self) -> Result<(), AppError>;
+
+    /// Cheap reachability probe for readiness checks: `Ok(())` only if the
+    /// search backend actually answers, not merely because the service was
+    /// constructed.
+    async fn health_check(&self) -> Result<(), AppError>;
 }
 
 /// Meilisearch implementation of the SearchService.
@@ -208,6 +213,14 @@ impl SearchService for MeilisearchService {
             .map_err(|e| AppError::Internal(format!("Meilisearch config error: {e}")))?;
 
         Ok(())
+    }
+
+    async fn health_check(&self) -> Result<(), AppError> {
+        self.client
+            .health()
+            .await
+            .map(|_| ())
+            .map_err(|e| AppError::Internal(format!("Meilisearch health check failed: {e}")))
     }
 }
 

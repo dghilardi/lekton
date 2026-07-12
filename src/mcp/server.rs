@@ -227,6 +227,44 @@ const DOCS_RESOURCE_TEMPLATE: &str = "lekton://docs/{id}";
 /// huge object as a UTF-8 string.
 const MAX_SCHEMA_CONTENT_BYTES: usize = 5 * 1024 * 1024;
 
+/// Maximum length (chars) of a free-text documentation-feedback field, and the
+/// maximum number of items in its resource/query/id arrays, so an MCP client
+/// cannot persist an unbounded blob to the feedback store.
+const MAX_FEEDBACK_FIELD_CHARS: usize = 4000;
+const MAX_FEEDBACK_ITEMS: usize = 100;
+
+/// Reject a free-text field longer than `max` characters.
+fn ensure_field_len(name: &str, value: &str, max: usize) -> Result<(), String> {
+    if value.chars().count() > max {
+        return Err(format!(
+            "{name} exceeds the maximum length of {max} characters"
+        ));
+    }
+    Ok(())
+}
+
+/// Reject a list with more than `max` items.
+fn ensure_items_len(name: &str, len: usize, max: usize) -> Result<(), String> {
+    if len > max {
+        return Err(format!("{name} exceeds the maximum of {max} items"));
+    }
+    Ok(())
+}
+
+/// Enforce the shared feedback field/array limits over a set of named fields.
+fn validate_feedback_limits(
+    text_fields: &[(&str, &str)],
+    item_fields: &[(&str, usize)],
+) -> Result<(), String> {
+    for (name, value) in text_fields {
+        ensure_field_len(name, value, MAX_FEEDBACK_FIELD_CHARS)?;
+    }
+    for (name, len) in item_fields {
+        ensure_items_len(name, *len, MAX_FEEDBACK_ITEMS)?;
+    }
+    Ok(())
+}
+
 // ── MCP Server ──────────────────────────────────────────────────────────────
 
 /// The MCP server instance, created once per session.
@@ -1088,6 +1126,25 @@ impl LektonMcpServer {
             ));
         }
 
+        validate_feedback_limits(
+            &[
+                ("title", feedback.title.as_str()),
+                ("summary", feedback.summary.as_str()),
+                ("user_goal", feedback.user_goal.as_deref().unwrap_or("")),
+                (
+                    "missing_information",
+                    feedback.missing_information.as_deref().unwrap_or(""),
+                ),
+                ("impact", feedback.impact.as_deref().unwrap_or("")),
+            ],
+            &[
+                ("searched_resources", feedback.related_resources.len()),
+                ("search_queries_used", feedback.search_queries.len()),
+                ("related_feedback_ids", feedback.related_feedback_ids.len()),
+            ],
+        )
+        .map_err(|m| McpError::invalid_params(m, None))?;
+
         self.documentation_feedback_repo
             .create(feedback.clone())
             .await
@@ -1156,6 +1213,28 @@ impl LektonMcpServer {
                 None,
             ));
         }
+
+        validate_feedback_limits(
+            &[
+                ("title", feedback.title.as_str()),
+                ("summary", feedback.summary.as_str()),
+                (
+                    "problem_summary",
+                    feedback.problem_summary.as_deref().unwrap_or(""),
+                ),
+                ("proposal", feedback.proposal.as_deref().unwrap_or("")),
+                (
+                    "expected_benefit",
+                    feedback.expected_benefit.as_deref().unwrap_or(""),
+                ),
+            ],
+            &[
+                ("search_queries_used", feedback.search_queries.len()),
+                ("supporting_resources", feedback.supporting_resources.len()),
+                ("related_feedback_ids", feedback.related_feedback_ids.len()),
+            ],
+        )
+        .map_err(|m| McpError::invalid_params(m, None))?;
 
         self.documentation_feedback_repo
             .create(feedback.clone())
@@ -1738,6 +1817,21 @@ mod tests {
         let p = paginate(items, 0, 100);
         assert_eq!(p.items.len(), 10);
         assert!(!p.has_more, "a limit larger than the set fits everything");
+    }
+
+    #[test]
+    fn feedback_limits_reject_oversized_text_and_arrays() {
+        // Within limits → Ok.
+        assert!(validate_feedback_limits(&[("title", "short")], &[("ids", 3)]).is_ok());
+
+        // Oversized text field → Err naming the field.
+        let long = "x".repeat(MAX_FEEDBACK_FIELD_CHARS + 1);
+        let err = validate_feedback_limits(&[("summary", long.as_str())], &[]).unwrap_err();
+        assert!(err.contains("summary"));
+
+        // Oversized array → Err naming the field.
+        let err = validate_feedback_limits(&[], &[("ids", MAX_FEEDBACK_ITEMS + 1)]).unwrap_err();
+        assert!(err.contains("ids"));
     }
 
     #[test]

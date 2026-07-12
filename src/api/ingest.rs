@@ -1160,6 +1160,9 @@ mod tests {
         ) -> Result<(), AppError> {
             Ok(())
         }
+        async fn health_check(&self) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     #[tokio::test]
@@ -1229,6 +1232,9 @@ mod tests {
         ) -> Result<(), AppError> {
             Ok(())
         }
+        async fn health_check(&self) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     struct BlockingAclRagService {
@@ -1272,6 +1278,9 @@ mod tests {
         ) -> Result<(), AppError> {
             self.started.notify_one();
             self.release.notified().await;
+            Ok(())
+        }
+        async fn health_check(&self) -> Result<(), AppError> {
             Ok(())
         }
     }

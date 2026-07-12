@@ -8,15 +8,22 @@ use crate::app::{
     get_search_reindex_status, list_admin_access_levels, list_admin_users,
     list_documentation_feedback, list_service_tokens, mark_documentation_feedback_duplicate,
     resolve_documentation_feedback, save_custom_css, save_navigation_order,
-    set_admin_user_access_levels, trigger_rag_reindex, trigger_schema_endpoint_reindex,
-    trigger_search_reindex, update_admin_access_level, AccessLevelInfo, CreateTokenResult,
-    DocumentationFeedbackAdminItem, DocumentationFeedbackAdminListResult, NavItem,
-    NavigationOrderEntry, ReindexStatus, ServiceTokenInfo,
+    set_admin_user_access_levels, trigger_rag_reindex, trigger_rag_reindex_failed,
+    trigger_schema_endpoint_reindex, trigger_search_reindex, update_admin_access_level,
+    AccessLevelInfo, CreateTokenResult, DocumentationFeedbackAdminItem,
+    DocumentationFeedbackAdminListResult, NavItem, NavigationOrderEntry, ReindexStatus,
+    ServiceTokenInfo,
 };
 #[allow(unused_imports)]
 use crate::auth::refresh_client::with_auth_retry;
 
 // ── Index Rebuilds ───────────────────────────────────────────────────────────
+
+/// Optional "retry only failed items" trigger for a reindex card. Boxed so the
+/// shared component stays free of extra generic parameters.
+type RetryTrigger = std::sync::Arc<
+    dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, ServerFnError>>>>,
+>;
 
 /// Generic re-index card shared by the search, RAG, and schema-endpoint sections.
 ///
@@ -35,6 +42,10 @@ fn ReindexSection<FStatus, FStatusFut, FTrigger, FTriggerFut>(
     button_class: &'static str,
     /// DaisyUI progress class, e.g. `"progress progress-primary w-full"`.
     progress_class: &'static str,
+    /// Optional trigger to re-index only the items that failed last run. When
+    /// set, a "Retry failed items" button appears once a run reports failures.
+    #[prop(optional)]
+    retry_trigger: Option<RetryTrigger>,
 ) -> impl IntoView
 where
     FStatus: Fn() -> FStatusFut + 'static,
@@ -44,6 +55,20 @@ where
 {
     let (poll_counter, set_poll_counter) = signal(0u32);
     let (is_polling, set_is_polling) = signal(false);
+
+    let has_retry = retry_trigger.is_some();
+    let retry_action = Action::new_local(move |_: &()| {
+        let trigger = retry_trigger.clone();
+        async move {
+            let Some(trigger) = trigger else {
+                return Ok(String::new());
+            };
+            let result = trigger().await;
+            set_is_polling.set(true);
+            set_poll_counter.update(|c| *c += 1);
+            result
+        }
+    });
 
     let status_resource = LocalResource::new(move || {
         let _ = poll_counter.get();
@@ -161,12 +186,22 @@ where
                                                     let (failed, skipped, last_error) = outcome.get();
                                                     (!is_running.get() && (failed > 0 || skipped > 0)).then(|| {
                                                         let cls = if failed > 0 { "alert alert-warning text-sm mt-2" } else { "alert alert-info text-sm mt-2" };
+                                                        let show_retry = has_retry && failed > 0;
                                                         view! {
                                                             <div class=cls>
-                                                                <div class="flex flex-col gap-1">
+                                                                <div class="flex flex-col gap-1 w-full">
                                                                     <span>{format!("Last run: {failed} failed, {skipped} skipped.")}</span>
                                                                     {last_error.map(|e| view! {
                                                                         <span class="opacity-80 break-all">{format!("Last error: {e}")}</span>
+                                                                    })}
+                                                                    {show_retry.then(|| view! {
+                                                                        <button
+                                                                            class="btn btn-xs btn-warning mt-1 self-start"
+                                                                            on:click=move |_| { retry_action.dispatch(()); }
+                                                                            prop:disabled=move || retry_action.pending().get()
+                                                                        >
+                                                                            "Retry failed items"
+                                                                        </button>
                                                                     })}
                                                                 </div>
                                                             </div>
@@ -223,6 +258,10 @@ pub fn RagReindexSection() -> impl IntoView {
         <ReindexSection
             fetch_status=|| with_auth_retry(get_rag_reindex_status)
             trigger=|| with_auth_retry(trigger_rag_reindex)
+            retry_trigger=std::sync::Arc::new(|| {
+                Box::pin(with_auth_retry(trigger_rag_reindex_failed))
+                    as std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, ServerFnError>>>>
+            }) as RetryTrigger
             icon=|| view! {
                 <svg class="w-6 h-6 text-secondary" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
             }

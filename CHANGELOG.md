@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 - OIDC `id_token`s are now cryptographically verified (JWKS signature selected by `kid`, issuer, audience, expiry and nonce) instead of decoded without verification; symmetric/`none` algorithms are rejected and the JWKS is refetched on key rotation. OIDC now always performs discovery to obtain the issuer and JWKS URI.
 
 ### Fixed
+- The RAG reindex records which documents/attachments failed and offers a "Retry failed items" action (admin UI + `trigger_rag_reindex_failed`) that re-embeds only those, instead of forcing a full re-embed of the whole corpus to recover from a partial failure.
 - Reindex status (search, RAG, schema endpoints) now reports per-run `failed`/`skipped` counts and the last error, surfaced in the admin UI and the REST status endpoints, so a run that reaches 100% with failures is no longer indistinguishable from a clean one.
 - Background reindex jobs (search, RAG, schema endpoints) now reset their `is_running` flag via an RAII guard even if the job panics or is cancelled, so a crashed reindex can no longer stay stuck "running" and permanently block every future reindex.
 - Attachment extractions left `Pending` or `InProgress` by a previous run are now re-enqueued on startup, so work is no longer silently lost across a restart while the extraction queue is in-memory.

@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - OIDC `id_token`s are now cryptographically verified (JWKS signature selected by `kid`, issuer, audience, expiry and nonce) instead of decoded without verification; symmetric/`none` algorithms are rejected and the JWKS is refetched on key rotation. OIDC now always performs discovery to obtain the issuer and JWKS URI.
 
 ### Fixed
+- Outbound HTTP clients for external dependencies (OIDC, embedding, reranker) are now built with bounded connect/total timeouts via a shared helper, so a stuck dependency can no longer hang a request indefinitely.
 - Asset uploads now roll back the just-written S3 object when the metadata write fails for a brand-new asset, instead of leaving an orphaned blob with no record (updates keep the blob, still referenced by the surviving record).
 - The RAG reindex records which documents/attachments failed and offers a "Retry failed items" action (admin UI + `trigger_rag_reindex_failed`) that re-embeds only those, instead of forcing a full re-embed of the whole corpus to recover from a partial failure.
 - Reindex status (search, RAG, schema endpoints) now reports per-run `failed`/`skipped` counts and the last error, surfaced in the admin UI and the REST status endpoints, so a run that reaches 100% with failures is no longer indistinguishable from a clean one.

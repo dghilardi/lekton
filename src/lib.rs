@@ -14,6 +14,8 @@ pub mod error;
 pub mod jobs;
 #[cfg(feature = "ssr")]
 pub mod mcp;
+#[cfg(feature = "ssr")]
+pub mod net;
 pub mod pages;
 pub mod rag;
 #[cfg(feature = "ssr")]

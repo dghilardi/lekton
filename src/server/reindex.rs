@@ -92,6 +92,52 @@ pub async fn trigger_rag_reindex() -> Result<String, ServerFnError> {
     Ok("Re-index started".to_string())
 }
 
+#[server(TriggerRagReindexFailed, "/api")]
+pub async fn trigger_rag_reindex_failed() -> Result<String, ServerFnError> {
+    use std::sync::atomic::Ordering;
+    let state = expect_context::<AppState>();
+    require_admin_user(&state).await?;
+
+    let rag = state
+        .rag_service
+        .as_ref()
+        .ok_or_else(|| ServerFnError::new("RAG is not enabled"))?;
+
+    let reindex = state
+        .reindex_state
+        .as_ref()
+        .ok_or_else(|| ServerFnError::new("Reindex state not available"))?;
+
+    if reindex
+        .is_running
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Err(ServerFnError::new("Re-index is already in progress"));
+    }
+
+    let reindex_clone = reindex.clone();
+    let document_repo = state.document_repo.clone();
+    let storage = state.storage_client.clone();
+    let rag_clone = rag.clone();
+    let asset_repo = state.asset_repo.clone();
+    let attachment_service = state.attachment_service.clone();
+
+    tokio::spawn(async move {
+        crate::rag::reindex::run_reindex_failed(
+            reindex_clone,
+            document_repo,
+            storage,
+            rag_clone,
+            asset_repo,
+            attachment_service,
+        )
+        .await;
+    });
+
+    Ok("Retry of failed items started".to_string())
+}
+
 #[server(GetSearchReindexStatus, "/api")]
 pub async fn get_search_reindex_status() -> Result<ReindexStatus, ServerFnError> {
     use std::sync::atomic::Ordering;

@@ -1,7 +1,8 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::db::asset_repository::AssetRepository;
+use crate::db::models::{Asset, Document};
 use crate::db::repository::DocumentRepository;
 use crate::rag::attachment_extraction::AttachmentExtractionService;
 use crate::rag::service::RagService;
@@ -15,6 +16,10 @@ pub struct ReindexState {
     pub progress: AtomicU32,
     /// Per-run failed/skipped counters and last error.
     pub outcome: crate::jobs::JobOutcome,
+    /// Slugs of documents that failed in the last run, for a targeted retry.
+    pub failed_docs: Mutex<Vec<String>>,
+    /// Keys of attachments that failed in the last run, for a targeted retry.
+    pub failed_assets: Mutex<Vec<String>>,
 }
 
 impl crate::jobs::RunningFlag for ReindexState {
@@ -44,32 +49,108 @@ pub async fn run_reindex(
     // return or panic, so a crashed reindex cannot block all future runs.
     let _guard = crate::jobs::RunningGuard::new(reindex.clone());
 
-    reindex.progress.store(0, Ordering::Relaxed);
-    reindex.outcome.reset();
-
     // Load all non-archived documents (None = no access level filter, true = include drafts)
-    let documents = match document_repo.list_by_access_levels(None, true).await {
-        Ok(docs) => docs,
+    let documents: Vec<Document> = match document_repo.list_by_access_levels(None, true).await {
+        Ok(docs) => docs.into_iter().filter(|d| !d.is_archived).collect(),
         Err(e) => {
             tracing::error!("RAG reindex: failed to list documents: {e}");
-            return;
+            Vec::new()
         }
     };
-    let documents: Vec<_> = documents.into_iter().filter(|d| !d.is_archived).collect();
 
     // Only attachments still referenced by at least one document are worth
     // re-indexing; an empty `referenced_by` means it is orphaned and pending
     // cleanup (see `recompute_access_levels`), not something to re-embed.
-    let assets: Vec<_> = match asset_repo.list_all().await {
+    let assets: Vec<Asset> = match asset_repo.list_all().await {
         Ok(assets) => assets
             .into_iter()
             .filter(|a| !a.referenced_by.is_empty())
             .collect(),
         Err(e) => {
             tracing::error!("RAG reindex: failed to list assets: {e}");
-            vec![]
+            Vec::new()
         }
     };
+
+    reindex_items(
+        &reindex,
+        storage.as_ref(),
+        rag.as_ref(),
+        attachment_service.as_deref(),
+        documents,
+        assets,
+    )
+    .await;
+}
+
+/// Re-index only the documents/attachments that failed in the previous run,
+/// recorded on the [`ReindexState`]. This avoids re-embedding the entire corpus
+/// to recover from a partial RAG failure.
+pub async fn run_reindex_failed(
+    reindex: Arc<ReindexState>,
+    document_repo: Arc<dyn DocumentRepository>,
+    storage: Arc<dyn StorageClient>,
+    rag: Arc<dyn RagService>,
+    asset_repo: Arc<dyn AssetRepository>,
+    attachment_service: Option<Arc<AttachmentExtractionService>>,
+) {
+    let _guard = crate::jobs::RunningGuard::new(reindex.clone());
+
+    // Snapshot the previous run's failures before `reindex_items` clears them.
+    let failed_docs = reindex.failed_docs.lock().unwrap().clone();
+    let failed_assets = reindex.failed_assets.lock().unwrap().clone();
+
+    let documents: Vec<Document> = if failed_docs.is_empty() {
+        Vec::new()
+    } else {
+        match document_repo.find_by_slugs(&failed_docs).await {
+            Ok(docs) => docs,
+            Err(e) => {
+                tracing::error!("RAG retry: failed to load documents: {e}");
+                Vec::new()
+            }
+        }
+    };
+    let assets: Vec<Asset> = if failed_assets.is_empty() {
+        Vec::new()
+    } else {
+        match asset_repo.list_all().await {
+            Ok(assets) => assets
+                .into_iter()
+                .filter(|a| failed_assets.contains(&a.key))
+                .collect(),
+            Err(e) => {
+                tracing::error!("RAG retry: failed to load assets: {e}");
+                Vec::new()
+            }
+        }
+    };
+
+    reindex_items(
+        &reindex,
+        storage.as_ref(),
+        rag.as_ref(),
+        attachment_service.as_deref(),
+        documents,
+        assets,
+    )
+    .await;
+}
+
+/// Shared worker: (re)index the given documents and attachments, updating
+/// progress and recording per-item failures so they can be retried in isolation.
+async fn reindex_items(
+    reindex: &ReindexState,
+    storage: &dyn StorageClient,
+    rag: &dyn RagService,
+    attachment_service: Option<&AttachmentExtractionService>,
+    documents: Vec<Document>,
+    assets: Vec<Asset>,
+) {
+    reindex.progress.store(0, Ordering::Relaxed);
+    reindex.outcome.reset();
+    reindex.failed_docs.lock().unwrap().clear();
+    reindex.failed_assets.lock().unwrap().clear();
 
     let total = documents.len() + assets.len();
     if total == 0 {
@@ -99,6 +180,7 @@ pub async fn run_reindex(
                 reindex
                     .outcome
                     .record_failure(format!("remove {}: {e}", doc.slug));
+                reindex.failed_docs.lock().unwrap().push(doc.slug.clone());
             }
             done += 1;
             reindex
@@ -126,6 +208,7 @@ pub async fn run_reindex(
                 reindex
                     .outcome
                     .record_failure(format!("read {}: {e}", doc.slug));
+                reindex.failed_docs.lock().unwrap().push(doc.slug.clone());
                 done += 1;
                 reindex
                     .progress
@@ -151,6 +234,7 @@ pub async fn run_reindex(
             reindex
                 .outcome
                 .record_failure(format!("index {}: {e}", doc.slug));
+            reindex.failed_docs.lock().unwrap().push(doc.slug.clone());
         }
 
         done += 1;
@@ -162,7 +246,7 @@ pub async fn run_reindex(
     let mut attachments_skipped = 0usize;
     let mut attachments_failed = 0usize;
 
-    if let Some(service) = &attachment_service {
+    if let Some(service) = attachment_service {
         for asset in &assets {
             if let Err(e) = service.process_one(&asset.key, true).await {
                 tracing::warn!(key = %asset.key, "RAG reindex: failed to re-index attachment: {e}");
@@ -170,6 +254,11 @@ pub async fn run_reindex(
                 reindex
                     .outcome
                     .record_failure(format!("attachment {}: {e}", asset.key));
+                reindex
+                    .failed_assets
+                    .lock()
+                    .unwrap()
+                    .push(asset.key.clone());
             }
             done += 1;
             reindex
@@ -274,8 +363,13 @@ mod tests {
         async fn find_by_slug(&self, _: &str) -> Result<Option<Document>, AppError> {
             Ok(None)
         }
-        async fn find_by_slugs(&self, _: &[String]) -> Result<Vec<Document>, AppError> {
-            Ok(vec![])
+        async fn find_by_slugs(&self, slugs: &[String]) -> Result<Vec<Document>, AppError> {
+            Ok(self
+                .docs
+                .iter()
+                .filter(|d| slugs.contains(&d.slug))
+                .cloned()
+                .collect())
         }
         async fn list_all(&self) -> Result<Vec<Document>, AppError> {
             Ok(self.docs.clone())
@@ -369,6 +463,8 @@ mod tests {
     struct RecordingRagService {
         indexed_slugs: Mutex<Vec<String>>,
         deleted_slugs: Mutex<Vec<String>>,
+        /// Slugs whose indexing should fail (to exercise failure/retry paths).
+        fail_slugs: Mutex<Vec<String>>,
     }
 
     #[async_trait]
@@ -382,7 +478,11 @@ mod tests {
             _: bool,
             _: &[String],
         ) -> Result<(), AppError> {
+            // Record every attempt, then fail the ones marked to fail.
             self.indexed_slugs.lock().unwrap().push(slug.to_string());
+            if self.fail_slugs.lock().unwrap().iter().any(|s| s == slug) {
+                return Err(AppError::Internal(format!("index {slug} rejected")));
+            }
             Ok(())
         }
         async fn delete_document(&self, slug: &str) -> Result<(), AppError> {
@@ -430,6 +530,73 @@ mod tests {
 
         assert_eq!(*rag.indexed_slugs.lock().unwrap(), vec!["normal"]);
         assert_eq!(*rag.deleted_slugs.lock().unwrap(), vec!["upload-stub"]);
+    }
+
+    #[tokio::test]
+    async fn run_reindex_failed_reprocesses_only_previously_failed_documents() {
+        let reindex = Arc::new(ReindexState::default());
+        let storage = Arc::new(MockStorage::new());
+        storage
+            .objects
+            .lock()
+            .unwrap()
+            .insert("docs/good.md".to_string(), b"# Good".to_vec());
+        storage
+            .objects
+            .lock()
+            .unwrap()
+            .insert("docs/bad.md".to_string(), b"# Bad".to_vec());
+        let doc_repo = Arc::new(FakeDocRepo {
+            docs: vec![make_doc("good", false), make_doc("bad", false)],
+        });
+        let rag = Arc::new(RecordingRagService::default());
+        rag.fail_slugs.lock().unwrap().push("bad".to_string());
+        let asset_repo = Arc::new(FakeAssetRepo::new(vec![]));
+
+        // Full run: both attempted, "bad" fails and is recorded for retry.
+        run_reindex(
+            reindex.clone(),
+            doc_repo.clone(),
+            storage.clone(),
+            rag.clone(),
+            asset_repo.clone(),
+            None,
+        )
+        .await;
+        assert_eq!(*rag.indexed_slugs.lock().unwrap(), vec!["good", "bad"]);
+        assert_eq!(
+            *reindex.failed_docs.lock().unwrap(),
+            vec!["bad".to_string()]
+        );
+
+        // Fix the failure and retry only the failed items: "good" is not touched.
+        rag.fail_slugs.lock().unwrap().clear();
+        rag.indexed_slugs.lock().unwrap().clear();
+        // The trigger sets is_running; the guard resets it. Mimic the trigger.
+        reindex
+            .is_running
+            .store(true, std::sync::atomic::Ordering::Release);
+
+        run_reindex_failed(
+            reindex.clone(),
+            doc_repo,
+            storage,
+            rag.clone(),
+            asset_repo,
+            None,
+        )
+        .await;
+
+        assert_eq!(
+            *rag.indexed_slugs.lock().unwrap(),
+            vec!["bad"],
+            "retry must reprocess only the previously-failed document"
+        );
+        assert!(
+            reindex.failed_docs.lock().unwrap().is_empty(),
+            "a successful retry clears the failed list"
+        );
+        assert_eq!(reindex.outcome.snapshot().0, 0, "no failures after retry");
     }
 
     #[tokio::test]

@@ -125,7 +125,7 @@ impl VertexAIEmbedding {
         })?;
         Ok(Self {
             auth_manager,
-            client: reqwest::Client::new(),
+            client: crate::net::http_client(),
             project_id: config.embedding_vertex_project_id.clone(),
             location: location.clone(),
             model: vertex_embedding_model_id(&config.embedding_model),

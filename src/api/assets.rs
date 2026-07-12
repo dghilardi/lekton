@@ -138,15 +138,14 @@ pub async fn process_upload_asset(
     let s3_key = format!("assets/{}", key);
     let content_hash = Some(compute_content_hash(&data));
 
+    // Look up any existing record first: this tells us both the referenced_by
+    // set to preserve and whether the S3 object is new (safe to roll back).
+    let existing = asset_repo.find_by_key(key).await?;
+    let is_new = existing.is_none();
+    let referenced_by = existing.map(|e| e.referenced_by).unwrap_or_default();
+
     // Upload to S3
     storage.put_object(&s3_key, data).await?;
-
-    // Preserve referenced_by from existing asset if updating
-    let referenced_by = if let Some(existing) = asset_repo.find_by_key(key).await? {
-        existing.referenced_by
-    } else {
-        vec![]
-    };
 
     let asset = Asset {
         key: key.to_string(),
@@ -164,7 +163,20 @@ pub async fn process_upload_asset(
         indexed_chunks: None,
     };
 
-    asset_repo.create_or_update(asset).await?;
+    if let Err(e) = asset_repo.create_or_update(asset).await {
+        // Compensate: for a brand-new asset the just-written blob has no
+        // surviving record, so roll it back rather than leave an orphan. For an
+        // update the blob is still referenced by the existing record — keep it.
+        if is_new {
+            if let Err(del_err) = storage.delete_object(&s3_key).await {
+                tracing::warn!(
+                    key,
+                    "failed to roll back orphaned S3 object after metadata write failure: {del_err}"
+                );
+            }
+        }
+        return Err(e);
+    }
 
     Ok(AssetUploadResponse {
         message: "Asset uploaded successfully".to_string(),
@@ -365,7 +377,7 @@ pub async fn process_editor_upload(
         key: key.clone(),
         content_type: content_type.to_string(),
         size_bytes,
-        s3_key,
+        s3_key: s3_key.clone(),
         uploaded_at: Utc::now(),
         uploaded_by: uploaded_by.to_string(),
         referenced_by: vec![],
@@ -377,7 +389,17 @@ pub async fn process_editor_upload(
         indexed_chunks: None,
     };
 
-    asset_repo.create_or_update(asset).await?;
+    if let Err(e) = asset_repo.create_or_update(asset).await {
+        // The editor key is always new (timestamped), so the blob has no
+        // surviving record — roll it back to avoid an orphan.
+        if let Err(del_err) = storage.delete_object(&s3_key).await {
+            tracing::warn!(
+                key,
+                "failed to roll back orphaned editor S3 object after metadata write failure: {del_err}"
+            );
+        }
+        return Err(e);
+    }
 
     Ok(EditorUploadResponse {
         url: format!("/api/v1/assets/{}", key),
@@ -836,12 +858,14 @@ mod tests {
 
     struct MockAssetRepo {
         assets: Mutex<Vec<Asset>>,
+        fail_create: std::sync::atomic::AtomicBool,
     }
 
     impl MockAssetRepo {
         fn new() -> Self {
             Self {
                 assets: Mutex::new(vec![]),
+                fail_create: std::sync::atomic::AtomicBool::new(false),
             }
         }
     }
@@ -849,6 +873,11 @@ mod tests {
     #[async_trait]
     impl AssetRepository for MockAssetRepo {
         async fn create_or_update(&self, asset: Asset) -> Result<(), AppError> {
+            if self.fail_create.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(AppError::Database(
+                    "simulated metadata write failure".into(),
+                ));
+            }
             let mut assets = self.assets.lock().unwrap();
             assets.retain(|a| a.key != asset.key);
             assets.push(asset);
@@ -969,6 +998,107 @@ mod tests {
         // Verify in storage
         let stored = storage.objects.lock().unwrap();
         assert!(stored.contains_key("assets/project/file.txt"));
+    }
+
+    #[tokio::test]
+    async fn upload_new_asset_rolls_back_s3_object_when_metadata_write_fails() {
+        let repo = MockAssetRepo::new();
+        repo.fail_create
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let storage = MockStorage::new();
+
+        let result = process_upload_asset(
+            &repo,
+            &storage,
+            "project/orphan.txt",
+            "text/plain",
+            b"data".to_vec(),
+            "ci-bot",
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+            "valid-token",
+            DEFAULT_MAX_ATTACHMENT_SIZE,
+        )
+        .await;
+
+        assert!(result.is_err(), "metadata write failure must surface");
+        assert!(
+            storage.objects.lock().unwrap().is_empty(),
+            "a new asset's S3 object must be rolled back when the metadata write fails"
+        );
+    }
+
+    #[tokio::test]
+    async fn upload_existing_asset_keeps_s3_object_when_metadata_write_fails() {
+        // Updating an existing asset: the blob is still referenced by the
+        // surviving record, so a failed re-write must NOT delete it.
+        let repo = MockAssetRepo::new();
+        let storage = MockStorage::new();
+        // Seed an existing asset + its blob.
+        process_upload_asset(
+            &repo,
+            &storage,
+            "project/existing.txt",
+            "text/plain",
+            b"v1".to_vec(),
+            "ci-bot",
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+            "valid-token",
+            DEFAULT_MAX_ATTACHMENT_SIZE,
+        )
+        .await
+        .unwrap();
+
+        repo.fail_create
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let result = process_upload_asset(
+            &repo,
+            &storage,
+            "project/existing.txt",
+            "text/plain",
+            b"v2".to_vec(),
+            "ci-bot",
+            &MockServiceTokenRepo,
+            Some("valid-token"),
+            "valid-token",
+            DEFAULT_MAX_ATTACHMENT_SIZE,
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(
+            storage
+                .objects
+                .lock()
+                .unwrap()
+                .contains_key("assets/project/existing.txt"),
+            "an existing asset's blob must not be rolled back (still referenced by its record)"
+        );
+    }
+
+    #[tokio::test]
+    async fn editor_upload_rolls_back_s3_object_when_metadata_write_fails() {
+        let repo = MockAssetRepo::new();
+        repo.fail_create
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let storage = MockStorage::new();
+
+        let result = process_editor_upload(
+            &repo,
+            &storage,
+            "diagram.png",
+            "image/png",
+            b"data".to_vec(),
+            "admin",
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(
+            storage.objects.lock().unwrap().is_empty(),
+            "editor upload must roll back its S3 object when the metadata write fails"
+        );
     }
 
     #[tokio::test]

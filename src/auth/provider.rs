@@ -317,7 +317,7 @@ impl OAuth2AuthProvider {
             userinfo_endpoint,
             redirect_uri: config.redirect_uri.clone(),
             scopes: config.scopes.clone(),
-            http: reqwest::Client::new(),
+            http: crate::net::http_client(),
             sub_field: config.userinfo_sub_field.clone(),
             email_field: config.userinfo_email_field.clone(),
             name_field: config.userinfo_name_field.clone(),
@@ -457,7 +457,7 @@ impl OidcAuthProvider {
     /// to verify the `id_token`, so a preconfigured `token_endpoint` no longer
     /// bypasses it.
     pub async fn from_config(config: &AuthProviderConfig) -> Result<Self, AppError> {
-        let http = reqwest::Client::new();
+        let http = crate::net::http_client();
         let discovery_url = format!(
             "{}/.well-known/openid-configuration",
             config.authorization_endpoint.trim_end_matches('/')

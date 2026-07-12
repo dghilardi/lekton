@@ -80,7 +80,7 @@ impl CrossEncoderReranker {
             }
         }
 
-        let client = reqwest::Client::builder()
+        let client = crate::net::http_client_builder()
             .default_headers(headers)
             .build()
             .expect("failed to build reranker HTTP client");

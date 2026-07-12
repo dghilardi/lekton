@@ -64,6 +64,11 @@ test.describe('Accessibility', () => {
     await page.setViewportSize({ width: 1600, height: 900 });
     await page.goto('/');
     await page.waitForLoadState('networkidle');
+    // Wait for hydration: the Ctrl+K handler is attached client-side, so pressing
+    // before the navbar search control has rendered would be a no-op.
+    await expect(
+      page.locator('button', { hasText: /search|ctrl.*k/i }).first(),
+    ).toBeVisible({ timeout: 15_000 });
 
     await page.keyboard.press('Control+k');
     const dialog = page.locator('[role="dialog"]');

@@ -205,8 +205,10 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                         </div>
                     </div>
 
-                    // Results area
-                    <div class="max-h-96 overflow-y-auto">
+                    // Results area — carries the id referenced by the input's
+                    // `aria-controls` so the reference always resolves (the inner
+                    // listbox only exists once there are results).
+                    <div id=SEARCH_RESULTS_LIST_ID class="max-h-96 overflow-y-auto">
                         <Suspense fallback=move || view! {
                             <div class="flex justify-center p-8">
                                 <span class="loading loading-spinner loading-lg"></span>
@@ -232,7 +234,7 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                     }
                                     Ok(hits) => {
                                         view! {
-                                            <div id=SEARCH_RESULTS_LIST_ID role="listbox" class="divide-y divide-base-300">
+                                            <div role="listbox" class="divide-y divide-base-300">
                                                 {hits.into_iter().enumerate().map(|(idx, hit)| {
                                                     let href = search_hit_href(&hit);
                                                     let target = search_hit_target(&hit);
@@ -361,6 +363,7 @@ pub fn SearchBar() -> impl IntoView {
                     type="text"
                     placeholder="Search docs..."
                     class="input input-bordered w-24 md:w-64"
+                    aria-label="Search documentation"
                     prop:value=query
                     on:input=move |ev| {
                         let val = event_target_value(&ev);

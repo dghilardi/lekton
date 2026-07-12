@@ -415,7 +415,7 @@ pub fn Layout(children: Children) -> impl IntoView {
                     "drawer pt-16"
                 }
             }>
-                <input id="sidebar-drawer" type="checkbox" class="drawer-toggle" />
+                <input id="sidebar-drawer" type="checkbox" class="drawer-toggle" aria-label="Toggle navigation sidebar" />
                 <div class="drawer-content lg:col-start-2 flex flex-col bg-base-100 min-w-0">
                     <div class=move || {
                         if is_chat_layout.get() {

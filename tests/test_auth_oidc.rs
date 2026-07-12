@@ -15,6 +15,7 @@ async fn issue_tokens(
         id: uuid::Uuid::new_v4().to_string(),
         user_id: user.user_id.clone(),
         token_hash: refresh_hash.clone(),
+        family_id: uuid::Uuid::new_v4().to_string(),
         expires_at: chrono::Utc::now() + chrono::Duration::days(30),
         revoked_at: None,
         created_at: chrono::Utc::now(),

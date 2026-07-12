@@ -212,4 +212,19 @@ impl UserRepository for MockUserRepository {
         }
         Ok(())
     }
+
+    async fn revoke_refresh_token_family(&self, family_id: &str) -> Result<(), AppError> {
+        if family_id.is_empty() {
+            return Ok(());
+        }
+        let mut tokens = self.tokens.lock().unwrap();
+        let now = Utc::now();
+        for t in tokens
+            .iter_mut()
+            .filter(|t| t.family_id == family_id && t.revoked_at.is_none())
+        {
+            t.revoked_at = Some(now);
+        }
+        Ok(())
+    }
 }

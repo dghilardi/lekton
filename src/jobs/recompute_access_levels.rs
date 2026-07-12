@@ -249,6 +249,9 @@ mod tests {
         async fn revoke_all_user_tokens(&self, _: &str) -> Result<(), AppError> {
             Ok(())
         }
+        async fn revoke_refresh_token_family(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     #[tokio::test]

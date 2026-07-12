@@ -5,6 +5,9 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Security
+- Refresh tokens now belong to a rotation family: reusing an already-rotated token revokes the whole family (theft detection), and a TTL index prunes expired/revoked tokens instead of letting them accumulate forever.
+- The OAuth/OIDC login flow state (CSRF token and OIDC nonce) is now carried in a signed, short-lived token instead of a plaintext cookie, so it can no longer be forged or tampered with by the browser.
+- Startup now rejects a JWT signing secret shorter than 32 bytes instead of accepting any non-empty value, so a trivially brute-forceable HS256 secret can no longer be configured.
 - OIDC `id_token`s are now cryptographically verified (JWKS signature selected by `kid`, issuer, audience, expiry and nonce) instead of decoded without verification; symmetric/`none` algorithms are rejected and the JWKS is refetched on key rotation. OIDC now always performs discovery to obtain the issuer and JWKS URI.
 
 ### Fixed

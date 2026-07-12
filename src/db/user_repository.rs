@@ -78,6 +78,11 @@ pub trait UserRepository: Send + Sync {
 
     /// Revoke all active tokens for a user (used on admin disable or forced logout).
     async fn revoke_all_user_tokens(&self, user_id: &str) -> Result<(), AppError>;
+
+    /// Revoke every still-active token in a rotation family. Used for
+    /// reuse-detection: presenting an already-rotated token kills the whole
+    /// chain rather than just the reused token.
+    async fn revoke_refresh_token_family(&self, family_id: &str) -> Result<(), AppError>;
 }
 
 // ── MongoDB implementation ────────────────────────────────────────────────────
@@ -269,6 +274,24 @@ impl UserRepository for MongoUserRepository {
             .await?;
         Ok(())
     }
+
+    async fn revoke_refresh_token_family(&self, family_id: &str) -> Result<(), AppError> {
+        use mongodb::bson::doc;
+
+        // An empty family_id is not a real family (legacy/backfilled records);
+        // never revoke across all of them.
+        if family_id.is_empty() {
+            return Ok(());
+        }
+        let now = bson::DateTime::from_millis(Utc::now().timestamp_millis());
+        self.refresh_tokens
+            .update_many(
+                doc! { "family_id": family_id, "revoked_at": { "$exists": false } },
+                doc! { "$set": { "revoked_at": now } },
+            )
+            .await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -300,6 +323,7 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             user_id: user_id.to_string(),
             token_hash: hash.to_string(),
+            family_id: uuid::Uuid::new_v4().to_string(),
             expires_at: if valid {
                 Utc::now() + chrono::Duration::days(30)
             } else {

@@ -18,6 +18,31 @@ const DEFAULT_ACCESS_ISSUER: &str = "lekton";
 const DEFAULT_ACCESS_AUDIENCE: &str = "lekton";
 /// Alphanumeric token length required to reach at least 256 bits of entropy.
 const OPAQUE_TOKEN_LENGTH: usize = 43;
+/// Minimum accepted length for the HS256 signing secret. A short secret is
+/// brute-forceable, so startup rejects anything below this (recommend 32+
+/// random bytes).
+#[cfg(feature = "ssr")]
+const MIN_JWT_SECRET_BYTES: usize = 32;
+/// Issuer/audience marker for the signed OAuth/OIDC flow-state token, distinct
+/// from access tokens so the two cannot be confused despite sharing a secret.
+#[cfg(feature = "ssr")]
+const FLOW_STATE_MARKER: &str = "lekton:auth-flow";
+/// Lifetime of a signed flow-state token — long enough for a login roundtrip.
+#[cfg(feature = "ssr")]
+const FLOW_STATE_TTL_SECS: u64 = 600;
+
+/// Claims for the signed OAuth/OIDC flow-state token (CSRF token + optional
+/// nonce), so the cookie carrying them is tamper-proof and expires.
+#[cfg(feature = "ssr")]
+#[derive(Debug, Serialize, Deserialize)]
+struct FlowStateClaims {
+    iss: String,
+    aud: String,
+    csrf_token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    nonce: Option<String>,
+    exp: u64,
+}
 
 /// Claims embedded in the JWT access token.
 #[derive(Debug, Serialize, Deserialize)]
@@ -60,6 +85,13 @@ impl TokenService {
             .jwt_secret
             .clone()
             .ok_or_else(|| AppError::Auth("auth.jwt_secret not set".into()))?;
+        if secret.len() < MIN_JWT_SECRET_BYTES {
+            return Err(AppError::Auth(format!(
+                "auth.jwt_secret must be at least {MIN_JWT_SECRET_BYTES} bytes \
+                 (recommend 32+ random bytes); got {}",
+                secret.len()
+            )));
+        }
         Ok(Self::new_with_claims(
             &secret,
             auth.jwt_access_ttl_secs,
@@ -142,6 +174,52 @@ impl TokenService {
             })
     }
 
+    /// Sign the OAuth/OIDC flow state (CSRF token + optional nonce) as a
+    /// short-lived HS256 JWT, so the cookie carrying it across the login
+    /// redirect cannot be forged or tampered with by the browser.
+    pub fn sign_flow_state(
+        &self,
+        state: &crate::auth::provider::AuthFlowState,
+    ) -> Result<String, AppError> {
+        let now = Utc::now().timestamp() as u64;
+        let claims = FlowStateClaims {
+            iss: FLOW_STATE_MARKER.to_string(),
+            aud: FLOW_STATE_MARKER.to_string(),
+            csrf_token: state.csrf_token.clone(),
+            nonce: state.nonce.clone(),
+            exp: now + FLOW_STATE_TTL_SECS,
+        };
+        jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &claims,
+            &self.encoding_key,
+        )
+        .map_err(|e| AppError::Internal(format!("Failed to sign auth flow state: {e}")))
+    }
+
+    /// Verify and decode a signed flow-state token, rejecting tampered, expired,
+    /// or wrong-purpose tokens.
+    pub fn verify_flow_state(
+        &self,
+        token: &str,
+    ) -> Result<crate::auth::provider::AuthFlowState, AppError> {
+        let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
+        validation.validate_exp = true;
+        validation.leeway = 0;
+        validation.set_issuer(&[FLOW_STATE_MARKER]);
+        validation.set_audience(&[FLOW_STATE_MARKER]);
+
+        let claims =
+            jsonwebtoken::decode::<FlowStateClaims>(token, &self.decoding_key, &validation)
+                .map(|d| d.claims)
+                .map_err(|e| AppError::Auth(format!("Invalid auth flow state: {e}")))?;
+
+        Ok(crate::auth::provider::AuthFlowState {
+            csrf_token: claims.csrf_token,
+            nonce: claims.nonce,
+        })
+    }
+
     /// Generate a fresh refresh token pair: `(raw_token, hash)`.
     ///
     /// The raw token is a 43-character alphanumeric secret (~256 bits of
@@ -204,6 +282,117 @@ mod tests {
     #[cfg(feature = "ssr")]
     fn make_service() -> TokenService {
         TokenService::new("test-secret-key-at-least-32-bytes!!", 3600, 30)
+    }
+
+    #[cfg(feature = "ssr")]
+    fn make_auth_config(secret: Option<&str>) -> crate::config::AuthConfig {
+        crate::config::AuthConfig {
+            demo_mode: false,
+            allow_demo_in_production: false,
+            service_token: None,
+            jwt_secret: secret.map(str::to_string),
+            jwt_access_ttl_secs: 900,
+            jwt_refresh_ttl_days: 30,
+            jwt_issuer: "lekton".to_string(),
+            jwt_audience: "lekton".to_string(),
+            provider_type: "oidc".to_string(),
+            client_id: None,
+            client_secret: None,
+            redirect_uri: None,
+            authorization_endpoint: None,
+            token_endpoint: None,
+            userinfo_endpoint: None,
+            scopes: "openid profile email".to_string(),
+            userinfo_sub_field: None,
+            userinfo_email_field: None,
+            userinfo_name_field: None,
+        }
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn from_app_config_rejects_short_secret() {
+        let auth = make_auth_config(Some("too-short"));
+        match TokenService::from_app_config(&auth) {
+            Err(AppError::Auth(msg)) => assert!(
+                msg.contains("32"),
+                "error should mention the minimum length, got: {msg}"
+            ),
+            Err(other) => panic!("expected Auth error, got {other:?}"),
+            Ok(_) => panic!("a short jwt_secret must be rejected"),
+        }
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn from_app_config_accepts_sufficiently_long_secret() {
+        let auth = make_auth_config(Some("this-secret-is-exactly-32-bytes!"));
+        assert_eq!(auth.jwt_secret.as_deref().unwrap().len(), 32);
+        assert!(TokenService::from_app_config(&auth).is_ok());
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn from_app_config_rejects_missing_secret() {
+        let auth = make_auth_config(None);
+        assert!(TokenService::from_app_config(&auth).is_err());
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn flow_state_signed_roundtrip() {
+        use crate::auth::provider::AuthFlowState;
+        let svc = make_service();
+        let token = svc
+            .sign_flow_state(&AuthFlowState::new_oidc("csrf-1".into(), "nonce-1".into()))
+            .unwrap();
+        let out = svc.verify_flow_state(&token).unwrap();
+        assert_eq!(out.csrf_token, "csrf-1");
+        assert_eq!(out.nonce.as_deref(), Some("nonce-1"));
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn flow_state_rejects_tampered_token() {
+        use crate::auth::provider::AuthFlowState;
+        let svc = make_service();
+        let token = svc
+            .sign_flow_state(&AuthFlowState::new_oauth2("csrf-1".into()))
+            .unwrap();
+        // Flip the first character of the signature segment.
+        let parts: Vec<&str> = token.split('.').collect();
+        let sig = parts[2];
+        let flipped = if sig.starts_with('A') { 'B' } else { 'A' };
+        let tampered = format!("{}.{}.{}{}", parts[0], parts[1], flipped, &sig[1..]);
+        assert!(
+            svc.verify_flow_state(&tampered).is_err(),
+            "a tampered flow-state token must be rejected"
+        );
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn flow_state_rejects_token_from_other_secret() {
+        use crate::auth::provider::AuthFlowState;
+        let signer = TokenService::new("another-secret-key-32-bytes-long!", 3600, 30);
+        let verifier = make_service();
+        let token = signer
+            .sign_flow_state(&AuthFlowState::new_oauth2("csrf-1".into()))
+            .unwrap();
+        assert!(
+            verifier.verify_flow_state(&token).is_err(),
+            "a flow-state token signed with a different secret must be rejected"
+        );
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn flow_state_verify_rejects_access_token() {
+        // An access token shares the secret but has a different audience; it
+        // must not be accepted as flow state.
+        let svc = make_service();
+        let access = svc.generate_access_token(&make_user(false)).unwrap();
+        assert!(svc.verify_flow_state(&access).is_err());
     }
 
     #[cfg(feature = "ssr")]

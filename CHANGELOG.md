@@ -16,6 +16,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - `/health/ready` now actively probes the enabled RAG (Qdrant) and search (Meilisearch) backends instead of reporting them healthy merely because the service was constructed, so an initialised-but-unreachable dependency is reported as an error.
 - `POST /api/v1/assets/check-hashes` now caps the number of entries per request and looks them up in a single batched `$in` query instead of one sequential query per entry.
+- The MCP documentation-feedback tools (`report_missing_documentation`, `propose_documentation_improvement`) now cap free-text field lengths and array sizes, so a client cannot persist an unbounded blob to the feedback store.
 - The MCP `list_schemas` and `get_index` tools now paginate (`limit`/`offset`, bounded page sizes) and wrap results with pagination metadata, instead of serialising the entire schema registry / document tree into a single response.
 - Navbar dropdown triggers now advertise `aria-haspopup`, and icon-only navbar controls (Docs, Registry, Chat, Admin) carry accessible names, so screen-reader users can tell they open menus and what they do.
 - Chat feedback (thumbs up/down, comment, remove) now rolls back its optimistic UI state and shows an inline error when the write to the server fails, and admin access-level deletion surfaces failures instead of silently swallowing them.
@@ -38,8 +39,9 @@ All notable changes to this project will be documented in this file.
 ## [0.25.15] 2026-07-10
 
 ## [0.25.14] 2026-07-10
-# Fixed
-- limit embedding batch size to 100 items
+
+### Fixed
+- Limit embedding batch size to 100 items.
 
 ## [0.25.13] 2026-07-05
 
@@ -52,8 +54,6 @@ All notable changes to this project will be documented in this file.
 - Show the actual demo login failure message instead of always rendering a generic invalid-credentials error.
 - Surface chat session deletion failures in the UI instead of failing silently.
 - Added accessible labels to icon-only navigation and chat controls so navbar, user menu, send, and session-delete actions remain screen-reader discoverable.
-
-### Fixed
 - The global search modal now supports keyboard result navigation: arrow keys move through results and `Enter` opens the currently highlighted match while the input retains focus.
 - The top navbar now renders a stable SSR placeholder instead of appearing only after hydration, reducing the visible pop-in of the docs/system links area on first paint.
 - Streaming chat responses now throttle markdown re-rendering while tokens arrive, avoiding full reprocessing of the accumulated assistant text on every delta.

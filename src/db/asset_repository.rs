@@ -48,6 +48,12 @@ pub trait AssetRepository: Send + Sync {
         source_slug: &str,
         keys: &[String],
     ) -> Result<Vec<String>, AppError>;
+
+    /// List assets whose extraction was left unfinished — `Pending` (never
+    /// started) or `InProgress` (interrupted mid-flight). Used by a startup
+    /// sweep to re-enqueue work that would otherwise be lost across a restart,
+    /// since the extraction queue is in-memory.
+    async fn list_unfinished_extractions(&self) -> Result<Vec<Asset>, AppError>;
 }
 
 /// MongoDB implementation of the AssetRepository.
@@ -230,5 +236,29 @@ impl AssetRepository for MongoAssetRepository {
         let mut affected = removed;
         affected.extend(added);
         Ok(affected)
+    }
+
+    async fn list_unfinished_extractions(&self) -> Result<Vec<Asset>, AppError> {
+        use futures::TryStreamExt;
+        use mongodb::bson::{doc, to_bson};
+
+        let serialize = |s: &ExtractionStatus| {
+            to_bson(s).map_err(|e| {
+                AppError::Internal(format!("failed to serialize extraction status: {e}"))
+            })
+        };
+        let pending = serialize(&ExtractionStatus::Pending)?;
+        let in_progress = serialize(&ExtractionStatus::InProgress)?;
+
+        let mut cursor = self
+            .collection
+            .find(doc! { "extraction_status": { "$in": [pending, in_progress] } })
+            .await?;
+
+        let mut assets = Vec::new();
+        while let Some(asset) = cursor.try_next().await? {
+            assets.push(asset);
+        }
+        Ok(assets)
     }
 }

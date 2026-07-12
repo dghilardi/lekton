@@ -878,6 +878,20 @@ async fn main() {
         (None, None)
     };
 
+    // Recover attachment extractions left unfinished by a previous run: the
+    // queue is in-memory, so Pending/InProgress assets would otherwise be lost
+    // across a restart. Sweep in the background so startup is not blocked.
+    if let Some(queue) = attachment_queue.clone() {
+        let asset_repo = asset_repo.clone();
+        tokio::spawn(async move {
+            lekton::rag::attachment_extraction::resume_unfinished_extractions(
+                asset_repo.as_ref(),
+                &queue,
+            )
+            .await;
+        });
+    }
+
     // Build application state
     let app_state = lekton::app::AppState {
         document_repo,

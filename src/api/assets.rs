@@ -926,6 +926,12 @@ mod tests {
             }
             Ok(affected)
         }
+
+        async fn list_unfinished_extractions(
+            &self,
+        ) -> Result<Vec<crate::db::models::Asset>, AppError> {
+            Ok(vec![])
+        }
     }
 
     #[tokio::test]

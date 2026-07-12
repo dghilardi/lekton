@@ -91,6 +91,34 @@ async fn mark_enqueue_failure(asset_repo: &dyn AssetRepository, key: &str, error
     }
 }
 
+/// Re-enqueue attachments whose extraction was left unfinished (`Pending` or
+/// `InProgress`) so a process restart does not silently lose queued work.
+///
+/// The extraction queue is in-memory, so without this sweep any asset that was
+/// persisted but not yet processed before a restart would never be indexed.
+/// Safe to run on startup: `process_one` skips already-indexed content.
+pub async fn resume_unfinished_extractions(
+    asset_repo: &dyn AssetRepository,
+    queue: &AttachmentQueue,
+) {
+    match asset_repo.list_unfinished_extractions().await {
+        Ok(assets) => {
+            if !assets.is_empty() {
+                tracing::info!(
+                    count = assets.len(),
+                    "re-enqueuing unfinished attachment extractions at startup"
+                );
+            }
+            for asset in assets {
+                queue.enqueue(&asset.key);
+            }
+        }
+        Err(e) => {
+            tracing::warn!("startup attachment extraction sweep failed: {e}");
+        }
+    }
+}
+
 /// Owns the dependencies needed to extract and index a single attachment.
 pub struct AttachmentExtractionService {
     storage: Arc<dyn StorageClient>,
@@ -610,6 +638,21 @@ mod tests {
         async fn set_references(&self, _: &str, _: &[String]) -> Result<Vec<String>, AppError> {
             Ok(vec![])
         }
+        async fn list_unfinished_extractions(&self) -> Result<Vec<Asset>, AppError> {
+            Ok(self
+                .assets
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|a| {
+                    matches!(
+                        a.extraction_status,
+                        ExtractionStatus::Pending | ExtractionStatus::InProgress
+                    )
+                })
+                .cloned()
+                .collect())
+        }
     }
 
     struct NoopDocumentRepo;
@@ -755,6 +798,39 @@ mod tests {
             "orphaned asset's S3 object should be deleted"
         );
         assert!(rag.updated_acl.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn startup_sweep_reenqueues_only_unfinished_extractions() {
+        let mut pending = make_asset("pdfs/pending.pdf", vec!["docs/x".to_string()]);
+        pending.extraction_status = ExtractionStatus::Pending;
+        let mut in_progress = make_asset("pdfs/inprogress.pdf", vec!["docs/y".to_string()]);
+        in_progress.extraction_status = ExtractionStatus::InProgress;
+        let mut done = make_asset("pdfs/done.pdf", vec!["docs/z".to_string()]);
+        done.extraction_status = ExtractionStatus::Done;
+
+        let asset_repo = Arc::new(FakeAssetRepo::new(vec![pending, in_progress, done]));
+        let (tx, mut rx) = mpsc::channel(16);
+        let queue = AttachmentQueue {
+            tx,
+            asset_repo: asset_repo.clone(),
+        };
+
+        resume_unfinished_extractions(asset_repo.as_ref(), &queue).await;
+
+        let mut got = Vec::new();
+        while let Ok(key) = rx.try_recv() {
+            got.push(key);
+        }
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                "pdfs/inprogress.pdf".to_string(),
+                "pdfs/pending.pdf".to_string(),
+            ],
+            "only Pending/InProgress assets should be re-enqueued at startup"
+        );
     }
 
     #[tokio::test]

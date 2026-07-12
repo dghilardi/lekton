@@ -562,6 +562,9 @@ mod tests {
                 Ok(vec![])
             }
         }
+        async fn list_unfinished_extractions(&self) -> Result<Vec<Asset>, AppError> {
+            Ok(vec![])
+        }
     }
 
     /// Search service whose `index_document` result is configurable.

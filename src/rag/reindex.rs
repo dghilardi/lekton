@@ -334,6 +334,9 @@ mod tests {
         async fn set_references(&self, _: &str, _: &[String]) -> Result<Vec<String>, AppError> {
             Ok(vec![])
         }
+        async fn list_unfinished_extractions(&self) -> Result<Vec<Asset>, AppError> {
+            Ok(vec![])
+        }
     }
 
     #[derive(Default)]

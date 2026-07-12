@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Security
+- Startup now rejects a JWT signing secret shorter than 32 bytes instead of accepting any non-empty value, so a trivially brute-forceable HS256 secret can no longer be configured.
 - OIDC `id_token`s are now cryptographically verified (JWKS signature selected by `kid`, issuer, audience, expiry and nonce) instead of decoded without verification; symmetric/`none` algorithms are rejected and the JWKS is refetched on key rotation. OIDC now always performs discovery to obtain the issuer and JWKS URI.
 
 ### Fixed

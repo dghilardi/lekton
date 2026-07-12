@@ -18,6 +18,11 @@ const DEFAULT_ACCESS_ISSUER: &str = "lekton";
 const DEFAULT_ACCESS_AUDIENCE: &str = "lekton";
 /// Alphanumeric token length required to reach at least 256 bits of entropy.
 const OPAQUE_TOKEN_LENGTH: usize = 43;
+/// Minimum accepted length for the HS256 signing secret. A short secret is
+/// brute-forceable, so startup rejects anything below this (recommend 32+
+/// random bytes).
+#[cfg(feature = "ssr")]
+const MIN_JWT_SECRET_BYTES: usize = 32;
 
 /// Claims embedded in the JWT access token.
 #[derive(Debug, Serialize, Deserialize)]
@@ -60,6 +65,13 @@ impl TokenService {
             .jwt_secret
             .clone()
             .ok_or_else(|| AppError::Auth("auth.jwt_secret not set".into()))?;
+        if secret.len() < MIN_JWT_SECRET_BYTES {
+            return Err(AppError::Auth(format!(
+                "auth.jwt_secret must be at least {MIN_JWT_SECRET_BYTES} bytes \
+                 (recommend 32+ random bytes); got {}",
+                secret.len()
+            )));
+        }
         Ok(Self::new_with_claims(
             &secret,
             auth.jwt_access_ttl_secs,
@@ -204,6 +216,60 @@ mod tests {
     #[cfg(feature = "ssr")]
     fn make_service() -> TokenService {
         TokenService::new("test-secret-key-at-least-32-bytes!!", 3600, 30)
+    }
+
+    #[cfg(feature = "ssr")]
+    fn make_auth_config(secret: Option<&str>) -> crate::config::AuthConfig {
+        crate::config::AuthConfig {
+            demo_mode: false,
+            allow_demo_in_production: false,
+            service_token: None,
+            jwt_secret: secret.map(str::to_string),
+            jwt_access_ttl_secs: 900,
+            jwt_refresh_ttl_days: 30,
+            jwt_issuer: "lekton".to_string(),
+            jwt_audience: "lekton".to_string(),
+            provider_type: "oidc".to_string(),
+            client_id: None,
+            client_secret: None,
+            redirect_uri: None,
+            authorization_endpoint: None,
+            token_endpoint: None,
+            userinfo_endpoint: None,
+            scopes: "openid profile email".to_string(),
+            userinfo_sub_field: None,
+            userinfo_email_field: None,
+            userinfo_name_field: None,
+        }
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn from_app_config_rejects_short_secret() {
+        let auth = make_auth_config(Some("too-short"));
+        match TokenService::from_app_config(&auth) {
+            Err(AppError::Auth(msg)) => assert!(
+                msg.contains("32"),
+                "error should mention the minimum length, got: {msg}"
+            ),
+            Err(other) => panic!("expected Auth error, got {other:?}"),
+            Ok(_) => panic!("a short jwt_secret must be rejected"),
+        }
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn from_app_config_accepts_sufficiently_long_secret() {
+        let auth = make_auth_config(Some("this-secret-is-exactly-32-bytes!"));
+        assert_eq!(auth.jwt_secret.as_deref().unwrap().len(), 32);
+        assert!(TokenService::from_app_config(&auth).is_ok());
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn from_app_config_rejects_missing_secret() {
+        let auth = make_auth_config(None);
+        assert!(TokenService::from_app_config(&auth).is_err());
     }
 
     #[cfg(feature = "ssr")]

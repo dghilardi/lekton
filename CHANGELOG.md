@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 - OIDC `id_token`s are now cryptographically verified (JWKS signature selected by `kid`, issuer, audience, expiry and nonce) instead of decoded without verification; symmetric/`none` algorithms are rejected and the JWKS is refetched on key rotation. OIDC now always performs discovery to obtain the issuer and JWKS URI.
 
 ### Fixed
+- Background reindex jobs (search, RAG, schema endpoints) now reset their `is_running` flag via an RAII guard even if the job panics or is cancelled, so a crashed reindex can no longer stay stuck "running" and permanently block every future reindex.
 - Attachment extractions left `Pending` or `InProgress` by a previous run are now re-enqueued on startup, so work is no longer silently lost across a restart while the extraction queue is in-memory.
 - The WYSIWYG editor now indexes the document into search before persisting it, records `needs_reindex` when indexing fails (mirroring the ingest API), and reports partial success in the save message instead of always claiming success while search or asset-reference reconciliation silently failed.
 - Orphaned-attachment cleanup now deindexes RAG/search and deletes the blob before removing the canonical asset record, keeping the record (marked failed) for retry if any step fails, instead of stranding indexed chunks with stale ACLs and no anchor to reconcile them.

@@ -15,6 +15,12 @@ pub struct ReindexState {
     pub progress: AtomicU32,
 }
 
+impl crate::jobs::RunningFlag for ReindexState {
+    fn is_running(&self) -> &AtomicBool {
+        &self.is_running
+    }
+}
+
 /// Run a full re-index of all non-archived documents, plus every referenced
 /// PDF attachment (force-reprocessed regardless of content-hash match), so
 /// documents uploaded before extraction was wired up — or a changed
@@ -32,6 +38,10 @@ pub async fn run_reindex(
     asset_repo: Arc<dyn AssetRepository>,
     attachment_service: Option<Arc<AttachmentExtractionService>>,
 ) {
+    // Reset `is_running` unconditionally when this task ends, even on an early
+    // return or panic, so a crashed reindex cannot block all future runs.
+    let _guard = crate::jobs::RunningGuard::new(reindex.clone());
+
     reindex.progress.store(0, Ordering::Relaxed);
 
     // Load all non-archived documents (None = no access level filter, true = include drafts)
@@ -39,7 +49,6 @@ pub async fn run_reindex(
         Ok(docs) => docs,
         Err(e) => {
             tracing::error!("RAG reindex: failed to list documents: {e}");
-            reindex.is_running.store(false, Ordering::Release);
             return;
         }
     };
@@ -63,7 +72,6 @@ pub async fn run_reindex(
     if total == 0 {
         tracing::info!("RAG reindex: nothing to index");
         reindex.progress.store(100, Ordering::Relaxed);
-        reindex.is_running.store(false, Ordering::Release);
         return;
     }
 
@@ -176,7 +184,6 @@ pub async fn run_reindex(
         "RAG reindex: complete"
     );
     reindex.progress.store(100, Ordering::Relaxed);
-    reindex.is_running.store(false, Ordering::Release);
 }
 
 #[cfg(test)]

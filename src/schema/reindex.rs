@@ -12,6 +12,12 @@ pub struct SchemaEndpointReindexState {
     pub progress: AtomicU32,
 }
 
+impl crate::jobs::RunningFlag for SchemaEndpointReindexState {
+    fn is_running(&self) -> &AtomicBool {
+        &self.is_running
+    }
+}
+
 /// Re-extract and persist API endpoints for every non-archived schema version.
 ///
 /// Fetches each version's content from S3, runs endpoint extraction, and
@@ -22,13 +28,16 @@ pub async fn run_schema_endpoint_reindex(
     schema_repo: Arc<dyn SchemaRepository>,
     storage: Arc<dyn StorageClient>,
 ) {
+    // Reset `is_running` unconditionally when this task ends, even on an early
+    // return or panic, so a crashed reindex cannot block all future runs.
+    let _guard = crate::jobs::RunningGuard::new(reindex.clone());
+
     reindex.progress.store(0, Ordering::Relaxed);
 
     let mut schemas = match schema_repo.list_all().await {
         Ok(s) => s,
         Err(e) => {
             tracing::error!("Schema endpoint reindex: failed to list schemas: {e}");
-            reindex.is_running.store(false, Ordering::Release);
             return;
         }
     };
@@ -37,7 +46,6 @@ pub async fn run_schema_endpoint_reindex(
     if total == 0 {
         tracing::info!("Schema endpoint reindex: no schemas found");
         reindex.progress.store(100, Ordering::Relaxed);
-        reindex.is_running.store(false, Ordering::Release);
         return;
     }
 
@@ -91,7 +99,6 @@ pub async fn run_schema_endpoint_reindex(
 
     tracing::info!(total, "Schema endpoint reindex: complete");
     reindex.progress.store(100, Ordering::Relaxed);
-    reindex.is_running.store(false, Ordering::Release);
 }
 
 fn update_progress(reindex: &SchemaEndpointReindexState, index: usize, total: usize) {

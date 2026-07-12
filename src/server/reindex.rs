@@ -1,24 +1,49 @@
 use leptos::prelude::*;
+use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "ssr")]
 use crate::app::AppState;
 #[cfg(feature = "ssr")]
 use crate::server::require_admin_user;
 
+/// Status of a background reindex job reported to the admin UI.
+///
+/// Beyond `is_running`/`progress`, it carries the per-run `failed`/`skipped`
+/// counts and `last_error` so a completed run at 100% is no longer
+/// indistinguishable from a partial one.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ReindexStatus {
+    pub is_running: bool,
+    pub progress: u32,
+    pub failed: u32,
+    pub skipped: u32,
+    pub last_error: Option<String>,
+    pub enabled: bool,
+}
+
 #[server(GetRagReindexStatus, "/api")]
-pub async fn get_rag_reindex_status() -> Result<(bool, u32, bool), ServerFnError> {
+pub async fn get_rag_reindex_status() -> Result<ReindexStatus, ServerFnError> {
     use std::sync::atomic::Ordering;
     let state = expect_context::<AppState>();
     require_admin_user(&state).await?;
-    let rag_enabled = state.rag_service.is_some();
-    match &state.reindex_state {
-        Some(reindex) => Ok((
-            reindex.is_running.load(Ordering::Acquire),
-            reindex.progress.load(Ordering::Relaxed),
-            rag_enabled,
-        )),
-        None => Ok((false, 0, rag_enabled)),
-    }
+    let enabled = state.rag_service.is_some();
+    Ok(match &state.reindex_state {
+        Some(reindex) => {
+            let (failed, skipped, last_error) = reindex.outcome.snapshot();
+            ReindexStatus {
+                is_running: reindex.is_running.load(Ordering::Acquire),
+                progress: reindex.progress.load(Ordering::Relaxed),
+                failed,
+                skipped,
+                last_error,
+                enabled,
+            }
+        }
+        None => ReindexStatus {
+            enabled,
+            ..Default::default()
+        },
+    })
 }
 
 #[server(TriggerRagReindex, "/api")]
@@ -68,19 +93,28 @@ pub async fn trigger_rag_reindex() -> Result<String, ServerFnError> {
 }
 
 #[server(GetSearchReindexStatus, "/api")]
-pub async fn get_search_reindex_status() -> Result<(bool, u32, bool), ServerFnError> {
+pub async fn get_search_reindex_status() -> Result<ReindexStatus, ServerFnError> {
     use std::sync::atomic::Ordering;
     let state = expect_context::<AppState>();
     require_admin_user(&state).await?;
-    let search_enabled = state.search_service.is_some();
-    match &state.search_reindex_state {
-        Some(reindex) => Ok((
-            reindex.is_running.load(Ordering::Acquire),
-            reindex.progress.load(Ordering::Relaxed),
-            search_enabled,
-        )),
-        None => Ok((false, 0, search_enabled)),
-    }
+    let enabled = state.search_service.is_some();
+    Ok(match &state.search_reindex_state {
+        Some(reindex) => {
+            let (failed, skipped, last_error) = reindex.outcome.snapshot();
+            ReindexStatus {
+                is_running: reindex.is_running.load(Ordering::Acquire),
+                progress: reindex.progress.load(Ordering::Relaxed),
+                failed,
+                skipped,
+                last_error,
+                enabled,
+            }
+        }
+        None => ReindexStatus {
+            enabled,
+            ..Default::default()
+        },
+    })
 }
 
 #[server(TriggerSearchReindex, "/api")]
@@ -121,20 +155,20 @@ pub async fn trigger_search_reindex() -> Result<String, ServerFnError> {
 }
 
 #[server(GetSchemaEndpointReindexStatus, "/api")]
-pub async fn get_schema_endpoint_reindex_status() -> Result<(bool, u32), ServerFnError> {
+pub async fn get_schema_endpoint_reindex_status() -> Result<ReindexStatus, ServerFnError> {
     use std::sync::atomic::Ordering;
     let state = expect_context::<AppState>();
     require_admin_user(&state).await?;
-    Ok((
-        state
-            .schema_endpoint_reindex_state
-            .is_running
-            .load(Ordering::Acquire),
-        state
-            .schema_endpoint_reindex_state
-            .progress
-            .load(Ordering::Relaxed),
-    ))
+    let reindex = &state.schema_endpoint_reindex_state;
+    let (failed, skipped, last_error) = reindex.outcome.snapshot();
+    Ok(ReindexStatus {
+        is_running: reindex.is_running.load(Ordering::Acquire),
+        progress: reindex.progress.load(Ordering::Relaxed),
+        failed,
+        skipped,
+        last_error,
+        enabled: true,
+    })
 }
 
 #[server(TriggerSchemaEndpointReindex, "/api")]

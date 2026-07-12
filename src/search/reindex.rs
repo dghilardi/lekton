@@ -11,6 +11,8 @@ pub struct SearchReindexState {
     pub is_running: AtomicBool,
     /// Progress percentage (0-100).
     pub progress: AtomicU32,
+    /// Per-run failed/skipped counters and last error.
+    pub outcome: crate::jobs::JobOutcome,
 }
 
 impl crate::jobs::RunningFlag for SearchReindexState {
@@ -35,6 +37,7 @@ pub async fn run_reindex(
     let _guard = crate::jobs::RunningGuard::new(reindex.clone());
 
     reindex.progress.store(0, Ordering::Relaxed);
+    reindex.outcome.reset();
 
     if let Err(e) = search.configure_index().await {
         tracing::warn!("Search reindex: failed to configure Meilisearch index: {e}");
@@ -61,6 +64,9 @@ pub async fn run_reindex(
         if doc.is_archived || doc.is_hidden {
             if let Err(e) = search.delete_document(&doc.slug).await {
                 tracing::warn!(slug = %doc.slug, "Search reindex: failed to delete stale document: {e}");
+                reindex
+                    .outcome
+                    .record_failure(format!("delete {}: {e}", doc.slug));
             }
             update_progress(&reindex, i, total);
             continue;
@@ -70,11 +76,15 @@ pub async fn run_reindex(
             Ok(Some(bytes)) => String::from_utf8_lossy(&bytes).into_owned(),
             Ok(None) => {
                 tracing::warn!(slug = %doc.slug, "Search reindex: content not found in storage, skipping");
+                reindex.outcome.record_skip();
                 update_progress(&reindex, i, total);
                 continue;
             }
             Err(e) => {
                 tracing::warn!(slug = %doc.slug, "Search reindex: failed to read from storage: {e}");
+                reindex
+                    .outcome
+                    .record_failure(format!("read {}: {e}", doc.slug));
                 update_progress(&reindex, i, total);
                 continue;
             }
@@ -83,6 +93,9 @@ pub async fn run_reindex(
         let search_doc = build_search_document(doc, &content);
         if let Err(e) = search.index_document(&search_doc).await {
             tracing::warn!(slug = %doc.slug, "Search reindex: failed to index document: {e}");
+            reindex
+                .outcome
+                .record_failure(format!("index {}: {e}", doc.slug));
         }
 
         update_progress(&reindex, i, total);
@@ -270,6 +283,7 @@ mod tests {
         let state = Arc::new(SearchReindexState {
             is_running: AtomicBool::new(true),
             progress: AtomicU32::new(0),
+            ..Default::default()
         });
 
         run_reindex(state.clone(), repo, storage, search.clone()).await;
@@ -285,6 +299,58 @@ mod tests {
 
         let deleted = search.deleted.lock().unwrap();
         assert_eq!(&*deleted, &vec![hidden.slug.clone(), archived.slug.clone()]);
+    }
+
+    #[tokio::test]
+    async fn reindex_counts_failed_documents_and_records_last_error() {
+        struct FailingSearch;
+        #[async_trait]
+        impl SearchService for FailingSearch {
+            async fn index_document(&self, _: &SearchDocument) -> Result<(), AppError> {
+                Err(AppError::Internal("index rejected".to_string()))
+            }
+            async fn delete_document(&self, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            async fn search(
+                &self,
+                _: &str,
+                _: Option<&[String]>,
+                _: bool,
+            ) -> Result<Vec<SearchHit>, AppError> {
+                Ok(vec![])
+            }
+            async fn configure_index(&self) -> Result<(), AppError> {
+                Ok(())
+            }
+        }
+
+        let doc = make_doc("a", false, false);
+        let repo = Arc::new(MockDocumentRepo {
+            documents: vec![doc.clone()],
+        });
+        let storage = Arc::new(MockStorage::default());
+        storage
+            .put_object(&doc.s3_key, b"# A".to_vec())
+            .await
+            .unwrap();
+        let state = Arc::new(SearchReindexState::default());
+        state.is_running.store(true, Ordering::Release);
+
+        run_reindex(state.clone(), repo, storage, Arc::new(FailingSearch)).await;
+
+        let (failed, skipped, last_error) = state.outcome.snapshot();
+        assert_eq!(failed, 1, "a failed index must be counted");
+        assert_eq!(skipped, 0);
+        assert!(
+            last_error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("index a"),
+            "last_error should name the failed document, got: {last_error:?}"
+        );
+        // Progress still reaches 100, but the failure count reveals it was partial.
+        assert_eq!(state.progress.load(Ordering::Relaxed), 100);
     }
 
     #[tokio::test]
@@ -325,6 +391,7 @@ mod tests {
         let state = Arc::new(SearchReindexState {
             is_running: AtomicBool::new(true),
             progress: AtomicU32::new(0),
+            ..Default::default()
         });
 
         let state_in_task = state.clone();

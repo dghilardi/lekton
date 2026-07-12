@@ -10,6 +10,8 @@ pub struct SchemaEndpointReindexState {
     pub is_running: AtomicBool,
     /// Progress percentage (0–100).
     pub progress: AtomicU32,
+    /// Per-run failed/skipped counters and last error.
+    pub outcome: crate::jobs::JobOutcome,
 }
 
 impl crate::jobs::RunningFlag for SchemaEndpointReindexState {
@@ -33,6 +35,7 @@ pub async fn run_schema_endpoint_reindex(
     let _guard = crate::jobs::RunningGuard::new(reindex.clone());
 
     reindex.progress.store(0, Ordering::Relaxed);
+    reindex.outcome.reset();
 
     let mut schemas = match schema_repo.list_all().await {
         Ok(s) => s,
@@ -62,6 +65,7 @@ pub async fn run_schema_endpoint_reindex(
                             version = %version.version,
                             "Schema endpoint reindex: invalid UTF-8, skipping: {e}"
                         );
+                        reindex.outcome.record_skip();
                         continue;
                     }
                 },
@@ -71,6 +75,7 @@ pub async fn run_schema_endpoint_reindex(
                         version = %version.version,
                         "Schema endpoint reindex: content not found in storage, skipping"
                     );
+                    reindex.outcome.record_skip();
                     continue;
                 }
                 Err(e) => {
@@ -79,6 +84,9 @@ pub async fn run_schema_endpoint_reindex(
                         version = %version.version,
                         "Schema endpoint reindex: storage error, skipping: {e}"
                     );
+                    reindex
+                        .outcome
+                        .record_failure(format!("read {}@{}: {e}", schema.name, version.version));
                     continue;
                 }
             };
@@ -92,6 +100,9 @@ pub async fn run_schema_endpoint_reindex(
                 schema = %schema.name,
                 "Schema endpoint reindex: failed to persist updated schema: {e}"
             );
+            reindex
+                .outcome
+                .record_failure(format!("persist {}: {e}", schema.name));
         }
 
         update_progress(&reindex, i, total);

@@ -13,6 +13,8 @@ pub struct ReindexState {
     pub is_running: AtomicBool,
     /// Progress percentage (0–100).
     pub progress: AtomicU32,
+    /// Per-run failed/skipped counters and last error.
+    pub outcome: crate::jobs::JobOutcome,
 }
 
 impl crate::jobs::RunningFlag for ReindexState {
@@ -43,6 +45,7 @@ pub async fn run_reindex(
     let _guard = crate::jobs::RunningGuard::new(reindex.clone());
 
     reindex.progress.store(0, Ordering::Relaxed);
+    reindex.outcome.reset();
 
     // Load all non-archived documents (None = no access level filter, true = include drafts)
     let documents = match document_repo.list_by_access_levels(None, true).await {
@@ -93,6 +96,9 @@ pub async fn run_reindex(
             if let Err(e) = rag.delete_document(&doc.slug).await {
                 tracing::warn!(slug = %doc.slug, "RAG reindex: failed to remove skip_rag document: {e}");
                 failed += 1;
+                reindex
+                    .outcome
+                    .record_failure(format!("remove {}: {e}", doc.slug));
             }
             done += 1;
             reindex
@@ -107,6 +113,7 @@ pub async fn run_reindex(
             Ok(None) => {
                 tracing::warn!(slug = %doc.slug, "RAG reindex: content not found in S3, skipping");
                 skipped += 1;
+                reindex.outcome.record_skip();
                 done += 1;
                 reindex
                     .progress
@@ -116,6 +123,9 @@ pub async fn run_reindex(
             Err(e) => {
                 tracing::warn!(slug = %doc.slug, "RAG reindex: failed to read from S3: {e}");
                 failed += 1;
+                reindex
+                    .outcome
+                    .record_failure(format!("read {}: {e}", doc.slug));
                 done += 1;
                 reindex
                     .progress
@@ -138,6 +148,9 @@ pub async fn run_reindex(
         {
             tracing::warn!(slug = %doc.slug, "RAG reindex: failed to index: {e}");
             failed += 1;
+            reindex
+                .outcome
+                .record_failure(format!("index {}: {e}", doc.slug));
         }
 
         done += 1;
@@ -154,6 +167,9 @@ pub async fn run_reindex(
             if let Err(e) = service.process_one(&asset.key, true).await {
                 tracing::warn!(key = %asset.key, "RAG reindex: failed to re-index attachment: {e}");
                 attachments_failed += 1;
+                reindex
+                    .outcome
+                    .record_failure(format!("attachment {}: {e}", asset.key));
             }
             done += 1;
             reindex
@@ -166,6 +182,9 @@ pub async fn run_reindex(
             "RAG reindex: attachment indexing is disabled, skipping referenced PDFs"
         );
         attachments_skipped = assets.len();
+        for _ in &assets {
+            reindex.outcome.record_skip();
+        }
         done += assets.len();
         reindex
             .progress

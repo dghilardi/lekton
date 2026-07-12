@@ -36,6 +36,9 @@ use crate::error::AppError;
 pub struct ReindexStatusResponse {
     pub is_running: bool,
     pub progress: u32,
+    pub failed: u32,
+    pub skipped: u32,
+    pub last_error: Option<String>,
     pub rag_enabled: bool,
 }
 
@@ -112,17 +115,26 @@ pub async fn reindex_status_handler(
         return Err(AppError::Forbidden("Admin privileges required".into()));
     }
 
-    let (is_running, progress) = match &state.reindex_state {
-        Some(reindex) => (
-            reindex.is_running.load(Ordering::Acquire),
-            reindex.progress.load(Ordering::Relaxed),
-        ),
-        None => (false, 0),
+    let (is_running, progress, failed, skipped, last_error) = match &state.reindex_state {
+        Some(reindex) => {
+            let (failed, skipped, last_error) = reindex.outcome.snapshot();
+            (
+                reindex.is_running.load(Ordering::Acquire),
+                reindex.progress.load(Ordering::Relaxed),
+                failed,
+                skipped,
+                last_error,
+            )
+        }
+        None => (false, 0, 0, 0, None),
     };
 
     Ok(Json(ReindexStatusResponse {
         is_running,
         progress,
+        failed,
+        skipped,
+        last_error,
         rag_enabled: state.rag_service.is_some(),
     }))
 }

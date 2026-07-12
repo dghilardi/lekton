@@ -905,9 +905,13 @@ pub async fn schema_endpoint_reindex_status_handler(
     }
 
     let reindex = &state.schema_endpoint_reindex_state;
+    let (failed, skipped, last_error) = reindex.outcome.snapshot();
     Ok(axum::Json(serde_json::json!({
         "is_running": reindex.is_running.load(Ordering::Acquire),
         "progress": reindex.progress.load(Ordering::Relaxed),
+        "failed": failed,
+        "skipped": skipped,
+        "last_error": last_error,
     })))
 }
 

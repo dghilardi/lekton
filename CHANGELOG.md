@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - OIDC `id_token`s are now cryptographically verified (JWKS signature selected by `kid`, issuer, audience, expiry and nonce) instead of decoded without verification; symmetric/`none` algorithms are rejected and the JWKS is refetched on key rotation. OIDC now always performs discovery to obtain the issuer and JWKS URI.
 
 ### Fixed
+- Navbar dropdown triggers now advertise `aria-haspopup`, and icon-only navbar controls (Docs, Registry, Chat, Admin) carry accessible names, so screen-reader users can tell they open menus and what they do.
 - Chat feedback (thumbs up/down, comment, remove) now rolls back its optimistic UI state and shows an inline error when the write to the server fails, and admin access-level deletion surfaces failures instead of silently swallowing them.
 - Outbound HTTP clients for external dependencies (OIDC, embedding, reranker) are now built with bounded connect/total timeouts via a shared helper, so a stuck dependency can no longer hang a request indefinitely.
 - Asset uploads now roll back the just-written S3 object when the metadata write fails for a brand-new asset, instead of leaving an orphaned blob with no record (updates keep the blob, still referenced by the surviving record).

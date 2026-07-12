@@ -133,7 +133,35 @@ pub struct ListSchemasParams {
     /// Filter by service owner (case-insensitive substring).
     #[serde(default)]
     pub service_owner: Option<String>,
+    /// Maximum number of entries to return (default: 50, max: 200).
+    #[serde(default = "default_list_page")]
+    pub limit: usize,
+    /// Number of entries to skip, for paging (default: 0).
+    #[serde(default)]
+    pub offset: usize,
 }
+
+/// Default/maximum page sizes for listing tools, bounding the MCP response
+/// (and the LLM context it consumes) instead of serialising the whole registry.
+fn default_list_page() -> usize {
+    50
+}
+const MAX_LIST_PAGE: usize = 200;
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetIndexParams {
+    /// Maximum number of documents to return (default: 100, max: 500).
+    #[serde(default = "default_index_page")]
+    pub limit: usize,
+    /// Number of documents to skip, for paging (default: 0).
+    #[serde(default)]
+    pub offset: usize,
+}
+
+fn default_index_page() -> usize {
+    100
+}
+const MAX_INDEX_PAGE: usize = 500;
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SearchSchemasParams {
@@ -395,6 +423,44 @@ fn endpoint_matches_query(endpoint: &crate::db::models::SchemaEndpoint, query: &
             .unwrap_or(false)
 }
 
+/// A bounded slice of a larger result set plus the metadata a client needs to
+/// page through the rest.
+struct Page<T> {
+    items: Vec<T>,
+    total: usize,
+    offset: usize,
+    limit: usize,
+    has_more: bool,
+}
+
+/// Take a `limit`-sized window of `items` starting at `offset`.
+fn paginate<T>(items: Vec<T>, offset: usize, limit: usize) -> Page<T> {
+    let total = items.len();
+    let items: Vec<T> = items.into_iter().skip(offset).take(limit).collect();
+    let has_more = offset + items.len() < total;
+    Page {
+        items,
+        total,
+        offset,
+        limit,
+        has_more,
+    }
+}
+
+/// Wrap a page of JSON entries under `field` with a `pagination` object, so the
+/// caller can tell the list was truncated and how to fetch the next window.
+fn paginated_json(field: &str, page: Page<serde_json::Value>) -> serde_json::Value {
+    serde_json::json!({
+        field: page.items,
+        "pagination": {
+            "total": page.total,
+            "offset": page.offset,
+            "limit": page.limit,
+            "has_more": page.has_more,
+        }
+    })
+}
+
 fn schema_list_entry(schema: &Schema, visible_versions: &[&SchemaVersion]) -> serde_json::Value {
     let latest =
         crate::db::models::latest_schema_version_refs(visible_versions).map(|v| v.version.clone());
@@ -552,7 +618,8 @@ impl LektonMcpServer {
             })
             .collect();
 
-        let json = serde_json::to_string_pretty(&entries)
+        let page = paginate(entries, params.offset, params.limit.clamp(1, MAX_LIST_PAGE));
+        let json = serde_json::to_string_pretty(&paginated_json("schemas", page))
             .map_err(|e| McpError::internal_error(format!("JSON error: {e}"), None))?;
 
         Ok(CallToolResult::success(vec![Content::text(json)]))
@@ -810,7 +877,11 @@ impl LektonMcpServer {
         name = "get_index",
         description = "Legacy helper that returns the tree of available documents with their slugs, titles, hierarchy, and lekton://docs/ resource URIs. Prefer list_resources for native MCP resource discovery."
     )]
-    async fn get_index(&self, ctx: RequestContext<RoleServer>) -> Result<CallToolResult, McpError> {
+    async fn get_index(
+        &self,
+        Parameters(params): Parameters<GetIndexParams>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
         let user_ctx = user_context(&ctx)?;
         let (levels, include_draft) = user_ctx.document_visibility();
 
@@ -837,7 +908,12 @@ impl LektonMcpServer {
             })
             .collect();
 
-        let json = serde_json::to_string_pretty(&entries)
+        let page = paginate(
+            entries,
+            params.offset,
+            params.limit.clamp(1, MAX_INDEX_PAGE),
+        );
+        let json = serde_json::to_string_pretty(&paginated_json("documents", page))
             .map_err(|e| McpError::internal_error(format!("JSON error: {e}"), None))?;
 
         Ok(CallToolResult::success(vec![Content::text(json)]))
@@ -1637,6 +1713,45 @@ mod tests {
 
     use crate::auth::models::AuthenticatedUser;
     use crate::db::user_prompt_preference_repository::UserPromptPreference;
+
+    #[test]
+    fn paginate_windows_results_and_reports_has_more() {
+        let items: Vec<usize> = (0..10).collect();
+
+        let p = paginate(items.clone(), 0, 4);
+        assert_eq!(p.items, vec![0, 1, 2, 3]);
+        assert_eq!(p.total, 10);
+        assert!(p.has_more, "more than one page remains");
+
+        let p = paginate(items.clone(), 8, 4);
+        assert_eq!(p.items, vec![8, 9]);
+        assert!(!p.has_more, "last partial page has no more");
+
+        let p = paginate(items.clone(), 20, 4);
+        assert!(
+            p.items.is_empty(),
+            "offset past the end yields an empty page"
+        );
+        assert_eq!(p.total, 10);
+        assert!(!p.has_more);
+
+        let p = paginate(items, 0, 100);
+        assert_eq!(p.items.len(), 10);
+        assert!(!p.has_more, "a limit larger than the set fits everything");
+    }
+
+    #[test]
+    fn paginated_json_wraps_items_with_metadata() {
+        let page = paginate(
+            vec![serde_json::json!({"n": 1}), serde_json::json!({"n": 2})],
+            0,
+            1,
+        );
+        let body = paginated_json("schemas", page);
+        assert_eq!(body["schemas"].as_array().unwrap().len(), 1);
+        assert_eq!(body["pagination"]["total"], 2);
+        assert_eq!(body["pagination"]["has_more"], true);
+    }
 
     fn prompt(
         slug: &str,

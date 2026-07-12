@@ -26,20 +26,29 @@ pub async fn readiness_handler(State(state): State<AppState>) -> (StatusCode, Js
         Err(_) => "error",
     };
 
-    let rag = if state.rag_service.is_some() {
-        "ok"
-    } else {
-        "disabled"
+    // Actually probe the enabled dependencies rather than reporting "ok" merely
+    // because the service handle exists: an initialised-but-unreachable backend
+    // must show as an error, not healthy.
+    let rag = match &state.rag_service {
+        Some(svc) => match svc.health_check().await {
+            Ok(()) => "ok",
+            Err(_) => "error",
+        },
+        None => "disabled",
     };
 
-    let search = if state.search_service.is_some() {
-        "ok"
-    } else {
-        "disabled"
+    let search = match &state.search_service {
+        Some(svc) => match svc.health_check().await {
+            Ok(()) => "ok",
+            Err(_) => "error",
+        },
+        None => "disabled",
     };
 
-    let status = if mongo == "ok" { "ok" } else { "degraded" };
-    let code = if mongo == "ok" {
+    // Ready only when Mongo is up and no *enabled* dependency is failing its probe.
+    let deps_ok = mongo == "ok" && rag != "error" && search != "error";
+    let status = if deps_ok { "ok" } else { "degraded" };
+    let code = if deps_ok {
         StatusCode::OK
     } else {
         StatusCode::SERVICE_UNAVAILABLE

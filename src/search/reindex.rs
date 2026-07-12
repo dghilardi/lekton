@@ -237,6 +237,9 @@ mod tests {
             self.configured.store(true, Ordering::Relaxed);
             Ok(())
         }
+        async fn health_check(&self) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     fn make_doc(slug: &str, is_hidden: bool, is_archived: bool) -> Document {
@@ -323,6 +326,9 @@ mod tests {
             async fn configure_index(&self) -> Result<(), AppError> {
                 Ok(())
             }
+            async fn health_check(&self) -> Result<(), AppError> {
+                Ok(())
+            }
         }
 
         let doc = make_doc("a", false, false);
@@ -375,6 +381,9 @@ mod tests {
                 Ok(vec![])
             }
             async fn configure_index(&self) -> Result<(), AppError> {
+                Ok(())
+            }
+            async fn health_check(&self) -> Result<(), AppError> {
                 Ok(())
             }
         }

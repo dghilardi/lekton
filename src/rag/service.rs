@@ -65,6 +65,10 @@ pub trait RagService: Send + Sync {
         attachment_key: &str,
         access_levels: &[String],
     ) -> Result<(), AppError>;
+
+    /// Cheap reachability probe for readiness checks: `Ok(())` only if the
+    /// vector store actually answers.
+    async fn health_check(&self) -> Result<(), AppError>;
 }
 
 // ── Default implementation ───────────────────────────────────────────────────
@@ -345,6 +349,10 @@ impl RagService for DefaultRagService {
         tracing::debug!(attachment_key, "RAG: updated attachment access levels");
         Ok(())
     }
+
+    async fn health_check(&self) -> Result<(), AppError> {
+        self.vectorstore.health_check().await
+    }
 }
 
 #[cfg(test)]
@@ -423,6 +431,9 @@ mod tests {
             _: bool,
         ) -> Result<Vec<VectorSearchResult>, AppError> {
             Ok(vec![])
+        }
+        async fn health_check(&self) -> Result<(), AppError> {
+            Ok(())
         }
     }
 

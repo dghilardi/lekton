@@ -156,6 +156,9 @@ pub trait VectorStore: Send + Sync {
         access_levels: Option<&[String]>,
         include_draft: bool,
     ) -> Result<Vec<VectorSearchResult>, AppError>;
+
+    /// Cheap reachability probe for readiness checks.
+    async fn health_check(&self) -> Result<(), AppError>;
 }
 
 // ── Qdrant implementation ────────────────────────────────────────────────────
@@ -659,6 +662,16 @@ impl VectorStore for QdrantVectorStore {
 
         results.sort_by_key(|chunk| chunk.chunk_index);
         Ok(results)
+    }
+
+    async fn health_check(&self) -> Result<(), AppError> {
+        // `collection_exists` is a cheap round-trip that fails if Qdrant is
+        // unreachable, which is what a readiness probe needs to detect.
+        self.client
+            .collection_exists(&self.collection)
+            .await
+            .map(|_| ())
+            .map_err(|e| AppError::Internal(format!("qdrant health check: {e}")))
     }
 }
 

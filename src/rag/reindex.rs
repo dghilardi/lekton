@@ -519,6 +519,9 @@ mod tests {
         ) -> Result<(), AppError> {
             Ok(())
         }
+        async fn health_check(&self) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     #[tokio::test]

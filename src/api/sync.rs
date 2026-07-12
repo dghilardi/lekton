@@ -402,6 +402,9 @@ mod tests {
         ) -> Result<(), AppError> {
             Ok(())
         }
+        async fn health_check(&self) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     #[async_trait]
@@ -425,6 +428,9 @@ mod tests {
             Ok(vec![])
         }
         async fn configure_index(&self) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn health_check(&self) -> Result<(), AppError> {
             Ok(())
         }
     }

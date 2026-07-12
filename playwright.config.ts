@@ -19,15 +19,22 @@ export default defineConfig({
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
     },
-    // Enable these for local multi-browser testing:
-    // {
-    //   name: 'firefox',
-    //   use: { ...devices['Desktop Firefox'] },
-    // },
-    // {
-    //   name: 'webkit',
-    //   use: { ...devices['Desktop Safari'] },
-    // },
+    // WebKit and a mobile profile run locally only. They are intentionally not
+    // forced in CI, which would need extra browser installs and can surface
+    // cross-browser issues that should be triaged before gating the pipeline.
+    // Run locally with e.g. `npx playwright test --project=webkit`.
+    ...(process.env.CI
+      ? []
+      : [
+          {
+            name: 'webkit',
+            use: { ...devices['Desktop Safari'] },
+          },
+          {
+            name: 'mobile-chrome',
+            use: { ...devices['Pixel 5'] },
+          },
+        ]),
   ],
 
   globalSetup: './e2e/global-setup.ts',

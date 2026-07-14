@@ -29,6 +29,33 @@ pub struct AdminParams {
     pub section: String,
 }
 
+/// The `d` attribute of the header icon for each admin section, so the icon
+/// reflects the section instead of a generic gear everywhere.
+fn section_icon_path(section: &str) -> &'static str {
+    match section {
+        // key
+        "tokens" => "M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z",
+        // id badge
+        "pats" => "M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z",
+        // chat bubble
+        "documentation-feedback" => "M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z",
+        // list
+        "navigation" => "M4 6h16M4 12h16M4 18h16",
+        // color swatch
+        "css" => "M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485",
+        // database
+        "rag" => "M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4",
+        // shield-check
+        "access-levels" => "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z",
+        // users
+        "users" => "M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m9-4a4 4 0 11-8 0 4 4 0 018 0z",
+        // upload
+        "upload" => "M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12",
+        // gear (default)
+        _ => "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z",
+    }
+}
+
 /// Admin settings page with service token management and theming.
 #[component]
 pub fn AdminSettingsPage() -> impl IntoView {
@@ -79,14 +106,14 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
 
     let section = std::sync::Arc::new(section);
     let section2 = section.clone();
+    let section3 = section.clone();
 
     view! {
         <div class="max-w-5xl mx-auto space-y-8 pb-20">
             <header class="flex flex-col items-start gap-4 border-b border-base-200 pb-8 sm:flex-row sm:items-center">
                 <div class="p-3 bg-primary/10 rounded-2xl text-primary">
-                    <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                    <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d=move || section_icon_path(&section3())></path>
                     </svg>
                 </div>
                 <div>
@@ -105,7 +132,11 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
                            _ => "Administration",
                        };
                        let subtitle = match current_section.as_str() {
+                           "tokens" => "Long-lived, scoped tokens for CI/CD pipelines and external service integrations.",
+                           "pats" => "Personal tokens scoped to your own access, for scripts and local tooling.",
                            "documentation-feedback" => "Review MCP-reported documentation gaps, resolve them, and keep the registry tidy.",
+                           "navigation" => "Arrange the documentation navigation: order, nesting, and visibility.",
+                           "css" => "Inject custom CSS to tune the portal's theme and branding at runtime.",
                            "access-levels" => "Manage content access levels and their inheritance hierarchy.",
                            "users" => "Assign access levels and permissions to registered users.",
                            "rag" => "Rebuild derived search and retrieval indexes from the canonical document store.",
@@ -160,7 +191,18 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
                             </Show>
                         }.into_any()
                     }
-                    _ => view! { <div class="alert alert-warning">"Page not found"</div> }.into_any(),
+                    _ => view! {
+                        <div class="flex flex-col items-center justify-center py-16 text-center">
+                            <div class="p-4 bg-base-200 rounded-2xl text-base-content/40 mb-4">
+                                <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                            </div>
+                            <h2 class="text-lg font-semibold">"Section not found"</h2>
+                            <p class="text-base-content/60 mt-1 max-w-sm">"This admin section does not exist. Pick a section from the sidebar to continue."</p>
+                            <a href="/admin/tokens" class="btn btn-primary btn-sm mt-4">"Go to Service Tokens"</a>
+                        </div>
+                    }.into_any(),
                 }}
             </div>
         </div>

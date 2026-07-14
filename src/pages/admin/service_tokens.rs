@@ -257,26 +257,20 @@ fn CreateTokenForm(
             </Show>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
-                <div class="form-control w-full">
-                    <label class="label pt-0">
-                        <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60">"Token Name"</span>
-                    </label>
+                <div>
+                    <label class="block font-bold text-xs uppercase tracking-wider text-base-content/60 mb-1.5">"Token Name"</label>
                     <input
                         type="text"
                         placeholder="e.g. github-actions-ci"
-                        class="input input-bordered focus:input-primary transition-all shadow-sm"
+                        class="input input-bordered w-full focus:input-primary transition-all shadow-sm"
                         prop:value=move || name.get()
                         on:input=move |ev| set_name.set(event_target_value(&ev))
                     />
-                    <label class="label">
-                      <span class="label-text-alt text-base-content/65 italic">"A descriptive name for identification."</span>
-                    </label>
+                    <p class="mt-1.5 text-xs text-base-content/65 italic">"A descriptive name for identification."</p>
                 </div>
 
-                <div class="form-control w-full">
-                    <label class="label pt-0">
-                        <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60">"Permissions"</span>
-                    </label>
+                <div>
+                    <label class="block font-bold text-xs uppercase tracking-wider text-base-content/60 mb-1.5">"Permissions"</label>
                     <div class="bg-base-100 rounded-lg border border-base-300 px-3 shadow-sm flex items-center min-h-12">
                       <label class="cursor-pointer flex items-center gap-4 w-full">
                           <input
@@ -286,33 +280,27 @@ fn CreateTokenForm(
                               on:change=move |ev| set_can_write.set(event_target_checked(&ev))
                           />
                           <div>
-                            <span class="label-text font-bold block mb-0.5">"Allow Write Access"</span>
-                            <span class="label-text-alt text-base-content/65">"Permit updates and deletions via API."</span>
+                            <span class="font-bold block mb-0.5">"Allow Write Access"</span>
+                            <span class="text-xs text-base-content/65">"Permit updates and deletions via API."</span>
                           </div>
                       </label>
                     </div>
-                    <label class="label">
-                      <span class="label-text-alt text-base-content/65 italic">"Controls write permissions for this token."</span>
-                    </label>
+                    <p class="mt-1.5 text-xs text-base-content/65 italic">"Controls write permissions for this token."</p>
                 </div>
             </div>
 
-            <div class="form-control">
-                <label class="label pt-0">
-                    <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60">"Allowed Scopes"</span>
-                </label>
+            <div>
+                <label class="block font-bold text-xs uppercase tracking-wider text-base-content/60 mb-1.5">"Allowed Scopes"</label>
                 <textarea
-                    class="textarea textarea-bordered h-32 font-mono text-sm leading-relaxed focus:textarea-primary transition-all shadow-sm"
+                    class="textarea textarea-bordered w-full h-32 font-mono text-sm leading-relaxed focus:textarea-primary transition-all shadow-sm"
                     placeholder={"docs/getting-started\nprojects/*\napi/v2/reference"}
                     prop:value=move || scopes.get()
                     on:input=move |ev| set_scopes.set(event_target_value(&ev))
                 ></textarea>
-                <label class="label">
-                    <span class="label-text-alt text-base-content/65 bg-base-300/30 px-2 py-1 rounded inline-flex items-center gap-1.5">
-                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                        "Enter one path prefix per line."
-                    </span>
-                </label>
+                <p class="mt-1.5 text-xs text-base-content/65 inline-flex items-center gap-1.5">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    "Enter one path prefix per line."
+                </p>
             </div>
 
             <div class="flex justify-end pt-2">

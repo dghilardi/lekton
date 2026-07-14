@@ -20,6 +20,7 @@ All notable changes to this project will be documented in this file.
 - Service token "active" status now uses the success colour instead of the brand accent, so it reads as a status rather than a highlight.
 - The "Generate with AI" description action is now tinted so it is discoverable instead of blending into the form.
 - Added an SVG favicon so browsers no longer request a missing `/favicon.ico`.
+- The "Create service token" form now stacks labels above full-width fields, fixing the collapsed/misaligned scopes textarea.
 
 ## [0.25.17] 2026-07-12
 

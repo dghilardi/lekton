@@ -36,18 +36,6 @@ pub fn ServiceTokenManager(
         <div class="card bg-base-100 shadow-xl border border-base-200 overflow-hidden">
             <div class="card-body p-0">
                 <div class="p-8 pb-4">
-                    <div class="flex items-center gap-3 mb-2">
-                        <svg class="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
-                        </svg>
-                        <h2 class="card-title text-2xl">"Service Tokens"</h2>
-                    </div>
-                    <p class="text-base-content/60">
-                        "Long-lived tokens for CI/CD pipelines and external service integrations. Each token is restricted to specific documentation scopes."
-                    </p>
-                </div>
-
-                <div class="px-8 py-4">
                     <Suspense fallback=move || view! {
                         <div class="flex flex-col items-center justify-center py-12 gap-4">
                             <span class="loading loading-spinner loading-lg text-primary"></span>
@@ -198,7 +186,7 @@ fn TokenRow(
             <td class="text-right">
                 <Show when=move || is_active>
                     <button
-                        class="btn btn-ghost btn-xs text-error hover:bg-error/10 normal-case font-medium"
+                        class="btn btn-outline btn-error btn-xs normal-case font-medium"
                         disabled=move || deactivating.get()
                         on:click=move |_| {
                             #[cfg(feature = "hydrate")]

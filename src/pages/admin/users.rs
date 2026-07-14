@@ -63,21 +63,14 @@ pub fn UserManager() -> impl IntoView {
     view! {
         <div class="card bg-base-100 shadow-xl border border-base-200 overflow-hidden">
             <div class="card-body p-0">
-                <div class="p-8 pb-4">
-                    <h2 class="card-title text-2xl mb-1">"Users"</h2>
-                    <p class="text-base-content/60 text-sm">
-                        "Assign access levels and write permissions to registered users."
-                    </p>
-                </div>
-
                 {move || error_msg.get().map(|e| view! {
-                    <div class="mx-8 alert alert-error text-sm">
+                    <div class="mx-8 mt-8 alert alert-error text-sm">
                         <span>{e}</span>
                         <button class="btn btn-ghost btn-xs" on:click=move |_| error_msg.set(None)>"✕"</button>
                     </div>
                 })}
 
-                <div class="px-8 py-4 space-y-3">
+                <div class="p-8 space-y-3">
                     <Suspense fallback=move || view! {
                         <div class="flex justify-center py-8">
                             <span class="loading loading-spinner loading-md text-primary"></span>
@@ -87,6 +80,19 @@ pub fn UserManager() -> impl IntoView {
                             let users = users_resource.get()?;
                             let levels = levels_resource.get()?.unwrap_or_default();
                             let users = users.ok()?;
+                            if users.is_empty() {
+                                return Some(view! {
+                                    <div class="flex flex-col items-center justify-center py-12 px-4 text-center border-2 border-dashed border-base-300 rounded-xl bg-base-200/20">
+                                        <div class="w-16 h-16 bg-base-300/30 rounded-full flex items-center justify-center mb-4">
+                                            <svg class="w-8 h-8 text-base-content/30" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m9-4a4 4 0 11-8 0 4 4 0 018 0z"></path>
+                                            </svg>
+                                        </div>
+                                        <h3 class="font-bold text-lg text-base-content/70">"No registered users yet"</h3>
+                                        <p class="text-sm text-base-content/65 max-w-xs mt-1">"Users appear here after they sign in for the first time. You can then assign access levels and permissions."</p>
+                                    </div>
+                                }.into_any());
+                            }
                             Some(view! {
                                 <div class="space-y-2">
                                     <For
@@ -216,7 +222,7 @@ pub fn UserManager() -> impl IntoView {
                                         }
                                     />
                                 </div>
-                            })
+                            }.into_any())
                         }}
                     </Suspense>
                 </div>

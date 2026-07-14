@@ -45,15 +45,6 @@ pub fn AdminPatManager() -> impl IntoView {
 
     view! {
         <div class="space-y-4">
-            <div class="flex items-center justify-between">
-                <div>
-                    <h2 class="text-lg font-semibold">"Personal Access Tokens"</h2>
-                    <p class="text-sm text-base-content/60 mt-1">
-                        "PATs issued to users for IDE agent access (Claude Code, Cursor, etc.)."
-                    </p>
-                </div>
-            </div>
-
             <Suspense fallback=|| view! { <div class="skeleton h-40 w-full" /> }>
                 {move || pats_resource.get().map(|res| match res {
                     Err(e) => view! {

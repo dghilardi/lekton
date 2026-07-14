@@ -57,23 +57,11 @@ pub fn CustomCssEditor() -> impl IntoView {
     view! {
         <div class="card bg-base-100 shadow-xl border border-base-200">
             <div class="card-body p-0">
-                <div class="p-8 pb-4">
-                    <div class="flex items-center gap-3 mb-2">
-                        <svg class="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.172-1.172a4 4 0 115.656 5.656L15 13"></path>
-                        </svg>
-                        <h2 class="card-title text-2xl">"Theming & Custom CSS"</h2>
-                    </div>
-                    <p class="text-base-content/60">
-                        "Customize the visual appearance of your Lekton instance. The CSS below is injected into every page at runtime."
-                    </p>
-                </div>
-
-                <div class="p-8 pt-0 flex flex-col gap-6">
+                <div class="p-8 flex flex-col gap-6">
                     <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_18rem] xl:items-start">
                         <div class="form-control">
                             <textarea
-                                class="textarea textarea-bordered min-h-[28rem] xl:min-h-[34rem] resize-y font-mono text-sm leading-7 focus:textarea-primary transition-all shadow-inner bg-base-200/20"
+                                class="textarea textarea-bordered w-full min-h-[28rem] xl:min-h-[34rem] resize-y font-mono text-sm leading-7 focus:textarea-primary transition-all shadow-inner bg-base-200/20"
                                 placeholder={"/* Example:\n:root,\n[data-theme=\"light\"] {\n  --color-primary: #0f766e;\n  --lekton-content-max-width: 78rem;\n}\n\n[data-theme=\"dark\"] {\n  --color-primary: #2dd4bf;\n}\n\n.navbar {\n  border-bottom-color: color-mix(in oklab, var(--color-primary) 45%, transparent);\n}\n*/"}
                                 prop:value=move || css.get()
                                 on:input=move |ev| set_css.set(event_target_value(&ev))

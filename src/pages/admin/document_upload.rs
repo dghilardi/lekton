@@ -216,14 +216,9 @@ pub fn DocumentUploadManager() -> impl IntoView {
     view! {
         <div class="card bg-base-100 shadow-xl border border-base-200 overflow-hidden">
             <div class="card-body p-8 space-y-6">
-                <div>
-                    <h2 class="card-title text-2xl mb-1">
-                        {move || if edit_slug.get().is_some() { "Edit document" } else { "New document" }}
-                    </h2>
-                    <p class="text-base-content/60 text-sm">
-                        "Upload a PDF and publish it as a page with a description and a download link."
-                    </p>
-                </div>
+                <Show when=move || edit_slug.get().is_some()>
+                    <h2 class="card-title text-xl">"Edit document"</h2>
+                </Show>
 
                 {move || error_msg.get().map(|e| view! {
                     <div class="alert alert-error text-sm">

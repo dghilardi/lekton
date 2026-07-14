@@ -49,20 +49,7 @@ pub fn DocumentationFeedbackAdminPanel() -> impl IntoView {
     view! {
         <div class="card bg-base-100 shadow-xl border border-base-200 overflow-hidden">
             <div class="card-body p-0">
-                <div class="p-8 pb-4">
-                    <div class="flex items-center gap-3 mb-2">
-                        <svg class="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h8M8 14h6"></path>
-                        </svg>
-                        <h2 class="card-title text-2xl">"Documentation Feedback Registry"</h2>
-                    </div>
-                    <p class="text-base-content/60">
-                        "Admin-only registry of MCP-reported documentation gaps and improvement proposals. Use this to resolve, deduplicate, and prioritize documentation maintenance without turning Lekton into a ticket tracker."
-                    </p>
-                </div>
-
-                <div class="px-8 pb-6">
+                <div class="p-8 pb-6">
                     <div class="grid grid-cols-1 gap-4 md:grid-cols-4 md:items-end">
                         <label class="form-control md:col-span-2">
                             <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Search"</span>

@@ -279,7 +279,7 @@ pub fn DocumentUploadManager() -> impl IntoView {
                         <label class="label"><span class="label-text font-medium">"Description"</span></label>
                         <Show when=move || rag_enabled.get()>
                             <button
-                                class="btn btn-ghost btn-xs gap-1"
+                                class="btn btn-ghost btn-xs gap-1 text-primary hover:bg-primary/10"
                                 prop:disabled=move || generating.get() || asset_key.get().is_empty()
                                 on:click=on_generate
                             >

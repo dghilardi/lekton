@@ -171,7 +171,7 @@ fn TokenRow(
             </td>
             <td class="text-center">
                 {if is_active {
-                    view! { <span class="badge badge-primary badge-sm font-medium">"active"</span> }.into_any()
+                    view! { <span class="badge badge-success badge-sm font-medium">"active"</span> }.into_any()
                 } else {
                     view! { <span class="badge badge-ghost badge-sm text-xs font-medium">"deactivated"</span> }.into_any()
                 }}

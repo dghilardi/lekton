@@ -203,6 +203,19 @@ code, pre, kbd, samp, .font-mono {
     font-weight: 500;
 }
 
+/* On touch devices, header controls (search, theme, nav, log in) render as
+ * dense btn-sm (~32px). Bump them to a comfortable 44px tap target on coarse
+ * pointers only, leaving the desktop density untouched. */
+@media (pointer: coarse) {
+    header .btn {
+        min-height: 2.75rem;
+    }
+    header .btn-square,
+    header .btn-circle {
+        min-width: 2.75rem;
+    }
+}
+
 /* ════════════════════════════════════════════════════════════════
  * Inputs & Forms
  * ════════════════════════════════════════════════════════════════ */

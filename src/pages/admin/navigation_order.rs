@@ -230,17 +230,9 @@ pub fn NavigationOrderEditor() -> impl IntoView {
     view! {
         <div class="card bg-base-100 shadow-xl border border-base-200">
             <div class="card-body p-0">
-                <div class="p-8 pb-4">
-                    <div class="flex items-center gap-3 mb-2">
-                        <svg class="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path>
-                        </svg>
-                        <h2 class="card-title text-2xl">"Navigation Ordering"</h2>
-                    </div>
-                    <p class="text-base-content/60">
-                        "Reorder sections and categories in the navigation. Drag items or use the arrow buttons to change their position. Documents within each section are always sorted by their own weight or alphabetically."
-                    </p>
-                </div>
+                <p class="px-8 pt-8 text-sm text-base-content/60">
+                    "Drag items or use the arrow buttons to reorder sections. Documents within each section are sorted by their own weight or alphabetically."
+                </p>
 
                 <div class="px-8 py-4">
                     <Suspense fallback=move || view! {

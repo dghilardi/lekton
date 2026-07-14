@@ -91,22 +91,14 @@ pub fn AccessLevelManager() -> impl IntoView {
     view! {
         <div class="card bg-base-100 shadow-xl border border-base-200 overflow-hidden">
             <div class="card-body p-0">
-                <div class="p-8 pb-4">
-                    <h2 class="card-title text-2xl mb-1">"Access Levels"</h2>
-                    <p class="text-base-content/60 text-sm">
-                        "Define content access levels and their inheritance hierarchy. "
-                        "System levels (public, loggeduser) are injected automatically and cannot be deleted."
-                    </p>
-                </div>
-
                 {move || error_msg.get().map(|e| view! {
-                    <div class="mx-8 alert alert-error text-sm">
+                    <div class="mx-8 mt-8 alert alert-error text-sm">
                         <span>{e}</span>
                         <button class="btn btn-ghost btn-xs" on:click=move |_| error_msg.set(None)>"✕"</button>
                     </div>
                 })}
 
-                <div class="px-8 py-4 space-y-3">
+                <div class="p-8 pb-4 space-y-3">
                     <Suspense fallback=move || view! {
                         <div class="flex justify-center py-8">
                             <span class="loading loading-spinner loading-md text-primary"></span>

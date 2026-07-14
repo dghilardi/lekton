@@ -290,9 +290,14 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                         }.into_any()
                                     }
                                     Err(e) => {
+                                        // Surface a friendly message; keep the raw
+                                        // error in the browser console for debugging
+                                        // rather than leaking internals to the user.
+                                        leptos::logging::error!("search failed: {e}");
                                         view! {
-                                            <div class="p-8 text-center text-error">
-                                                "Search error: " {e.to_string()}
+                                            <div class="p-8 text-center">
+                                                <p class="font-medium text-base-content/80">"Search is temporarily unavailable"</p>
+                                                <p class="mt-1 text-sm text-base-content/60">"Please try again in a moment."</p>
                                             </div>
                                         }.into_any()
                                     }
@@ -427,7 +432,7 @@ pub fn SearchBar() -> impl IntoView {
                                 }
                                 Err(_) => {
                                     view! {
-                                        <li class="text-error p-2">"Search error"</li>
+                                        <li class="text-base-content/60 p-2">"Search unavailable"</li>
                                     }.into_any()
                                 }
                             })

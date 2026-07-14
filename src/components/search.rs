@@ -201,7 +201,6 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                 on:keydown=on_keydown
                                 autofocus
                             />
-                            <kbd class="kbd kbd-sm bg-base-200 border-none shadow-sm text-xs font-semibold">"ESC"</kbd>
                         </div>
                     </div>
 
@@ -308,10 +307,20 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
 
                     // Footer with keyboard hints
                     <div class="p-3 border-t border-base-300 bg-base-200/50 rounded-b-lg">
-                        <div class="flex items-center justify-between text-xs text-base-content/65">
-                            <div class="flex items-center gap-4">
-                                <span>"Press ESC to close"</span>
-                            </div>
+                        <div class="flex items-center gap-4 text-xs text-base-content/65">
+                            <span class="flex items-center gap-1.5">
+                                <kbd class="kbd kbd-xs">"↑"</kbd>
+                                <kbd class="kbd kbd-xs">"↓"</kbd>
+                                "to navigate"
+                            </span>
+                            <span class="flex items-center gap-1.5">
+                                <kbd class="kbd kbd-xs">"↵"</kbd>
+                                "to select"
+                            </span>
+                            <span class="flex items-center gap-1.5">
+                                <kbd class="kbd kbd-xs">"esc"</kbd>
+                                "to close"
+                            </span>
                         </div>
                     </div>
                 </div>

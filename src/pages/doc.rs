@@ -285,7 +285,7 @@ pub fn DocPage() -> impl IntoView {
                         };
                         view! {
                             <div class="flex gap-8 items-start">
-                                <div class="flex-1 min-w-0">
+                                <div class="flex-1 min-w-0 max-w-4xl">
                                     // Breadcrumb row + edit button — single meta strip
                                     <div class="flex items-center justify-between gap-4 mb-5">
                                         <Breadcrumbs slug=current_slug.clone() />

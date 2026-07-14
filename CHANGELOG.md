@@ -15,6 +15,11 @@ All notable changes to this project will be documented in this file.
 - Destructive admin actions (deactivate token, delete access level) now use a clear outline button instead of a bare red text link.
 - The Custom CSS editor textarea now fills the available width instead of collapsing to its intrinsic size.
 - Header controls now meet a 44px touch-target minimum on touch devices.
+- Document pages now cap the reading column width so long-form content stays within a comfortable line length instead of spanning the full content area.
+- The global search modal footer now shows keyboard hints (navigate / select / close) instead of a lone, duplicated "ESC" affordance.
+- Service token "active" status now uses the success colour instead of the brand accent, so it reads as a status rather than a highlight.
+- The "Generate with AI" description action is now tinted so it is discoverable instead of blending into the form.
+- Added an SVG favicon so browsers no longer request a missing `/favicon.ico`.
 
 ## [0.25.17] 2026-07-12
 

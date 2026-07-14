@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Admin pages no longer duplicate their heading: the section header now carries a section-specific icon and subtitle, and the redundant per-card title/description was removed (Service Tokens, Users, Access Levels, Documentation Feedback, Navigation, Custom CSS, Personal Access Tokens, Upload Document).
+- The home page feature cards use themed SVG icons instead of emoji and are no longer styled as interactive (they are informational, not links).
+
+### Fixed
+- Global search now shows a friendly "temporarily unavailable" message instead of leaking the raw internal/backend error string; the underlying error is logged to the browser console.
+- The admin "section not found" state is now a neutral empty state with a recovery link instead of a full-width warning banner.
+- The Users admin panel now shows an empty state when no users are registered instead of a blank card.
+- Destructive admin actions (deactivate token, delete access level) now use a clear outline button instead of a bare red text link.
+- The Custom CSS editor textarea now fills the available width instead of collapsing to its intrinsic size.
+- Header controls now meet a 44px touch-target minimum on touch devices.
+
 ## [0.25.17] 2026-07-12
 
 ### Security

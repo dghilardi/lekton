@@ -166,6 +166,32 @@ pub fn shell(options: LeptosOptions, features: FeatureFlags) -> impl IntoView {
             <script type="module" src="/js/tiptap.js"></script>
         }
     });
+
+    // Favicon follows the same override priority as the navbar logo
+    // (logo-{theme}.svg > logo.svg > the built-in Lekton mark), resolved here at
+    // SSR time so a deployment's custom logo also becomes the browser tab icon.
+    let resolve_icon = |theme_file: &str| {
+        if std::path::Path::new(&format!("public/{theme_file}")).exists() {
+            format!("/{theme_file}")
+        } else if std::path::Path::new("public/logo.svg").exists() {
+            "/logo.svg".to_string()
+        } else {
+            "/favicon.svg".to_string()
+        }
+    };
+    let icon_light = resolve_icon("logo-light.svg");
+    let icon_dark = resolve_icon("logo-dark.svg");
+    let favicon = if icon_light == icon_dark {
+        view! { <link rel="icon" href=icon_light /> }.into_any()
+    } else {
+        // Two icons keyed to the OS colour scheme (favicons can't follow the
+        // in-app theme toggle; prefers-color-scheme is the closest approximation).
+        view! {
+            <link rel="icon" href=icon_light media="(prefers-color-scheme: light)" />
+            <link rel="icon" href=icon_dark media="(prefers-color-scheme: dark)" />
+        }
+        .into_any()
+    };
     view! {
         <!DOCTYPE html>
         <html lang="en" data-theme="light">
@@ -185,7 +211,7 @@ pub fn shell(options: LeptosOptions, features: FeatureFlags) -> impl IntoView {
                 <HydrationScripts options=options />
                 <MetaTags />
                 <meta name="description" content="Lekton: A dynamic, high-performance Internal Developer Portal with RBAC and unified schema registry." />
-                <Link rel="icon" type_="image/svg+xml" href="/favicon.svg" />
+                {favicon}
                 <Stylesheet id="leptos" href="/pkg/lekton.css" />
                 <Link rel="stylesheet" href="/custom.css" />
                 {editor_scripts}

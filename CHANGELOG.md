@@ -21,7 +21,7 @@ All notable changes to this project will be documented in this file.
 - The global search modal footer now shows keyboard hints (navigate / select / close) instead of a lone, duplicated "ESC" affordance.
 - Service token "active" status now uses the success colour instead of the brand accent, so it reads as a status rather than a highlight.
 - The "Generate with AI" description action is now tinted so it is discoverable instead of blending into the form.
-- Added an SVG favicon so browsers no longer request a missing `/favicon.ico`.
+- Added a browser tab favicon that mirrors the navbar logo: the built-in Lekton mark by default, or a deployment's `logo.svg` / `logo-light.svg` / `logo-dark.svg` override (with light/dark variants keyed to the OS colour scheme) when present.
 - The "Create service token" form now stacks labels above full-width fields, fixing the collapsed/misaligned scopes textarea.
 - Admin form fields on Access Levels and the Documentation Feedback filters now fill their columns instead of collapsing to their intrinsic width.
 - Deleting an access level now asks for confirmation, matching service-token deactivation.

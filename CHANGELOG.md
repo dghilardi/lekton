@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 - The home page feature cards use themed SVG icons instead of emoji and are no longer styled as interactive (they are informational, not links).
 
 ### Fixed
+- Navbar dropdown menus (the mobile "Menu" and the desktop overflow/"more" and group menus) are no longer clipped by the nav container's `overflow: hidden`; the container now clips only horizontally so menus render fully below the header.
 - Global search now shows a friendly "temporarily unavailable" message instead of leaking the raw internal/backend error string; the underlying error is logged to the browser console.
 - The admin "section not found" state is now a neutral empty state with a recovery link instead of a full-width warning banner.
 - The Users admin panel now shows an empty state when no users are registered instead of a blank card.

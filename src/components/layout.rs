@@ -75,7 +75,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                     view! {
                         // ── TIER 1: xl+ — full text, max items, "Altro" overflow ──────────────
                         <div class="hidden xl:flex w-full items-center gap-3 min-w-0">
-                            <div class="flex flex-1 items-center gap-2 min-w-0 overflow-hidden">
+                            <div class="flex flex-1 items-center gap-2 min-w-0 overflow-x-clip">
                             {t1_standalone.into_iter().map(|item| {
                                 view! {
                                     <a href=format!("/docs/{}", item.slug)
@@ -173,7 +173,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
 
                         // ── TIER 2: lg–xl — "Docs ▾" dropdown + text system links ─────────────
                         <div class="hidden lg:flex xl:hidden w-full items-center gap-3 min-w-0">
-                            <div class="flex flex-1 items-center min-w-0 overflow-hidden">
+                            <div class="flex flex-1 items-center min-w-0 overflow-x-clip">
                             <div class="dropdown dropdown-hover dropdown-bottom">
                                 <div tabindex="0" role="button" aria-haspopup="menu"
                                      class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50 m-1">
@@ -231,7 +231,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
 
                         // ── TIER 3: <lg — one labelled menu (icon-only items are ambiguous on touch) ─
                         <div class="flex lg:hidden items-center">
-                            <div class="dropdown dropdown-end dropdown-bottom">
+                            <div class="dropdown dropdown-bottom">
                                 <div tabindex="0" role="button" aria-haspopup="menu"
                                      class="btn btn-ghost btn-sm gap-1.5 px-2.5 text-base-content/80 hover:text-base-content hover:bg-base-200/50"
                                      aria-label="Navigation menu">
@@ -332,7 +332,7 @@ pub fn Layout(children: Children) -> impl IntoView {
                         </label>
                     </Show>
                     <BrandedLogo />
-                    <div class="flex items-center gap-1 min-w-0 ml-2 pl-2 sm:ml-4 sm:pl-4 border-l border-base-300 overflow-hidden">
+                    <div class="flex items-center gap-1 min-w-0 ml-2 pl-2 sm:ml-4 sm:pl-4 border-l border-base-300 overflow-visible lg:overflow-x-clip">
                         <TopNavbarLinks />
                     </div>
                 </div>

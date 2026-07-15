@@ -38,7 +38,7 @@ services:
   # Meilisearch — Full-text search engine
   # ===========================================================================
   meilisearch:
-    image: getmeili/meilisearch:v1.13.3
+    image: getmeili/meilisearch:v1.49.0
     ports:
       - "7700:7700"
     environment:
@@ -46,7 +46,7 @@ services:
       - MEILI_ENV=development
       - MEILI_NO_ANALYTICS=true
     volumes:
-      - meilisearch_data:/meili_data
+      - meilisearch_data:/meili_data_1_49
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:7700/health"]
       interval: 5s

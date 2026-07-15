@@ -172,9 +172,13 @@ pub fn AccessLevelManager() -> impl IntoView {
                                                                     let del_name = name_for_del.clone();
                                                                     view! {
                                                                         <button
-                                                                            class="btn btn-ghost btn-xs text-error"
+                                                                            class="btn btn-outline btn-error btn-xs"
                                                                             on:click=move |_| {
                                                                                 let n = del_name.clone();
+                                                                                #[cfg(feature = "hydrate")]
+                                                                                if !window().confirm_with_message(&format!("Delete access level \"{n}\"? This cannot be undone.")).unwrap_or(false) {
+                                                                                    return;
+                                                                                }
                                                                                 leptos::task::spawn_local(async move {
                                                                                     match with_auth_retry(|| delete_admin_access_level(n.clone())).await {
                                                                                         Ok(_) => error_msg.set(None),
@@ -198,7 +202,7 @@ pub fn AccessLevelManager() -> impl IntoView {
                                                                         <span class="label-text text-xs font-medium">"Label"</span>
                                                                         <input
                                                                             type="text"
-                                                                            class="input input-sm input-bordered mt-1"
+                                                                            class="input input-sm input-bordered mt-1 w-full"
                                                                             prop:value=move || edit_label.get()
                                                                             on:input=move |e| edit_label.set(event_target_value(&e))
                                                                         />
@@ -207,7 +211,7 @@ pub fn AccessLevelManager() -> impl IntoView {
                                                                         <span class="label-text text-xs font-medium">"Description"</span>
                                                                         <input
                                                                             type="text"
-                                                                            class="input input-sm input-bordered mt-1"
+                                                                            class="input input-sm input-bordered mt-1 w-full"
                                                                             prop:value=move || edit_description.get()
                                                                             on:input=move |e| edit_description.set(event_target_value(&e))
                                                                         />
@@ -277,7 +281,7 @@ pub fn AccessLevelManager() -> impl IntoView {
                                     <span class="label-text text-xs font-medium">"Name (slug)"</span>
                                     <input
                                         type="text"
-                                        class="input input-sm input-bordered mt-1"
+                                        class="input input-sm input-bordered mt-1 w-full"
                                         placeholder="e.g. cloud-developer"
                                         prop:value=move || new_name.get()
                                         on:input=move |e| new_name.set(event_target_value(&e))
@@ -287,7 +291,7 @@ pub fn AccessLevelManager() -> impl IntoView {
                                     <span class="label-text text-xs font-medium">"Label"</span>
                                     <input
                                         type="text"
-                                        class="input input-sm input-bordered mt-1"
+                                        class="input input-sm input-bordered mt-1 w-full"
                                         prop:value=move || new_label.get()
                                         on:input=move |e| new_label.set(event_target_value(&e))
                                     />
@@ -296,7 +300,7 @@ pub fn AccessLevelManager() -> impl IntoView {
                                     <span class="label-text text-xs font-medium">"Description"</span>
                                     <input
                                         type="text"
-                                        class="input input-sm input-bordered mt-1"
+                                        class="input input-sm input-bordered mt-1 w-full"
                                         prop:value=move || new_description.get()
                                         on:input=move |e| new_description.set(event_target_value(&e))
                                     />

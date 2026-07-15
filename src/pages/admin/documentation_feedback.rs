@@ -55,7 +55,7 @@ pub fn DocumentationFeedbackAdminPanel() -> impl IntoView {
                             <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Search"</span>
                             <input
                                 type="text"
-                                class="input input-bordered h-12 focus:input-primary"
+                                class="input input-bordered h-12 w-full focus:input-primary"
                                 placeholder="Search title, summary, lekton://docs/ URI, or proposal"
                                 prop:value=move || query.get()
                                 on:input=move |ev| {
@@ -68,7 +68,7 @@ pub fn DocumentationFeedbackAdminPanel() -> impl IntoView {
                         <label class="form-control">
                             <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Kind"</span>
                             <select
-                                class="select select-bordered h-12 focus:select-primary"
+                                class="select select-bordered h-12 w-full focus:select-primary"
                                 prop:value=move || kind_filter.get()
                                 on:change=move |ev| {
                                     set_page.set(0);
@@ -84,7 +84,7 @@ pub fn DocumentationFeedbackAdminPanel() -> impl IntoView {
                         <label class="form-control">
                             <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Status"</span>
                             <select
-                                class="select select-bordered h-12 focus:select-primary"
+                                class="select select-bordered h-12 w-full focus:select-primary"
                                 prop:value=move || status_filter.get()
                                 on:change=move |ev| {
                                     set_page.set(0);
@@ -367,7 +367,7 @@ fn DocumentationFeedbackCard(
                             <label class="form-control">
                                 <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Resolution note"</span>
                                 <textarea
-                                    class="textarea textarea-bordered min-h-28 focus:textarea-primary"
+                                    class="textarea textarea-bordered min-h-28 w-full focus:textarea-primary"
                                     placeholder="Optional note describing how the item was resolved or why it was marked duplicate."
                                     prop:value=move || resolution_note.get()
                                     on:input=move |ev| set_resolution_note.set(event_target_value(&ev))
@@ -379,7 +379,7 @@ fn DocumentationFeedbackCard(
                                     <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Duplicate of"</span>
                                     <input
                                         type="text"
-                                        class="input input-bordered h-12 focus:input-primary font-mono"
+                                        class="input input-bordered h-12 w-full focus:input-primary font-mono"
                                         placeholder="Existing feedback id"
                                         prop:value=move || duplicate_of.get()
                                         on:input=move |ev| set_duplicate_of.set(event_target_value(&ev))

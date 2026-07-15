@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- On small screens the primary navigation (Documentation, Registry, Chat, Admin) is now a single labelled "Menu" dropdown with text items instead of a row of unlabelled icons whose tooltips never appear on touch.
 - Admin pages no longer duplicate their heading: the section header now carries a section-specific icon and subtitle, and the redundant per-card title/description was removed (Service Tokens, Users, Access Levels, Documentation Feedback, Navigation, Custom CSS, Personal Access Tokens, Upload Document).
 - The home page feature cards use themed SVG icons instead of emoji and are no longer styled as interactive (they are informational, not links).
 

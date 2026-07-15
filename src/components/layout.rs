@@ -229,19 +229,19 @@ pub fn TopNavbarLinks() -> impl IntoView {
                             </div>
                         </div>
 
-                        // ── TIER 3: <lg — icons only (always visible below lg) ───────────────
-                        <div class="flex lg:hidden items-center gap-2">
-                            // Book icon + docs dropdown
-                            <div class="dropdown dropdown-hover dropdown-bottom">
+                        // ── TIER 3: <lg — one labelled menu (icon-only items are ambiguous on touch) ─
+                        <div class="flex lg:hidden items-center">
+                            <div class="dropdown dropdown-end dropdown-bottom">
                                 <div tabindex="0" role="button" aria-haspopup="menu"
-                                     class="btn btn-ghost btn-sm px-2 text-base-content/80 hover:text-base-content hover:bg-base-200/50 m-1"
-                                     title="Documentazione"
-                                     aria-label="Documentazione">
-                                    // Book icon
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
+                                     class="btn btn-ghost btn-sm gap-1.5 px-2.5 text-base-content/80 hover:text-base-content hover:bg-base-200/50"
+                                     aria-label="Navigation menu">
+                                    // Grid icon — distinct from the sidebar drawer's hamburger
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+                                    <span class="text-sm font-medium">"Menu"</span>
                                     <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="opacity-60"><path d="m6 9 6 6 6-6"/></svg>
                                 </div>
-                                <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52 border border-base-200">
+                                <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-56 border border-base-200 max-h-[70vh] flex-nowrap overflow-y-auto">
+                                    <li class="menu-title">"Documentation"</li>
                                     {t3_standalone.into_iter().map(|item| view! {
                                         <li><a href=format!("/docs/{}", item.slug) class="active:!bg-primary active:!text-primary-content">{item.title}</a></li>
                                     }).collect::<Vec<_>>()}
@@ -258,54 +258,26 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                         }.into_any()));
                                         all
                                     }).collect::<Vec<_>>()}
+
+                                    // Top-level sections
+                                    {move || if schema_enabled.get() {
+                                        view! { <li><a href="/schemas" class="active:!bg-primary active:!text-primary-content">"Registry"</a></li> }.into_any()
+                                    } else { view! { <li class="hidden"></li> }.into_any() }}
+                                    {move || {
+                                        let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
+                                        let rag_enabled = is_rag.map(|sig| sig.0.get()).unwrap_or(false);
+                                        if logged_in && rag_enabled {
+                                            view! { <li><a href="/chat" class="active:!bg-primary active:!text-primary-content">"Chat"</a></li> }.into_any()
+                                        } else { view! { <li class="hidden"></li> }.into_any() }
+                                    }}
+                                    {move || {
+                                        let is_admin = current_user.and_then(|sig| sig.get()).map(|u| u.is_admin).unwrap_or(false);
+                                        if is_admin {
+                                            view! { <li><a href="/admin/tokens" class="active:!bg-primary active:!text-primary-content">"Admin"</a></li> }.into_any()
+                                        } else { view! { <li class="hidden"></li> }.into_any() }
+                                    }}
                                 </ul>
                             </div>
-
-                            // Registry icon (conditional)
-                            {move || if schema_enabled.get() { view! {
-                            <a href="/schemas"
-                               class="btn btn-ghost btn-sm px-2 text-base-content/80 hover:text-base-content hover:bg-base-200/50"
-                               title="Registry"
-                               aria-label="Registry">
-                                // File-list icon
-                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
-                            </a>
-                            }.into_any() } else { view! { <span></span> }.into_any() }}
-
-                            // Chat icon (conditional)
-                            {move || {
-                                let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
-                                let rag_enabled = is_rag.map(|sig| sig.0.get()).unwrap_or(false);
-                                if logged_in && rag_enabled {
-                                    view! {
-                                        <a href="/chat"
-                                           class="btn btn-ghost btn-sm px-2 text-base-content/80 hover:text-base-content hover:bg-base-200/50"
-                                           title="Chat"
-                                           aria-label="Chat">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                                        </a>
-                                    }.into_any()
-                                } else {
-                                    view! { <span></span> }.into_any()
-                                }
-                            }}
-
-                            // Admin icon (conditional)
-                            {move || {
-                                let is_admin = current_user.and_then(|sig| sig.get()).map(|u| u.is_admin).unwrap_or(false);
-                                if is_admin {
-                                    view! {
-                                        <a href="/admin/tokens"
-                                           class="btn btn-ghost btn-sm px-2 text-base-content/80 hover:text-base-content hover:bg-base-200/50"
-                                           title="Admin"
-                                           aria-label="Admin">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-                                        </a>
-                                    }.into_any()
-                                } else {
-                                    view! { <span></span> }.into_any()
-                                }
-                            }}
                         </div>
                     }.into_any()
                 } else {

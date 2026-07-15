@@ -24,10 +24,26 @@ const ADMIN_PAT_PER_PAGE: u64 = 20;
 #[component]
 pub fn AdminPatManager() -> impl IntoView {
     let page = RwSignal::new(1u64);
+    let total_pages = RwSignal::new(1u64);
+    // A Memo (not a plain signal) so a runaway `page` write, of any origin,
+    // cannot keep retriggering the resource forever: Memo only notifies
+    // subscribers when the clamped value actually changes, so once `page`
+    // reaches `total_pages` the resource stops refetching even if `page`
+    // itself keeps moving underneath it.
+    let requested_page = Memo::new(move |_| page.get().min(total_pages.get()));
 
     let pats_resource = LocalResource::new(move || {
-        let page = page.get();
-        with_auth_retry(move || admin_list_pats(page, ADMIN_PAT_PER_PAGE))
+        let requested_page = requested_page.get();
+        with_auth_retry(move || admin_list_pats(requested_page, ADMIN_PAT_PER_PAGE))
+    });
+
+    Effect::new(move |_| {
+        if let Some(Ok((_, total))) = pats_resource.get() {
+            let computed = total.div_ceil(ADMIN_PAT_PER_PAGE).max(1);
+            if total_pages.get_untracked() != computed {
+                total_pages.set(computed);
+            }
+        }
     });
 
     let toggle_action = Action::new_local(move |(id, active): &(String, bool)| {

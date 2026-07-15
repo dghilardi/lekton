@@ -21,6 +21,8 @@ All notable changes to this project will be documented in this file.
 - The "Generate with AI" description action is now tinted so it is discoverable instead of blending into the form.
 - Added an SVG favicon so browsers no longer request a missing `/favicon.ico`.
 - The "Create service token" form now stacks labels above full-width fields, fixing the collapsed/misaligned scopes textarea.
+- Admin form fields on Access Levels and the Documentation Feedback filters now fill their columns instead of collapsing to their intrinsic width.
+- Deleting an access level now asks for confirmation, matching service-token deactivation.
 
 ## [0.25.17] 2026-07-12
 

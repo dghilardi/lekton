@@ -185,7 +185,7 @@ pub fn shell(options: LeptosOptions, features: FeatureFlags) -> impl IntoView {
                 <HydrationScripts options=options />
                 <MetaTags />
                 <meta name="description" content="Lekton: A dynamic, high-performance Internal Developer Portal with RBAC and unified schema registry." />
-                <Link rel="icon" type_="image/svg+xml" href="/_logo-light.svg" />
+                <Link rel="icon" type_="image/svg+xml" href="/favicon.svg" />
                 <Stylesheet id="leptos" href="/pkg/lekton.css" />
                 <Link rel="stylesheet" href="/custom.css" />
                 {editor_scripts}

@@ -146,7 +146,7 @@ pub fn AdminPatManager() -> impl IntoView {
                                             </button>
                                             <button
                                                 class="join-item btn btn-sm"
-                                                disabled=move || page.get() >= total_pages
+                                                disabled=move || total_pages <= page.get()
                                                 on:click=move |_| { page.update(|p| *p += 1); }
                                             >"»"</button>
                                         </div>

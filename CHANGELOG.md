@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- The admin Personal Access Tokens pager and the Profile page's own PAT pager no longer trigger a runaway pagination request loop: a bare `>=` in the "next page" button's `disabled` attribute confused the `view!` macro's parser, reattaching the click handler as button content where it reran (and advanced the page) on every render.
+
 ## [0.25.20] 2026-07-15
 
 ## [0.25.19] 2026-07-15

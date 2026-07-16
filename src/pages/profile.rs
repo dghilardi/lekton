@@ -312,7 +312,7 @@ fn FeedbackSection() -> impl IntoView {
                                             </button>
                                             <button
                                                 class="join-item btn btn-sm"
-                                                disabled=move || page.get() + 1 >= total_pages
+                                                disabled=move || total_pages <= page.get() + 1
                                                 on:click=move |_| page.update(|p| *p += 1)
                                             >
                                                 "»"

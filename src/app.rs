@@ -23,6 +23,7 @@ pub use crate::server::prompts::*;
 pub use crate::server::reindex::*;
 pub use crate::server::search::*;
 pub use crate::server::service_tokens::*;
+pub use crate::server::sources::*;
 pub use crate::server::users::*;
 
 /// Newtype wrapper for the demo-mode signal, used as Leptos context.
@@ -51,6 +52,7 @@ pub struct FeatureFlags {
     pub documentation_feedback: bool,
     pub attachment_indexing: bool,
     pub document_upload: bool,
+    pub sources: bool,
 }
 
 /// Newtype wrapper for the feature-flags signal, used as Leptos context.
@@ -147,6 +149,7 @@ pub struct AppState {
     pub feedback_repo: Option<Arc<dyn crate::db::feedback_repository::FeedbackRepository>>,
     pub documentation_feedback_repo:
         Arc<dyn crate::db::documentation_feedback_repository::DocumentationFeedbackRepository>,
+    pub document_source_repo: Arc<dyn crate::db::source_repository::DocumentSourceRepository>,
     pub embedding_cache_repo:
         Option<Arc<dyn crate::db::embedding_cache_repository::EmbeddingCacheRepository>>,
     #[from_ref(skip)]

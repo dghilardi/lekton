@@ -568,6 +568,8 @@ async fn main() {
     let documentation_feedback_repo: Arc<
         dyn lekton::db::documentation_feedback_repository::DocumentationFeedbackRepository,
     > = Arc::new(MongoDocumentationFeedbackRepository::new(&mongo_db));
+    let document_source_repo: Arc<dyn lekton::db::source_repository::DocumentSourceRepository> =
+        Arc::new(lekton::db::source_repository::MongoDocumentSourceRepository::new(&mongo_db));
     let embedding_cache_repo: Option<
         Arc<dyn lekton::db::embedding_cache_repository::EmbeddingCacheRepository>,
     > = if config.features.rag {
@@ -830,6 +832,7 @@ async fn main() {
         documentation_feedback: config.features.documentation_feedback,
         attachment_indexing: config.features.attachment_indexing && rag_service.is_some(),
         document_upload: config.features.document_upload,
+        sources: config.features.sources,
     };
 
     // Spawn the attachment extraction worker when attachment indexing is enabled.
@@ -928,6 +931,7 @@ async fn main() {
         schema_endpoint_reindex_state,
         feedback_repo,
         documentation_feedback_repo,
+        document_source_repo,
         embedding_cache_repo,
         insecure_cookies: config.server.insecure_cookies,
         max_attachment_size_bytes: config.server.max_attachment_size_mb * 1024 * 1024,

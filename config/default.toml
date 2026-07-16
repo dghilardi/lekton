@@ -25,6 +25,9 @@ attachment_indexing = false
 # Admin-only guided PDF upload form (creates a markdown stub linking the file).
 # Independent of `editor`; the AI-summary helper additionally needs rag. Off by default.
 document_upload = false
+# Admin-only source registry: attach repo metadata (URL, branch, maintainers) to
+# the import sources discovered from documents. Off by default.
+sources = false
 
 [server]
 rate_limit_burst = 50

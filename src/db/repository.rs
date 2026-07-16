@@ -3,6 +3,14 @@ use async_trait::async_trait;
 use crate::db::models::Document;
 use crate::error::AppError;
 
+/// A distinct import source discovered from the documents collection, together
+/// with how many documents carry that `source_id`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceDocCount {
+    pub source_id: String,
+    pub document_count: u64,
+}
+
 /// Repository trait for document operations.
 ///
 /// This trait allows mocking the database layer in tests.
@@ -79,6 +87,16 @@ pub trait DocumentRepository: Send + Sync {
     /// Used at render time to build a `source_path → slug` map for relative
     /// link resolution. Returns an empty vec for unknown source ids.
     async fn find_all_by_source_id(&self, source_id: &str) -> Result<Vec<Document>, AppError>;
+
+    /// List distinct non-empty `source_id` values across all documents, each
+    /// with its document count. Used by the source registry to discover which
+    /// import sources exist.
+    ///
+    /// Defaults to an empty list so test mocks need not implement it; the
+    /// MongoDB backend overrides it with the real aggregation.
+    async fn list_source_ids(&self) -> Result<Vec<SourceDocCount>, AppError> {
+        Ok(vec![])
+    }
 }
 
 /// MongoDB implementation of the DocumentRepository.
@@ -348,6 +366,36 @@ impl DocumentRepository for MongoDocumentRepository {
             documents.push(document);
         }
         Ok(documents)
+    }
+
+    async fn list_source_ids(&self) -> Result<Vec<SourceDocCount>, AppError> {
+        use futures::TryStreamExt;
+        use mongodb::bson::doc;
+
+        let pipeline = vec![
+            doc! { "$match": { "source_id": { "$type": "string", "$ne": "" } } },
+            doc! { "$group": { "_id": "$source_id", "count": { "$sum": 1 } } },
+            doc! { "$sort": { "_id": 1 } },
+        ];
+
+        let mut cursor = self.collection.aggregate(pipeline).await?;
+        let mut sources = Vec::new();
+        while let Some(doc) = cursor.try_next().await? {
+            let source_id = match doc.get_str("_id") {
+                Ok(id) if !id.is_empty() => id.to_string(),
+                _ => continue,
+            };
+            let document_count = doc
+                .get_i64("count")
+                .map(|v| v as u64)
+                .or_else(|_| doc.get_i32("count").map(|v| v as u64))
+                .unwrap_or(0);
+            sources.push(SourceDocCount {
+                source_id,
+                document_count,
+            });
+        }
+        Ok(sources)
     }
 }
 

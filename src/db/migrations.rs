@@ -70,6 +70,11 @@ mod inner {
                 "davide.ghilardi@comelit.it",
                 add_refresh_tokens_ttl_and_family,
             )
+            .register(
+                "013_add_document_sources_index",
+                "davide.ghilardi@comelit.it",
+                add_document_sources_index,
+            )
     }
 
     fn format_duplicate_group_id(id: &bson::Bson) -> String {
@@ -689,6 +694,23 @@ mod inner {
             )
             .await?;
 
+        Ok(())
+    }
+
+    /// Creates the unique index on `document_sources.id`, the source-registry
+    /// metadata keyed by a document's `source_id`.
+    async fn add_document_sources_index(db: Database) -> Result<(), mongodb::error::Error> {
+        use mongodb::options::IndexOptions;
+        use mongodb::IndexModel;
+
+        db.collection::<bson::Document>("document_sources")
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "id": 1 })
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+            )
+            .await?;
         Ok(())
     }
 

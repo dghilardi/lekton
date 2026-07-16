@@ -12,6 +12,7 @@ mod navigation_order;
 mod pats;
 mod reindex;
 mod service_tokens;
+mod sources;
 mod users;
 
 use access_levels::AccessLevelManager;
@@ -22,6 +23,7 @@ use navigation_order::NavigationOrderEditor;
 use pats::AdminPatManager;
 use reindex::{RagReindexSection, SchemaEndpointReindexSection, SearchReindexSection};
 use service_tokens::ServiceTokenManager;
+use sources::SourcesAdminPanel;
 use users::UserManager;
 
 #[derive(Params, PartialEq, Clone, Debug)]
@@ -51,6 +53,8 @@ fn section_icon_path(section: &str) -> &'static str {
         "users" => "M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m9-4a4 4 0 11-8 0 4 4 0 018 0z",
         // upload
         "upload" => "M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12",
+        // folder-git (source repositories)
+        "sources" => "M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z",
         // gear (default)
         _ => "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z",
     }
@@ -129,6 +133,7 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
                            "access-levels" => "Access Levels",
                            "users" => "User Management",
                            "upload" => "Upload Document",
+                           "sources" => "Documentation Sources",
                            _ => "Administration",
                        };
                        let subtitle = match current_section.as_str() {
@@ -141,6 +146,7 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
                            "users" => "Assign access levels and permissions to registered users.",
                            "rag" => "Rebuild derived search and retrieval indexes from the canonical document store.",
                            "upload" => "Upload a PDF and publish it as a page with a description and download link.",
+                           "sources" => "Attach repository metadata and maintainers to the import sources your documents come from.",
                            _ => "Manage your instance configuration, service tokens, and theming.",
                        };
                        view! {
@@ -180,6 +186,17 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
                     }
                     "access-levels" => view! { <AccessLevelManager /> }.into_any(),
                     "users" => view! { <UserManager /> }.into_any(),
+                    "sources" => {
+                        let sources_enabled = crate::app::use_feature(|f| f.sources);
+                        view! {
+                            <Show
+                                when=move || sources_enabled.get()
+                                fallback=|| view! { <div class="alert alert-warning">"Source registry is disabled."</div> }
+                            >
+                                <SourcesAdminPanel />
+                            </Show>
+                        }.into_any()
+                    }
                     "upload" => {
                         let upload_enabled = crate::app::use_feature(|f| f.document_upload);
                         view! {

@@ -78,6 +78,11 @@ pub struct FeaturesConfig {
     /// helper additionally needs `rag`. Off by default.
     #[serde(default)]
     pub document_upload: bool,
+    /// Admin-only source registry: attach repository metadata (URL, mainline
+    /// branch, maintainers) to the import sources discovered from documents.
+    /// Off by default.
+    #[serde(default)]
+    pub sources: bool,
 }
 
 fn default_true() -> bool {
@@ -96,6 +101,7 @@ impl Default for FeaturesConfig {
             documentation_feedback: true,
             attachment_indexing: false,
             document_upload: false,
+            sources: false,
         }
     }
 }

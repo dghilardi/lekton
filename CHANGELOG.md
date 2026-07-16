@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Admin source registry (behind the `sources` feature flag, off by default): a "Sources" admin page that lists the documentation import sources discovered from ingested documents (with per-source document counts) and lets admins attach repository metadata — display name, repository URL, mainline branch, description, and a list of maintainers (external contacts or linked Lekton users).
+
 ## [0.25.21] 2026-07-16
 
 ### Fixed

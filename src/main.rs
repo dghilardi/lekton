@@ -353,6 +353,7 @@ fn mcp_routes(
     let prompt_repo = app_state.prompt_repo.clone();
     let user_prompt_preference_repo = app_state.user_prompt_preference_repo.clone();
     let documentation_feedback_repo = app_state.documentation_feedback_repo.clone();
+    let document_source_repo = app_state.document_source_repo.clone();
     let storage = app_state.storage_client.clone();
 
     let mcp_config = if config.mcp.allowed_hosts.is_empty() {
@@ -379,6 +380,7 @@ fn mcp_routes(
                 prompt_repo.clone(),
                 user_prompt_preference_repo.clone(),
                 documentation_feedback_repo.clone(),
+                document_source_repo.clone(),
                 storage.clone(),
                 emb.clone(),
                 vs.clone(),
@@ -568,6 +570,8 @@ async fn main() {
     let documentation_feedback_repo: Arc<
         dyn lekton::db::documentation_feedback_repository::DocumentationFeedbackRepository,
     > = Arc::new(MongoDocumentationFeedbackRepository::new(&mongo_db));
+    let document_source_repo: Arc<dyn lekton::db::source_repository::DocumentSourceRepository> =
+        Arc::new(lekton::db::source_repository::MongoDocumentSourceRepository::new(&mongo_db));
     let embedding_cache_repo: Option<
         Arc<dyn lekton::db::embedding_cache_repository::EmbeddingCacheRepository>,
     > = if config.features.rag {
@@ -830,6 +834,7 @@ async fn main() {
         documentation_feedback: config.features.documentation_feedback,
         attachment_indexing: config.features.attachment_indexing && rag_service.is_some(),
         document_upload: config.features.document_upload,
+        sources: config.features.sources,
     };
 
     // Spawn the attachment extraction worker when attachment indexing is enabled.
@@ -928,6 +933,7 @@ async fn main() {
         schema_endpoint_reindex_state,
         feedback_repo,
         documentation_feedback_repo,
+        document_source_repo,
         embedding_cache_repo,
         insecure_cookies: config.server.insecure_cookies,
         max_attachment_size_bytes: config.server.max_attachment_size_mb * 1024 * 1024,

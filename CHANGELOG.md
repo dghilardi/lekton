@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Admin source registry (behind the `sources` feature flag, off by default): a "Sources" admin page that lists the documentation import sources discovered from ingested documents (with per-source document counts) and lets admins attach repository metadata — display name, repository URL, mainline branch, description, and a list of maintainers (external contacts or linked Lekton users).
+- MCP tools (admin only) to drive external tooling over the source registry and feedback queue: `list_sources` (repository metadata + document counts, gated by the `sources` feature) and `list_documentation_feedback` (the feedback queue, open by default, gated by `documentation_feedback`) — each feedback item carries resolved repository targets (repo URL, mainline branch, source file path) for the documents it references.
+
 ## [0.25.21] 2026-07-16
 
 ### Fixed

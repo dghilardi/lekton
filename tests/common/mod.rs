@@ -33,6 +33,7 @@ use lekton::db::repository::{DocumentRepository, MongoDocumentRepository};
 use lekton::db::schema_repository::{MongoSchemaRepository, SchemaRepository};
 use lekton::db::service_token_repository::{MongoServiceTokenRepository, ServiceTokenRepository};
 use lekton::db::settings_repository::{MongoSettingsRepository, SettingsRepository};
+use lekton::db::source_repository::{DocumentSourceRepository, MongoDocumentSourceRepository};
 use lekton::db::user_prompt_preference_repository::{
     MongoUserPromptPreferenceRepository, UserPromptPreferenceRepository,
 };
@@ -62,6 +63,7 @@ pub struct TestEnv {
     pub user_prompt_preference_repo: Arc<dyn UserPromptPreferenceRepository>,
     pub navigation_order_repo: Arc<dyn NavigationOrderRepository>,
     pub documentation_feedback_repo: Arc<dyn DocumentationFeedbackRepository>,
+    pub document_source_repo: Arc<dyn DocumentSourceRepository>,
     pub storage: Arc<dyn StorageClient>,
     pub search: Arc<dyn SearchService>,
     pub token_service: Arc<TokenService>,
@@ -113,6 +115,8 @@ impl TestEnv {
             Arc::new(MongoNavigationOrderRepository::new(&mongo_db));
         let documentation_feedback_repo: Arc<dyn DocumentationFeedbackRepository> =
             Arc::new(MongoDocumentationFeedbackRepository::new(&mongo_db));
+        let document_source_repo: Arc<dyn DocumentSourceRepository> =
+            Arc::new(MongoDocumentSourceRepository::new(&mongo_db));
         access_level_repo
             .seed_defaults()
             .await
@@ -194,6 +198,7 @@ impl TestEnv {
                 documentation_feedback: true,
                 attachment_indexing: false,
                 document_upload: false,
+                sources: false,
             },
             service_token: "test-token".to_string(),
             service_token_repo: service_token_repo.clone(),
@@ -220,6 +225,7 @@ impl TestEnv {
             chat_service: None,
             feedback_repo: None,
             documentation_feedback_repo: documentation_feedback_repo.clone(),
+            document_source_repo: document_source_repo.clone(),
             embedding_cache_repo: None,
             schema_endpoint_reindex_state: Arc::new(
                 lekton::schema::reindex::SchemaEndpointReindexState::default(),
@@ -344,6 +350,7 @@ impl TestEnv {
             user_prompt_preference_repo,
             navigation_order_repo,
             documentation_feedback_repo,
+            document_source_repo,
             storage,
             search,
             token_service,
@@ -513,6 +520,7 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
             documentation_feedback: true,
             attachment_indexing: false,
             document_upload: false,
+            sources: false,
         },
         service_token: "test-token".to_string(),
         service_token_repo: env.service_token_repo.clone(),
@@ -539,6 +547,7 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
         chat_service: None,
         feedback_repo: None,
         documentation_feedback_repo: env.documentation_feedback_repo.clone(),
+        document_source_repo: env.document_source_repo.clone(),
         embedding_cache_repo: None,
         schema_endpoint_reindex_state: Arc::new(
             lekton::schema::reindex::SchemaEndpointReindexState::default(),

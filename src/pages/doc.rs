@@ -26,6 +26,11 @@ pub struct DocPageData {
     /// prominent download card and the summary, instead of the bare stub body.
     /// `html` then holds only the rendered summary. `None` for other documents.
     pub pdf_asset_key: Option<String>,
+    /// For externally-managed (sync) documents whose source is registered with a
+    /// recognized provider repo URL, a link to view the source file on that repo.
+    /// `None` when the source is unregistered, has no repo URL, or the host is
+    /// not a known provider. Shown to all users.
+    pub source_view_url: Option<String>,
 }
 
 /// Breadcrumbs component to show document hierarchy based on slug.
@@ -244,6 +249,10 @@ pub fn DocPage() -> impl IntoView {
                         };
                         let edit_href = format!("/edit/{current_slug}");
                         let upload_edit_href = format!("/admin/upload?edit={current_slug}");
+                        // Externally-managed docs are read-only in the portal, but
+                        // when their source repo is registered with a recognized
+                        // provider we link out to the file. Shown to all users.
+                        let source_view_url = data.source_view_url.clone();
 
                         // Upload documents backed by a PDF get a specialized layout
                         // (download card + summary, no table of contents); everything
@@ -328,6 +337,24 @@ pub fn DocPage() -> impl IntoView {
                                                 </svg>
                                                 "Archive"
                                             </button>
+                                        </Show>
+                                        <Show when={
+                                            let has = source_view_url.is_some();
+                                            move || has
+                                        }>
+                                            <a
+                                                href=source_view_url.clone().unwrap_or_default()
+                                                target="_blank"
+                                                rel="noopener"
+                                                class="btn btn-ghost btn-sm flex-shrink-0 gap-1.5 text-base-content/60 hover:text-primary"
+                                            >
+                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                        d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14">
+                                                    </path>
+                                                </svg>
+                                                "View source"
+                                            </a>
                                         </Show>
                                     </div>
                                     {content}

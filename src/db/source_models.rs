@@ -64,9 +64,122 @@ pub struct DocumentSource {
     pub updated_at: DateTime<Utc>,
 }
 
+impl DocumentSource {
+    /// Build a "view source" URL pointing at `source_path` on the source repo's
+    /// mainline branch, when the repository host is a recognized provider.
+    ///
+    /// Returns `None` when the repo URL is absent, the host is not a known
+    /// provider (GitHub / GitLab / Bitbucket), or `source_path` is empty. The
+    /// branch defaults to `main` when [`DocumentSource::mainline_branch`] is
+    /// unset.
+    pub fn source_view_url(&self, source_path: &str) -> Option<String> {
+        let repo_url = self.repo_url.as_deref()?.trim().trim_end_matches('/');
+        if repo_url.is_empty() {
+            return None;
+        }
+        let path = source_path.trim().trim_start_matches('/');
+        if path.is_empty() {
+            return None;
+        }
+        let branch = self
+            .mainline_branch
+            .as_deref()
+            .map(str::trim)
+            .filter(|b| !b.is_empty())
+            .unwrap_or("main");
+
+        // Strip a trailing `.git` so `repo_url` values copied from clone URLs
+        // still produce valid web links.
+        let repo_url = repo_url.trim_end_matches(".git");
+
+        // Route by host to each provider's file-view path scheme.
+        let host = repo_url
+            .split("://")
+            .nth(1)
+            .unwrap_or(repo_url)
+            .split('/')
+            .next()
+            .unwrap_or("");
+        let segment = if host.contains("github.com") {
+            "blob"
+        } else if host.contains("gitlab.com") {
+            "-/blob"
+        } else if host.contains("bitbucket.org") {
+            "src"
+        } else {
+            return None;
+        };
+
+        Some(format!("{repo_url}/{segment}/{branch}/{path}"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
+
+    fn source(repo_url: Option<&str>, branch: Option<&str>) -> DocumentSource {
+        DocumentSource {
+            id: "svc".into(),
+            display_name: None,
+            repo_url: repo_url.map(str::to_string),
+            mainline_branch: branch.map(str::to_string),
+            maintainers: vec![],
+            description: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn github_view_url() {
+        let s = source(Some("https://github.com/org/repo"), Some("develop"));
+        assert_eq!(
+            s.source_view_url("docs/guide.md").as_deref(),
+            Some("https://github.com/org/repo/blob/develop/docs/guide.md")
+        );
+    }
+
+    #[test]
+    fn gitlab_view_url() {
+        let s = source(Some("https://gitlab.com/org/repo"), None);
+        assert_eq!(
+            s.source_view_url("docs/guide.md").as_deref(),
+            Some("https://gitlab.com/org/repo/-/blob/main/docs/guide.md")
+        );
+    }
+
+    #[test]
+    fn bitbucket_view_url() {
+        let s = source(Some("https://bitbucket.org/org/repo"), Some("master"));
+        assert_eq!(
+            s.source_view_url("docs/guide.md").as_deref(),
+            Some("https://bitbucket.org/org/repo/src/master/docs/guide.md")
+        );
+    }
+
+    #[test]
+    fn normalizes_trailing_slash_git_suffix_and_leading_path_slash() {
+        let s = source(Some("https://github.com/org/repo.git/"), Some("main"));
+        assert_eq!(
+            s.source_view_url("/docs/guide.md").as_deref(),
+            Some("https://github.com/org/repo/blob/main/docs/guide.md")
+        );
+    }
+
+    #[test]
+    fn unknown_provider_or_missing_data_returns_none() {
+        assert!(source(Some("https://example.com/org/repo"), None)
+            .source_view_url("docs/guide.md")
+            .is_none());
+        assert!(source(None, None)
+            .source_view_url("docs/guide.md")
+            .is_none());
+        assert!(source(Some("https://github.com/org/repo"), None)
+            .source_view_url("  ")
+            .is_none());
+    }
 
     #[test]
     fn maintainer_requires_email_or_user_link() {

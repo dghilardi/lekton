@@ -123,6 +123,7 @@ pub async fn get_doc_html(
                 is_upload_doc: false,
                 is_sync_doc: false,
                 pdf_asset_key: None,
+                source_view_url: None,
             }));
         }
 
@@ -177,6 +178,7 @@ pub async fn get_doc_html(
             is_upload_doc: false,
             is_sync_doc: false,
             pdf_asset_key: None,
+            source_view_url: None,
         }));
     };
 
@@ -210,6 +212,23 @@ pub async fn get_doc_html(
     // Externally managed (ingest API / lekton-sync) when it carries a source id
     // and isn't an upload-form document.
     let is_sync_doc = !is_upload_doc && doc.source_id.as_deref().is_some_and(|s| !s.is_empty());
+
+    // For sync documents, offer a "view source" link when the source is
+    // registered with a recognized provider repo URL. Absent registration or an
+    // unknown host leaves this `None` and the page stays read-only.
+    let source_view_url = if is_sync_doc {
+        match (doc.source_id.as_deref(), doc.source_path.as_deref()) {
+            (Some(source_id), Some(source_path)) => state
+                .document_source_repo
+                .find_by_id(source_id)
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))?
+                .and_then(|source| source.source_view_url(source_path)),
+            _ => None,
+        }
+    } else {
+        None
+    };
 
     // Body rendering diverges by provenance:
     // - Upload documents get a specialized PDF layout, so `html` holds only the
@@ -258,5 +277,6 @@ pub async fn get_doc_html(
         is_upload_doc,
         is_sync_doc,
         pdf_asset_key,
+        source_view_url,
     }))
 }

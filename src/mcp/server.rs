@@ -37,6 +37,8 @@ use crate::db::prompt_models::{ContextCost, Prompt, PromptStatus, PromptVariable
 use crate::db::prompt_repository::PromptRepository;
 use crate::db::repository::DocumentRepository;
 use crate::db::schema_repository::SchemaRepository;
+use crate::db::source_models::DocumentSource;
+use crate::db::source_repository::DocumentSourceRepository;
 use crate::db::user_prompt_preference_repository::UserPromptPreferenceRepository;
 use crate::error::AppError;
 use crate::rag::embedding::EmbeddingService;
@@ -120,6 +122,26 @@ pub struct ProposeDocumentationImprovementParams {
     pub search_queries_used: Vec<String>,
     #[serde(default)]
     pub related_feedback_ids: Vec<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ListDocumentationFeedbackParams {
+    /// Which items to return: `open` (default), `resolved`, or `all`.
+    #[serde(default)]
+    pub status: Option<String>,
+    /// Optional kind filter: `missing_info` or `improvement`.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// Maximum items to return (default: 20, max: 50).
+    #[serde(default = "default_feedback_limit")]
+    pub limit: u64,
+    /// Zero-based page index (default: 0).
+    #[serde(default)]
+    pub page: u64,
+}
+
+fn default_feedback_limit() -> u64 {
+    20
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -275,6 +297,7 @@ pub struct LektonMcpServer {
     prompt_repo: Arc<dyn PromptRepository>,
     user_prompt_preference_repo: Arc<dyn UserPromptPreferenceRepository>,
     documentation_feedback_repo: Arc<dyn DocumentationFeedbackRepository>,
+    document_source_repo: Arc<dyn DocumentSourceRepository>,
     storage_client: Arc<dyn StorageClient>,
     /// Present only when the RAG feature is enabled — the `search_documents`
     /// tool requires it and is hidden otherwise.
@@ -294,6 +317,7 @@ impl LektonMcpServer {
         prompt_repo: Arc<dyn PromptRepository>,
         user_prompt_preference_repo: Arc<dyn UserPromptPreferenceRepository>,
         documentation_feedback_repo: Arc<dyn DocumentationFeedbackRepository>,
+        document_source_repo: Arc<dyn DocumentSourceRepository>,
         storage_client: Arc<dyn StorageClient>,
         embedding_service: Option<Arc<dyn EmbeddingService>>,
         vector_store: Option<Arc<dyn VectorStore>>,
@@ -305,6 +329,7 @@ impl LektonMcpServer {
             prompt_repo,
             user_prompt_preference_repo,
             documentation_feedback_repo,
+            document_source_repo,
             storage_client,
             embedding_service,
             vector_store,
@@ -331,7 +356,9 @@ impl LektonMcpServer {
             }
             "search_documentation_feedback"
             | "report_missing_documentation"
-            | "propose_documentation_improvement" => self.features.documentation_feedback,
+            | "propose_documentation_improvement"
+            | "list_documentation_feedback" => self.features.documentation_feedback,
+            "list_sources" => self.features.sources,
             _ => true,
         }
     }
@@ -1394,6 +1421,214 @@ impl LektonMcpServer {
         let json = serde_json::to_string_pretty(&output)
             .map_err(|e| McpError::internal_error(format!("JSON error: {e}"), None))?;
 
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "list_sources",
+        description = "Lists the documentation import sources with their repository metadata (repo URL, mainline branch, maintainers) and per-source document counts. Admin only."
+    )]
+    async fn list_sources(
+        &self,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let user_ctx = user_context(&ctx)?;
+        if !user_ctx.user.is_admin {
+            return Err(McpError::invalid_request(
+                "Admin privileges required for list_sources",
+                None,
+            ));
+        }
+
+        let counts = self
+            .document_repo
+            .list_source_ids()
+            .await
+            .map_err(app_err)?;
+        let stored = self.document_source_repo.list().await.map_err(app_err)?;
+
+        let mut count_map: BTreeMap<String, u64> = BTreeMap::new();
+        for c in counts {
+            count_map.insert(c.source_id, c.document_count);
+        }
+        let mut meta: BTreeMap<String, DocumentSource> = BTreeMap::new();
+        for s in stored {
+            meta.insert(s.id.clone(), s);
+        }
+        let ids: BTreeSet<String> = count_map.keys().chain(meta.keys()).cloned().collect();
+
+        let sources = ids
+            .into_iter()
+            .map(|id| {
+                let document_count = count_map.get(&id).copied().unwrap_or(0);
+                let m = meta.get(&id);
+                serde_json::json!({
+                    "id": id,
+                    "document_count": document_count,
+                    "has_metadata": m.is_some(),
+                    "display_name": m.and_then(|m| m.display_name.clone()),
+                    "repo_url": m.and_then(|m| m.repo_url.clone()),
+                    "mainline_branch": m.and_then(|m| m.mainline_branch.clone()),
+                    "description": m.and_then(|m| m.description.clone()),
+                    "maintainers": m
+                        .map(|m| {
+                            m.maintainers
+                                .iter()
+                                .map(|mt| serde_json::json!({
+                                    "name": mt.name,
+                                    "email": mt.email,
+                                    "lekton_user_id": mt.lekton_user_id,
+                                }))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default(),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let json = serde_json::to_string_pretty(&sources)
+            .map_err(|e| McpError::internal_error(format!("JSON error: {e}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "list_documentation_feedback",
+        description = "Lists documentation feedback (missing-info reports and improvement proposals), by default the open queue. Each item carries resolved repository targets (repo URL, mainline branch, source file path) for the documents it references, so an agent knows exactly which repository and file to act on. Admin only."
+    )]
+    async fn list_documentation_feedback(
+        &self,
+        Parameters(params): Parameters<ListDocumentationFeedbackParams>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        use std::collections::{HashMap, HashSet};
+
+        let user_ctx = user_context(&ctx)?;
+        if !user_ctx.user.is_admin {
+            return Err(McpError::invalid_request(
+                "Admin privileges required for list_documentation_feedback",
+                None,
+            ));
+        }
+
+        let status = match params.status.as_deref().map(str::trim) {
+            None | Some("") | Some("open") => Some(DocumentationFeedbackStatus::Open),
+            Some("resolved") => Some(DocumentationFeedbackStatus::Resolved),
+            Some("all") => None,
+            Some(other) => {
+                return Err(McpError::invalid_params(
+                    format!("Unsupported status '{other}'. Expected 'open', 'resolved', or 'all'"),
+                    None,
+                ))
+            }
+        };
+        let kind = parse_feedback_kind(params.kind.as_deref())?;
+
+        let page = self
+            .documentation_feedback_repo
+            .list(
+                crate::db::documentation_feedback_repository::DocumentationFeedbackListParams {
+                    query: None,
+                    kind,
+                    status,
+                    page: params.page,
+                    per_page: params.limit.clamp(1, 50),
+                },
+            )
+            .await
+            .map_err(app_err)?;
+
+        // Build a source_id → metadata map once for repo resolution.
+        let source_map: HashMap<String, DocumentSource> = self
+            .document_source_repo
+            .list()
+            .await
+            .map_err(app_err)?
+            .into_iter()
+            .map(|s| (s.id.clone(), s))
+            .collect();
+
+        // Resolve every referenced doc slug in a single batch.
+        let mut all_slugs: Vec<String> = Vec::new();
+        for item in &page.items {
+            for uri in item
+                .related_resources
+                .iter()
+                .chain(item.target_resource_uri.iter())
+            {
+                if let Ok(slug) = slug_from_docs_uri(uri) {
+                    all_slugs.push(slug.to_string());
+                }
+            }
+        }
+        all_slugs.sort();
+        all_slugs.dedup();
+        let docs = self
+            .document_repo
+            .find_by_slugs(&all_slugs)
+            .await
+            .map_err(app_err)?;
+        let doc_map: HashMap<&str, &Document> = docs.iter().map(|d| (d.slug.as_str(), d)).collect();
+
+        let items = page
+            .items
+            .iter()
+            .map(|item| {
+                let mut seen = HashSet::new();
+                let mut targets = Vec::new();
+                for uri in item
+                    .related_resources
+                    .iter()
+                    .chain(item.target_resource_uri.iter())
+                {
+                    let Ok(slug) = slug_from_docs_uri(uri) else {
+                        continue;
+                    };
+                    if !seen.insert(slug) {
+                        continue;
+                    }
+                    let Some(doc) = doc_map.get(slug) else {
+                        continue;
+                    };
+                    let source = doc.source_id.as_ref().and_then(|sid| source_map.get(sid));
+                    targets.push(serde_json::json!({
+                        "slug": doc.slug,
+                        "source_path": doc.source_path,
+                        "source_id": doc.source_id,
+                        "repo_url": source.and_then(|s| s.repo_url.clone()),
+                        "mainline_branch": source.and_then(|s| s.mainline_branch.clone()),
+                    }));
+                }
+                serde_json::json!({
+                    "id": item.id,
+                    "kind": item.kind.as_str(),
+                    "status": item.status.as_str(),
+                    "title": item.title,
+                    "summary": item.summary,
+                    "created_by": item.created_by,
+                    "created_at": item.created_at.to_rfc3339(),
+                    "user_goal": item.user_goal,
+                    "missing_information": item.missing_information,
+                    "impact": item.impact,
+                    "problem_summary": item.problem_summary,
+                    "proposal": item.proposal,
+                    "expected_benefit": item.expected_benefit,
+                    "suggested_target_resource": item.suggested_target_resource,
+                    "related_resources": item.related_resources,
+                    "targets": targets,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let output = serde_json::json!({
+            "items": items,
+            "total": page.total,
+            "page": page.page,
+            "per_page": page.per_page,
+        });
+        let json = serde_json::to_string_pretty(&output)
+            .map_err(|e| McpError::internal_error(format!("JSON error: {e}"), None))?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 }

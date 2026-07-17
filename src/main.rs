@@ -353,6 +353,7 @@ fn mcp_routes(
     let prompt_repo = app_state.prompt_repo.clone();
     let user_prompt_preference_repo = app_state.user_prompt_preference_repo.clone();
     let documentation_feedback_repo = app_state.documentation_feedback_repo.clone();
+    let document_source_repo = app_state.document_source_repo.clone();
     let storage = app_state.storage_client.clone();
 
     let mcp_config = if config.mcp.allowed_hosts.is_empty() {
@@ -379,6 +380,7 @@ fn mcp_routes(
                 prompt_repo.clone(),
                 user_prompt_preference_repo.clone(),
                 documentation_feedback_repo.clone(),
+                document_source_repo.clone(),
                 storage.clone(),
                 emb.clone(),
                 vs.clone(),

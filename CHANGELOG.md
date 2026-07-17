@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.26.1] 2026-07-17
+
 ### Added
 - Externally-managed (sync) documents now show a "View source" link when their source is registered with a recognized provider repository URL (GitHub, GitLab, or Bitbucket). The link points at the source file on the repository's mainline branch and is shown to all users.
 

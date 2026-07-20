@@ -64,6 +64,8 @@ lekton-sync [OPTIONS] [ROOT]
 | `--config <PATH>` | `<ROOT>/.lekton.yml` | Path to config file |
 | `-v, --verbose` | — | Verbose output |
 
+`ROOT` need not be the git repository root — e.g. `lekton-sync docs/` scans only that subdirectory. The "view source" link on synced documents is still built from the path relative to the repository root (detected via `git`), so it resolves correctly regardless of `ROOT` or the CLI's working directory.
+
 ### Environment variables
 
 | Variable | Required | Description |

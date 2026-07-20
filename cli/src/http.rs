@@ -51,6 +51,27 @@ pub fn is_interactive() -> bool {
     std::io::stdin().is_terminal() && std::env::var("CI").is_err()
 }
 
+/// Find the top-level directory of the git repository containing `dir`.
+///
+/// Returns `None` if `dir` is not inside a git working tree (or `git` is not
+/// on `PATH`), so callers can fall back to treating `dir` itself as the path
+/// root.
+pub fn find_git_root(dir: &Path) -> Option<std::path::PathBuf> {
+    let out = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(dir)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let path = String::from_utf8(out.stdout).ok()?.trim().to_string();
+    if path.is_empty() {
+        return None;
+    }
+    Some(std::path::PathBuf::from(path))
+}
+
 /// Try to detect a git remote URL from `root`.
 /// Prefers `origin`; falls back to the first listed remote.
 pub fn detect_git_remote(root: &Path) -> Option<String> {
@@ -137,4 +158,35 @@ pub fn prompt_and_persist_source_id(
     eprintln!();
 
     Ok(id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_git_root_resolves_from_subdirectory() {
+        let repo = tempfile::tempdir().unwrap();
+        let status = std::process::Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(repo.path())
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let sub = repo.path().join("docs");
+        std::fs::create_dir(&sub).unwrap();
+
+        let found = find_git_root(&sub).unwrap();
+        assert_eq!(
+            found.canonicalize().unwrap(),
+            repo.path().canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn find_git_root_none_outside_a_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(find_git_root(dir.path()).is_none());
+    }
 }

@@ -21,7 +21,9 @@ use api::{
     PromptSyncResponse, SchemaIngestRequest, SchemaIngestResponse, SchemaSyncEntry,
     SchemaSyncRequest, SchemaSyncResponse, SyncDocEntry, SyncRequest, SyncResponse,
 };
-use http::{detect_git_remote, is_interactive, prompt_and_persist_source_id, send_with_retry};
+use http::{
+    detect_git_remote, find_git_root, is_interactive, prompt_and_persist_source_id, send_with_retry,
+};
 use scan::{scan_documents, scan_prompts, scan_schemas};
 
 // ── CLI args ──────────────────────────────────────────────────────────────────
@@ -120,7 +122,20 @@ async fn main() -> Result<()> {
         eprintln!("Scanning {}", root.display());
     }
 
-    let docs = scan_documents(&root, &config, args.verbose)?;
+    // `source_path` (used to build "view source" links against the source
+    // repo) must be relative to the git repository root, not to `root` —
+    // `root` is merely where we're told to scan for markdown files, and may
+    // be a subdirectory of the repo (or the CLI may simply be invoked from
+    // one). Falls back to `root` when it's not inside a git working tree.
+    let path_root = find_git_root(&root).unwrap_or_else(|| root.clone());
+    if args.verbose && path_root != root {
+        eprintln!(
+            "Resolving source paths relative to git root {}",
+            path_root.display()
+        );
+    }
+
+    let docs = scan_documents(&root, &path_root, &config, args.verbose)?;
     let prompts = scan_prompts(&root, &config)?;
     let schemas = scan_schemas(&root, &config)?;
 

@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- `lekton-sync` now computes each document's source path relative to the git repository root instead of the CLI's scan root, so "View source" links resolve correctly even when the tool is invoked from (or pointed at) a subdirectory of the repo.
+
 ## [0.26.1] 2026-07-17
 
 ### Added

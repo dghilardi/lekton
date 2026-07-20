@@ -18,6 +18,7 @@ use crate::slug::{
 
 pub fn scan_documents(
     root: &Path,
+    path_root: &Path,
     config: &LektonConfig,
     verbose: bool,
 ) -> Result<HashMap<String, DocumentInfo>> {
@@ -47,7 +48,7 @@ pub fn scan_documents(
             continue;
         }
 
-        let source_path = source_path_from_file(path, root);
+        let source_path = source_path_from_file(path, path_root);
         let path_derived = slug_from_path(path, root);
 
         let slug_raw = if let Some(ref explicit) = fm.slug {
@@ -474,7 +475,7 @@ mod tests {
                 b"---\ntitle: Guide\nsummary: A concise guide for testing camel case front matter fields in document sync.\naccessLevel: public\nserviceOwner: docs\nparentSlug: handbook\nisHidden: true\nlektonImport: true\n---\n# Guide body\n",
             )
             .unwrap();
-        let docs = scan_documents(dir.path(), &LektonConfig::default(), false).unwrap();
+        let docs = scan_documents(dir.path(), dir.path(), &LektonConfig::default(), false).unwrap();
         assert_eq!(docs.len(), 1);
         let doc = docs.values().next().unwrap();
         assert_eq!(
@@ -495,7 +496,7 @@ mod tests {
             .unwrap()
             .write_all(b"# No front matter\n")
             .unwrap();
-        let docs = scan_documents(dir.path(), &LektonConfig::default(), false).unwrap();
+        let docs = scan_documents(dir.path(), dir.path(), &LektonConfig::default(), false).unwrap();
         assert!(docs.is_empty());
     }
 
@@ -507,7 +508,7 @@ mod tests {
             .unwrap()
             .write_all(b"---\ntitle: Guide\naccess_level: public\nlekton-import: true\n---\n# Guide body\n")
             .unwrap();
-        let docs = scan_documents(dir.path(), &LektonConfig::default(), false).unwrap();
+        let docs = scan_documents(dir.path(), dir.path(), &LektonConfig::default(), false).unwrap();
         assert_eq!(docs.len(), 1);
         let doc = docs.values().next().unwrap();
         assert_eq!(doc.title, "Guide");
@@ -523,7 +524,7 @@ mod tests {
             .unwrap()
             .write_all(b"---\ntitle: README\n---\n# Not for Lekton\n")
             .unwrap();
-        let docs = scan_documents(dir.path(), &LektonConfig::default(), false).unwrap();
+        let docs = scan_documents(dir.path(), dir.path(), &LektonConfig::default(), false).unwrap();
         assert!(docs.is_empty());
     }
 
@@ -545,7 +546,7 @@ mod tests {
             slug_prefix: Some("micro/docs".to_string()),
             ..LektonConfig::default()
         };
-        let docs = scan_documents(dir.path(), &config, false).unwrap();
+        let docs = scan_documents(dir.path(), dir.path(), &config, false).unwrap();
         assert_eq!(docs.len(), 1);
         let doc = docs.values().next().unwrap();
         assert_eq!(doc.slug, "micro/docs/guidelines");
@@ -576,7 +577,7 @@ mod tests {
             )
             .unwrap();
 
-        let docs = scan_documents(dir.path(), &LektonConfig::default(), false).unwrap();
+        let docs = scan_documents(dir.path(), dir.path(), &LektonConfig::default(), false).unwrap();
         assert_eq!(docs.len(), 1);
         let doc = docs.values().next().unwrap();
         assert_eq!(doc.attachments.len(), 1);
@@ -585,6 +586,25 @@ mod tests {
             .rewritten_content
             .contains("/api/v1/assets/attachments/guide/logo.png"));
         assert!(doc.content.contains("images/logo.png"));
+    }
+
+    #[test]
+    fn scan_source_path_is_relative_to_path_root_not_scan_root() {
+        // Simulates `lekton-sync docs/` invoked from the git repo root: the
+        // scan root is a subdirectory, but source_path must still be
+        // relative to the repo root so "view source" links resolve.
+        let repo = tempfile::tempdir().unwrap();
+        let docs_dir = repo.path().join("docs");
+        std::fs::create_dir(&docs_dir).unwrap();
+        std::fs::File::create(docs_dir.join("guide.md"))
+            .unwrap()
+            .write_all(b"---\ntitle: Guide\nlekton-import: true\n---\n# Guide\n")
+            .unwrap();
+
+        let docs = scan_documents(&docs_dir, repo.path(), &LektonConfig::default(), false).unwrap();
+        assert_eq!(docs.len(), 1);
+        let doc = docs.values().next().unwrap();
+        assert_eq!(doc.source_path, "docs/guide.md");
     }
 
     #[test]

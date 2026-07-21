@@ -108,11 +108,14 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                     </div>
                                 }.into_any()
                             }).collect::<Vec<_>>()}
+                            </div>
 
-                            // "Altro" overflow dropdown
+                            // "Altro" overflow dropdown — kept outside the clipped row (shrink-0) so
+                            // it never gets squeezed out when the centered search bar (2xl+) halves
+                            // the space available to the nav-links row.
                             {if has_overflow {
                                 view! {
-                                    <div class="dropdown dropdown-hover dropdown-bottom">
+                                    <div class="dropdown dropdown-hover dropdown-bottom shrink-0">
                                         <div tabindex="0" role="button" aria-haspopup="menu"
                                              class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50 m-1">
                                             "Altro"
@@ -141,7 +144,6 @@ pub fn TopNavbarLinks() -> impl IntoView {
                             } else {
                                 view! { <span></span> }.into_any()
                             }}
-                            </div>
 
                             <div class="w-px h-5 bg-base-300 self-center shrink-0"></div>
 

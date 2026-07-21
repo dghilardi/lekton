@@ -192,6 +192,14 @@ fn api_routes(features: &lekton::app::FeatureFlags) -> axum::Router<lekton::app:
             );
     }
 
+    // ── Documentation feedback ──────────────────────────────────────────────
+    if features.documentation_feedback {
+        router = router.route(
+            "/api/v1/feedback/resolve",
+            axum::routing::post(api::feedback::resolve_feedback_handler),
+        );
+    }
+
     // ── RAG (chat + indexing) ───────────────────────────────────────────────
     if features.rag {
         router = router

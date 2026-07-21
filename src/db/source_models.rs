@@ -58,6 +58,11 @@ pub struct DocumentSource {
     /// Free-form notes about the source.
     #[serde(default)]
     pub description: Option<String>,
+    /// Opt-in to the automated documentation reviewer (the docs-agent). When
+    /// `false` (the default), the agent never touches this source. Off by
+    /// default so enabling the source registry never implies automated changes.
+    #[serde(default)]
+    pub review_enabled: bool,
     #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub created_at: DateTime<Utc>,
     #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
@@ -127,6 +132,7 @@ mod tests {
             mainline_branch: branch.map(str::to_string),
             maintainers: vec![],
             description: None,
+            review_enabled: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

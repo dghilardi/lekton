@@ -28,6 +28,8 @@ pub struct SourceInfo {
     pub mainline_branch: Option<String>,
     pub description: Option<String>,
     pub maintainers: Vec<MaintainerDto>,
+    /// Whether this source is opted into the automated documentation reviewer.
+    pub review_enabled: bool,
 }
 
 /// List every documentation source: the union of source ids discovered on
@@ -87,6 +89,7 @@ pub async fn list_sources() -> Result<Vec<SourceInfo>, ServerFnError> {
                             lekton_user_id: mt.lekton_user_id,
                         })
                         .collect(),
+                    review_enabled: m.review_enabled,
                 },
                 None => SourceInfo {
                     id,
@@ -97,6 +100,7 @@ pub async fn list_sources() -> Result<Vec<SourceInfo>, ServerFnError> {
                     mainline_branch: None,
                     description: None,
                     maintainers: vec![],
+                    review_enabled: false,
                 },
             }
         })
@@ -114,6 +118,7 @@ pub async fn save_source(
     mainline_branch: Option<String>,
     description: Option<String>,
     maintainers: Vec<MaintainerDto>,
+    review_enabled: bool,
 ) -> Result<(), ServerFnError> {
     use crate::db::source_models::{DocumentSource, Maintainer};
 
@@ -156,6 +161,7 @@ pub async fn save_source(
         mainline_branch: blank_to_none(mainline_branch),
         maintainers: cleaned,
         description: blank_to_none(description),
+        review_enabled,
         // created_at is only applied on insert (via $setOnInsert); updated_at wins.
         created_at: now,
         updated_at: now,

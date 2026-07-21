@@ -35,6 +35,10 @@ impl std::str::FromStr for DocumentationFeedbackKind {
 #[serde(rename_all = "snake_case")]
 pub enum DocumentationFeedbackStatus {
     Open,
+    /// Taken in charge (typically by the documentation agent): a fix is being
+    /// delivered via the recorded `delivery_ref`. Excluded from the open queue
+    /// so it is not re-worked.
+    InProgress,
     Resolved,
 }
 
@@ -42,6 +46,7 @@ impl DocumentationFeedbackStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Open => "open",
+            Self::InProgress => "in_progress",
             Self::Resolved => "resolved",
         }
     }
@@ -53,9 +58,10 @@ impl std::str::FromStr for DocumentationFeedbackStatus {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value.trim() {
             "open" => Ok(Self::Open),
+            "in_progress" => Ok(Self::InProgress),
             "resolved" => Ok(Self::Resolved),
             other => Err(format!(
-                "Unsupported feedback status '{other}'. Expected 'open' or 'resolved'"
+                "Unsupported feedback status '{other}'. Expected 'open', 'in_progress', or 'resolved'"
             )),
         }
     }
@@ -99,6 +105,25 @@ pub struct DocumentationFeedback {
     pub supporting_resources: Vec<String>,
     #[serde(default)]
     pub expected_benefit: Option<String>,
+    // ── Claim / delivery metadata (set when status is `in_progress`) ──────────
+    /// The `source_id` where the fix is being delivered (may differ from where
+    /// the feedback was originally filed). Used to authorize resolution.
+    #[serde(default)]
+    pub delivery_source_id: Option<String>,
+    /// Human/audit reference to the delivery (e.g. the pull request URL).
+    #[serde(default)]
+    pub delivery_ref: Option<String>,
+    /// Per-claim nonce echoed in the resolving commit trailer, so a stale
+    /// marker from a previous claim cycle cannot auto-resolve a re-opened item.
+    #[serde(default)]
+    pub claim_nonce: Option<String>,
+    /// When the item was taken in charge.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::db::auth_models::option_bson_datetime"
+    )]
+    pub claimed_at: Option<DateTime<Utc>>,
 }
 
 #[cfg(test)]
@@ -124,8 +149,18 @@ mod tests {
             DocumentationFeedbackStatus::Open
         );
         assert_eq!(
+            "in_progress"
+                .parse::<DocumentationFeedbackStatus>()
+                .unwrap(),
+            DocumentationFeedbackStatus::InProgress
+        );
+        assert_eq!(
             "resolved".parse::<DocumentationFeedbackStatus>().unwrap(),
             DocumentationFeedbackStatus::Resolved
+        );
+        assert_eq!(
+            DocumentationFeedbackStatus::InProgress.as_str(),
+            "in_progress"
         );
     }
 }

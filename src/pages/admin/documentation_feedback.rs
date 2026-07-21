@@ -92,6 +92,7 @@ pub fn DocumentationFeedbackAdminPanel() -> impl IntoView {
                                 }
                             >
                                 <option value="open">"Open"</option>
+                                <option value="in_progress">"In progress"</option>
                                 <option value="resolved">"Resolved"</option>
                                 <option value="">"All statuses"</option>
                             </select>
@@ -195,7 +196,43 @@ fn DocumentationFeedbackCard(
     item: DocumentationFeedbackAdminItem,
     trigger_refresh: impl Fn() + Copy + Send + Sync + 'static,
 ) -> impl IntoView {
-    let status_is_open = item.status == "open";
+    // Both open and in-progress items can be resolved/duplicated by an admin.
+    let status_is_actionable = item.status != "resolved";
+    let status_label = match item.status.as_str() {
+        "in_progress" => "in progress",
+        other => other,
+    }
+    .to_string();
+    let status_badge_class = match item.status.as_str() {
+        "open" => "badge badge-sm badge-outline badge-primary",
+        "in_progress" => "badge badge-sm badge-outline badge-info",
+        _ => "badge badge-sm badge-outline badge-ghost",
+    };
+    // Delivery box shown when the item has been claimed (agent took it in charge).
+    let delivery_box = item.delivery_source_id.clone().map(|source_id| {
+        let claimed_at = item.claimed_at.clone();
+        let delivery_ref = item.delivery_ref.clone();
+        view! {
+            <div class="rounded-xl border border-info/30 bg-info/10 px-4 py-3 text-sm">
+                <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-base-content/70">
+                    <span class="inline-flex items-center gap-1.5">
+                        <span class="font-semibold text-base-content/80">"Delivering to"</span>
+                        <span class="font-mono">{source_id}</span>
+                    </span>
+                    {delivery_ref.map(|r| {
+                        let href = r.clone();
+                        view! {
+                            <a class="link link-primary inline-flex items-center gap-1" href=href target="_blank" rel="noopener">
+                                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                                "delivery"
+                            </a>
+                        }
+                    })}
+                    {claimed_at.map(|c| view! { <span>"claimed "{c}</span> })}
+                </div>
+            </div>
+        }
+    });
     let item_id_for_resolve = item.id.clone();
     let item_id_for_duplicate = item.id.clone();
     let (resolution_note, set_resolution_note) =
@@ -334,11 +371,8 @@ fn DocumentationFeedbackCard(
                             )>
                                 {item.kind.clone()}
                             </span>
-                            <span class=move || format!(
-                                "badge badge-sm badge-outline {}",
-                                if item.status == "open" { "badge-primary" } else { "badge-ghost" }
-                            )>
-                                {item.status.clone()}
+                            <span class=status_badge_class>
+                                {status_label}
                             </span>
                             <span class="text-xs text-base-content/65 font-mono break-all">{item.id.clone()}</span>
                         </div>
@@ -357,11 +391,13 @@ fn DocumentationFeedbackCard(
                     </div>
                 </Show>
 
+                {delivery_box}
+
                 <div class="grid grid-cols-1 gap-5 text-sm lg:grid-cols-2">
                     {detail_sections}
                 </div>
 
-                <Show when=move || status_is_open>
+                <Show when=move || status_is_actionable>
                     <div class="border-t border-base-200 pt-5">
                         <div class="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
                             <label class="form-control">

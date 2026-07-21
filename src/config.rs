@@ -83,6 +83,12 @@ pub struct FeaturesConfig {
     /// Off by default.
     #[serde(default)]
     pub sources: bool,
+    /// Prometheus metrics: exposes usage statistics at `GET /metrics` and
+    /// records HTTP + product-usage counters. Off by default — opt in with
+    /// `LKN__FEATURES__METRICS=true`. Protect the endpoint at the proxy layer
+    /// and/or with `server.metrics_token`.
+    #[serde(default)]
+    pub metrics: bool,
 }
 
 fn default_true() -> bool {
@@ -102,6 +108,7 @@ impl Default for FeaturesConfig {
             attachment_indexing: false,
             document_upload: false,
             sources: false,
+            metrics: false,
         }
     }
 }
@@ -124,6 +131,11 @@ pub struct ServerConfig {
     pub log_filter: String,
     /// Maximum attachment size in megabytes.
     pub max_attachment_size_mb: u64,
+    /// Optional bearer token guarding `GET /metrics`. When set, scrapers must
+    /// send `Authorization: Bearer <token>`. When unset, the endpoint relies
+    /// solely on proxy-layer protection.
+    #[serde(default)]
+    pub metrics_token: Option<String>,
 }
 
 // ── Database ──────────────────────────────────────────────────────────────────
@@ -759,6 +771,7 @@ mod tests {
         assert!(config.features.documentation_feedback);
         assert!(!config.features.attachment_indexing);
         assert!(!config.features.document_upload);
+        assert!(!config.features.metrics);
 
         // Default config validates cleanly (nothing external is enabled).
         assert!(config.validate_features().is_ok());

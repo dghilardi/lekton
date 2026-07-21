@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.27.0] 2026-07-21
+
 ### Added
 - Hand-authored pages in the WYSIWYG editor (behind the `editor` feature flag): a "Create Page" admin entry point opens the editor in creation mode for a new slug, with page-metadata fields (slug, access level, parent, order) consistent with the upload form. Creating and editing manual pages is admin-only.
 - Documentation-agent groundwork (all behind existing feature flags, off by default):

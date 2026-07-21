@@ -189,6 +189,8 @@ pub async fn chat_handler(
         Ok::<_, Infallible>(Event::default().data(data))
     });
 
+    metrics::counter!("lekton_rag_chat_messages_total").increment(1);
+
     Ok(Sse::new(sse_stream))
 }
 

@@ -28,6 +28,10 @@ document_upload = false
 # Admin-only source registry: attach repo metadata (URL, branch, maintainers) to
 # the import sources discovered from documents. Off by default.
 sources = false
+# Prometheus usage metrics at GET /metrics (HTTP + product-usage counters).
+# Off by default; protect the endpoint at the proxy layer and/or with
+# server.metrics_token.
+metrics = false
 
 [server]
 rate_limit_burst = 50
@@ -36,6 +40,10 @@ rate_limit_trusted_proxies = "127.0.0.1/32,::1/128"
 insecure_cookies = false
 log_filter = "lekton=info,tower_http=info"
 max_attachment_size_mb = 25
+# Optional bearer token guarding GET /metrics. When set, scrapers must send
+# `Authorization: Bearer <token>`. Leave empty to rely on proxy-layer protection.
+# Set via LKN__SERVER__METRICS_TOKEN.
+# metrics_token = ""
 
 [database]
 uri = "mongodb://localhost:27017"

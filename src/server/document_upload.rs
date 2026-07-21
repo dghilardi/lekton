@@ -279,6 +279,8 @@ pub async fn save_document_with_attachment(
     // nothing else references it, that call deletes its S3 object, MongoDB
     // record, and RAG chunks (see src/rag/attachment_extraction.rs).
 
+    metrics::counter!("lekton_document_uploads_total").increment(1);
+
     Ok(slug)
 }
 

@@ -191,7 +191,7 @@ pub async fn save_editor_page(
         .put_object(&doc.s3_key, html_content.clone().into_bytes())
         .await?;
 
-    finalize_document_save(
+    let result = finalize_document_save(
         document_repo,
         asset_repo,
         search_service,
@@ -202,7 +202,12 @@ pub async fn save_editor_page(
         &html_content,
         &old_links,
     )
-    .await
+    .await;
+
+    if result.is_ok() {
+        metrics::counter!("lekton_editor_saves_total").increment(1);
+    }
+    result
 }
 
 /// Build the `Document` to persist. Metadata the form owns (title, access level,

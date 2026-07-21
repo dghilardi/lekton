@@ -468,6 +468,16 @@ async fn main() {
     tracing::info!("Starting Lekton server...");
     tracing::debug!(demo_mode = config.auth.demo_mode, "auth config loaded");
 
+    // Install the Prometheus recorder before anything records metrics. Product
+    // counters are no-ops until this runs, so gating it on the flag keeps the
+    // whole subsystem inert when disabled.
+    let metrics_handle = if config.features.metrics {
+        tracing::info!("Metrics enabled: exposing GET /metrics");
+        Some(lekton::metrics::install())
+    } else {
+        None
+    };
+
     // Check demo mode
     let demo_mode = config.auth.demo_mode;
 
@@ -955,6 +965,20 @@ async fn main() {
     // can be audited in one place; auth routes are mounted below.
     let mut app = api_routes(&features);
 
+    // Metrics endpoint — mounted whenever the metrics feature is enabled. Guarded
+    // by an optional bearer token; otherwise relies on proxy-layer protection.
+    if let Some(handle) = metrics_handle {
+        let token = config.server.metrics_token.clone();
+        app = app.route(
+            "/metrics",
+            axum::routing::get(move |headers: axum::http::HeaderMap| {
+                let handle = handle.clone();
+                let token = token.clone();
+                async move { lekton::metrics::render(&handle, token.as_deref(), &headers) }
+            }),
+        );
+    }
+
     // Mount auth routes: demo auth when demo_mode is enabled, OAuth2/OIDC otherwise.
     app = app.merge(auth_routes(demo_mode));
     if demo_mode {
@@ -1061,6 +1085,14 @@ async fn main() {
         .layer(middleware::from_fn(mjs_content_type))
         .layer(cors)
         .with_state(app_state);
+
+    // Record HTTP request metrics as the outermost layer so latency covers the
+    // whole stack. No-op recorder means this only runs when metrics are enabled.
+    let app = if config.features.metrics {
+        app.layer(middleware::from_fn(lekton::metrics::track_metrics))
+    } else {
+        app
+    };
 
     // Start the server
     tracing::info!("Listening on http://{}", addr);

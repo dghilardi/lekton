@@ -158,6 +158,10 @@ ipnet = { version = "2", optional = true }
 # Configuration management
 config = { version = "0.14", optional = true }
 
+# Prometheus metrics (usage statistics)
+metrics = { version = "0.24", optional = true }
+metrics-exporter-prometheus = { version = "0.16", default-features = false, optional = true }
+
 # CLI argument parsing
 clap = { version = "4", features = ["derive"], optional = true }
 
@@ -210,6 +214,8 @@ ssr = [
     "dep:tower_governor",
     "dep:ipnet",
     "dep:config",
+    "dep:metrics",
+    "dep:metrics-exporter-prometheus",
     "dep:async-stream",
     "dep:qdrant-client",
     "dep:async-openai",

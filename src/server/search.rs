@@ -40,5 +40,10 @@ pub async fn search_docs(query: String) -> Result<Vec<SearchHit>, ServerFnError>
         }
     }
 
+    metrics::counter!("lekton_search_queries_total").increment(1);
+    if results.is_empty() {
+        metrics::counter!("lekton_search_zero_results_total").increment(1);
+    }
+
     Ok(results)
 }

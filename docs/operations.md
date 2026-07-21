@@ -29,6 +29,42 @@ If multiple real users share the same public NAT IP, they still share the same I
 
 ---
 
+## Prometheus Metrics
+
+Usage metrics are exposed at `GET /metrics` when the `metrics` feature is enabled (off by default):
+
+```bash
+LKN__FEATURES__METRICS=true
+# Optional bearer token; when set, scrapers must send Authorization: Bearer <token>.
+LKN__SERVER__METRICS_TOKEN="<random-secret>"
+```
+
+The endpoint is **not** meant to be public. Protect it at the proxy layer (block `/metrics` on the public vhost, expose it only to the scraper's network) and/or set `metrics_token`.
+
+Exposed series (labels kept low-cardinality — matched route templates, no per-document ids):
+
+- `http_requests_total{method,path,status}` and `http_request_duration_seconds{...}` — HTTP traffic and latency histogram.
+- `lekton_search_queries_total`, `lekton_search_zero_results_total` — search volume and content gaps.
+- `lekton_document_views_total{kind}` — document reads (`kind` = `markdown`/`upload`/`sync`).
+- `lekton_schema_views_total` — schema detail views.
+- `lekton_rag_chat_messages_total` — RAG chat usage.
+- `lekton_editor_saves_total`, `lekton_document_uploads_total` — content production.
+
+Example Prometheus scrape config (token via a `Bearer` credentials file or `authorization`):
+
+```yaml
+scrape_configs:
+  - job_name: lekton
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials: "<random-secret>"   # omit if metrics_token is unset
+    static_configs:
+      - targets: ["lekton:3000"]
+```
+
+---
+
 ## MongoDB
 
 ### Backup

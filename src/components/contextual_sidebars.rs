@@ -193,6 +193,7 @@ pub fn AdminSidebar() -> impl IntoView {
     let doc_feedback_enabled = crate::app::use_feature(|f| f.documentation_feedback);
     let indexes_enabled = crate::app::use_feature(|f| f.search || f.rag || f.schema_registry);
     let upload_enabled = crate::app::use_feature(|f| f.document_upload);
+    let editor_enabled = crate::app::use_feature(|f| f.editor);
     let sources_enabled = crate::app::use_feature(|f| f.sources);
 
     view! {
@@ -215,6 +216,14 @@ pub fn AdminSidebar() -> impl IntoView {
                 <a href="/admin/documentation-feedback" aria-current=move || if pathname.get() == "/admin/documentation-feedback" { Some("page") } else { None } class="gap-3 group transition-colors">
                     <svg class="w-4 h-4 opacity-70" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path><path d="M8 10h8"></path><path d="M8 14h6"></path></svg>
                     "Documentation Feedback"
+                </a>
+            </li>
+            </Show>
+            <Show when=move || editor_enabled.get()>
+            <li>
+                <a href="/edit" aria-current=move || if pathname.get() == "/edit" { Some("page") } else { None } class="gap-3 group transition-colors">
+                    <svg class="w-4 h-4 opacity-70" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                    "Create Page"
                 </a>
             </li>
             </Show>

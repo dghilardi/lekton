@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Documentation-agent groundwork (all behind existing feature flags, off by default):
+  - Per-source opt-in flag `review_enabled` on the source registry — a source must explicitly opt in before the documentation agent may touch it (admin Sources editor toggle + `list_sources` MCP tool).
+  - Feedback lifecycle: new `in_progress` status with claim/delivery metadata; the `claim_documentation_feedback` MCP tool takes an item in charge and returns a per-claim commit trailer; `list_documentation_feedback` gains a `delivery_source_id` filter (the CI candidate query) and the `in_progress` status.
+  - Source-scoped resolution: `POST /api/v1/feedback/resolve` (service-token auth) closes items a repo's merge addressed, only when they are `in_progress` and claimed for that source.
+  - `reopen_stale_documentation_claims` MCP tool to return abandoned in-progress claims to the open queue.
+  - Admin provisioning of user-less "machine" PATs (not tied to a user account) for machine-to-machine MCP access.
+
 ## [0.26.2] 2026-07-20
 
 ### Fixed

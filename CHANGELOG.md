@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.27.1] 2026-07-21
+
 ### Fixed
 - Top navbar "Altro" overflow dropdown could be clipped and unreachable on wide viewports (e.g. fullscreen), where the centered search bar (2xl+) halves the space available to the nav-links row.
 

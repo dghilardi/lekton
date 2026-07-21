@@ -1135,6 +1135,10 @@ impl LektonMcpServer {
             proposal: None,
             supporting_resources: vec![],
             expected_benefit: None,
+            delivery_source_id: None,
+            delivery_ref: None,
+            claim_nonce: None,
+            claimed_at: None,
         };
 
         if feedback.title.is_empty()
@@ -1223,6 +1227,10 @@ impl LektonMcpServer {
             proposal: Some(params.proposal.trim().to_string()),
             supporting_resources: params.supporting_resources,
             expected_benefit: Some(params.expected_benefit.trim().to_string()),
+            delivery_source_id: None,
+            delivery_ref: None,
+            claim_nonce: None,
+            claimed_at: None,
         };
 
         if feedback.title.is_empty()

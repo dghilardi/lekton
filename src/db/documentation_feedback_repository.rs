@@ -45,6 +45,18 @@ pub trait DocumentationFeedbackRepository: Send + Sync {
         duplicate_of: &str,
         resolution_note: Option<String>,
     ) -> Result<(), AppError>;
+
+    /// Take an item in charge: set it `in_progress` and record the delivery
+    /// (where the fix will land) plus a per-claim `nonce`. Allowed from `open`
+    /// or `in_progress` (re-claim updates the delivery); rejected for a
+    /// `resolved` item (returns `NotFound`).
+    async fn claim(
+        &self,
+        id: &str,
+        delivery_source_id: &str,
+        delivery_ref: Option<&str>,
+        nonce: &str,
+    ) -> Result<(), AppError>;
 }
 
 #[cfg(feature = "ssr")]
@@ -193,6 +205,44 @@ impl DocumentationFeedbackRepository for MongoDocumentationFeedbackRepository {
         if result.matched_count == 0 {
             return Err(AppError::NotFound(format!(
                 "Documentation feedback '{id}' not found"
+            )));
+        }
+
+        Ok(())
+    }
+
+    async fn claim(
+        &self,
+        id: &str,
+        delivery_source_id: &str,
+        delivery_ref: Option<&str>,
+        nonce: &str,
+    ) -> Result<(), AppError> {
+        use mongodb::bson::{doc, DateTime};
+
+        let now = DateTime::from_millis(chrono::Utc::now().timestamp_millis());
+        let result = self
+            .collection
+            .update_one(
+                // Only claim an open or already-in-progress item; a resolved
+                // item cannot be re-claimed.
+                doc! { "id": id, "status": { "$in": ["open", "in_progress"] } },
+                doc! {
+                    "$set": {
+                        "status": "in_progress",
+                        "delivery_source_id": delivery_source_id,
+                        "delivery_ref": delivery_ref,
+                        "claim_nonce": nonce,
+                        "claimed_at": now,
+                    }
+                },
+            )
+            .await
+            .map_err(|e| AppError::Database(format!("claim documentation_feedback: {e}")))?;
+
+        if result.matched_count == 0 {
+            return Err(AppError::NotFound(format!(
+                "Open or in-progress documentation feedback '{id}' not found"
             )));
         }
 

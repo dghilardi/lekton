@@ -1468,6 +1468,7 @@ impl LektonMcpServer {
                     "id": id,
                     "document_count": document_count,
                     "has_metadata": m.is_some(),
+                    "review_enabled": m.map(|m| m.review_enabled).unwrap_or(false),
                     "display_name": m.and_then(|m| m.display_name.clone()),
                     "repo_url": m.and_then(|m| m.repo_url.clone()),
                     "mainline_branch": m.and_then(|m| m.mainline_branch.clone()),

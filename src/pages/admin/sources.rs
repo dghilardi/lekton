@@ -84,6 +84,7 @@ pub fn SourcesAdminPanel() -> impl IntoView {
     let edit_repo_url = RwSignal::new(String::new());
     let edit_branch = RwSignal::new(String::new());
     let edit_description = RwSignal::new(String::new());
+    let edit_review_enabled = RwSignal::new(false);
     let edit_maintainers = RwSignal::new(Vec::<MaintainerRow>::new());
     let row_counter = RwSignal::new(0usize);
     let error_msg = RwSignal::new(Option::<String>::None);
@@ -106,6 +107,7 @@ pub fn SourcesAdminPanel() -> impl IntoView {
         edit_repo_url.set(s.repo_url.clone().unwrap_or_default());
         edit_branch.set(s.mainline_branch.clone().unwrap_or_default());
         edit_description.set(s.description.clone().unwrap_or_default());
+        edit_review_enabled.set(s.review_enabled);
         edit_maintainers.set(Vec::new());
         for m in &s.maintainers {
             add_row(Some(m));
@@ -134,6 +136,7 @@ pub fn SourcesAdminPanel() -> impl IntoView {
                 Some(edit_branch.get_untracked()),
                 Some(edit_description.get_untracked()),
                 maintainers.clone(),
+                edit_review_enabled.get_untracked(),
             )
         })
         .await;
@@ -285,6 +288,10 @@ pub fn SourcesAdminPanel() -> impl IntoView {
                                                             {format!("{doc_count}")}
                                                         </span>
                                                         {(!has_meta).then(|| view! { <span class="badge badge-sm badge-warning badge-outline">"needs setup"</span> })}
+                                                        {source.review_enabled.then(|| view! { <span class="badge badge-sm badge-primary badge-outline gap-1" title="Automated documentation review is enabled">
+                                                            <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                                                            "auto-review"
+                                                        </span> })}
                                                     </div>
                                                     {meta_line}
                                                 </div>
@@ -327,6 +334,16 @@ pub fn SourcesAdminPanel() -> impl IntoView {
                                                                 on:input=move |e| edit_description.set(event_target_value(&e)) />
                                                         </div>
                                                     </div>
+
+                                                    <label class="mt-5 flex cursor-pointer items-start gap-3 rounded-xl border border-base-200 bg-base-100 p-3">
+                                                        <input type="checkbox" class="toggle toggle-primary toggle-sm mt-0.5"
+                                                            prop:checked=move || edit_review_enabled.get()
+                                                            on:change=move |e| edit_review_enabled.set(event_target_checked(&e)) />
+                                                        <span class="min-w-0">
+                                                            <span class="block text-xs font-semibold text-base-content/80">"Automated documentation review"</span>
+                                                            <span class="block text-[0.7rem] text-base-content/55">"Let the documentation agent open change proposals for this source. Off by default."</span>
+                                                        </span>
+                                                    </label>
 
                                                     <div class="mt-5">
                                                         <div class="flex items-center justify-between">

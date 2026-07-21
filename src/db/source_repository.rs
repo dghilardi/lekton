@@ -57,6 +57,7 @@ impl DocumentSourceRepository for MongoDocumentSourceRepository {
                 "mainline_branch": source.mainline_branch,
                 "maintainers": maintainers,
                 "description": source.description,
+                "review_enabled": source.review_enabled,
                 "updated_at": updated_at,
             },
             "$setOnInsert": {

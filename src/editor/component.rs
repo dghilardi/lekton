@@ -16,20 +16,91 @@ extern "C" {
     pub fn upload_asset_js() -> js_sys::Promise;
 }
 
-/// Server function to fetch document content for editing.
+/// Metadata + rendered body returned to the editor for an existing page.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct EditorDoc {
+    pub title: String,
+    /// Rendered HTML body, ready for the WYSIWYG editor.
+    pub html: String,
+    pub access_level: String,
+    pub parent_slug: Option<String>,
+    pub order: u32,
+}
+
+/// Server function to fetch a page's content and editable metadata. Admin only.
+/// Returns `Ok(None)` when no page exists at `slug` (the editor then opens in
+/// creation mode).
 #[server(GetDocContent, "/api")]
-pub async fn get_doc_content(slug: String) -> Result<Option<(String, String)>, ServerFnError> {
+pub async fn get_doc_content(slug: String) -> Result<Option<EditorDoc>, ServerFnError> {
+    let state = expect_context::<crate::app::AppState>();
+    crate::server::require_admin_user(&state).await?;
+
+    load_editor_page(
+        state.document_repo.as_ref(),
+        state.storage_client.as_ref(),
+        &slug,
+    )
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+/// Fields the editor form submits to create or update a hand-authored page.
+#[cfg(feature = "ssr")]
+pub struct EditorPageInput {
+    pub slug: String,
+    pub title: String,
+    pub html_content: String,
+    pub access_level: String,
+    pub parent_slug: Option<String>,
+    pub order: u32,
+}
+
+/// Server function to save a hand-authored page (create or update). Admin only.
+#[server(SaveDocContent, "/api")]
+pub async fn save_doc_content(
+    slug: String,
+    title: String,
+    html_content: String,
+    access_level: String,
+    parent_slug: Option<String>,
+    order: u32,
+) -> Result<String, ServerFnError> {
+    let state = expect_context::<crate::app::AppState>();
+    crate::server::require_admin_user(&state).await?;
+
+    save_editor_page(
+        state.document_repo.as_ref(),
+        state.asset_repo.as_ref(),
+        state.search_service.as_deref(),
+        state.rag_service.as_deref(),
+        state.attachment_search_service.as_deref(),
+        state.storage_client.as_ref(),
+        EditorPageInput {
+            slug,
+            title,
+            html_content,
+            access_level,
+            parent_slug,
+            order,
+        },
+    )
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+/// Load a page's rendered body and editable metadata, or `None` when it does
+/// not exist. Errors when the page is managed outside the editor
+/// (ingest / lekton-sync / upload form), which is read-only here.
+#[cfg(feature = "ssr")]
+pub async fn load_editor_page(
+    document_repo: &dyn crate::db::repository::DocumentRepository,
+    storage: &dyn crate::storage::client::StorageClient,
+    slug: &str,
+) -> Result<Option<EditorDoc>, crate::error::AppError> {
+    use crate::error::AppError;
     use crate::rendering::markdown::render_markdown;
 
-    let state = expect_context::<crate::app::AppState>();
-
-    let doc = state
-        .document_repo
-        .find_by_slug(&slug)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let Some(doc) = doc else {
+    let Some(doc) = document_repo.find_by_slug(slug).await? else {
         return Ok(None);
     };
 
@@ -37,116 +108,142 @@ pub async fn get_doc_content(slug: String) -> Result<Option<(String, String)>, S
     // are read-only in the markdown editor: editing them here would be lost on
     // the next sync, or diverge from the upload form.
     if doc.source_id.as_deref().is_some_and(|s| !s.is_empty()) {
-        return Err(ServerFnError::new(
-            "This page is managed outside the editor and can't be edited here.",
+        return Err(AppError::BadRequest(
+            "This page is managed outside the editor and can't be edited here.".into(),
         ));
     }
 
-    let content_bytes = state
-        .storage_client
-        .get_object(&doc.s3_key)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let Some(content_bytes) = content_bytes else {
+    let Some(content_bytes) = storage.get_object(&doc.s3_key).await? else {
         return Ok(None);
     };
-
     let raw_markdown =
-        String::from_utf8(content_bytes).map_err(|e| ServerFnError::new(e.to_string()))?;
+        String::from_utf8(content_bytes).map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let html = render_markdown(&raw_markdown);
-
-    Ok(Some((doc.title, html)))
+    Ok(Some(EditorDoc {
+        title: doc.title,
+        html: render_markdown(&raw_markdown),
+        access_level: doc.access_level,
+        parent_slug: doc.parent_slug,
+        order: doc.order,
+    }))
 }
 
-/// Server function to save edited document content.
-#[server(SaveDocContent, "/api")]
-pub async fn save_doc_content(
-    slug: String,
-    title: String,
-    html_content: String,
-) -> Result<String, ServerFnError> {
-    use chrono::Utc;
+/// Create or update a hand-authored page from the editor. Validates the slug and
+/// metadata, refuses to overwrite externally-managed pages, writes the body to
+/// storage, then persists the document and reconciles search / backlinks / asset
+/// references.
+#[cfg(feature = "ssr")]
+#[allow(clippy::too_many_arguments)]
+pub async fn save_editor_page(
+    document_repo: &dyn crate::db::repository::DocumentRepository,
+    asset_repo: &dyn crate::db::asset_repository::AssetRepository,
+    search_service: Option<&dyn crate::search::client::SearchService>,
+    rag_service: Option<&dyn crate::rag::service::RagService>,
+    attachment_search: Option<&dyn crate::search::attachment_search::AttachmentSearchService>,
+    storage: &dyn crate::storage::client::StorageClient,
+    input: EditorPageInput,
+) -> Result<String, crate::error::AppError> {
+    use crate::error::AppError;
 
-    let state = expect_context::<crate::app::AppState>();
-
-    if slug.contains("..") || slug.starts_with('/') {
-        return Err(ServerFnError::new("Invalid slug"));
+    let slug = input.slug.trim();
+    if slug.is_empty() {
+        return Err(AppError::BadRequest("Slug is required".into()));
     }
+    if slug.contains("..") || slug.starts_with('/') {
+        return Err(AppError::BadRequest("Invalid slug".into()));
+    }
+    if input.access_level.trim().is_empty() {
+        return Err(AppError::BadRequest("Access level is required".into()));
+    }
+    let parent_slug = crate::api::ingest::normalize_parent_slug(input.parent_slug.as_deref())?;
 
+    let html_content = input.html_content;
     let links_out = crate::rendering::links::extract_internal_links_from_html(&html_content);
 
-    let old_doc = state
-        .document_repo
-        .find_by_slug(&slug)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
+    let old_doc = document_repo.find_by_slug(slug).await?;
     // Refuse to overwrite externally-managed (ingest / lekton-sync) or
     // upload-form documents from the markdown editor.
     if let Some(ref d) = old_doc {
         if d.source_id.as_deref().is_some_and(|s| !s.is_empty()) {
-            return Err(ServerFnError::new(
-                "This page is managed outside the editor and can't be edited here.",
+            return Err(AppError::BadRequest(
+                "This page is managed outside the editor and can't be edited here.".into(),
             ));
         }
     }
+    let old_links = old_doc
+        .as_ref()
+        .map(|d| d.links_out.clone())
+        .unwrap_or_default();
 
-    let (
-        old_links,
-        access_level,
-        is_draft,
-        service_owner,
-        tags,
-        backlinks,
+    let doc = build_editor_document(
+        slug,
+        input.title,
+        input.access_level,
         parent_slug,
-        order,
-        is_hidden,
-    ) = match old_doc {
+        input.order,
+        links_out,
+        old_doc,
+    );
+
+    // The body lives in storage; finalize_document_save only persists metadata
+    // and reconciles the derived indexes, so write the content here first.
+    storage
+        .put_object(&doc.s3_key, html_content.clone().into_bytes())
+        .await?;
+
+    finalize_document_save(
+        document_repo,
+        asset_repo,
+        search_service,
+        rag_service,
+        attachment_search,
+        storage,
+        doc,
+        &html_content,
+        &old_links,
+    )
+    .await
+}
+
+/// Build the `Document` to persist. Metadata the form owns (title, access level,
+/// parent, order) comes from the input; fields it does not (draft state, tags,
+/// backlinks, visibility, service owner) are preserved from the existing page on
+/// edit and defaulted on creation. A hand-authored page never carries a
+/// `source_id`, so it stays editable here.
+#[cfg(feature = "ssr")]
+fn build_editor_document(
+    slug: &str,
+    title: String,
+    access_level: String,
+    parent_slug: Option<String>,
+    order: u32,
+    links_out: Vec<String>,
+    old_doc: Option<crate::db::models::Document>,
+) -> crate::db::models::Document {
+    use chrono::Utc;
+
+    let (is_draft, service_owner, tags, backlinks, is_hidden) = match &old_doc {
         Some(d) => (
-            d.links_out,
-            d.access_level,
             d.is_draft,
-            d.service_owner,
-            d.tags,
-            d.backlinks,
-            d.parent_slug,
-            d.order,
+            d.service_owner.clone(),
+            d.tags.clone(),
+            d.backlinks.clone(),
             d.is_hidden,
         ),
-        None => (
-            vec![],
-            "public".to_string(),
-            false,
-            "web-editor".to_string(),
-            vec![],
-            vec![],
-            None,
-            0,
-            false,
-        ),
+        None => (false, "web-editor".to_string(), vec![], vec![], false),
     };
 
-    let s3_key = format!("docs/{}.md", slug.replace('/', "_"));
-
-    state
-        .storage_client
-        .put_object(&s3_key, html_content.clone().into_bytes())
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let doc = crate::db::models::Document {
-        slug: slug.clone(),
+    crate::db::models::Document {
+        slug: slug.to_string(),
         title,
         summary: None,
-        s3_key,
+        s3_key: format!("docs/{}.md", slug.replace('/', "_")),
         access_level,
         is_draft,
         service_owner,
         last_updated: Utc::now(),
         tags,
-        links_out: links_out.clone(),
+        links_out,
         backlinks,
         parent_slug,
         order,
@@ -158,21 +255,7 @@ pub async fn save_doc_content(
         source_id: None,
         needs_reindex: false,
         skip_rag: false,
-    };
-
-    finalize_document_save(
-        state.document_repo.as_ref(),
-        state.asset_repo.as_ref(),
-        state.search_service.as_deref(),
-        state.rag_service.as_deref(),
-        state.attachment_search_service.as_deref(),
-        state.storage_client.as_ref(),
-        doc,
-        &html_content,
-        &old_links,
-    )
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))
+    }
 }
 
 /// Index the document into search, persist it, reconcile backlinks and asset
@@ -262,46 +345,83 @@ async fn finalize_document_save(
     }
 }
 
-/// The editor page component.
+/// The editor page component. Renders the WYSIWYG editor for an existing
+/// hand-authored page (edit mode) or, when no page exists at the route slug, a
+/// blank editor with an editable slug for creating one (creation mode).
 #[component]
 pub fn EditorPage() -> impl IntoView {
     let params = leptos_router::hooks::use_params_map();
-    let slug = move || params.read().get("slug").unwrap_or_default();
+    let route_slug = move || params.read().get("slug").unwrap_or_default();
 
     #[allow(clippy::redundant_closure)]
-    let doc_resource = Resource::new(move || slug(), |slug| get_doc_content(slug));
+    let doc_resource = Resource::new(move || route_slug(), |slug| get_doc_content(slug));
+    let levels_resource = LocalResource::new(list_levels);
+    let nav_resource = LocalResource::new(crate::server::nav::get_navigation);
 
     let (msg, set_msg) = signal(TiptapInstanceMsg::Noop);
     let (value, set_value) = signal(String::new());
     let (title, set_title) = signal(String::new());
+    let (slug, set_slug) = signal(String::new());
+    let (access_level, set_access_level) = signal(String::new());
+    let (parent_slug, set_parent_slug) = signal(String::new());
+    let (order, set_order) = signal(0u32);
     let (disabled, _set_disabled) = signal(false);
     let (_selection, set_selection) = signal(TiptapSelectionState::default());
     let (save_status, set_save_status) = signal(String::new());
     let (saving, set_saving) = signal(false);
-    // Sentinel: the slug whose content is currently loaded in the editor signals.
-    // The Effect below only overwrites title/value when the slug changes, so
+    // Sentinel: the route slug whose content is currently loaded in the editor
+    // signals. The Effect below only prefills when the route changes, so
     // in-progress edits are never clobbered by a resource refetch for the same doc.
-    let (loaded_slug, set_loaded_slug) = signal(String::new());
+    let (loaded_slug, set_loaded_slug) = signal(Option::<String>::None);
 
     Effect::new(move || {
-        let current_slug = slug();
-        if let Some(Ok(Some((doc_title, html)))) = doc_resource.get() {
-            if loaded_slug.get_untracked() != current_slug {
-                set_loaded_slug.set(current_slug);
-                set_title.set(doc_title);
-                set_value.set(html);
+        let current_slug = route_slug();
+        if let Some(Ok(maybe)) = doc_resource.get() {
+            if loaded_slug.get_untracked().as_deref() != Some(current_slug.as_str()) {
+                set_loaded_slug.set(Some(current_slug.clone()));
+                match maybe {
+                    Some(doc) => {
+                        set_slug.set(current_slug);
+                        set_title.set(doc.title);
+                        set_value.set(doc.html);
+                        set_access_level.set(doc.access_level);
+                        set_parent_slug.set(doc.parent_slug.unwrap_or_default());
+                        set_order.set(doc.order);
+                    }
+                    // Creation mode: seed the (editable) slug from the route, if any.
+                    None => set_slug.set(current_slug),
+                }
             }
         }
     });
 
     let save_action = Action::new(move |_: &()| {
-        let current_slug = slug();
+        let current_slug = slug.get();
         let current_title = title.get();
         let current_content = value.get();
+        let current_access_level = access_level.get();
+        let current_parent = {
+            let p = parent_slug.get();
+            if p.is_empty() {
+                None
+            } else {
+                Some(p)
+            }
+        };
+        let current_order = order.get();
         async move {
             set_saving.set(true);
             set_save_status.set(String::new());
-            match save_doc_content(current_slug, current_title, current_content).await {
+            match save_doc_content(
+                current_slug,
+                current_title,
+                current_content,
+                current_access_level,
+                current_parent,
+                current_order,
+            )
+            .await
+            {
                 Ok(msg) => set_save_status.set(msg),
                 Err(e) => set_save_status.set(format!("Error: {e}")),
             }
@@ -313,9 +433,36 @@ pub fn EditorPage() -> impl IntoView {
         <Suspense fallback=move || view! { <div class="loading loading-spinner loading-lg"></div> }>
             {move || {
                 doc_resource.get().map(|result| match result {
-                    Ok(Some(_)) => {
+                    Ok(existing) => {
+                        let is_new = existing.is_none();
                         view! {
                             <div class="space-y-4">
+                                <h2 class="text-2xl font-bold">
+                                    {if is_new { "Create Page" } else { "Edit Page" }}
+                                </h2>
+
+                                // Slug — editable only when creating a new page.
+                                <div class="form-control">
+                                    <label class="label">
+                                        <span class="label-text font-semibold">"Slug (page path)"</span>
+                                    </label>
+                                    {if is_new {
+                                        view! {
+                                            <input
+                                                type="text"
+                                                class="input input-bordered w-full"
+                                                placeholder="e.g. guides/getting-started"
+                                                prop:value=slug
+                                                on:input=move |ev| set_slug.set(event_target_value(&ev))
+                                            />
+                                        }.into_any()
+                                    } else {
+                                        view! {
+                                            <input type="text" class="input input-bordered w-full" prop:value=slug disabled=true />
+                                        }.into_any()
+                                    }}
+                                </div>
+
                                 // Title input
                                 <div class="form-control">
                                     <label class="label">
@@ -329,6 +476,84 @@ pub fn EditorPage() -> impl IntoView {
                                             set_title.set(event_target_value(&ev));
                                         }
                                     />
+                                </div>
+
+                                // Access level
+                                <div class="form-control">
+                                    <label class="label">
+                                        <span class="label-text font-semibold">"Access level"</span>
+                                    </label>
+                                    <Suspense fallback=move || view! { <span class="loading loading-spinner loading-sm"></span> }>
+                                        {move || {
+                                            let levels = levels_resource.get().and_then(|r| r.ok()).unwrap_or_default();
+                                            view! {
+                                                <select
+                                                    class="select select-bordered w-full"
+                                                    prop:value=move || access_level.get()
+                                                    on:change=move |e| set_access_level.set(event_target_value(&e))
+                                                >
+                                                    <option value="" disabled selected=move || access_level.get().is_empty()>
+                                                        "Select an access level…"
+                                                    </option>
+                                                    {levels.into_iter().map(|l| {
+                                                        let name = l.name.clone();
+                                                        let name_sel = l.name.clone();
+                                                        let label = if l.label.is_empty() { l.name.clone() } else { l.label.clone() };
+                                                        view! {
+                                                            <option value=name.clone() selected=move || access_level.get() == name_sel>
+                                                                {format!("{label} ({name})")}
+                                                            </option>
+                                                        }
+                                                    }).collect::<Vec<_>>()}
+                                                </select>
+                                            }
+                                        }}
+                                    </Suspense>
+                                </div>
+
+                                // Parent + order
+                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                    <div class="form-control sm:col-span-2">
+                                        <label class="label"><span class="label-text font-semibold">"Parent (optional)"</span></label>
+                                        <Suspense fallback=move || view! { <span class="loading loading-spinner loading-sm"></span> }>
+                                            {move || {
+                                                let nav = nav_resource.get().and_then(|r| r.ok()).unwrap_or_default();
+                                                let mut flat = Vec::new();
+                                                flatten_nav(&nav, 0, &mut flat);
+                                                view! {
+                                                    <select
+                                                        class="select select-bordered w-full"
+                                                        prop:value=move || parent_slug.get()
+                                                        on:change=move |e| set_parent_slug.set(event_target_value(&e))
+                                                    >
+                                                        <option value="">"— Top level —"</option>
+                                                        {flat.into_iter().map(|(slug, label)| {
+                                                            let slug_sel = slug.clone();
+                                                            view! {
+                                                                <option value=slug.clone() selected=move || parent_slug.get() == slug_sel>
+                                                                    {label}
+                                                                </option>
+                                                            }
+                                                        }).collect::<Vec<_>>()}
+                                                    </select>
+                                                }
+                                            }}
+                                        </Suspense>
+                                    </div>
+                                    <div class="form-control">
+                                        <label class="label"><span class="label-text font-semibold">"Order"</span></label>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            class="input input-bordered w-full"
+                                            prop:value=move || order.get().to_string()
+                                            on:input=move |e| {
+                                                if let Ok(n) = event_target_value(&e).parse::<u32>() {
+                                                    set_order.set(n);
+                                                }
+                                            }
+                                        />
+                                    </div>
                                 </div>
 
                                 // Toolbar
@@ -415,10 +640,19 @@ pub fn EditorPage() -> impl IntoView {
                                         prop:disabled=saving
                                         on:click=move |_| { save_action.dispatch(()); }
                                     >
-                                        {move || if saving.get() { "Saving..." } else { "Save Document" }}
+                                        {move || if saving.get() {
+                                            "Saving...".to_string()
+                                        } else if is_new {
+                                            "Create Page".to_string()
+                                        } else {
+                                            "Save Document".to_string()
+                                        }}
                                     </button>
                                     <a
-                                        href=move || format!("/docs/{}", slug())
+                                        href=move || {
+                                            let s = slug.get();
+                                            if s.is_empty() { "/".to_string() } else { format!("/docs/{s}") }
+                                        }
                                         class="btn btn-ghost"
                                     >
                                         "Cancel"
@@ -440,13 +674,6 @@ pub fn EditorPage() -> impl IntoView {
                             </div>
                         }.into_any()
                     }
-                    Ok(None) => {
-                        view! {
-                            <div class="alert alert-warning">
-                                <span>"Document not found. You can create a new document from this editor."</span>
-                            </div>
-                        }.into_any()
-                    }
                     Err(e) => {
                         view! {
                             <div class="alert alert-error">
@@ -457,6 +684,22 @@ pub fn EditorPage() -> impl IntoView {
                 })
             }}
         </Suspense>
+    }
+}
+
+/// Wrapper so `LocalResource` gets a plain async fn for the access-level picker.
+async fn list_levels() -> Result<Vec<crate::server::access_levels::AccessLevelInfo>, ServerFnError>
+{
+    crate::server::access_levels::list_admin_access_levels().await
+}
+
+/// Flatten the navigation tree into `(slug, indented_title)` pairs for the
+/// parent-page picker.
+fn flatten_nav(items: &[crate::app::NavItem], depth: usize, out: &mut Vec<(String, String)>) {
+    for item in items {
+        let prefix = "\u{00a0}\u{00a0}".repeat(depth);
+        out.push((item.slug.clone(), format!("{prefix}{}", item.title)));
+        flatten_nav(&item.children, depth + 1, out);
     }
 }
 
@@ -721,5 +964,67 @@ mod tests {
         let saved = doc_repo.saved.lock().unwrap().clone().unwrap();
         assert!(!saved.needs_reindex);
         assert!(msg.contains("saved successfully"), "got: {msg}");
+    }
+
+    #[test]
+    fn build_editor_document_defaults_a_new_page() {
+        let doc = build_editor_document(
+            "guides/intro",
+            "Intro".to_string(),
+            "internal".to_string(),
+            Some("guides".to_string()),
+            3,
+            vec!["docs/other".to_string()],
+            None,
+        );
+
+        assert_eq!(doc.slug, "guides/intro");
+        // Slashes are flattened in the storage key.
+        assert_eq!(doc.s3_key, "docs/guides_intro.md");
+        assert_eq!(doc.title, "Intro");
+        assert_eq!(doc.access_level, "internal");
+        assert_eq!(doc.parent_slug.as_deref(), Some("guides"));
+        assert_eq!(doc.order, 3);
+        assert_eq!(doc.links_out, vec!["docs/other".to_string()]);
+        // A hand-authored page: web-editor owned, no external source, published.
+        assert_eq!(doc.service_owner, "web-editor");
+        assert_eq!(doc.source_id, None);
+        assert!(!doc.is_draft);
+        assert!(!doc.is_archived);
+    }
+
+    #[test]
+    fn build_editor_document_applies_form_metadata_but_preserves_untouched_fields() {
+        // An existing hand-authored page with fields the form does not manage.
+        let mut existing = make_doc();
+        existing.is_draft = true;
+        existing.is_hidden = true;
+        existing.tags = vec!["kept".to_string()];
+        existing.backlinks = vec!["docs/ref".to_string()];
+        existing.access_level = "public".to_string();
+        existing.order = 0;
+        existing.parent_slug = None;
+
+        let doc = build_editor_document(
+            "guide",
+            "Guide v2".to_string(),
+            "internal".to_string(), // changed via the form
+            Some("handbook".to_string()),
+            9,
+            vec![],
+            Some(existing),
+        );
+
+        // Form-owned metadata is taken from the input.
+        assert_eq!(doc.title, "Guide v2");
+        assert_eq!(doc.access_level, "internal");
+        assert_eq!(doc.parent_slug.as_deref(), Some("handbook"));
+        assert_eq!(doc.order, 9);
+        // Fields the form does not manage are preserved from the existing page.
+        assert!(doc.is_draft);
+        assert!(doc.is_hidden);
+        assert_eq!(doc.tags, vec!["kept".to_string()]);
+        assert_eq!(doc.backlinks, vec!["docs/ref".to_string()]);
+        assert_eq!(doc.service_owner, "web-editor");
     }
 }

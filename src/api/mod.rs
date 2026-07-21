@@ -7,6 +7,8 @@ pub mod auth;
 pub mod document_upload;
 pub mod errors;
 #[cfg(feature = "ssr")]
+pub mod feedback;
+#[cfg(feature = "ssr")]
 pub mod health;
 pub mod ingest;
 #[cfg(feature = "ssr")]

@@ -46,6 +46,10 @@ pub struct DocumentationFeedbackAdminItem {
     pub proposal: Option<String>,
     pub supporting_resources: Vec<String>,
     pub expected_benefit: Option<String>,
+    pub delivery_source_id: Option<String>,
+    pub delivery_ref: Option<String>,
+    pub claim_nonce: Option<String>,
+    pub claimed_at: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -82,6 +86,12 @@ fn map_documentation_feedback_item(
         proposal: item.proposal,
         supporting_resources: item.supporting_resources,
         expected_benefit: item.expected_benefit,
+        delivery_source_id: item.delivery_source_id,
+        delivery_ref: item.delivery_ref,
+        claim_nonce: item.claim_nonce,
+        claimed_at: item
+            .claimed_at
+            .map(|d| d.format("%Y-%m-%d %H:%M").to_string()),
     }
 }
 
@@ -187,6 +197,7 @@ pub async fn list_documentation_feedback(
             query,
             kind,
             status,
+            delivery_source_id: None,
             page,
             per_page: per_page.clamp(1, 50),
         })

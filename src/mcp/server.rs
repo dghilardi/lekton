@@ -126,12 +126,16 @@ pub struct ProposeDocumentationImprovementParams {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ListDocumentationFeedbackParams {
-    /// Which items to return: `open` (default), `resolved`, or `all`.
+    /// Which items to return: `open` (default), `in_progress`, `resolved`, or `all`.
     #[serde(default)]
     pub status: Option<String>,
     /// Optional kind filter: `missing_info` or `improvement`.
     #[serde(default)]
     pub kind: Option<String>,
+    /// Optional filter to items claimed for delivery to this source id — the
+    /// candidate set for a repo's CI reconciliation.
+    #[serde(default)]
+    pub delivery_source_id: Option<String>,
     /// Maximum items to return (default: 20, max: 50).
     #[serde(default = "default_feedback_limit")]
     pub limit: u64,
@@ -142,6 +146,30 @@ pub struct ListDocumentationFeedbackParams {
 
 fn default_feedback_limit() -> u64 {
     20
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ClaimDocumentationFeedbackParams {
+    /// The feedback item to take in charge.
+    pub feedback_id: String,
+    /// The `source_id` where the fix will be delivered (the repo the PR lands
+    /// in) — may differ from where the item was originally filed.
+    pub delivery_source_id: String,
+    /// Optional human/audit reference to the delivery, e.g. the pull request URL.
+    #[serde(default)]
+    pub delivery_ref: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ReopenStaleClaimsParams {
+    /// Reopen in-progress items claimed more than this many hours ago
+    /// (abandoned deliveries). Default: 336 (14 days).
+    #[serde(default = "default_stale_claim_hours")]
+    pub older_than_hours: u64,
+}
+
+fn default_stale_claim_hours() -> u64 {
+    336
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -357,7 +385,9 @@ impl LektonMcpServer {
             "search_documentation_feedback"
             | "report_missing_documentation"
             | "propose_documentation_improvement"
-            | "list_documentation_feedback" => self.features.documentation_feedback,
+            | "list_documentation_feedback"
+            | "claim_documentation_feedback"
+            | "reopen_stale_documentation_claims" => self.features.documentation_feedback,
             "list_sources" => self.features.sources,
             _ => true,
         }
@@ -1135,6 +1165,10 @@ impl LektonMcpServer {
             proposal: None,
             supporting_resources: vec![],
             expected_benefit: None,
+            delivery_source_id: None,
+            delivery_ref: None,
+            claim_nonce: None,
+            claimed_at: None,
         };
 
         if feedback.title.is_empty()
@@ -1223,6 +1257,10 @@ impl LektonMcpServer {
             proposal: Some(params.proposal.trim().to_string()),
             supporting_resources: params.supporting_resources,
             expected_benefit: Some(params.expected_benefit.trim().to_string()),
+            delivery_source_id: None,
+            delivery_ref: None,
+            claim_nonce: None,
+            claimed_at: None,
         };
 
         if feedback.title.is_empty()
@@ -1468,6 +1506,7 @@ impl LektonMcpServer {
                     "id": id,
                     "document_count": document_count,
                     "has_metadata": m.is_some(),
+                    "review_enabled": m.map(|m| m.review_enabled).unwrap_or(false),
                     "display_name": m.and_then(|m| m.display_name.clone()),
                     "repo_url": m.and_then(|m| m.repo_url.clone()),
                     "mainline_branch": m.and_then(|m| m.mainline_branch.clone()),
@@ -1514,16 +1553,25 @@ impl LektonMcpServer {
 
         let status = match params.status.as_deref().map(str::trim) {
             None | Some("") | Some("open") => Some(DocumentationFeedbackStatus::Open),
+            Some("in_progress") => Some(DocumentationFeedbackStatus::InProgress),
             Some("resolved") => Some(DocumentationFeedbackStatus::Resolved),
             Some("all") => None,
             Some(other) => {
                 return Err(McpError::invalid_params(
-                    format!("Unsupported status '{other}'. Expected 'open', 'resolved', or 'all'"),
+                    format!(
+                        "Unsupported status '{other}'. Expected 'open', 'in_progress', 'resolved', or 'all'"
+                    ),
                     None,
                 ))
             }
         };
         let kind = parse_feedback_kind(params.kind.as_deref())?;
+        let delivery_source_id = params
+            .delivery_source_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
 
         let page = self
             .documentation_feedback_repo
@@ -1532,6 +1580,7 @@ impl LektonMcpServer {
                     query: None,
                     kind,
                     status,
+                    delivery_source_id,
                     page: params.page,
                     per_page: params.limit.clamp(1, 50),
                 },
@@ -1629,6 +1678,93 @@ impl LektonMcpServer {
         });
         let json = serde_json::to_string_pretty(&output)
             .map_err(|e| McpError::internal_error(format!("JSON error: {e}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "claim_documentation_feedback",
+        description = "Take a documentation-feedback item in charge before opening a change: moves it to `in_progress`, records the delivery source (the repo the fix will land in) and an optional delivery reference, and returns a per-claim nonce plus the ready-to-use commit trailer. Excludes the item from the open queue so it is not re-worked. Admin only."
+    )]
+    async fn claim_documentation_feedback(
+        &self,
+        Parameters(params): Parameters<ClaimDocumentationFeedbackParams>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let user_ctx = user_context(&ctx)?;
+        if !user_ctx.user.is_admin {
+            return Err(McpError::invalid_request(
+                "Admin privileges required for claim_documentation_feedback",
+                None,
+            ));
+        }
+
+        let feedback_id = params.feedback_id.trim();
+        let delivery_source_id = params.delivery_source_id.trim();
+        if feedback_id.is_empty() || delivery_source_id.is_empty() {
+            return Err(McpError::invalid_params(
+                "feedback_id and delivery_source_id are required",
+                None,
+            ));
+        }
+        let delivery_ref = params
+            .delivery_ref
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+
+        // Short per-claim nonce: unique enough to guard a re-open cycle, short
+        // enough to sit comfortably in a commit trailer.
+        let nonce: String = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
+
+        self.documentation_feedback_repo
+            .claim(feedback_id, delivery_source_id, delivery_ref, &nonce)
+            .await
+            .map_err(app_err)?;
+
+        let trailer = format!("Resolves-Lekton-Feedback: {feedback_id} (claim={nonce})");
+        let json = serde_json::to_string_pretty(&serde_json::json!({
+            "id": feedback_id,
+            "status": "in_progress",
+            "delivery_source_id": delivery_source_id,
+            "delivery_ref": delivery_ref,
+            "claim_nonce": nonce,
+            "commit_trailer": trailer,
+        }))
+        .map_err(|e| McpError::internal_error(format!("JSON error: {e}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "reopen_stale_documentation_claims",
+        description = "Reopen documentation-feedback items that have been in_progress (claimed) longer than the given number of hours without being resolved — abandoned deliveries. Clears the stale claim so the item returns to the open queue. Intended to be called at the start of an agent run. Admin only."
+    )]
+    async fn reopen_stale_documentation_claims(
+        &self,
+        Parameters(params): Parameters<ReopenStaleClaimsParams>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let user_ctx = user_context(&ctx)?;
+        if !user_ctx.user.is_admin {
+            return Err(McpError::invalid_request(
+                "Admin privileges required for reopen_stale_documentation_claims",
+                None,
+            ));
+        }
+
+        let hours = params.older_than_hours.clamp(1, 24 * 365) as i64;
+        let cutoff = chrono::Utc::now() - chrono::Duration::hours(hours);
+        let reopened = self
+            .documentation_feedback_repo
+            .reopen_stale_claims(cutoff)
+            .await
+            .map_err(app_err)?;
+
+        let json = serde_json::to_string_pretty(&serde_json::json!({
+            "reopened": reopened,
+            "older_than_hours": hours,
+            "cutoff": cutoff.to_rfc3339(),
+        }))
+        .map_err(|e| McpError::internal_error(format!("JSON error: {e}"), None))?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 }

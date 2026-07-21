@@ -10,6 +10,8 @@ pub struct DocumentationFeedbackListParams {
     pub query: Option<String>,
     pub kind: Option<DocumentationFeedbackKind>,
     pub status: Option<DocumentationFeedbackStatus>,
+    /// Filter to items whose claim delivers to this source id.
+    pub delivery_source_id: Option<String>,
     pub page: u64,
     pub per_page: u64,
 }
@@ -101,7 +103,7 @@ impl DocumentationFeedbackRepository for MongoDocumentationFeedbackRepository {
     ) -> Result<Vec<DocumentationFeedback>, AppError> {
         use futures::TryStreamExt;
 
-        let filter = build_filter(Some(query), kind, status, created_by);
+        let filter = build_filter(Some(query), kind, status, created_by, None);
         let cursor = self
             .collection
             .find(filter)
@@ -125,7 +127,13 @@ impl DocumentationFeedbackRepository for MongoDocumentationFeedbackRepository {
         const MAX_PER_PAGE: u64 = 100;
         let per_page = params.per_page.clamp(1, MAX_PER_PAGE);
         let skip = params.page * per_page;
-        let filter = build_filter(params.query.as_deref(), params.kind, params.status, None);
+        let filter = build_filter(
+            params.query.as_deref(),
+            params.kind,
+            params.status,
+            None,
+            params.delivery_source_id.as_deref(),
+        );
 
         let total = self
             .collection
@@ -256,6 +264,7 @@ fn build_filter(
     kind: Option<DocumentationFeedbackKind>,
     status: Option<DocumentationFeedbackStatus>,
     created_by: Option<&str>,
+    delivery_source_id: Option<&str>,
 ) -> mongodb::bson::Document {
     use mongodb::bson::{doc, Bson};
 
@@ -263,6 +272,10 @@ fn build_filter(
 
     if let Some(owner) = created_by {
         filter_parts.push(doc! { "created_by": owner });
+    }
+
+    if let Some(source_id) = delivery_source_id {
+        filter_parts.push(doc! { "delivery_source_id": source_id });
     }
 
     if let Some(kind) = kind {

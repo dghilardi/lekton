@@ -126,12 +126,16 @@ pub struct ProposeDocumentationImprovementParams {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ListDocumentationFeedbackParams {
-    /// Which items to return: `open` (default), `resolved`, or `all`.
+    /// Which items to return: `open` (default), `in_progress`, `resolved`, or `all`.
     #[serde(default)]
     pub status: Option<String>,
     /// Optional kind filter: `missing_info` or `improvement`.
     #[serde(default)]
     pub kind: Option<String>,
+    /// Optional filter to items claimed for delivery to this source id — the
+    /// candidate set for a repo's CI reconciliation.
+    #[serde(default)]
+    pub delivery_source_id: Option<String>,
     /// Maximum items to return (default: 20, max: 50).
     #[serde(default = "default_feedback_limit")]
     pub limit: u64,
@@ -1536,16 +1540,25 @@ impl LektonMcpServer {
 
         let status = match params.status.as_deref().map(str::trim) {
             None | Some("") | Some("open") => Some(DocumentationFeedbackStatus::Open),
+            Some("in_progress") => Some(DocumentationFeedbackStatus::InProgress),
             Some("resolved") => Some(DocumentationFeedbackStatus::Resolved),
             Some("all") => None,
             Some(other) => {
                 return Err(McpError::invalid_params(
-                    format!("Unsupported status '{other}'. Expected 'open', 'resolved', or 'all'"),
+                    format!(
+                        "Unsupported status '{other}'. Expected 'open', 'in_progress', 'resolved', or 'all'"
+                    ),
                     None,
                 ))
             }
         };
         let kind = parse_feedback_kind(params.kind.as_deref())?;
+        let delivery_source_id = params
+            .delivery_source_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
 
         let page = self
             .documentation_feedback_repo
@@ -1554,6 +1567,7 @@ impl LektonMcpServer {
                     query: None,
                     kind,
                     status,
+                    delivery_source_id,
                     page: params.page,
                     per_page: params.limit.clamp(1, 50),
                 },

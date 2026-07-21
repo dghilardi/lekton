@@ -187,6 +187,7 @@ pub async fn list_documentation_feedback(
             query,
             kind,
             status,
+            delivery_source_id: None,
             page,
             per_page: per_page.clamp(1, 50),
         })

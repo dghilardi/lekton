@@ -66,6 +66,14 @@ pub trait DocumentationFeedbackRepository: Send + Sync {
     /// that actually holds the claim. Idempotent-safe: a non-match is not an
     /// error.
     async fn resolve_claimed(&self, id: &str, delivery_source_id: &str) -> Result<bool, AppError>;
+
+    /// Reopen `in_progress` items claimed before `cutoff` (abandoned deliveries):
+    /// set them back to `open` and clear the claim metadata so a fresh claim
+    /// starts clean. Returns how many were reopened.
+    async fn reopen_stale_claims(
+        &self,
+        cutoff: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64, AppError>;
 }
 
 #[cfg(feature = "ssr")]
@@ -283,6 +291,35 @@ impl DocumentationFeedbackRepository for MongoDocumentationFeedbackRepository {
             })?;
 
         Ok(result.matched_count == 1)
+    }
+
+    async fn reopen_stale_claims(
+        &self,
+        cutoff: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64, AppError> {
+        use mongodb::bson::{doc, DateTime};
+
+        let cutoff = DateTime::from_millis(cutoff.timestamp_millis());
+        let result = self
+            .collection
+            .update_many(
+                doc! { "status": "in_progress", "claimed_at": { "$lt": cutoff } },
+                doc! {
+                    "$set": { "status": "open" },
+                    "$unset": {
+                        "delivery_source_id": "",
+                        "delivery_ref": "",
+                        "claim_nonce": "",
+                        "claimed_at": "",
+                    },
+                },
+            )
+            .await
+            .map_err(|e| {
+                AppError::Database(format!("reopen_stale_claims documentation_feedback: {e}"))
+            })?;
+
+        Ok(result.modified_count)
     }
 }
 

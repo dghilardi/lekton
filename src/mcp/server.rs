@@ -161,6 +161,18 @@ pub struct ClaimDocumentationFeedbackParams {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ReopenStaleClaimsParams {
+    /// Reopen in-progress items claimed more than this many hours ago
+    /// (abandoned deliveries). Default: 336 (14 days).
+    #[serde(default = "default_stale_claim_hours")]
+    pub older_than_hours: u64,
+}
+
+fn default_stale_claim_hours() -> u64 {
+    336
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ListSchemasParams {
     /// Filter by schema type: "openapi", "asyncapi", or "jsonschema".
     #[serde(default)]
@@ -374,7 +386,8 @@ impl LektonMcpServer {
             | "report_missing_documentation"
             | "propose_documentation_improvement"
             | "list_documentation_feedback"
-            | "claim_documentation_feedback" => self.features.documentation_feedback,
+            | "claim_documentation_feedback"
+            | "reopen_stale_documentation_claims" => self.features.documentation_feedback,
             "list_sources" => self.features.sources,
             _ => true,
         }
@@ -1716,6 +1729,40 @@ impl LektonMcpServer {
             "delivery_ref": delivery_ref,
             "claim_nonce": nonce,
             "commit_trailer": trailer,
+        }))
+        .map_err(|e| McpError::internal_error(format!("JSON error: {e}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "reopen_stale_documentation_claims",
+        description = "Reopen documentation-feedback items that have been in_progress (claimed) longer than the given number of hours without being resolved — abandoned deliveries. Clears the stale claim so the item returns to the open queue. Intended to be called at the start of an agent run. Admin only."
+    )]
+    async fn reopen_stale_documentation_claims(
+        &self,
+        Parameters(params): Parameters<ReopenStaleClaimsParams>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let user_ctx = user_context(&ctx)?;
+        if !user_ctx.user.is_admin {
+            return Err(McpError::invalid_request(
+                "Admin privileges required for reopen_stale_documentation_claims",
+                None,
+            ));
+        }
+
+        let hours = params.older_than_hours.clamp(1, 24 * 365) as i64;
+        let cutoff = chrono::Utc::now() - chrono::Duration::hours(hours);
+        let reopened = self
+            .documentation_feedback_repo
+            .reopen_stale_claims(cutoff)
+            .await
+            .map_err(app_err)?;
+
+        let json = serde_json::to_string_pretty(&serde_json::json!({
+            "reopened": reopened,
+            "older_than_hours": hours,
+            "cutoff": cutoff.to_rfc3339(),
         }))
         .map_err(|e| McpError::internal_error(format!("JSON error: {e}"), None))?;
         Ok(CallToolResult::success(vec![Content::text(json)]))

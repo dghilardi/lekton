@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.28.0] 2026-07-21
+
 ### Added
 - Prometheus usage metrics (behind the `metrics` feature flag, off by default): a `GET /metrics` endpoint exposing HTTP request counts/latencies plus product-usage counters (searches and zero-result searches, document views, schema views, RAG chat messages, editor saves, guided uploads) for building Grafana dashboards. Labels are kept low-cardinality (matched route templates, no per-document ids). The endpoint can be guarded with an optional `server.metrics_token` bearer token in addition to proxy-layer protection.
 

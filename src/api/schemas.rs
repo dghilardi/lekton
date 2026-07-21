@@ -846,6 +846,7 @@ pub async fn get_schema_route_handler(
 
     let detail =
         process_get_schema(state.schema_repo.as_ref(), &name, allowed_levels.as_deref()).await?;
+    metrics::counter!("lekton_schema_views_total").increment(1);
     Ok(axum::Json(detail).into_response())
 }
 

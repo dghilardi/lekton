@@ -268,6 +268,15 @@ pub async fn get_doc_html(
         (html, extract_headings(&raw), None)
     };
 
+    let kind = if is_upload_doc {
+        "upload"
+    } else if is_sync_doc {
+        "sync"
+    } else {
+        "markdown"
+    };
+    metrics::counter!("lekton_document_views_total", "kind" => kind).increment(1);
+
     Ok(Some(crate::pages::DocPageData {
         title: doc.title,
         html,

@@ -417,7 +417,7 @@ mod tests {
     #[cfg(feature = "ssr")]
     #[test]
     fn build_filter_scopes_to_created_by_when_provided() {
-        let filter = build_filter(None, None, None, Some("alice@example.com"));
+        let filter = build_filter(None, None, None, Some("alice@example.com"), None);
         let bson_str = filter.to_string();
         assert!(
             bson_str.contains("created_by") && bson_str.contains("alice@example.com"),
@@ -428,7 +428,7 @@ mod tests {
     #[cfg(feature = "ssr")]
     #[test]
     fn build_filter_no_created_by_for_admins() {
-        let filter = build_filter(None, None, None, None);
+        let filter = build_filter(None, None, None, None, None);
         let bson_str = filter.to_string();
         assert!(
             !bson_str.contains("created_by"),

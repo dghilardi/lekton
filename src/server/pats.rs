@@ -189,6 +189,54 @@ pub async fn admin_list_pats(
     Ok((items, total))
 }
 
+#[server(CreateMachinePat, "/api")]
+pub async fn create_machine_pat(name: String) -> Result<CreatePatResult, ServerFnError> {
+    use crate::auth::token_service::TokenService;
+
+    let state = expect_context::<AppState>();
+    let admin = require_admin_user(&state).await?;
+
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err(ServerFnError::new("Token name cannot be empty"));
+    }
+
+    let raw_token = TokenService::generate_opaque_token();
+    let token_hash = TokenService::hash_token(&raw_token);
+    let id = uuid::Uuid::new_v4().to_string();
+
+    // A user-less PAT: not tied to any user account, so it survives the
+    // creator being demoted/removed. `access_levels = None` makes it a
+    // full-admin machine token — required today because the agent's MCP tools
+    // are admin-gated. Provision sparingly; a leak exposes the whole corpus.
+    let token = crate::db::service_token_models::ServiceToken {
+        id: id.clone(),
+        name: name.clone(),
+        token_hash,
+        allowed_scopes: vec![],
+        token_type: "pat".to_string(),
+        user_id: None,
+        can_write: true,
+        access_levels: None,
+        created_by: admin.user_id,
+        created_at: chrono::Utc::now(),
+        last_used_at: None,
+        is_active: true,
+    };
+
+    state
+        .service_token_repo
+        .create(token)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(CreatePatResult {
+        id,
+        name,
+        raw_token,
+    })
+}
+
 #[server(AdminTogglePat, "/api")]
 pub async fn admin_toggle_pat(id: String, active: bool) -> Result<(), ServerFnError> {
     let state = expect_context::<AppState>();

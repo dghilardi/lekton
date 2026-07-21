@@ -59,6 +59,13 @@ pub trait DocumentationFeedbackRepository: Send + Sync {
         delivery_ref: Option<&str>,
         nonce: &str,
     ) -> Result<(), AppError>;
+
+    /// Resolve an item only if it is `in_progress` and claimed for
+    /// `delivery_source_id`. Returns `true` when it matched (and was resolved),
+    /// `false` otherwise — so a caller can authorize resolution to the source
+    /// that actually holds the claim. Idempotent-safe: a non-match is not an
+    /// error.
+    async fn resolve_claimed(&self, id: &str, delivery_source_id: &str) -> Result<bool, AppError>;
 }
 
 #[cfg(feature = "ssr")]
@@ -255,6 +262,27 @@ impl DocumentationFeedbackRepository for MongoDocumentationFeedbackRepository {
         }
 
         Ok(())
+    }
+
+    async fn resolve_claimed(&self, id: &str, delivery_source_id: &str) -> Result<bool, AppError> {
+        use mongodb::bson::doc;
+
+        let result = self
+            .collection
+            .update_one(
+                doc! {
+                    "id": id,
+                    "status": "in_progress",
+                    "delivery_source_id": delivery_source_id,
+                },
+                doc! { "$set": { "status": "resolved" } },
+            )
+            .await
+            .map_err(|e| {
+                AppError::Database(format!("resolve_claimed documentation_feedback: {e}"))
+            })?;
+
+        Ok(result.matched_count == 1)
     }
 }
 

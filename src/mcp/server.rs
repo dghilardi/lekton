@@ -145,6 +145,18 @@ fn default_feedback_limit() -> u64 {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ClaimDocumentationFeedbackParams {
+    /// The feedback item to take in charge.
+    pub feedback_id: String,
+    /// The `source_id` where the fix will be delivered (the repo the PR lands
+    /// in) — may differ from where the item was originally filed.
+    pub delivery_source_id: String,
+    /// Optional human/audit reference to the delivery, e.g. the pull request URL.
+    #[serde(default)]
+    pub delivery_ref: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ListSchemasParams {
     /// Filter by schema type: "openapi", "asyncapi", or "jsonschema".
     #[serde(default)]
@@ -357,7 +369,8 @@ impl LektonMcpServer {
             "search_documentation_feedback"
             | "report_missing_documentation"
             | "propose_documentation_improvement"
-            | "list_documentation_feedback" => self.features.documentation_feedback,
+            | "list_documentation_feedback"
+            | "claim_documentation_feedback" => self.features.documentation_feedback,
             "list_sources" => self.features.sources,
             _ => true,
         }
@@ -1638,6 +1651,59 @@ impl LektonMcpServer {
         });
         let json = serde_json::to_string_pretty(&output)
             .map_err(|e| McpError::internal_error(format!("JSON error: {e}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "claim_documentation_feedback",
+        description = "Take a documentation-feedback item in charge before opening a change: moves it to `in_progress`, records the delivery source (the repo the fix will land in) and an optional delivery reference, and returns a per-claim nonce plus the ready-to-use commit trailer. Excludes the item from the open queue so it is not re-worked. Admin only."
+    )]
+    async fn claim_documentation_feedback(
+        &self,
+        Parameters(params): Parameters<ClaimDocumentationFeedbackParams>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let user_ctx = user_context(&ctx)?;
+        if !user_ctx.user.is_admin {
+            return Err(McpError::invalid_request(
+                "Admin privileges required for claim_documentation_feedback",
+                None,
+            ));
+        }
+
+        let feedback_id = params.feedback_id.trim();
+        let delivery_source_id = params.delivery_source_id.trim();
+        if feedback_id.is_empty() || delivery_source_id.is_empty() {
+            return Err(McpError::invalid_params(
+                "feedback_id and delivery_source_id are required",
+                None,
+            ));
+        }
+        let delivery_ref = params
+            .delivery_ref
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+
+        // Short per-claim nonce: unique enough to guard a re-open cycle, short
+        // enough to sit comfortably in a commit trailer.
+        let nonce: String = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
+
+        self.documentation_feedback_repo
+            .claim(feedback_id, delivery_source_id, delivery_ref, &nonce)
+            .await
+            .map_err(app_err)?;
+
+        let trailer = format!("Resolves-Lekton-Feedback: {feedback_id} (claim={nonce})");
+        let json = serde_json::to_string_pretty(&serde_json::json!({
+            "id": feedback_id,
+            "status": "in_progress",
+            "delivery_source_id": delivery_source_id,
+            "delivery_ref": delivery_ref,
+            "claim_nonce": nonce,
+            "commit_trailer": trailer,
+        }))
+        .map_err(|e| McpError::internal_error(format!("JSON error: {e}"), None))?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 }

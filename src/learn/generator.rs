@@ -110,13 +110,15 @@ impl LessonGenerator {
     }
 
     /// Generate the next lesson for a scope. `covered` lists already-covered
-    /// points so the tutor can pick something new.
+    /// points so the tutor can pick something new; `mission` is the learner's
+    /// stated goal, steering which sub-topic is most worth teaching.
     pub async fn generate(
         &self,
         user_ctx: &UserContext,
         scope: &LearningScope,
         covered: &[String],
         directive: Option<&str>,
+        mission: Option<&str>,
     ) -> Result<GeneratedLesson, AppError> {
         // ── Stage 1: which documents ──────────────────────────────────────
         let (target, candidate_slugs) = match scope {
@@ -163,7 +165,7 @@ impl LessonGenerator {
         }
 
         // ── Stage 3: generate (JSON mode, with a corrective retry) ────────
-        let system_prompt = self.render_system_prompt(&target, covered, directive)?;
+        let system_prompt = self.render_system_prompt(&target, covered, directive, mission)?;
         let parsed = self.generate_parsed(&system_prompt, &context).await?;
 
         // ── Stage 4: validate + sanitize ──────────────────────────────────
@@ -239,16 +241,9 @@ impl LessonGenerator {
         target: &str,
         covered: &[String],
         directive: Option<&str>,
+        mission: Option<&str>,
     ) -> Result<String, AppError> {
-        let mut tera = tera::Tera::default();
-        tera.add_raw_template("tutor", &self.system_template)
-            .map_err(|e| AppError::Internal(format!("learn: invalid tutor template: {e}")))?;
-        let mut ctx = tera::Context::new();
-        ctx.insert("target", target);
-        ctx.insert("covered", &covered.join("; "));
-        ctx.insert("directive", &directive.unwrap_or(""));
-        tera.render("tutor", &ctx)
-            .map_err(|e| AppError::Internal(format!("learn: tutor template render failed: {e}")))
+        render_tutor_prompt(&self.system_template, target, covered, directive, mission)
     }
 
     /// Generate and parse a lesson, retrying once without JSON mode and with a
@@ -322,6 +317,28 @@ impl LessonGenerator {
             .and_then(|c| c.message.content)
             .unwrap_or_default())
     }
+}
+
+/// Render the tutor system prompt from its Tera template. Extracted as a free
+/// function so the templating (mission/directive/covered wiring) is unit
+/// testable without building a whole generator.
+fn render_tutor_prompt(
+    template: &str,
+    target: &str,
+    covered: &[String],
+    directive: Option<&str>,
+    mission: Option<&str>,
+) -> Result<String, AppError> {
+    let mut tera = tera::Tera::default();
+    tera.add_raw_template("tutor", template)
+        .map_err(|e| AppError::Internal(format!("learn: invalid tutor template: {e}")))?;
+    let mut ctx = tera::Context::new();
+    ctx.insert("target", target);
+    ctx.insert("covered", &covered.join("; "));
+    ctx.insert("directive", &directive.unwrap_or(""));
+    ctx.insert("mission", &mission.unwrap_or("").trim());
+    tera.render("tutor", &ctx)
+        .map_err(|e| AppError::Internal(format!("learn: tutor template render failed: {e}")))
 }
 
 /// Concatenate documents under a character budget. Returns `(context, truncated)`
@@ -440,6 +457,45 @@ fn validate_and_build(raw: RawLesson, source_slugs: &[String]) -> GeneratedLesso
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::learn::prompt::TUTOR_SYSTEM_TEMPLATE;
+
+    #[test]
+    fn tutor_prompt_includes_the_mission_when_present() {
+        let out = render_tutor_prompt(
+            TUTOR_SYSTEM_TEMPLATE,
+            "the topic \"kafka\"",
+            &[],
+            None,
+            Some("ship a Kafka consumer"),
+        )
+        .unwrap();
+        assert!(out.contains("the topic \"kafka\""));
+        assert!(out.contains("ship a Kafka consumer"));
+        assert!(out.contains("The learner's goal"));
+    }
+
+    #[test]
+    fn tutor_prompt_omits_the_mission_block_when_absent() {
+        let with_empty = render_tutor_prompt(
+            TUTOR_SYSTEM_TEMPLATE,
+            "the topic \"kafka\"",
+            &[],
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(!with_empty.contains("The learner's goal"));
+        // A blank mission is treated the same as no mission.
+        let blank = render_tutor_prompt(
+            TUTOR_SYSTEM_TEMPLATE,
+            "the topic \"kafka\"",
+            &[],
+            None,
+            Some("   "),
+        )
+        .unwrap();
+        assert!(!blank.contains("The learner's goal"));
+    }
 
     fn doc(slug: &str, title: &str, content: &str) -> SourceDoc {
         SourceDoc {

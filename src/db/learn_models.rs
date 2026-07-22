@@ -29,6 +29,11 @@ pub struct LearningPath {
     pub scope: LearningScope,
     /// Short title shown in the dashboard.
     pub title: String,
+    /// The learner's own reason for studying this — the "mission". Optional,
+    /// captured when the path is started; steers every lesson toward what
+    /// serves this goal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mission: Option<String>,
     /// Section anchors / document slugs already covered, used to calibrate the
     /// next lesson (avoid repeating covered ground).
     #[serde(default)]
@@ -228,6 +233,7 @@ mod tests {
                 tag: "kafka".into(),
             },
             title: "Kafka basics".into(),
+            mission: Some("ship a Kafka consumer".into()),
             covered_anchors: vec!["docs/kafka#intro".into()],
             created_at: Utc::now(),
             updated_at: Utc::now(),

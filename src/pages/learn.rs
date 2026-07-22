@@ -42,6 +42,7 @@ pub fn LearnDashboardPage() -> impl IntoView {
 
     let scope_kind = RwSignal::new("tag".to_string());
     let scope_value = RwSignal::new(String::new());
+    let mission = RwSignal::new(String::new());
     let error = RwSignal::new(None::<String>);
     let starting = RwSignal::new(false);
     let ephemeral = RwSignal::new(None::<LessonView>);
@@ -51,6 +52,8 @@ pub fn LearnDashboardPage() -> impl IntoView {
         let navigate = navigate.clone();
         let kind = scope_kind.get();
         let value = scope_value.get().trim().to_string();
+        let goal = mission.get().trim().to_string();
+        let goal = (!goal.is_empty()).then_some(goal);
         let do_persist = persist.get();
         async move {
             if value.is_empty() {
@@ -65,12 +68,18 @@ pub fn LearnDashboardPage() -> impl IntoView {
                 _ => LearningScope::Tag { tag: value },
             };
             if do_persist {
-                match with_auth_retry(move || start_learning_path(scope.clone())).await {
+                match with_auth_retry(move || start_learning_path(scope.clone(), goal.clone()))
+                    .await
+                {
                     Ok(path) => navigate(&format!("/learn/{}", path.id), Default::default()),
                     Err(e) => error.set(Some(e.to_string())),
                 }
             } else {
-                match with_auth_retry(move || generate_ephemeral_lesson(scope.clone())).await {
+                match with_auth_retry(move || {
+                    generate_ephemeral_lesson(scope.clone(), goal.clone())
+                })
+                .await
+                {
                     Ok(lesson) => ephemeral.set(Some(lesson)),
                     Err(e) => error.set(Some(e.to_string())),
                 }
@@ -158,6 +167,13 @@ pub fn LearnDashboardPage() -> impl IntoView {
                             }}
                         </button>
                     </div>
+                    <input
+                        type="text"
+                        class="input input-bordered w-full"
+                        placeholder="Why do you want to learn this? (optional — shapes every lesson)"
+                        prop:value=move || mission.get()
+                        on:input=move |ev| mission.set(event_target_value(&ev))
+                    />
                 </div>
             </div>
 
@@ -250,9 +266,13 @@ pub fn LearnPathPage() -> impl IntoView {
                 {move || data.get().map(|res| match res {
                     Ok(pw) => {
                         let title = pw.path.title.clone();
+                        let mission = pw.path.mission.clone();
                         let empty = pw.lessons.is_empty();
                         view! {
                             <h1 class="text-2xl font-semibold">{title}</h1>
+                            {mission.map(|m| view! {
+                                <p class="text-sm text-base-content/60 italic">"Goal: "{m}</p>
+                            })}
                             {if empty {
                                 view! {
                                     <p class="text-base-content/60 text-sm">

@@ -14,6 +14,7 @@ fn path(id: &str, user: &str) -> LearningPath {
             tag: "kafka".into(),
         },
         title: "Kafka basics".into(),
+        mission: None,
         covered_anchors: vec![],
         created_at: Utc::now(),
         updated_at: Utc::now(),

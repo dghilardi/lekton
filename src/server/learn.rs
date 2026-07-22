@@ -29,14 +29,18 @@ fn learn_service(
         .ok_or_else(|| ServerFnError::new("Learn mode is not enabled"))
 }
 
-/// Start a new learning path over the given scope.
+/// Start a new learning path over the given scope. `mission` is the learner's
+/// own reason for studying it (optional) and grounds every lesson in the path.
 #[server(StartLearningPath, "/api")]
-pub async fn start_learning_path(scope: LearningScope) -> Result<LearningPath, ServerFnError> {
+pub async fn start_learning_path(
+    scope: LearningScope,
+    mission: Option<String>,
+) -> Result<LearningPath, ServerFnError> {
     let state = expect_context::<AppState>();
     let user_ctx = require_user_context(&state).await?;
     let service = learn_service(&state)?;
     service
-        .start_path(&user_ctx, scope)
+        .start_path(&user_ctx, scope, mission)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
 }
@@ -131,12 +135,15 @@ pub async fn set_learn_privacy(persist: bool) -> Result<(), ServerFnError> {
 
 /// Generate a one-off lesson without persisting anything (privacy opt-out).
 #[server(GenerateEphemeralLesson, "/api")]
-pub async fn generate_ephemeral_lesson(scope: LearningScope) -> Result<LessonView, ServerFnError> {
+pub async fn generate_ephemeral_lesson(
+    scope: LearningScope,
+    mission: Option<String>,
+) -> Result<LessonView, ServerFnError> {
     let state = expect_context::<AppState>();
     let user_ctx = require_user_context(&state).await?;
     let service = learn_service(&state)?;
     service
-        .generate_ephemeral(&user_ctx, &scope)
+        .generate_ephemeral(&user_ctx, &scope, mission)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
 }

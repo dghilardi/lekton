@@ -227,15 +227,20 @@ def _live_login(cfg):
     return _LIVE_COOKIE
 
 
-def lekton_live(cfg, slug, attempts=4):
+def lekton_live(cfg, slug, mission=None, attempts=4):
     """Generate a real ephemeral lesson from the running instance (Document
     scope). Returns the parsed Lesson JSON — the shipped output, using the real
     prompt/generator/model. Retries transient 5xx (the free upstream model is
-    flaky) so the harness stays usable."""
+    flaky) so the harness stays usable.
+
+    `mission` exercises the learner-goal grounding; an empty field is sent when
+    absent so the request shape always matches the server fn signature."""
     import time
 
     cookie = _live_login(cfg)
-    data = urllib.parse.urlencode({"scope[kind]": "document", "scope[slug]": slug}).encode()
+    data = urllib.parse.urlencode(
+        {"scope[kind]": "document", "scope[slug]": slug, "mission": mission or ""}
+    ).encode()
     last = None
     for i in range(attempts):
         req = urllib.request.Request(
@@ -403,7 +408,7 @@ def cmd_gen(cfg, topics, args):
             print(f"  gen  {t['id']} / {name} (truncated={truncated})")
             try:
                 if spec["backend"] == "lekton-live":
-                    lesson = lekton_live(cfg, slugs[0])
+                    lesson = lekton_live(cfg, slugs[0], mission=t.get("mission"))
                 else:
                     system = render_system(spec["prompt"], t["target"])
                     lesson = call_backend(cfg, spec["backend"], system, user)

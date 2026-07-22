@@ -34,11 +34,13 @@ impl LearnService {
         }
     }
 
-    /// Start a new learning path for the user.
+    /// Start a new learning path for the user. `mission` is the learner's own
+    /// reason for studying this scope; it grounds every lesson in the path.
     pub async fn start_path(
         &self,
         user_ctx: &UserContext,
         scope: LearningScope,
+        mission: Option<String>,
     ) -> Result<LearningPath, AppError> {
         let now = Utc::now();
         let path = LearningPath {
@@ -46,6 +48,7 @@ impl LearnService {
             user_id: user_ctx.user.user_id.clone(),
             title: default_title(&scope),
             scope,
+            mission: normalize_mission(mission),
             covered_anchors: Vec::new(),
             created_at: now,
             updated_at: now,
@@ -73,7 +76,13 @@ impl LearnService {
 
         let generated = self
             .generator
-            .generate(user_ctx, &path.scope, covered, Some(focus.directive()))
+            .generate(
+                user_ctx,
+                &path.scope,
+                covered,
+                Some(focus.directive()),
+                path.mission.as_deref(),
+            )
             .await?;
 
         let seq = self.repo.list_lessons_for_path(path_id).await?.len() as u32 + 1;
@@ -179,8 +188,13 @@ impl LearnService {
         &self,
         user_ctx: &UserContext,
         scope: &LearningScope,
+        mission: Option<String>,
     ) -> Result<LessonView, AppError> {
-        let generated = self.generator.generate(user_ctx, scope, &[], None).await?;
+        let mission = normalize_mission(mission);
+        let generated = self
+            .generator
+            .generate(user_ctx, scope, &[], None, mission.as_deref())
+            .await?;
         let lesson = into_lesson(
             Uuid::new_v4().to_string(),
             String::new(),
@@ -281,6 +295,13 @@ fn quiz_key(quiz: &[QuizQuestion]) -> QuizKey {
         correct: quiz.iter().map(|q| q.correct_index).collect(),
         explanations: quiz.iter().map(|q| q.explanation.clone()).collect(),
     }
+}
+
+/// Trim a learner-supplied mission, treating blank input as "no mission".
+fn normalize_mission(mission: Option<String>) -> Option<String> {
+    mission
+        .map(|m| m.trim().to_string())
+        .filter(|m| !m.is_empty())
 }
 
 /// Derive a short human-readable title for a new path.

@@ -14,7 +14,8 @@ public/js/asyncapi-default.min.css
 
 # Environment variables
 .env
-
+.env.*
+!.env.example
 # Local config overrides (contain sensitive values)
 config/lekton.toml
 

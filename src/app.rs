@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 use crate::components::Layout;
 use crate::editor::component::EditorPage;
 use crate::pages::{
-    AdminSettingsPage, ChatPage, DocPage, HomePage, LoginPage, NotFound, ProfilePage, PromptsPage,
+    AdminSettingsPage, ChatPage, DocPage, HomePage, LearnDashboardPage, LearnPathPage, LoginPage,
+    NotFound, ProfilePage, PromptsPage,
 };
 use crate::schema::component::{SchemaListPage, SchemaViewerPage};
 // Re-export server functions so existing `use crate::app::*` imports keep working.
@@ -16,6 +17,7 @@ pub use crate::server::auth_fns::*;
 pub use crate::server::custom_css::*;
 pub use crate::server::docs::*;
 pub use crate::server::feedback::*;
+pub use crate::server::learn::*;
 pub use crate::server::nav::NavigationOrderEntry;
 pub use crate::server::nav::*;
 pub use crate::server::pats::*;
@@ -378,6 +380,8 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/schemas") view=SchemaListRoute />
                     <Route path=path!("/schemas/*name") view=SchemaViewerRoute />
                     <Route path=path!("/chat") view=ChatRoute />
+                    <Route path=path!("/learn") view=LearnRoute />
+                    <Route path=path!("/learn/:path_id") view=LearnPathRoute />
                     <Route path=path!("/prompts") view=PromptsRoute />
                     <Route path=path!("/profile") view=ProfilePage />
                     <Route path=path!("/admin/:section") view=AdminSettingsPage />
@@ -418,6 +422,18 @@ fn ChatRoute() -> impl IntoView {
 fn PromptsRoute() -> impl IntoView {
     let enabled = route_feature(|f| f.prompt_library);
     view! { <Show when=move || enabled.get() fallback=|| view! { <NotFound /> }><PromptsPage /></Show> }
+}
+
+#[component]
+fn LearnRoute() -> impl IntoView {
+    let enabled = route_feature(|f| f.learn);
+    view! { <Show when=move || enabled.get() fallback=|| view! { <NotFound /> }><LearnDashboardPage /></Show> }
+}
+
+#[component]
+fn LearnPathRoute() -> impl IntoView {
+    let enabled = route_feature(|f| f.learn);
+    view! { <Show when=move || enabled.get() fallback=|| view! { <NotFound /> }><LearnPathPage /></Show> }
 }
 
 #[cfg(test)]

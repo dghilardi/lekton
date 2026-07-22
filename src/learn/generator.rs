@@ -1,16 +1,17 @@
 //! Lesson generation: grounding on internal docs + structured LLM generation.
 //!
 //! Pipeline:
-//! 1. **Find documents** — semantic retrieval (`ChatService::retrieve_only`,
-//!    already access-filtered) selects the relevant document slugs; a
-//!    `Document` scope names its slug directly.
-//! 2. **Whole documents** — the full markdown of each selected document is
-//!    loaded (so no section is lost), re-filtered by the user's access levels
-//!    as defence in depth, and concatenated under a character budget.
+//! 1-2. **Grounding sections** — Tag/Topic scopes ground on the semantically
+//!    retrieved sections (`ChatService::retrieve_only`, already access-filtered),
+//!    keeping their real section anchors; a `Document` scope grounds on that
+//!    document — whole when it fits the context budget, otherwise split into
+//!    heading-delimited sections — re-filtered by the user's access levels as
+//!    defence in depth, and concatenated under a character budget.
 //! 3. **Generate** — one structured LLM call produces a JSON lesson.
 //! 4. **Validate + sanitize** — citations that don't resolve to a provided
-//!    document are dropped; the body HTML is sanitized with the app's ammonia
-//!    allowlist; a lesson with no valid citation is rejected.
+//!    section are dropped; the body HTML is sanitized with the app's ammonia
+//!    allowlist; citations are backfilled from the grounding sections if none
+//!    resolve.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -29,6 +30,7 @@ use crate::error::AppError;
 use crate::rag::chat::ChatService;
 use crate::rag::client::format_llm_error;
 use crate::rag::provider::LlmProvider;
+use crate::rag::splitter::split_document_sections;
 use crate::rendering::markdown::sanitize_html;
 use crate::storage::client::StorageClient;
 
@@ -49,11 +51,15 @@ pub struct GeneratedLesson {
     pub context_truncated: bool,
 }
 
-/// One source document loaded for grounding.
-struct SourceDoc {
+/// One grounding section fed to the tutor. For retrieval-based scopes (Tag /
+/// Topic) a section is a reranked chunk; for a small Document scope it is the
+/// whole document; for a large one it is a heading-delimited section. `anchor`
+/// is the real section anchor when known, so citations can deep-link.
+struct Section {
     slug: String,
     title: String,
-    content: String,
+    anchor: Option<String>,
+    text: String,
 }
 
 /// The raw JSON shape emitted by the LLM. Reuses the persisted field types so
@@ -120,35 +126,39 @@ impl LessonGenerator {
         directive: Option<&str>,
         mission: Option<&str>,
     ) -> Result<GeneratedLesson, AppError> {
-        // ── Stage 1: which documents ──────────────────────────────────────
-        let (target, candidate_slugs) = match scope {
-            LearningScope::Document { slug } => {
-                (format!("the document \"{slug}\""), vec![slug.clone()])
-            }
+        // ── Stages 1-2: assemble the grounding sections ───────────────────
+        // Tag/Topic ground on the semantically retrieved sections (relevant
+        // slices, with real anchors); a Document scope grounds on that document
+        // — whole when it fits the budget, split into sections when it doesn't.
+        let (target, sections) = match scope {
+            LearningScope::Document { slug } => (
+                format!("the document \"{slug}\""),
+                self.document_sections(user_ctx, slug).await?,
+            ),
             LearningScope::Tag { tag } => (
                 format!("the topic \"{tag}\""),
-                self.retrieve_slugs(user_ctx, tag).await?,
+                self.retrieved_sections(user_ctx, tag).await?,
             ),
             LearningScope::Topic { text } => {
-                (text.clone(), self.retrieve_slugs(user_ctx, text).await?)
+                (text.clone(), self.retrieved_sections(user_ctx, text).await?)
             }
         };
 
-        if candidate_slugs.is_empty() {
-            return Err(AppError::NotFound(
-                "no documentation found for this learning scope".into(),
-            ));
-        }
-
-        // ── Stage 2: whole documents (access-filtered) ────────────────────
-        let docs = self.load_documents(user_ctx, &candidate_slugs).await?;
-        if docs.is_empty() {
+        if sections.is_empty() {
             return Err(AppError::NotFound(
                 "no accessible documentation found for this learning scope".into(),
             ));
         }
-        let source_slugs: Vec<String> = docs.iter().map(|d| d.slug.clone()).collect();
-        let (body, truncated) = assemble_context(&docs, self.max_context_chars);
+
+        // Distinct source slugs (relevance order), for calibration/coverage.
+        let mut source_slugs: Vec<String> = Vec::new();
+        for s in &sections {
+            if !source_slugs.contains(&s.slug) {
+                source_slugs.push(s.slug.clone());
+            }
+        }
+
+        let (body, truncated) = assemble_context(&sections, self.max_context_chars);
         // Prefix the exact slugs so the model can echo them verbatim in citations.
         let context = format!(
             "Available document slugs (use these EXACT strings in every citation's \
@@ -169,71 +179,111 @@ impl LessonGenerator {
         let parsed = self.generate_parsed(&system_prompt, &context).await?;
 
         // ── Stage 4: validate + sanitize ──────────────────────────────────
-        let mut lesson = validate_and_build(parsed, &source_slugs);
+        let mut lesson = validate_and_build(parsed, &sections);
         lesson.source_slugs = source_slugs;
         lesson.context_truncated = truncated;
         Ok(lesson)
     }
 
-    /// Semantic retrieval → distinct document slugs, capped at
-    /// `max_source_documents`, preserving relevance order.
-    async fn retrieve_slugs(
+    /// Semantic retrieval → grounding sections (the reranked chunks), deduped
+    /// by `(slug, anchor)` in relevance order, limited to `max_source_documents`
+    /// distinct documents. Access is already filtered by `retrieve_only`.
+    async fn retrieved_sections(
         &self,
         user_ctx: &UserContext,
         query: &str,
-    ) -> Result<Vec<String>, AppError> {
+    ) -> Result<Vec<Section>, AppError> {
         let session_id = uuid::Uuid::new_v4().to_string();
         let retrieval = self
             .chat_service
             .retrieve_only(user_ctx, query, &[], &session_id)
             .await?;
 
-        let mut seen = HashSet::new();
-        let mut slugs = Vec::new();
+        let mut slugs_seen: HashSet<String> = HashSet::new();
+        let mut section_keys: HashSet<(String, String)> = HashSet::new();
+        let mut sections = Vec::new();
         for chunk in retrieval.post_rerank {
             if chunk.document_slug.is_empty() {
                 continue; // e.g. attachment-sourced chunks carry no doc slug
             }
-            if seen.insert(chunk.document_slug.clone()) {
-                slugs.push(chunk.document_slug);
-                if slugs.len() >= self.max_source_documents {
-                    break;
-                }
-            }
-        }
-        Ok(slugs)
-    }
-
-    /// Fetch documents by slug, keep only readable published ones, and load
-    /// their markdown from storage.
-    async fn load_documents(
-        &self,
-        user_ctx: &UserContext,
-        slugs: &[String],
-    ) -> Result<Vec<SourceDoc>, AppError> {
-        let docs = self.document_repo.find_by_slugs(slugs).await?;
-        let mut out = Vec::new();
-        for doc in docs {
-            // Defence in depth: retrieval already filters by access, but a
-            // Document-scope path fetches directly, so gate here too. Lessons
-            // are taught from published docs only.
-            if doc.is_draft || !user_ctx.can_read(&doc.access_level) {
+            if chunk.chunk_text.trim().is_empty() {
                 continue;
             }
-            let content = match self.storage_client.get_object(&doc.s3_key).await? {
-                Some(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-                None => continue,
-            };
-            if content.trim().is_empty() {
+            // Cap the number of distinct documents, but keep several sections
+            // from each so a lesson can span a document's structure.
+            if !slugs_seen.contains(&chunk.document_slug)
+                && slugs_seen.len() >= self.max_source_documents
+            {
                 continue;
             }
-            out.push(SourceDoc {
-                slug: doc.slug,
-                title: doc.title,
-                content,
+            let anchor = (!chunk.section_anchor.is_empty()).then(|| chunk.section_anchor.clone());
+            let key = (
+                chunk.document_slug.clone(),
+                anchor.clone().unwrap_or_default(),
+            );
+            if !section_keys.insert(key) {
+                continue; // already have this section
+            }
+            slugs_seen.insert(chunk.document_slug.clone());
+            sections.push(Section {
+                slug: chunk.document_slug,
+                title: chunk.document_title,
+                anchor,
+                text: chunk.chunk_text,
             });
         }
-        Ok(out)
+        Ok(sections)
+    }
+
+    /// Ground on a single document by slug: whole document when it fits the
+    /// context budget, otherwise split into heading-delimited sections. Keeps
+    /// only a readable, published document (defence in depth — a Document scope
+    /// fetches directly, bypassing retrieval's access filter).
+    async fn document_sections(
+        &self,
+        user_ctx: &UserContext,
+        slug: &str,
+    ) -> Result<Vec<Section>, AppError> {
+        let docs = self
+            .document_repo
+            .find_by_slugs(&[slug.to_string()])
+            .await?;
+        let Some(doc) = docs.into_iter().next() else {
+            return Ok(Vec::new());
+        };
+        if doc.is_draft || !user_ctx.can_read(&doc.access_level) {
+            return Ok(Vec::new());
+        }
+        let content = match self.storage_client.get_object(&doc.s3_key).await? {
+            Some(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+            None => return Ok(Vec::new()),
+        };
+        if content.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Small enough to teach whole; keep it as one section (no anchor).
+        if content.len() <= self.max_context_chars {
+            return Ok(vec![Section {
+                slug: doc.slug,
+                title: doc.title,
+                anchor: None,
+                text: content,
+            }]);
+        }
+
+        // Too large: split into sections so selection/citations are per-section.
+        let sections = split_document_sections(&content)
+            .into_iter()
+            .filter(|(_, text)| !text.trim().is_empty())
+            .map(|(anchor, text)| Section {
+                slug: doc.slug.clone(),
+                title: doc.title.clone(),
+                anchor: (!anchor.is_empty()).then_some(anchor),
+                text,
+            })
+            .collect();
+        Ok(sections)
     }
 
     fn render_system_prompt(
@@ -341,13 +391,18 @@ fn render_tutor_prompt(
         .map_err(|e| AppError::Internal(format!("learn: tutor template render failed: {e}")))
 }
 
-/// Concatenate documents under a character budget. Returns `(context, truncated)`
-/// where `truncated` is true if any document was cut or dropped to fit.
-fn assemble_context(docs: &[SourceDoc], max_chars: usize) -> (String, bool) {
+/// Concatenate sections under a character budget. Returns `(context, truncated)`
+/// where `truncated` is true if any section was cut or dropped to fit. Each
+/// section is headed with its document title, slug, and anchor so the model can
+/// cite it precisely.
+fn assemble_context(sections: &[Section], max_chars: usize) -> (String, bool) {
     let mut out = String::new();
     let mut truncated = false;
-    for doc in docs {
-        let header = format!("## {} ({})\n\n", doc.title, doc.slug);
+    for section in sections {
+        let header = match &section.anchor {
+            Some(a) => format!("## {} ({}#{})\n\n", section.title, section.slug, a),
+            None => format!("## {} ({})\n\n", section.title, section.slug),
+        };
         let remaining = max_chars.saturating_sub(out.len());
         if remaining <= header.len() {
             truncated = true;
@@ -355,16 +410,16 @@ fn assemble_context(docs: &[SourceDoc], max_chars: usize) -> (String, bool) {
         }
         out.push_str(&header);
         let body_budget = remaining - header.len();
-        if doc.content.len() <= body_budget {
-            out.push_str(&doc.content);
+        if section.text.len() <= body_budget {
+            out.push_str(&section.text);
             out.push_str("\n\n");
         } else {
             // Cut on a char boundary within the budget.
             let mut cut = body_budget;
-            while cut > 0 && !doc.content.is_char_boundary(cut) {
+            while cut > 0 && !section.text.is_char_boundary(cut) {
                 cut -= 1;
             }
-            out.push_str(&doc.content[..cut]);
+            out.push_str(&section.text[..cut]);
             out.push_str("\n\n");
             truncated = true;
             break;
@@ -403,15 +458,24 @@ fn resolve_slug(slug: &str, source_slugs: &[String]) -> Option<String> {
 /// Sanitize the body, canonicalize/keep only citations that resolve to a
 /// provided document, and validate quiz questions.
 ///
-/// The lesson is grounded on the provided documents by construction (they are
+/// The lesson is grounded on the provided sections by construction (they are
 /// the only context), so if the model's citations don't resolve we backfill
-/// citations from the source documents rather than discarding the lesson.
-fn validate_and_build(raw: RawLesson, source_slugs: &[String]) -> GeneratedLesson {
+/// citations from the source sections — with their real anchors — rather than
+/// discarding the lesson.
+fn validate_and_build(raw: RawLesson, sections: &[Section]) -> GeneratedLesson {
+    // Distinct source slugs, in order, for slug resolution.
+    let mut source_slugs: Vec<String> = Vec::new();
+    for s in sections {
+        if !source_slugs.contains(&s.slug) {
+            source_slugs.push(s.slug.clone());
+        }
+    }
+
     let mut citations: Vec<LessonCitation> = raw
         .citations
         .into_iter()
         .filter_map(|mut c| {
-            resolve_slug(&c.document_slug, source_slugs).map(|canon| {
+            resolve_slug(&c.document_slug, &source_slugs).map(|canon| {
                 c.document_slug = canon;
                 c
             })
@@ -419,18 +483,21 @@ fn validate_and_build(raw: RawLesson, source_slugs: &[String]) -> GeneratedLesso
         .collect();
 
     if citations.is_empty() {
-        citations = source_slugs
+        // Backfill one anchored citation per distinct source section.
+        let mut seen: HashSet<(String, Option<String>)> = HashSet::new();
+        citations = sections
             .iter()
-            .map(|slug| LessonCitation {
-                document_slug: slug.clone(),
-                section_anchor: None,
+            .filter(|s| seen.insert((s.slug.clone(), s.anchor.clone())))
+            .map(|s| LessonCitation {
+                document_slug: s.slug.clone(),
+                section_anchor: s.anchor.clone(),
                 quote: String::new(),
             })
             .collect();
     }
 
     let primary_source = raw.primary_source.and_then(|s| {
-        resolve_slug(&s.document_slug, source_slugs).map(|canon| LessonSource {
+        resolve_slug(&s.document_slug, &source_slugs).map(|canon| LessonSource {
             document_slug: canon,
             section_anchor: s.section_anchor,
         })
@@ -497,18 +564,22 @@ mod tests {
         assert!(!blank.contains("The learner's goal"));
     }
 
-    fn doc(slug: &str, title: &str, content: &str) -> SourceDoc {
-        SourceDoc {
+    fn section(slug: &str, title: &str, anchor: Option<&str>, text: &str) -> Section {
+        Section {
             slug: slug.into(),
             title: title.into(),
-            content: content.into(),
+            anchor: anchor.map(Into::into),
+            text: text.into(),
         }
     }
 
     #[test]
     fn assemble_context_fits_within_budget() {
-        let docs = vec![doc("a", "A", "hello"), doc("b", "B", "world")];
-        let (ctx, truncated) = assemble_context(&docs, 10_000);
+        let secs = vec![
+            section("a", "A", None, "hello"),
+            section("b", "B", None, "world"),
+        ];
+        let (ctx, truncated) = assemble_context(&secs, 10_000);
         assert!(ctx.contains("## A (a)"));
         assert!(ctx.contains("hello"));
         assert!(ctx.contains("world"));
@@ -516,9 +587,16 @@ mod tests {
     }
 
     #[test]
+    fn assemble_context_includes_the_section_anchor_in_the_header() {
+        let secs = vec![section("docs/kafka", "Kafka", Some("partitions"), "text")];
+        let (ctx, _) = assemble_context(&secs, 10_000);
+        assert!(ctx.contains("## Kafka (docs/kafka#partitions)"));
+    }
+
+    #[test]
     fn assemble_context_truncates_and_flags() {
-        let docs = vec![doc("a", "A", &"x".repeat(1000))];
-        let (ctx, truncated) = assemble_context(&docs, 50);
+        let secs = vec![section("a", "A", None, &"x".repeat(1000))];
+        let (ctx, truncated) = assemble_context(&secs, 50);
         assert!(truncated);
         assert!(ctx.len() <= 50 + "\n\n".len());
     }
@@ -535,8 +613,8 @@ mod tests {
         assert!(extract_json("no json here").is_err());
     }
 
-    fn allowed() -> Vec<String> {
-        vec!["docs/kafka".to_string()]
+    fn allowed() -> Vec<Section> {
+        vec![section("docs/kafka", "Kafka", Some("partitions"), "body")]
     }
 
     #[test]
@@ -614,6 +692,11 @@ mod tests {
         let lesson = validate_and_build(raw, &allowed());
         assert_eq!(lesson.citations.len(), 1);
         assert_eq!(lesson.citations[0].document_slug, "docs/kafka");
+        // Backfilled citation carries the section's real anchor.
+        assert_eq!(
+            lesson.citations[0].section_anchor.as_deref(),
+            Some("partitions")
+        );
     }
 
     #[test]

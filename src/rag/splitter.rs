@@ -157,12 +157,57 @@ pub fn split_document(
     chunks
 }
 
+/// Section-level split of a Markdown document: one entry per H1/H2 section
+/// (with small sections merged forward), each carrying its heading-derived
+/// anchor and full text. Unlike [`split_document`] this does **not** token-chunk
+/// or overlap — it is used where whole sections are wanted rather than
+/// embedding-sized chunks (Learn mode grounding of a large single document).
+///
+/// The anchor matches the one [`split_document`] assigns, so citations resolve
+/// to the same `#anchor` the docs page uses.
+pub fn split_document_sections(content: &str) -> Vec<(String, String)> {
+    if content.is_empty() {
+        return Vec::new();
+    }
+    let sections = split_into_sections(content);
+    let sections = merge_small_sections(sections, MIN_SECTION_CHARS);
+    sections
+        .into_iter()
+        .map(|s| {
+            let anchor = s
+                .heading_path
+                .iter()
+                .map(|h| anchor_from_heading(h))
+                .collect::<Vec<_>>()
+                .join("-");
+            (anchor, s.text)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const TOKENS: usize = 256;
     const OVERLAP: usize = 64;
+
+    #[test]
+    fn split_document_sections_yields_anchored_sections() {
+        // Bodies must clear MIN_SECTION_CHARS (128) or a small section merges
+        // forward into the next and adopts its heading.
+        let filler = "x".repeat(200);
+        let md = format!(
+            "# Intro\n\nWelcome to the guide. {filler}\n\n\
+             # Deployment\n\nHow deployments work. {filler}\n"
+        );
+        let sections = split_document_sections(&md);
+        assert!(sections.len() >= 2, "got {sections:?}");
+        let anchors: Vec<&str> = sections.iter().map(|(a, _)| a.as_str()).collect();
+        assert!(anchors.contains(&"intro"), "anchors: {anchors:?}");
+        assert!(anchors.contains(&"deployment"), "anchors: {anchors:?}");
+        assert!(sections.iter().any(|(_, t)| t.contains("deployments work")));
+    }
 
     fn table_chunks<'a>(chunks: &'a [SplitChunk], header: &str) -> Vec<&'a SplitChunk> {
         chunks

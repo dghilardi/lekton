@@ -24,7 +24,9 @@ use async_openai::types::chat::{
 use serde::Deserialize;
 
 use crate::auth::models::UserContext;
-use crate::db::learn_models::{LearningScope, LessonCitation, LessonSource, QuizQuestion};
+use crate::db::learn_models::{
+    GlossaryTerm, LearningScope, LessonCitation, LessonSource, QuizQuestion,
+};
 use crate::db::repository::DocumentRepository;
 use crate::error::AppError;
 use crate::rag::chat::ChatService;
@@ -47,6 +49,8 @@ pub struct GeneratedLesson {
     pub quiz: Vec<QuizQuestion>,
     /// Slugs of the documents that grounded this lesson (for calibration).
     pub source_slugs: Vec<String>,
+    /// New glossary terms the lesson introduced, to persist and reuse later.
+    pub glossary: Vec<GlossaryTerm>,
     /// Whether the source context was truncated to fit the budget.
     pub context_truncated: bool,
 }
@@ -74,6 +78,8 @@ struct RawLesson {
     primary_source: Option<LessonSource>,
     #[serde(default)]
     quiz: Vec<QuizQuestion>,
+    #[serde(default)]
+    glossary: Vec<GlossaryTerm>,
 }
 
 /// Generates lessons grounded on the internal documentation.
@@ -118,6 +124,7 @@ impl LessonGenerator {
     /// Generate the next lesson for a scope. `covered` lists already-covered
     /// points so the tutor can pick something new; `mission` is the learner's
     /// stated goal, steering which sub-topic is most worth teaching.
+    #[allow(clippy::too_many_arguments)]
     pub async fn generate(
         &self,
         user_ctx: &UserContext,
@@ -125,6 +132,7 @@ impl LessonGenerator {
         covered: &[String],
         directive: Option<&str>,
         mission: Option<&str>,
+        known_terms: &[GlossaryTerm],
     ) -> Result<GeneratedLesson, AppError> {
         // ── Stages 1-2: assemble the grounding sections ───────────────────
         // Tag/Topic ground on the semantically retrieved sections (relevant
@@ -175,7 +183,8 @@ impl LessonGenerator {
         }
 
         // ── Stage 3: generate (JSON mode, with a corrective retry) ────────
-        let system_prompt = self.render_system_prompt(&target, covered, directive, mission)?;
+        let system_prompt =
+            self.render_system_prompt(&target, covered, directive, mission, known_terms)?;
         let parsed = self.generate_parsed(&system_prompt, &context).await?;
 
         // ── Stage 4: validate + sanitize ──────────────────────────────────
@@ -292,8 +301,16 @@ impl LessonGenerator {
         covered: &[String],
         directive: Option<&str>,
         mission: Option<&str>,
+        known_terms: &[GlossaryTerm],
     ) -> Result<String, AppError> {
-        render_tutor_prompt(&self.system_template, target, covered, directive, mission)
+        render_tutor_prompt(
+            &self.system_template,
+            target,
+            covered,
+            directive,
+            mission,
+            known_terms,
+        )
     }
 
     /// Generate and parse a lesson, retrying once without JSON mode and with a
@@ -378,15 +395,22 @@ fn render_tutor_prompt(
     covered: &[String],
     directive: Option<&str>,
     mission: Option<&str>,
+    known_terms: &[GlossaryTerm],
 ) -> Result<String, AppError> {
     let mut tera = tera::Tera::default();
     tera.add_raw_template("tutor", template)
         .map_err(|e| AppError::Internal(format!("learn: invalid tutor template: {e}")))?;
+    let glossary = known_terms
+        .iter()
+        .map(|t| format!("{} — {}", t.term, t.definition))
+        .collect::<Vec<_>>()
+        .join("\n");
     let mut ctx = tera::Context::new();
     ctx.insert("target", target);
     ctx.insert("covered", &covered.join("; "));
     ctx.insert("directive", &directive.unwrap_or(""));
     ctx.insert("mission", &mission.unwrap_or("").trim());
+    ctx.insert("glossary", &glossary);
     tera.render("tutor", &ctx)
         .map_err(|e| AppError::Internal(format!("learn: tutor template render failed: {e}")))
 }
@@ -510,6 +534,17 @@ fn validate_and_build(raw: RawLesson, sections: &[Section]) -> GeneratedLesson {
         .filter(|q| q.options.len() >= 2 && q.correct_index < q.options.len())
         .collect();
 
+    // Keep only well-formed glossary terms (both fields non-empty), trimmed.
+    let glossary: Vec<GlossaryTerm> = raw
+        .glossary
+        .into_iter()
+        .map(|t| GlossaryTerm {
+            term: t.term.trim().to_string(),
+            definition: t.definition.trim().to_string(),
+        })
+        .filter(|t| !t.term.is_empty() && !t.definition.is_empty())
+        .collect();
+
     GeneratedLesson {
         title: raw.title.trim().to_string(),
         body_html: sanitize_html(&raw.body_html),
@@ -517,6 +552,7 @@ fn validate_and_build(raw: RawLesson, sections: &[Section]) -> GeneratedLesson {
         primary_source,
         quiz,
         source_slugs: Vec::new(),
+        glossary,
         context_truncated: false,
     }
 }
@@ -534,6 +570,7 @@ mod tests {
             &[],
             None,
             Some("ship a Kafka consumer"),
+            &[],
         )
         .unwrap();
         assert!(out.contains("the topic \"kafka\""));
@@ -549,6 +586,7 @@ mod tests {
             &[],
             None,
             None,
+            &[],
         )
         .unwrap();
         assert!(!with_empty.contains("The learner's goal"));
@@ -559,9 +597,28 @@ mod tests {
             &[],
             None,
             Some("   "),
+            &[],
         )
         .unwrap();
         assert!(!blank.contains("The learner's goal"));
+    }
+
+    #[test]
+    fn tutor_prompt_injects_known_glossary_terms() {
+        let terms = vec![GlossaryTerm {
+            term: "partition".into(),
+            definition: "an ordered, append-only log".into(),
+        }];
+        let out = render_tutor_prompt(
+            TUTOR_SYSTEM_TEMPLATE,
+            "the topic \"kafka\"",
+            &[],
+            None,
+            None,
+            &terms,
+        )
+        .unwrap();
+        assert!(out.contains("partition — an ordered, append-only log"));
     }
 
     fn section(slug: &str, title: &str, anchor: Option<&str>, text: &str) -> Section {
@@ -658,6 +715,7 @@ mod tests {
                     explanation: "e".into(),
                 },
             ],
+            glossary: vec![],
         };
 
         let lesson = validate_and_build(raw, &allowed());
@@ -688,6 +746,7 @@ mod tests {
             }],
             primary_source: None,
             quiz: vec![],
+            glossary: vec![],
         };
         let lesson = validate_and_build(raw, &allowed());
         assert_eq!(lesson.citations.len(), 1);
@@ -711,6 +770,7 @@ mod tests {
             }],
             primary_source: None,
             quiz: vec![],
+            glossary: vec![],
         };
         let lesson = validate_and_build(raw, &allowed());
         // Canonicalized to the source slug's exact casing.

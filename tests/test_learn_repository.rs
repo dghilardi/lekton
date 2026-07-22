@@ -3,7 +3,8 @@ mod common;
 use chrono::Utc;
 
 use lekton::db::learn_models::{
-    LearningPath, LearningRecord, LearningRecordKind, LearningScope, Lesson, QuizQuestion,
+    GlossaryTerm, LearningPath, LearningRecord, LearningRecordKind, LearningScope, Lesson,
+    QuizQuestion,
 };
 
 fn path(id: &str, user: &str) -> LearningPath {
@@ -153,4 +154,48 @@ async fn persist_preference_defaults_true_and_roundtrips() {
 
     // Preferences are per-user.
     assert!(repo.get_persist("u2").await.unwrap());
+}
+
+#[tokio::test]
+async fn glossary_upsert_is_stable_and_per_user_and_deletable() {
+    let env = common::TestEnv::start().await;
+    let repo = env.learn_repo.clone();
+
+    let term = |t: &str, d: &str| GlossaryTerm {
+        term: t.into(),
+        definition: d.into(),
+    };
+
+    repo.upsert_glossary_terms(
+        "u1",
+        &[
+            term("partition", "an ordered, append-only log"),
+            term("broker", "a Kafka server"),
+        ],
+    )
+    .await
+    .unwrap();
+
+    // Re-defining an existing term is a no-op: the first definition stands.
+    repo.upsert_glossary_terms("u1", &[term("partition", "SOMETHING ELSE")])
+        .await
+        .unwrap();
+    // Blank terms/definitions are ignored.
+    repo.upsert_glossary_terms("u1", &[term("  ", "x"), term("empty", "  ")])
+        .await
+        .unwrap();
+
+    let mut mine = repo.list_glossary("u1").await.unwrap();
+    mine.sort_by(|a, b| a.term.cmp(&b.term));
+    assert_eq!(mine.len(), 2);
+    assert_eq!(mine[0].term, "broker");
+    assert_eq!(mine[1].term, "partition");
+    assert_eq!(mine[1].definition, "an ordered, append-only log");
+
+    // Glossary is per-user.
+    assert!(repo.list_glossary("u2").await.unwrap().is_empty());
+
+    // Wiped by delete_all_for_user.
+    repo.delete_all_for_user("u1").await.unwrap();
+    assert!(repo.list_glossary("u1").await.unwrap().is_empty());
 }

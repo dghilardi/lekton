@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use crate::db::learn_models::{LearningPath, LearningRecord, Lesson};
+use crate::db::learn_models::{GlossaryTerm, LearningPath, LearningRecord, Lesson};
 use crate::error::AppError;
 
 #[cfg(feature = "ssr")]
@@ -47,6 +47,17 @@ pub trait LearnRepository: Send + Sync {
     /// Privacy: delete all learning data (paths, lessons, records) for a user.
     async fn delete_all_for_user(&self, user_id: &str) -> Result<(), AppError>;
 
+    /// List the user's glossary terms.
+    async fn list_glossary(&self, user_id: &str) -> Result<Vec<GlossaryTerm>, AppError>;
+
+    /// Insert any glossary terms the user does not already have. Existing terms
+    /// are left untouched so a definition stays stable once introduced.
+    async fn upsert_glossary_terms(
+        &self,
+        user_id: &str,
+        terms: &[GlossaryTerm],
+    ) -> Result<(), AppError>;
+
     /// Whether the user opted into persisting learning data. Defaults to `true`
     /// when no preference has been set.
     async fn get_persist(&self, user_id: &str) -> Result<bool, AppError>;
@@ -63,6 +74,7 @@ pub struct MongoLearnRepository {
     lessons: mongodb::Collection<Lesson>,
     records: mongodb::Collection<LearningRecord>,
     preferences: mongodb::Collection<LearnPreference>,
+    glossary: mongodb::Collection<GlossaryTerm>,
 }
 
 #[cfg(feature = "ssr")]
@@ -73,6 +85,7 @@ impl MongoLearnRepository {
             lessons: db.collection("learn_lessons"),
             records: db.collection("learn_records"),
             preferences: db.collection("learn_preferences"),
+            glossary: db.collection("learn_glossary"),
         }
     }
 }
@@ -212,9 +225,58 @@ impl LearnRepository for MongoLearnRepository {
             .await
             .map_err(|e| AppError::Internal(format!("mongo delete learn_lessons for user: {e}")))?;
         self.paths
-            .delete_many(filter)
+            .delete_many(filter.clone())
             .await
             .map_err(|e| AppError::Internal(format!("mongo delete learn_paths for user: {e}")))?;
+        self.glossary.delete_many(filter).await.map_err(|e| {
+            AppError::Internal(format!("mongo delete learn_glossary for user: {e}"))
+        })?;
+        Ok(())
+    }
+
+    async fn list_glossary(&self, user_id: &str) -> Result<Vec<GlossaryTerm>, AppError> {
+        use futures::TryStreamExt;
+
+        let cursor = self
+            .glossary
+            .find(mongodb::bson::doc! { "user_id": user_id })
+            .sort(mongodb::bson::doc! { "term": 1 })
+            .await
+            .map_err(|e| AppError::Internal(format!("mongo list learn_glossary: {e}")))?;
+
+        cursor
+            .try_collect()
+            .await
+            .map_err(|e| AppError::Internal(format!("mongo collect learn_glossary: {e}")))
+    }
+
+    async fn upsert_glossary_terms(
+        &self,
+        user_id: &str,
+        terms: &[GlossaryTerm],
+    ) -> Result<(), AppError> {
+        let now = mongodb::bson::DateTime::from_chrono(chrono::Utc::now());
+        for t in terms {
+            let term = t.term.trim();
+            if term.is_empty() || t.definition.trim().is_empty() {
+                continue;
+            }
+            // Insert only when absent, keying on (user_id, term): a term keeps
+            // its first definition so terminology stays stable across lessons.
+            self.glossary
+                .update_one(
+                    mongodb::bson::doc! { "user_id": user_id, "term": term },
+                    mongodb::bson::doc! { "$setOnInsert": {
+                        "user_id": user_id,
+                        "term": term,
+                        "definition": t.definition.trim(),
+                        "created_at": now,
+                    } },
+                )
+                .upsert(true)
+                .await
+                .map_err(|e| AppError::Internal(format!("mongo upsert learn_glossary: {e}")))?;
+        }
         Ok(())
     }
 

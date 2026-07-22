@@ -115,6 +115,15 @@ impl From<&QuizQuestion> for QuizQuestionView {
     }
 }
 
+/// A glossary term: a short, reusable definition introduced while learning.
+/// Kept per user so terminology stays consistent across lessons and paths — a
+/// term defined once is reused (and not redefined) in later lessons.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GlossaryTerm {
+    pub term: String,
+    pub definition: String,
+}
+
 /// Per-user Learn-mode preference document.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LearnPreference {

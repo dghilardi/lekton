@@ -73,6 +73,9 @@ impl LearnService {
         let history = build_history(&lessons, &records);
         let plan = plan_next(&history);
 
+        // Reuse the learner's glossary so terminology stays consistent.
+        let known_terms = self.repo.list_glossary(&user_ctx.user.user_id).await?;
+
         let generated = self
             .generator
             .generate(
@@ -81,8 +84,12 @@ impl LearnService {
                 &plan.mastered,
                 Some(&plan.directive()),
                 path.mission.as_deref(),
+                &known_terms,
             )
             .await?;
+
+        // Persist any new terms this lesson introduced (existing ones untouched).
+        let new_terms = generated.glossary.clone();
 
         let seq = lessons.len() as u32 + 1;
         let lesson = into_lesson(
@@ -108,6 +115,10 @@ impl LearnService {
             }
         }
         self.repo.update_path_progress(path_id, &covered).await?;
+
+        self.repo
+            .upsert_glossary_terms(&user_ctx.user.user_id, &new_terms)
+            .await?;
 
         // Persisted lessons are graded by id; no token needed.
         Ok(LessonView::from_lesson(lesson, None))
@@ -194,9 +205,10 @@ impl LearnService {
         mission: Option<String>,
     ) -> Result<LessonView, AppError> {
         let mission = normalize_mission(mission);
+        // Ephemeral: nothing is persisted, so no glossary is read or written.
         let generated = self
             .generator
-            .generate(user_ctx, scope, &[], None, mission.as_deref())
+            .generate(user_ctx, scope, &[], None, mission.as_deref(), &[])
             .await?;
         let lesson = into_lesson(
             Uuid::new_v4().to_string(),

@@ -27,6 +27,11 @@ does support and stay grounded.
 {% if covered %}
 Avoid re-teaching these already-covered points: {{ covered }}.
 {% endif %}
+{% if glossary %}
+These terms have already been defined for this learner — reuse them consistently
+with the same meaning, and do NOT redefine them:
+{{ glossary }}
+{% endif %}
 Write a short lesson (a few short paragraphs) that gives the learner one tangible
 takeaway. Then write exactly 3 multiple-choice questions that test genuine recall
 of that takeaway (not trivial recognition). Make the 4 options indistinguishable
@@ -43,11 +48,14 @@ no preamble — with exactly this shape:
   "body_html": "the lesson body as simple safe HTML using only <p>, <ul>, <ol>, <li>, <strong>, <em>, <code>, <pre>, <h3>, <blockquote>. No <script>, no inline styles, no event handlers.",
   "citations": [{"document_slug": "one of the provided documents", "section_anchor": "anchor string or null", "quote": "a short verbatim quote from the context"}],
   "primary_source": {"document_slug": "one of the provided documents", "section_anchor": "anchor string or null"},
-  "quiz": [{"prompt": "the question", "options": ["a", "b", "c", "d"], "correct_index": 0, "explanation": "why the answer is correct"}]
+  "quiz": [{"prompt": "the question", "options": ["a", "b", "c", "d"], "correct_index": 0, "explanation": "why the answer is correct"}],
+  "glossary": [{"term": "a key term this lesson introduces", "definition": "a one-line, self-contained definition grounded in the context"}]
 }
 
 Every citation's document_slug MUST be one of the provided documents. Include at
-least one citation. Reply in the same language as the documentation."#;
+least one citation. In "glossary", list only NEW key terms this lesson
+introduces (omit ones already defined above); keep definitions to one line. Reply
+in the same language as the documentation."#;
 
 /// Returns the tutor system-prompt template, honouring a config override.
 ///

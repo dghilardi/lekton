@@ -2,3 +2,4 @@
 # Both are reproducible from the local instance — do not commit.
 fixtures/
 runs/
+__pycache__/

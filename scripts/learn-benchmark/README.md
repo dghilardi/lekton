@@ -25,12 +25,21 @@ comparable unit is **a single lesson**. So we:
 
 | system | prompt | backend | answers |
 |--------|--------|---------|---------|
-| `learn@nemotron` | Learn tutor prompt | OpenRouter (nemotron, as shipped) | the shipped output |
+| `learn@live` | (the instance's own) | **running instance** via server fn | the *real* shipped output — ground truth |
+| `learn@nemotron` | Learn tutor prompt | OpenRouter (nemotron) | fast offline replica of the pipeline (may drift from code) |
 | `teach@claude`   | teach philosophy | `claude` CLI | teach as-is |
 | `learn@claude`   | Learn tutor prompt | `claude` CLI | is the *prompt* good, model held constant (B1) |
 | `teach@nemotron` | teach philosophy | OpenRouter (nemotron) | does teach pedagogy survive the cheap model (B2) |
 
-Comparisons: `A_product` (learn@nemotron vs teach@claude), `B1_prompt`
+**Fidelity note.** `learn@live` drives the running binary (real `prompt.rs`,
+generator, model, access control) over the `generate_ephemeral_lesson` server
+function, authenticating as the demo admin. Its URL is re-derived from the freshly
+built `lekton.wasm` on every run, so a code change is picked up after a rebuild +
+restart. `learn@nemotron` re-implements the Document-scope pipeline in Python — it
+is fast and needs no instance, but does **not** auto-track code changes; keep it
+for quick iteration and use `learn@live` for verdicts.
+
+Comparisons: `A_product` (learn@live vs teach@claude), `B1_prompt`
 (learn@claude vs teach@claude), `B2_cheapmodel` (learn@nemotron vs teach@nemotron).
 
 ## Prerequisites

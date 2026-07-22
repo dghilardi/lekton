@@ -11,6 +11,15 @@
     "bin": "claude",
     "model": "opus"
   },
+  "lekton_live": {
+    "base_url": "http://localhost:3000",
+    "login_path": "/api/auth/login",
+    "username": "admin",
+    "password": "admin",
+    "wasm_path": "../../target/site/pkg/lekton.wasm",
+    "fn_name": "generate_ephemeral_lesson",
+    "fn_path_fallback": "/api/generate_ephemeral_lesson6733416262739286912"
+  },
   "storage": {
     "endpoint": "http://localhost:3900",
     "bucket": "lekton-docs",
@@ -24,13 +33,14 @@
     "max_source_documents": 3
   },
   "systems": {
+    "learn@live":     { "backend": "lekton-live" },
     "learn@nemotron": { "prompt": "learn", "backend": "openrouter" },
     "teach@claude":   { "prompt": "teach", "backend": "claude" },
     "learn@claude":   { "prompt": "learn", "backend": "claude" },
     "teach@nemotron": { "prompt": "teach", "backend": "openrouter" }
   },
   "comparisons": [
-    { "name": "A_product",     "a": "learn@nemotron", "b": "teach@claude"   },
+    { "name": "A_product",     "a": "learn@live",     "b": "teach@claude"   },
     { "name": "B1_prompt",     "a": "learn@claude",   "b": "teach@claude"   },
     { "name": "B2_cheapmodel", "a": "learn@nemotron", "b": "teach@nemotron" }
   ],

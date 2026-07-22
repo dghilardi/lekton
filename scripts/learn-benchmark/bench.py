@@ -172,6 +172,78 @@ def openrouter_chat(cfg, system, user, json_mode):
     return data["choices"][0]["message"].get("content") or ""
 
 
+def _live_fn_url(cfg):
+    """Re-derive the server-fn URL from the freshly built wasm, so the harness
+    tracks code changes (the Leptos hash suffix moves when the fn signature
+    changes). Falls back to the configured static path."""
+    lv = cfg["lekton_live"]
+    wasm = (ROOT / lv["wasm_path"]).resolve()
+    if wasm.exists():
+        pattern = ("/api/" + lv["fn_name"]).encode() + rb"[0-9]+"
+        m = re.search(pattern, wasm.read_bytes())
+        if m:
+            return lv["base_url"].rstrip("/") + m.group(0).decode()
+    return lv["base_url"].rstrip("/") + lv["fn_path_fallback"]
+
+
+_LIVE_COOKIE = None
+
+
+def _live_login(cfg):
+    """Authenticate as the demo user; return a Cookie header string. The demo
+    cookies are flagged Secure, so we send them manually rather than via a
+    cookiejar (which withholds Secure cookies over http)."""
+    global _LIVE_COOKIE
+    if _LIVE_COOKIE is not None:
+        return _LIVE_COOKIE
+    lv = cfg["lekton_live"]
+    body = json.dumps({"username": lv["username"], "password": lv["password"]}).encode()
+    req = urllib.request.Request(
+        lv["base_url"].rstrip("/") + lv["login_path"],
+        data=body,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        set_cookies = resp.headers.get_all("Set-Cookie") or []
+    pairs = [c.split(";", 1)[0].strip() for c in set_cookies]
+    if not any(p.startswith("lekton_demo_user=") for p in pairs):
+        raise RuntimeError("demo login did not set lekton_demo_user (is DEMO_MODE on?)")
+    _LIVE_COOKIE = "; ".join(pairs)
+    return _LIVE_COOKIE
+
+
+def lekton_live(cfg, slug, attempts=4):
+    """Generate a real ephemeral lesson from the running instance (Document
+    scope). Returns the parsed Lesson JSON — the shipped output, using the real
+    prompt/generator/model. Retries transient 5xx (the free upstream model is
+    flaky) so the harness stays usable."""
+    import time
+
+    cookie = _live_login(cfg)
+    data = urllib.parse.urlencode({"scope[kind]": "document", "scope[slug]": slug}).encode()
+    last = None
+    for i in range(attempts):
+        req = urllib.request.Request(
+            _live_fn_url(cfg),
+            data=data,
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Cookie": cookie,
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", "replace")[:200]
+            last = f"HTTP {e.code}: {body}"
+            if e.code < 500:
+                raise RuntimeError(last)
+            print(f"    live 5xx (attempt {i + 1}/{attempts}): {last}", file=sys.stderr)
+            time.sleep(3 * (i + 1))
+    raise RuntimeError(f"live generation failed after {attempts} attempts: {last}")
+
+
 def claude_chat(cfg, system, user, model=None):
     c = cfg["claude_cli"]
     scratch = ROOT / "runs" / ".scratch"
@@ -302,9 +374,12 @@ def cmd_gen(cfg, topics, args):
                 print(f"  skip {t['id']} / {name} (cached)")
                 continue
             print(f"  gen  {t['id']} / {name} (truncated={truncated})")
-            system = render_system(spec["prompt"], t["target"])
             try:
-                lesson = call_backend(cfg, spec["backend"], system, user)
+                if spec["backend"] == "lekton-live":
+                    lesson = lekton_live(cfg, slugs[0])
+                else:
+                    system = render_system(spec["prompt"], t["target"])
+                    lesson = call_backend(cfg, spec["backend"], system, user)
             except Exception as e:  # noqa: BLE001
                 print(f"    FAILED: {e}", file=sys.stderr)
                 out.write_text(json.dumps({"error": str(e), "system": name, "topic": t["id"]}, indent=2))

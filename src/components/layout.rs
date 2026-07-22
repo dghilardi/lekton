@@ -36,6 +36,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
     let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
     let is_rag = use_context::<crate::app::IsRagEnabled>();
     let schema_enabled = crate::app::use_feature(|f| f.schema_registry);
+    let learn_enabled = crate::app::use_feature(|f| f.learn);
 
     view! {
         <Suspense fallback=move || view! { <TopNavbarLinksSkeleton /> }>
@@ -163,6 +164,14 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                 }
                             }}
                             {move || {
+                                let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
+                                if logged_in && learn_enabled.get() {
+                                    view! { <a href="/learn" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">"Learn"</a> }.into_any()
+                                } else {
+                                    view! { <span></span> }.into_any()
+                                }
+                            }}
+                            {move || {
                                 let is_admin = current_user.and_then(|sig| sig.get()).map(|u| u.is_admin).unwrap_or(false);
                                 if is_admin {
                                     view! { <a href="/admin/tokens" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">"Admin"</a> }.into_any()
@@ -221,6 +230,14 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                 }
                             }}
                             {move || {
+                                let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
+                                if logged_in && learn_enabled.get() {
+                                    view! { <a href="/learn" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">"Learn"</a> }.into_any()
+                                } else {
+                                    view! { <span></span> }.into_any()
+                                }
+                            }}
+                            {move || {
                                 let is_admin = current_user.and_then(|sig| sig.get()).map(|u| u.is_admin).unwrap_or(false);
                                 if is_admin {
                                     view! { <a href="/admin/tokens" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">"Admin"</a> }.into_any()
@@ -270,6 +287,12 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                         let rag_enabled = is_rag.map(|sig| sig.0.get()).unwrap_or(false);
                                         if logged_in && rag_enabled {
                                             view! { <li><a href="/chat" class="active:!bg-primary active:!text-primary-content">"Chat"</a></li> }.into_any()
+                                        } else { view! { <li class="hidden"></li> }.into_any() }
+                                    }}
+                                    {move || {
+                                        let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
+                                        if logged_in && learn_enabled.get() {
+                                            view! { <li><a href="/learn" class="active:!bg-primary active:!text-primary-content">"Learn"</a></li> }.into_any()
                                         } else { view! { <li class="hidden"></li> }.into_any() }
                                     }}
                                     {move || {

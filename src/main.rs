@@ -577,6 +577,14 @@ async fn main() {
         } else {
             None
         };
+    let learn_repo: Option<Arc<dyn lekton::db::learn_repository::LearnRepository>> =
+        if config.features.learn {
+            Some(Arc::new(
+                lekton::db::learn_repository::MongoLearnRepository::new(&mongo_db),
+            ))
+        } else {
+            None
+        };
     let feedback_repo: Option<Arc<dyn lekton::db::feedback_repository::FeedbackRepository>> =
         if config.features.rag {
             Some(Arc::new(
@@ -842,7 +850,7 @@ async fn main() {
     // flag is set and the service initialised. validate_features() already
     // failed fast on enabled-but-misconfigured features, so this reflects what
     // the client UI can safely surface.
-    let features = lekton::app::FeatureFlags {
+    let mut features = lekton::app::FeatureFlags {
         mcp: config.features.mcp,
         rag: config.features.rag && rag_service.is_some() && chat_service.is_some(),
         editor: config.features.editor,
@@ -853,6 +861,7 @@ async fn main() {
         attachment_indexing: config.features.attachment_indexing && rag_service.is_some(),
         document_upload: config.features.document_upload,
         sources: config.features.sources,
+        learn: config.features.learn && chat_service.is_some(),
     };
 
     // Spawn the attachment extraction worker when attachment indexing is enabled.
@@ -915,6 +924,45 @@ async fn main() {
         });
     }
 
+    // Build the Learn-mode service when the feature resolved on. It needs the
+    // chat service (retrieval) and its own LLM provider (resolved from [learn]
+    // with a fallback to rag.chat/rag.llm). If the provider fails to init, the
+    // feature is turned back off so the UI does not advertise a broken mode.
+    let learn_service = if let (true, Some(chat_svc), Some(lrepo)) =
+        (features.learn, chat_service.clone(), learn_repo.clone())
+    {
+        let resolved = config.resolve_learn_llm();
+        match lekton::rag::provider::LlmProvider::initialize(&resolved).await {
+            Ok(provider) => {
+                let generator = lekton::learn::generator::LessonGenerator::new(
+                    chat_svc,
+                    document_repo.clone(),
+                    storage_client.clone(),
+                    Arc::new(provider),
+                    resolved.model.clone(),
+                    resolved.headers.clone(),
+                    lekton::learn::prompt::tutor_system_template(
+                        config.learn.system_prompt_template.as_deref(),
+                    ),
+                    config.learn.max_context_chars,
+                    config.learn.max_source_documents,
+                );
+                Some(Arc::new(lekton::learn::service::LearnService::new(
+                    lrepo, generator,
+                )))
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Learn mode LLM provider failed to initialize: {e} — learn disabled"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+    features.learn = features.learn && learn_service.is_some();
+
     // Build application state
     let app_state = lekton::app::AppState {
         document_repo,
@@ -947,6 +995,8 @@ async fn main() {
         attachment_search_service,
         chat_repo,
         chat_service,
+        learn_repo,
+        learn_service,
         search_reindex_state,
         schema_endpoint_reindex_state,
         feedback_repo,

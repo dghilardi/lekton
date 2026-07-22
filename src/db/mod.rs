@@ -8,6 +8,8 @@ pub mod documentation_feedback_models;
 pub mod documentation_feedback_repository;
 pub mod embedding_cache_repository;
 pub mod feedback_repository;
+pub mod learn_models;
+pub mod learn_repository;
 pub mod migration;
 pub mod migrations;
 pub mod models;

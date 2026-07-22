@@ -13,6 +13,8 @@ pub mod error;
 #[cfg(feature = "ssr")]
 pub mod jobs;
 #[cfg(feature = "ssr")]
+pub mod learn;
+#[cfg(feature = "ssr")]
 pub mod mcp;
 #[cfg(feature = "ssr")]
 pub mod metrics;

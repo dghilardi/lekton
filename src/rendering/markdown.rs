@@ -84,7 +84,10 @@ pub fn render_markdown(raw: &str) -> String {
 /// - `id` on headings (anchor navigation)
 /// - `id`/`name` on `<a>` (manual in-page anchor targets, e.g. `<a id="git_repo"></a>`)
 /// - `<input>` with `type`/`disabled`/`checked` (GFM task list checkboxes)
-fn sanitize_html(html: &str) -> String {
+///
+/// Also used to sanitize LLM-generated HTML (Learn mode lessons), so the same
+/// XSS allowlist governs every HTML surface in the app.
+pub fn sanitize_html(html: &str) -> String {
     Builder::default()
         .add_tag_attributes("pre", &["class", "data-cb-init"])
         .add_tag_attributes("code", &["class"])

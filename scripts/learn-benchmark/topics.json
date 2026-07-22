@@ -1,0 +1,42 @@
+{
+  "comment": "Each topic pins explicit doc slugs so grounding is reproducible (mirrors Learn's Document scope). 'target' mirrors the tutor prompt's {{ target }} variable. s3_key is the Garage object key for fixture extraction; title feeds assemble_context's per-doc header.",
+  "titles": {
+    "docs/infrastructure/rabbitmq": "Rabbit MQ",
+    "docs/infrastructure/hashicorp-vault": "Hashicorp Vault",
+    "docs/microservices/authentication": "Authentication",
+    "docs/guidelines/commit-guidelines": "Commit Guidelines",
+    "docs/infrastructure/mongodb": "Mongo DB"
+  },
+  "topics": [
+    {
+      "id": "rabbitmq",
+      "target": "the document \"docs/infrastructure/rabbitmq\"",
+      "slugs": ["docs/infrastructure/rabbitmq"],
+      "s3_keys": { "docs/infrastructure/rabbitmq": "docs/docs_infrastructure_rabbitmq.md" }
+    },
+    {
+      "id": "vault",
+      "target": "the document \"docs/infrastructure/hashicorp-vault\"",
+      "slugs": ["docs/infrastructure/hashicorp-vault"],
+      "s3_keys": { "docs/infrastructure/hashicorp-vault": "docs/docs_infrastructure_hashicorp-vault.md" }
+    },
+    {
+      "id": "authentication",
+      "target": "the document \"docs/microservices/authentication\"",
+      "slugs": ["docs/microservices/authentication"],
+      "s3_keys": { "docs/microservices/authentication": "docs/docs_microservices_authentication.md" }
+    },
+    {
+      "id": "commit-guidelines",
+      "target": "the document \"docs/guidelines/commit-guidelines\"",
+      "slugs": ["docs/guidelines/commit-guidelines"],
+      "s3_keys": { "docs/guidelines/commit-guidelines": "docs/docs_guidelines_commit-guidelines.md" }
+    },
+    {
+      "id": "mongodb",
+      "target": "the document \"docs/infrastructure/mongodb\"",
+      "slugs": ["docs/infrastructure/mongodb"],
+      "s3_keys": { "docs/infrastructure/mongodb": "docs/docs_infrastructure_mongodb.md" }
+    }
+  ]
+}

@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Learn mode (behind the `learn` feature flag, off by default, requires `rag`): a guided, stateful alternative to reading docs or RAG chat that generates short personalized lessons grounded strictly on the documentation the user can access. Semantic retrieval selects the relevant documents, whose full text grounds a structured lesson (sanitized HTML body, source citations, and a 3-question quiz); citations that don't resolve to a provided document are dropped and lessons with none are rejected. Native `/learn` pages let users start a path (by tag, topic, or document slug), generate lessons, and take quizzes with immediate feedback. Progress is persisted and lightly calibrated (advance vs reinforce from recent quiz scores); a per-user "Save my progress" toggle enables an ephemeral, nothing-stored mode, and learning data can be deleted. The lesson LLM is configured under `[learn]` with a fallback to `[rag.chat]`/`[rag.llm]`.
+
 ## [0.28.0] 2026-07-21
 
 ### Added

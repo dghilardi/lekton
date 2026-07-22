@@ -22,6 +22,7 @@ use lekton::db::document_version_repository::{
 use lekton::db::documentation_feedback_repository::{
     DocumentationFeedbackRepository, MongoDocumentationFeedbackRepository,
 };
+use lekton::db::learn_repository::{LearnRepository, MongoLearnRepository};
 use lekton::db::navigation_order_repository::{
     MongoNavigationOrderRepository, NavigationOrderRepository,
 };
@@ -64,6 +65,7 @@ pub struct TestEnv {
     pub navigation_order_repo: Arc<dyn NavigationOrderRepository>,
     pub documentation_feedback_repo: Arc<dyn DocumentationFeedbackRepository>,
     pub document_source_repo: Arc<dyn DocumentSourceRepository>,
+    pub learn_repo: Arc<dyn LearnRepository>,
     pub storage: Arc<dyn StorageClient>,
     pub search: Arc<dyn SearchService>,
     pub token_service: Arc<TokenService>,
@@ -117,6 +119,7 @@ impl TestEnv {
             Arc::new(MongoDocumentationFeedbackRepository::new(&mongo_db));
         let document_source_repo: Arc<dyn DocumentSourceRepository> =
             Arc::new(MongoDocumentSourceRepository::new(&mongo_db));
+        let learn_repo: Arc<dyn LearnRepository> = Arc::new(MongoLearnRepository::new(&mongo_db));
         access_level_repo
             .seed_defaults()
             .await
@@ -199,6 +202,7 @@ impl TestEnv {
                 attachment_indexing: false,
                 document_upload: false,
                 sources: false,
+                learn: false,
             },
             service_token: "test-token".to_string(),
             service_token_repo: service_token_repo.clone(),
@@ -223,6 +227,8 @@ impl TestEnv {
             search_reindex_state: None,
             chat_repo: None,
             chat_service: None,
+            learn_repo: None,
+            learn_service: None,
             feedback_repo: None,
             documentation_feedback_repo: documentation_feedback_repo.clone(),
             document_source_repo: document_source_repo.clone(),
@@ -351,6 +357,7 @@ impl TestEnv {
             navigation_order_repo,
             documentation_feedback_repo,
             document_source_repo,
+            learn_repo,
             storage,
             search,
             token_service,
@@ -521,6 +528,7 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
             attachment_indexing: false,
             document_upload: false,
             sources: false,
+            learn: false,
         },
         service_token: "test-token".to_string(),
         service_token_repo: env.service_token_repo.clone(),
@@ -545,6 +553,8 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
         search_reindex_state: None,
         chat_repo: None,
         chat_service: None,
+        learn_repo: None,
+        learn_service: None,
         feedback_repo: None,
         documentation_feedback_repo: env.documentation_feedback_repo.clone(),
         document_source_repo: env.document_source_repo.clone(),

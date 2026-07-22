@@ -8,22 +8,30 @@ use uuid::Uuid;
 
 use crate::auth::models::UserContext;
 use crate::db::learn_models::{
-    LearningPath, LearningRecord, LearningRecordKind, LearningScope, Lesson, QuizGrade,
+    LearningPath, LearningRecord, LearningRecordKind, LearningScope, Lesson, LessonView, QuizGrade,
     QuizQuestion,
 };
 use crate::db::learn_repository::LearnRepository;
 use crate::error::AppError;
 use crate::learn::calibration::{calibrate, NextFocus};
 use crate::learn::generator::{GeneratedLesson, LessonGenerator};
+use crate::learn::token::{QuizKey, QuizSealer};
 
 pub struct LearnService {
     repo: Arc<dyn LearnRepository>,
     generator: LessonGenerator,
+    /// Seals ephemeral quiz answer keys so they can be graded server-side
+    /// without the answers ever reaching the client.
+    sealer: QuizSealer,
 }
 
 impl LearnService {
     pub fn new(repo: Arc<dyn LearnRepository>, generator: LessonGenerator) -> Self {
-        Self { repo, generator }
+        Self {
+            repo,
+            generator,
+            sealer: QuizSealer::new(),
+        }
     }
 
     /// Start a new learning path for the user.
@@ -51,7 +59,7 @@ impl LearnService {
         &self,
         user_ctx: &UserContext,
         path_id: &str,
-    ) -> Result<Lesson, AppError> {
+    ) -> Result<LessonView, AppError> {
         let path = self.owned_path(user_ctx, path_id).await?;
 
         // Calibrate from quiz history: when struggling, reinforce (revisit)
@@ -89,7 +97,8 @@ impl LearnService {
         }
         self.repo.update_path_progress(path_id, &covered).await?;
 
-        Ok(lesson)
+        // Persisted lessons are graded by id; no token needed.
+        Ok(LessonView::from_lesson(lesson, None))
     }
 
     /// Grade a quiz submission and record the result.
@@ -131,9 +140,15 @@ impl LearnService {
         &self,
         user_ctx: &UserContext,
         path_id: &str,
-    ) -> Result<(LearningPath, Vec<Lesson>), AppError> {
+    ) -> Result<(LearningPath, Vec<LessonView>), AppError> {
         let path = self.owned_path(user_ctx, path_id).await?;
-        let lessons = self.repo.list_lessons_for_path(path_id).await?;
+        let lessons = self
+            .repo
+            .list_lessons_for_path(path_id)
+            .await?
+            .into_iter()
+            .map(|l| LessonView::from_lesson(l, None))
+            .collect();
         Ok((path, lessons))
     }
 
@@ -158,20 +173,38 @@ impl LearnService {
     }
 
     /// Generate a one-off lesson without persisting anything (privacy opt-out).
-    /// The returned lesson has a synthetic id and no path.
+    /// The returned view has a synthetic id, no path, and a sealed `quiz_token`
+    /// carrying the answer key so the quiz can still be graded server-side.
     pub async fn generate_ephemeral(
         &self,
         user_ctx: &UserContext,
         scope: &LearningScope,
-    ) -> Result<Lesson, AppError> {
+    ) -> Result<LessonView, AppError> {
         let generated = self.generator.generate(user_ctx, scope, &[], None).await?;
-        Ok(into_lesson(
+        let lesson = into_lesson(
             Uuid::new_v4().to_string(),
             String::new(),
             0,
             &user_ctx.user.user_id,
             generated,
-        ))
+        );
+        let token = if lesson.quiz.is_empty() {
+            None
+        } else {
+            Some(self.sealer.seal(&quiz_key(&lesson.quiz))?)
+        };
+        Ok(LessonView::from_lesson(lesson, token))
+    }
+
+    /// Grade an ephemeral quiz from its sealed token, without persisting
+    /// anything. The token proves the answer key was issued by this server.
+    pub fn submit_ephemeral_quiz(
+        &self,
+        token: &str,
+        answers: &[usize],
+    ) -> Result<QuizGrade, AppError> {
+        let key = self.sealer.open(token)?;
+        Ok(grade_against(&key.correct, &key.explanations, answers))
     }
 
     /// Load a path and verify it belongs to the requesting user.
@@ -216,10 +249,19 @@ fn into_lesson(
 
 /// Grade answers against a quiz. An out-of-range or missing answer counts wrong.
 fn grade_quiz(quiz: &[QuizQuestion], answers: &[usize]) -> QuizGrade {
-    let per_question: Vec<bool> = quiz
+    let correct: Vec<usize> = quiz.iter().map(|q| q.correct_index).collect();
+    let explanations: Vec<String> = quiz.iter().map(|q| q.explanation.clone()).collect();
+    grade_against(&correct, &explanations, answers)
+}
+
+/// Core grading: compare `answers` against the `correct` answer key. A missing
+/// or out-of-range answer counts wrong. `explanations` are returned verbatim so
+/// the client can reveal them only after grading.
+fn grade_against(correct: &[usize], explanations: &[String], answers: &[usize]) -> QuizGrade {
+    let per_question: Vec<bool> = correct
         .iter()
         .enumerate()
-        .map(|(i, q)| answers.get(i).is_some_and(|&a| a == q.correct_index))
+        .map(|(i, &c)| answers.get(i).is_some_and(|&a| a == c))
         .collect();
     let score = if per_question.is_empty() {
         0.0
@@ -229,6 +271,15 @@ fn grade_quiz(quiz: &[QuizQuestion], answers: &[usize]) -> QuizGrade {
     QuizGrade {
         per_question,
         score,
+        explanations: explanations.to_vec(),
+    }
+}
+
+/// Extract the answer key from a quiz, for sealing into an ephemeral token.
+fn quiz_key(quiz: &[QuizQuestion]) -> QuizKey {
+    QuizKey {
+        correct: quiz.iter().map(|q| q.correct_index).collect(),
+        explanations: quiz.iter().map(|q| q.explanation.clone()).collect(),
     }
 }
 

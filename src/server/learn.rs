@@ -3,18 +3,19 @@
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::db::learn_models::{LearningPath, LearningScope, Lesson, QuizGrade};
+use crate::db::learn_models::{LearningPath, LearningScope, LessonView, QuizGrade};
 
 #[cfg(feature = "ssr")]
 use crate::app::AppState;
 #[cfg(feature = "ssr")]
 use crate::server::require_user_context;
 
-/// A learning path together with its lessons, ordered by `seq`.
+/// A learning path together with its lessons, ordered by `seq`. Lessons are the
+/// client-facing [`LessonView`] — the quiz answer key never crosses the wire.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PathWithLessons {
     pub path: LearningPath,
-    pub lessons: Vec<Lesson>,
+    pub lessons: Vec<LessonView>,
 }
 
 /// Resolve the Learn-mode service or fail with an actionable error.
@@ -42,7 +43,7 @@ pub async fn start_learning_path(scope: LearningScope) -> Result<LearningPath, S
 
 /// Generate, persist, and return the next lesson for a path.
 #[server(GenerateNextLesson, "/api")]
-pub async fn generate_next_lesson(path_id: String) -> Result<Lesson, ServerFnError> {
+pub async fn generate_next_lesson(path_id: String) -> Result<LessonView, ServerFnError> {
     let state = expect_context::<AppState>();
     let user_ctx = require_user_context(&state).await?;
     let service = learn_service(&state)?;
@@ -130,12 +131,28 @@ pub async fn set_learn_privacy(persist: bool) -> Result<(), ServerFnError> {
 
 /// Generate a one-off lesson without persisting anything (privacy opt-out).
 #[server(GenerateEphemeralLesson, "/api")]
-pub async fn generate_ephemeral_lesson(scope: LearningScope) -> Result<Lesson, ServerFnError> {
+pub async fn generate_ephemeral_lesson(scope: LearningScope) -> Result<LessonView, ServerFnError> {
     let state = expect_context::<AppState>();
     let user_ctx = require_user_context(&state).await?;
     let service = learn_service(&state)?;
     service
         .generate_ephemeral(&user_ctx, &scope)
         .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+/// Grade an ephemeral quiz from its sealed token. Nothing is persisted; the
+/// token proves the answer key was issued by this server.
+#[server(SubmitEphemeralQuiz, "/api")]
+pub async fn submit_ephemeral_quiz(
+    token: String,
+    answers: Vec<usize>,
+) -> Result<QuizGrade, ServerFnError> {
+    let state = expect_context::<AppState>();
+    // Auth-gate the endpoint, even though grading itself is stateless.
+    let _user_ctx = require_user_context(&state).await?;
+    let service = learn_service(&state)?;
+    service
+        .submit_ephemeral_quiz(&token, &answers)
         .map_err(|e| ServerFnError::new(e.to_string()))
 }

@@ -6,11 +6,12 @@ use leptos_router::hooks::{use_navigate, use_params_map};
 
 use crate::app::{
     delete_my_learning_data, generate_ephemeral_lesson, generate_next_lesson, get_learn_privacy,
-    get_learning_path, list_my_learning_paths, set_learn_privacy, start_learning_path, submit_quiz,
+    get_learning_path, list_my_learning_paths, set_learn_privacy, start_learning_path,
+    submit_ephemeral_quiz, submit_quiz,
 };
 use crate::auth::refresh_client::with_auth_retry;
 use crate::components::MarkdownContent;
-use crate::db::learn_models::{LearningScope, Lesson, QuizGrade, QuizQuestion};
+use crate::db::learn_models::{LearningScope, LessonView, QuizGrade, QuizQuestionView};
 
 /// Dashboard at `/learn`: start a new path and browse existing ones.
 #[component]
@@ -43,7 +44,7 @@ pub fn LearnDashboardPage() -> impl IntoView {
     let scope_value = RwSignal::new(String::new());
     let error = RwSignal::new(None::<String>);
     let starting = RwSignal::new(false);
-    let ephemeral = RwSignal::new(None::<Lesson>);
+    let ephemeral = RwSignal::new(None::<LessonView>);
     let navigate = use_navigate();
 
     let start = Action::new_local(move |_: &()| {
@@ -163,7 +164,7 @@ pub fn LearnDashboardPage() -> impl IntoView {
             {move || ephemeral.get().map(|l| view! {
                 <div class="space-y-2">
                     <p class="text-xs text-base-content/60">"This lesson is not saved."</p>
-                    <LessonCard lesson=l persist=false />
+                    <LessonCard lesson=l />
                 </div>
             })}
 
@@ -261,7 +262,7 @@ pub fn LearnPathPage() -> impl IntoView {
                             } else {
                                 view! {
                                     <div class="space-y-6">
-                                        {pw.lessons.into_iter().map(|l| view! { <LessonCard lesson=l persist=true /> }).collect::<Vec<_>>()}
+                                        {pw.lessons.into_iter().map(|l| view! { <LessonCard lesson=l /> }).collect::<Vec<_>>()}
                                     </div>
                                 }.into_any()
                             }}
@@ -294,13 +295,13 @@ pub fn LearnPathPage() -> impl IntoView {
     }
 }
 
-/// A single lesson: body, citations, and its interactive quiz. `persist`
-/// controls whether quiz submission is recorded server-side.
+/// A single lesson: body, citations, and its interactive quiz.
 #[component]
-fn LessonCard(lesson: Lesson, persist: bool) -> impl IntoView {
+fn LessonCard(lesson: LessonView) -> impl IntoView {
     let citations = lesson.citations.clone();
     let quiz = lesson.quiz.clone();
     let lesson_id = lesson.id.clone();
+    let quiz_token = lesson.quiz_token.clone();
 
     view! {
         <div class="card bg-base-100 border border-base-200">
@@ -323,51 +324,43 @@ fn LessonCard(lesson: Lesson, persist: bool) -> impl IntoView {
                     </div>
                 })}
 
-                {(!quiz.is_empty()).then(|| view! { <QuizWidget lesson_id=lesson_id.clone() quiz=quiz.clone() persist=persist /> })}
+                {(!quiz.is_empty()).then(|| view! { <QuizWidget lesson_id=lesson_id.clone() quiz_token=quiz_token.clone() quiz=quiz.clone() /> })}
             </div>
         </div>
     }
 }
 
-/// Interactive multiple-choice quiz with immediate feedback on submit. When
-/// `persist` is false (ephemeral/privacy-off) the quiz is graded client-side
-/// and nothing is sent to the server.
+/// Interactive multiple-choice quiz with immediate feedback on submit. Grading
+/// is always server-side — the answer key never reaches the browser. Persisted
+/// lessons grade by `lesson_id`; ephemeral lessons grade via the sealed
+/// `quiz_token` returned with the lesson (nothing is persisted either way).
 #[component]
-fn QuizWidget(lesson_id: String, quiz: Vec<QuizQuestion>, persist: bool) -> impl IntoView {
+fn QuizWidget(
+    lesson_id: String,
+    quiz_token: Option<String>,
+    quiz: Vec<QuizQuestionView>,
+) -> impl IntoView {
     let n = quiz.len();
     let answers = RwSignal::new(vec![None::<usize>; n]);
     let grade = RwSignal::new(None::<QuizGrade>);
     let error = RwSignal::new(None::<String>);
-    // Correct answers, kept for client-side grading in ephemeral mode.
-    let correct: Vec<usize> = quiz.iter().map(|q| q.correct_index).collect();
 
     let submit = Action::new_local(move |_: &()| {
         let lesson_id = lesson_id.clone();
-        let correct = correct.clone();
+        let quiz_token = quiz_token.clone();
         let selected: Vec<Option<usize>> = answers.get();
+        let ans: Vec<usize> = selected.iter().map(|o| o.unwrap_or(usize::MAX)).collect();
         async move {
             error.set(None);
-            if persist {
-                let ans: Vec<usize> = selected.iter().map(|o| o.unwrap_or(usize::MAX)).collect();
-                match with_auth_retry(move || submit_quiz(lesson_id.clone(), ans.clone())).await {
-                    Ok(g) => grade.set(Some(g)),
-                    Err(e) => error.set(Some(e.to_string())),
+            let result = match quiz_token {
+                Some(token) => {
+                    with_auth_retry(move || submit_ephemeral_quiz(token.clone(), ans.clone())).await
                 }
-            } else {
-                let per_question: Vec<bool> = correct
-                    .iter()
-                    .enumerate()
-                    .map(|(i, c)| selected.get(i).copied().flatten() == Some(*c))
-                    .collect();
-                let score = if per_question.is_empty() {
-                    0.0
-                } else {
-                    per_question.iter().filter(|&&b| b).count() as f32 / per_question.len() as f32
-                };
-                grade.set(Some(QuizGrade {
-                    per_question,
-                    score,
-                }));
+                None => with_auth_retry(move || submit_quiz(lesson_id.clone(), ans.clone())).await,
+            };
+            match result {
+                Ok(g) => grade.set(Some(g)),
+                Err(e) => error.set(Some(e.to_string())),
             }
         }
     });
@@ -380,6 +373,7 @@ fn QuizWidget(lesson_id: String, quiz: Vec<QuizQuestion>, persist: bool) -> impl
         .enumerate()
         .map(|(qi, q)| {
             let verdict = move || grade.get().and_then(|g| g.per_question.get(qi).copied());
+            let explanation = move || grade.get().and_then(|g| g.explanations.get(qi).cloned());
             let options = q
                 .options
                 .into_iter()
@@ -411,10 +405,9 @@ fn QuizWidget(lesson_id: String, quiz: Vec<QuizQuestion>, persist: bool) -> impl
                         }}
                     </p>
                     <div class="space-y-1 pl-1">{options}</div>
-                    {move || if graded() {
-                        view! { <p class="text-sm text-base-content/70 pl-1">{q.explanation.clone()}</p> }.into_any()
-                    } else {
-                        view! { <span></span> }.into_any()
+                    {move || match explanation() {
+                        Some(text) => view! { <p class="text-sm text-base-content/70 pl-1">{text}</p> }.into_any(),
+                        None => view! { <span></span> }.into_any(),
                     }}
                 </div>
             }

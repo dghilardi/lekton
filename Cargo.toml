@@ -110,6 +110,9 @@ url = "2"
 # Hashing (for content hash computation and refresh token storage)
 sha2 = "0.11"
 
+# Authenticated encryption (Learn-mode ephemeral quiz answer-key tokens)
+ring = { version = "0.17", optional = true }
+
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
@@ -230,6 +233,7 @@ ssr = [
     "dep:clap",
     "dep:toml",
     "dep:syntect",
+    "dep:ring",
     "dep:pdfium-render",
     "dep:image",
     "leptos/ssr",

@@ -61,6 +61,11 @@ pub struct LessonSource {
 
 /// A single multiple-choice quiz question. Options should be uniform in length
 /// so formatting gives no clue to the answer.
+///
+/// This is the server-side/persisted shape: it carries the answer key
+/// (`correct_index`) and `explanation`. It is **never** sent to the client —
+/// see [`QuizQuestionView`], which withholds both until the quiz is graded
+/// server-side.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QuizQuestion {
     pub prompt: String,
@@ -69,6 +74,24 @@ pub struct QuizQuestion {
     pub correct_index: usize,
     /// Shown after answering, regardless of correctness.
     pub explanation: String,
+}
+
+/// Client-facing view of a quiz question. The correct answer and explanation
+/// are deliberately withheld so the learner cannot read them off the payload
+/// before answering; grading happens server-side.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuizQuestionView {
+    pub prompt: String,
+    pub options: Vec<String>,
+}
+
+impl From<&QuizQuestion> for QuizQuestionView {
+    fn from(q: &QuizQuestion) -> Self {
+        Self {
+            prompt: q.prompt.clone(),
+            options: q.options.clone(),
+        }
+    }
 }
 
 /// Per-user Learn-mode preference document.
@@ -80,13 +103,19 @@ pub struct LearnPreference {
     pub persist: bool,
 }
 
-/// The graded outcome of a quiz submission, returned to the client.
+/// The graded outcome of a quiz submission, returned to the client. This is the
+/// only channel through which the answer explanations reach the client — they
+/// are revealed after grading, never before.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QuizGrade {
     /// Per-question correctness, aligned with the lesson's `quiz` order.
     pub per_question: Vec<bool>,
     /// Fraction correct, in `0.0..=1.0`.
     pub score: f32,
+    /// Per-question explanations, aligned with `per_question`, revealed only
+    /// once the quiz has been graded.
+    #[serde(default)]
+    pub explanations: Vec<String>,
 }
 
 /// A generated lesson: one tightly-scoped, self-contained teaching unit.
@@ -111,6 +140,50 @@ pub struct Lesson {
     pub quiz: Vec<QuizQuestion>,
     #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub created_at: DateTime<Utc>,
+}
+
+/// Client-facing view of a [`Lesson`]: identical, except the quiz carries no
+/// answer key (see [`QuizQuestionView`]). `quiz_token`, when present, is an
+/// opaque sealed token that lets the client submit an ephemeral (non-persisted)
+/// quiz for server-side grading without the answers ever reaching the browser.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LessonView {
+    pub id: String,
+    pub path_id: String,
+    pub seq: u32,
+    pub title: String,
+    pub body_html: String,
+    #[serde(default)]
+    pub citations: Vec<LessonCitation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_source: Option<LessonSource>,
+    #[serde(default)]
+    pub quiz: Vec<QuizQuestionView>,
+    /// Sealed answer-key token for ephemeral lessons; `None` for persisted ones
+    /// (which are graded by `id`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quiz_token: Option<String>,
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+    pub created_at: DateTime<Utc>,
+}
+
+impl LessonView {
+    /// Project a persisted lesson to its client-facing view, stripping the
+    /// answer key. `quiz_token` is attached for ephemeral lessons.
+    pub fn from_lesson(lesson: Lesson, quiz_token: Option<String>) -> Self {
+        Self {
+            quiz: lesson.quiz.iter().map(QuizQuestionView::from).collect(),
+            id: lesson.id,
+            path_id: lesson.path_id,
+            seq: lesson.seq,
+            title: lesson.title,
+            body_html: lesson.body_html,
+            citations: lesson.citations,
+            primary_source: lesson.primary_source,
+            quiz_token,
+            created_at: lesson.created_at,
+        }
+    }
 }
 
 /// A calibration signal recorded as the user progresses — the teaching
@@ -208,6 +281,40 @@ mod tests {
         assert_eq!(
             decoded.citations[0].section_anchor.as_deref(),
             Some("partitions")
+        );
+    }
+
+    #[test]
+    fn lesson_view_strips_the_answer_key() {
+        let lesson = Lesson {
+            id: "l1".into(),
+            path_id: "p1".into(),
+            user_id: "u1".into(),
+            seq: 1,
+            title: "T".into(),
+            body_html: "<p>x</p>".into(),
+            citations: vec![],
+            primary_source: None,
+            quiz: vec![QuizQuestion {
+                prompt: "What?".into(),
+                options: vec!["right".into(), "wrong".into()],
+                correct_index: 0,
+                explanation: "because right".into(),
+            }],
+            created_at: Utc::now(),
+        };
+
+        let view = LessonView::from_lesson(lesson, None);
+        // The view keeps the prompt/options but not the answer key.
+        assert_eq!(view.quiz.len(), 1);
+        assert_eq!(view.quiz[0].options, vec!["right", "wrong"]);
+
+        // Belt and braces: the serialized payload must not leak the answer.
+        let json = serde_json::to_string(&view).unwrap();
+        assert!(!json.contains("correct_index"), "leaked answer key: {json}");
+        assert!(
+            !json.contains("because right"),
+            "leaked explanation: {json}"
         );
     }
 

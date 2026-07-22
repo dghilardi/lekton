@@ -89,6 +89,11 @@ pub struct FeaturesConfig {
     /// and/or with `server.metrics_token`.
     #[serde(default)]
     pub metrics: bool,
+    /// Learn mode: teach-style personalized lessons grounded on the internal
+    /// documentation. Requires `rag` (retrieval + LLM generation). Off by
+    /// default — opt in with `LKN__FEATURES__LEARN=true`.
+    #[serde(default)]
+    pub learn: bool,
 }
 
 fn default_true() -> bool {
@@ -109,6 +114,7 @@ impl Default for FeaturesConfig {
             document_upload: false,
             sources: false,
             metrics: false,
+            learn: false,
         }
     }
 }
@@ -639,6 +645,12 @@ impl AppConfig {
                  (set LKN__FEATURES__RAG=true or disable attachment indexing)"
                     .into(),
             );
+        }
+
+        if self.features.learn && !self.features.rag {
+            return Err("features.learn = true requires features.rag = true \
+                 (set LKN__FEATURES__RAG=true or disable learn mode)"
+                .into());
         }
 
         if self.features.search && self.search.url.is_empty() {

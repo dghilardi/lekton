@@ -853,6 +853,7 @@ async fn main() {
         attachment_indexing: config.features.attachment_indexing && rag_service.is_some(),
         document_upload: config.features.document_upload,
         sources: config.features.sources,
+        learn: config.features.learn && chat_service.is_some(),
     };
 
     // Spawn the attachment extraction worker when attachment indexing is enabled.

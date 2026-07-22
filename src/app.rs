@@ -53,6 +53,7 @@ pub struct FeatureFlags {
     pub attachment_indexing: bool,
     pub document_upload: bool,
     pub sources: bool,
+    pub learn: bool,
 }
 
 /// Newtype wrapper for the feature-flags signal, used as Leptos context.

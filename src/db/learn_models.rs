@@ -71,6 +71,15 @@ pub struct QuizQuestion {
     pub explanation: String,
 }
 
+/// The graded outcome of a quiz submission, returned to the client.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuizGrade {
+    /// Per-question correctness, aligned with the lesson's `quiz` order.
+    pub per_question: Vec<bool>,
+    /// Fraction correct, in `0.0..=1.0`.
+    pub score: f32,
+}
+
 /// A generated lesson: one tightly-scoped, self-contained teaching unit.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Lesson {

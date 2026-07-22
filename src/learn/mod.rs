@@ -4,3 +4,4 @@
 
 pub mod generator;
 pub mod prompt;
+pub mod service;

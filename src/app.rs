@@ -150,6 +150,9 @@ pub struct AppState {
     /// Learn-mode persistence (paths/lessons/records). Present only when the
     /// `learn` feature is enabled.
     pub learn_repo: Option<Arc<dyn crate::db::learn_repository::LearnRepository>>,
+    /// Learn-mode orchestration (lesson generation + grading). Present only
+    /// when the `learn` feature is enabled and its LLM provider initialised.
+    pub learn_service: Option<Arc<crate::learn::service::LearnService>>,
     pub feedback_repo: Option<Arc<dyn crate::db::feedback_repository::FeedbackRepository>>,
     pub documentation_feedback_repo:
         Arc<dyn crate::db::documentation_feedback_repository::DocumentationFeedbackRepository>,

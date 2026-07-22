@@ -140,6 +140,7 @@ LKN__FEATURES__SEARCH=true
 LKN__FEATURES__ATTACHMENT_INDEXING=true
 LKN__FEATURES__DOCUMENT_UPLOAD=true
 LKN__FEATURES__SOURCES=true
+LKN__FEATURES__LEARN=true
 
 # RAG Configuration (Vector Database + Ollama)
 LKN__RAG__QDRANT_URL=http://localhost:6334
@@ -152,7 +153,7 @@ LKN__RAG__EMBEDDING_API_KEY=ollama
 # Base LLM (shared fallback for all pipeline steps)
 LKN__RAG__LLM__URL=http://localhost:11434/v1
 LKN__RAG__LLM__API_KEY=ollama
-LKN__RAG__LLM__MODEL=qwen3.5:0.8b
+LKN__RAG__LLM__MODEL=phi3:mini
 
 # RAG pipeline steps (model overrides — URL/key fall back to LLM base above)
 LKN__RAG__ANALYZER__MODEL=phi3:mini

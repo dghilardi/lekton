@@ -1,0 +1,38 @@
+{
+  "openrouter": {
+    "base_url": "https://openrouter.ai/api/v1",
+    "model": "nemotron-3-ultra-550b-a55b:free",
+    "env_file": "../../.env.go",
+    "api_key_var": "LKN__RAG__LLM__API_KEY",
+    "temperature": 0.2,
+    "max_tokens": 1500
+  },
+  "claude_cli": {
+    "bin": "claude",
+    "model": "opus"
+  },
+  "storage": {
+    "endpoint": "http://localhost:3900",
+    "bucket": "lekton-docs",
+    "region": "garage",
+    "env_file": "../../.env.go",
+    "access_key_var": "AWS_ACCESS_KEY_ID",
+    "secret_key_var": "AWS_SECRET_ACCESS_KEY"
+  },
+  "learn": {
+    "max_context_chars": 12000,
+    "max_source_documents": 3
+  },
+  "systems": {
+    "learn@nemotron": { "prompt": "learn", "backend": "openrouter" },
+    "teach@claude":   { "prompt": "teach", "backend": "claude" },
+    "learn@claude":   { "prompt": "learn", "backend": "claude" },
+    "teach@nemotron": { "prompt": "teach", "backend": "openrouter" }
+  },
+  "comparisons": [
+    { "name": "A_product",     "a": "learn@nemotron", "b": "teach@claude"   },
+    { "name": "B1_prompt",     "a": "learn@claude",   "b": "teach@claude"   },
+    { "name": "B2_cheapmodel", "a": "learn@nemotron", "b": "teach@nemotron" }
+  ],
+  "judge": { "model": "opus" }
+}

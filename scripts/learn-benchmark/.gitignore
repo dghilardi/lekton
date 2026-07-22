@@ -1,0 +1,4 @@
+# Fixtures hold internal-access doc content; runs hold generated lessons.
+# Both are reproducible from the local instance — do not commit.
+fixtures/
+runs/

@@ -147,6 +147,9 @@ pub struct AppState {
     pub schema_endpoint_reindex_state: Arc<crate::schema::reindex::SchemaEndpointReindexState>,
     pub chat_repo: Option<Arc<dyn crate::db::chat_repository::ChatRepository>>,
     pub chat_service: Option<Arc<crate::rag::chat::ChatService>>,
+    /// Learn-mode persistence (paths/lessons/records). Present only when the
+    /// `learn` feature is enabled.
+    pub learn_repo: Option<Arc<dyn crate::db::learn_repository::LearnRepository>>,
     pub feedback_repo: Option<Arc<dyn crate::db::feedback_repository::FeedbackRepository>>,
     pub documentation_feedback_repo:
         Arc<dyn crate::db::documentation_feedback_repository::DocumentationFeedbackRepository>,

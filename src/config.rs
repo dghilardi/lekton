@@ -30,6 +30,8 @@ pub struct AppConfig {
     pub rag: RagConfig,
     #[serde(default)]
     pub features: FeaturesConfig,
+    #[serde(default)]
+    pub learn: LearnConfig,
 }
 
 // ── Features ────────────────────────────────────────────────────────────────
@@ -115,6 +117,70 @@ impl Default for FeaturesConfig {
             sources: false,
             metrics: false,
             learn: false,
+        }
+    }
+}
+
+// ── Learn ─────────────────────────────────────────────────────────────────────
+
+/// Configuration for Learn mode. All LLM fields are optional and fall back to
+/// the resolved `[rag.chat]` config (which itself falls back to `[rag.llm]`).
+/// The entire `[learn]` section may be omitted — every field has a default.
+///
+/// Via env: `LKN__LEARN__MODEL`, `LKN__LEARN__MAX_CONTEXT_CHARS`, …
+#[derive(Debug, Clone, Deserialize)]
+pub struct LearnConfig {
+    /// Override the model. Falls back to `rag.chat.model` → `rag.llm.model`.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Override the LLM endpoint URL. Falls back to the resolved chat URL.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Override the API key. Falls back to the resolved chat API key.
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// Override HTTP headers. `None` inherits the resolved chat headers.
+    #[serde(default)]
+    pub headers: Option<HashMap<String, String>>,
+    /// Override the Vertex AI project ID. Falls back to the resolved chat value.
+    #[serde(default)]
+    pub vertex_project_id: Option<String>,
+    /// Override the Vertex AI location. Falls back to the resolved chat value.
+    #[serde(default)]
+    pub vertex_location: Option<String>,
+    /// Override the bundled tutor system-prompt template (Tera). `None` uses the
+    /// template shipped with the binary; kept here so it can later be promoted
+    /// to the prompt library without a code change.
+    #[serde(default)]
+    pub system_prompt_template: Option<String>,
+    /// Upper bound on source-document characters fed to the lesson generator.
+    #[serde(default = "default_learn_max_context_chars")]
+    pub max_context_chars: usize,
+    /// Max number of source documents pulled per lesson (retrieval stage 1).
+    #[serde(default = "default_learn_max_source_documents")]
+    pub max_source_documents: usize,
+}
+
+fn default_learn_max_context_chars() -> usize {
+    12_000
+}
+
+fn default_learn_max_source_documents() -> usize {
+    3
+}
+
+impl Default for LearnConfig {
+    fn default() -> Self {
+        Self {
+            model: None,
+            url: None,
+            api_key: None,
+            headers: None,
+            vertex_project_id: None,
+            vertex_location: None,
+            system_prompt_template: None,
+            max_context_chars: default_learn_max_context_chars(),
+            max_source_documents: default_learn_max_source_documents(),
         }
     }
 }
@@ -582,6 +648,48 @@ impl RagConfig {
                 .as_deref()
                 .and_then(non_empty)
                 .or_else(|| non_empty(&self.llm.vertex_location)),
+        }
+    }
+}
+
+#[cfg(feature = "ssr")]
+impl AppConfig {
+    /// Resolve the Learn-mode LLM config: `[learn]` overrides layered on top of
+    /// the resolved `[rag.chat]` config (which already merges over `[rag.llm]`).
+    pub fn resolve_learn_llm(&self) -> ResolvedLlmConfig {
+        let base = self.rag.resolve_chat();
+        ResolvedLlmConfig {
+            url: self
+                .learn
+                .url
+                .as_deref()
+                .and_then(non_empty)
+                .unwrap_or(base.url),
+            api_key: self
+                .learn
+                .api_key
+                .as_deref()
+                .and_then(non_empty)
+                .unwrap_or(base.api_key),
+            model: self
+                .learn
+                .model
+                .as_deref()
+                .and_then(non_empty)
+                .unwrap_or(base.model),
+            headers: self.learn.headers.clone().unwrap_or(base.headers),
+            vertex_project_id: self
+                .learn
+                .vertex_project_id
+                .as_deref()
+                .and_then(non_empty)
+                .or(base.vertex_project_id),
+            vertex_location: self
+                .learn
+                .vertex_location
+                .as_deref()
+                .and_then(non_empty)
+                .or(base.vertex_location),
         }
     }
 }

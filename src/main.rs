@@ -577,6 +577,14 @@ async fn main() {
         } else {
             None
         };
+    let learn_repo: Option<Arc<dyn lekton::db::learn_repository::LearnRepository>> =
+        if config.features.learn {
+            Some(Arc::new(
+                lekton::db::learn_repository::MongoLearnRepository::new(&mongo_db),
+            ))
+        } else {
+            None
+        };
     let feedback_repo: Option<Arc<dyn lekton::db::feedback_repository::FeedbackRepository>> =
         if config.features.rag {
             Some(Arc::new(
@@ -948,6 +956,7 @@ async fn main() {
         attachment_search_service,
         chat_repo,
         chat_service,
+        learn_repo,
         search_reindex_state,
         schema_endpoint_reindex_state,
         feedback_repo,

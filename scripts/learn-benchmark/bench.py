@@ -158,18 +158,33 @@ def openrouter_chat(cfg, system, user, json_mode):
     }
     if json_mode:
         body["response_format"] = {"type": "json_object"}
-    req = urllib.request.Request(
-        o["base_url"].rstrip("/") + "/chat/completions",
-        data=json.dumps(body).encode(),
-        headers={
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
-            "X-Title": "lekton-learn-benchmark",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=180) as resp:
-        data = json.loads(resp.read())
-    return data["choices"][0]["message"].get("content") or ""
+    import time
+
+    last = ""
+    for i in range(4):
+        req = urllib.request.Request(
+            o["base_url"].rstrip("/") + "/chat/completions",
+            data=json.dumps(body).encode(),
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+                "X-Title": "lekton-learn-benchmark",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                data = json.loads(resp.read())
+            choices = data.get("choices")
+            if choices:
+                return choices[0]["message"].get("content") or ""
+            last = str(data.get("error") or data)[:200]
+        except urllib.error.HTTPError as e:
+            last = f"HTTP {e.code}: {e.read().decode('utf-8', 'replace')[:150]}"
+            if e.code not in (429,) and e.code < 500:
+                raise RuntimeError(last)
+        print(f"    openrouter attempt {i + 1}/4 transient: {last}", file=sys.stderr)
+        time.sleep(3 * (i + 1))
+    raise RuntimeError(f"openrouter failed after retries: {last}")
 
 
 def _live_fn_url(cfg):
@@ -244,23 +259,35 @@ def lekton_live(cfg, slug, attempts=4):
     raise RuntimeError(f"live generation failed after {attempts} attempts: {last}")
 
 
-def claude_chat(cfg, system, user, model=None):
+def claude_chat(cfg, system, user, model=None, attempts=4):
+    import tempfile
+    import time
+
     c = cfg["claude_cli"]
-    scratch = ROOT / "runs" / ".scratch"
+    # Run from an out-of-repo scratch dir with MCP disabled: avoids inheriting
+    # the project's CLAUDE.md / user MCP servers, which are slow to init and
+    # occasionally fail a burst of back-to-back invocations.
+    scratch = Path(tempfile.gettempdir()) / "lekton-bench-scratch"
     scratch.mkdir(parents=True, exist_ok=True)
     cmd = [
         c["bin"], "-p",
         "--model", model or c["model"],
         "--system-prompt", system,
         "--exclude-dynamic-system-prompt-sections",
+        "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
         "--output-format", "text",
     ]
-    proc = subprocess.run(
-        cmd, input=user, capture_output=True, text=True, cwd=str(scratch), timeout=300
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(f"claude cli failed ({proc.returncode}): {proc.stderr[:400]}")
-    return proc.stdout
+    last = ""
+    for i in range(attempts):
+        proc = subprocess.run(
+            cmd, input=user, capture_output=True, text=True, cwd=str(scratch), timeout=300
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            return proc.stdout
+        last = (proc.stderr or proc.stdout or "").strip()[:300]
+        print(f"    claude cli attempt {i + 1}/{attempts} failed (rc={proc.returncode}): {last}", file=sys.stderr)
+        time.sleep(3 * (i + 1))
+    raise RuntimeError(f"claude cli failed after {attempts} attempts: {last}")
 
 
 # ── JSON extraction (faithful port of generator.rs::extract_json) ────────────

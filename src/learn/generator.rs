@@ -29,6 +29,7 @@ use crate::db::learn_models::{
 };
 use crate::db::repository::DocumentRepository;
 use crate::error::AppError;
+use crate::learn::prompt::LessonPromptSource;
 use crate::rag::chat::ChatService;
 use crate::rag::client::format_llm_error;
 use crate::rag::provider::LlmProvider;
@@ -90,7 +91,7 @@ pub struct LessonGenerator {
     llm_provider: Arc<LlmProvider>,
     model: String,
     headers: std::collections::HashMap<String, String>,
-    system_template: String,
+    prompt_source: Arc<dyn LessonPromptSource>,
     max_context_chars: usize,
     max_source_documents: usize,
 }
@@ -104,7 +105,7 @@ impl LessonGenerator {
         llm_provider: Arc<LlmProvider>,
         model: String,
         headers: std::collections::HashMap<String, String>,
-        system_template: String,
+        prompt_source: Arc<dyn LessonPromptSource>,
         max_context_chars: usize,
         max_source_documents: usize,
     ) -> Self {
@@ -115,7 +116,7 @@ impl LessonGenerator {
             llm_provider,
             model,
             headers,
-            system_template,
+            prompt_source,
             max_context_chars,
             max_source_documents,
         }
@@ -183,8 +184,9 @@ impl LessonGenerator {
         }
 
         // ── Stage 3: generate (JSON mode, with a corrective retry) ────────
+        let template = self.prompt_source.tutor_template().await;
         let system_prompt =
-            self.render_system_prompt(&target, covered, directive, mission, known_terms)?;
+            render_tutor_prompt(&template, &target, covered, directive, mission, known_terms)?;
         let parsed = self.generate_parsed(&system_prompt, &context).await?;
 
         // ── Stage 4: validate + sanitize ──────────────────────────────────
@@ -293,24 +295,6 @@ impl LessonGenerator {
             })
             .collect();
         Ok(sections)
-    }
-
-    fn render_system_prompt(
-        &self,
-        target: &str,
-        covered: &[String],
-        directive: Option<&str>,
-        mission: Option<&str>,
-        known_terms: &[GlossaryTerm],
-    ) -> Result<String, AppError> {
-        render_tutor_prompt(
-            &self.system_template,
-            target,
-            covered,
-            directive,
-            mission,
-            known_terms,
-        )
     }
 
     /// Generate and parse a lesson, retrying once without JSON mode and with a

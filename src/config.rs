@@ -149,10 +149,15 @@ pub struct LearnConfig {
     #[serde(default)]
     pub vertex_location: Option<String>,
     /// Override the bundled tutor system-prompt template (Tera). `None` uses the
-    /// template shipped with the binary; kept here so it can later be promoted
-    /// to the prompt library without a code change.
+    /// template shipped with the binary. Takes precedence over `prompt_slug`.
     #[serde(default)]
     pub system_prompt_template: Option<String>,
+    /// Slug of a prompt in the prompt library to use as the tutor system prompt.
+    /// When set (and `system_prompt_template` is not), the tutor prompt is
+    /// resolved from the library at generation time, falling back to the bundled
+    /// template if the prompt is missing or unreadable.
+    #[serde(default)]
+    pub prompt_slug: Option<String>,
     /// Upper bound on source-document characters fed to the lesson generator.
     #[serde(default = "default_learn_max_context_chars")]
     pub max_context_chars: usize,
@@ -179,6 +184,7 @@ impl Default for LearnConfig {
             vertex_project_id: None,
             vertex_location: None,
             system_prompt_template: None,
+            prompt_slug: None,
             max_context_chars: default_learn_max_context_chars(),
             max_source_documents: default_learn_max_source_documents(),
         }

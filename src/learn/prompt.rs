@@ -67,3 +67,127 @@ pub fn tutor_system_template(override_template: Option<&str>) -> String {
         _ => TUTOR_SYSTEM_TEMPLATE.to_string(),
     }
 }
+
+use std::sync::Arc;
+
+use async_trait::async_trait;
+
+use crate::db::prompt_repository::PromptRepository;
+use crate::error::AppError;
+use crate::storage::client::StorageClient;
+
+/// Where the generator gets its tutor system-prompt template. The indirection
+/// lets the template come from the bundled default, a config override, or the
+/// prompt library, without the generator caring which.
+#[async_trait]
+pub trait LessonPromptSource: Send + Sync {
+    /// Resolve the tutor system-prompt template (Tera). Implementations must
+    /// always return a usable template — falling back to the bundled one on any
+    /// miss — so lesson generation never fails on a prompt-lookup problem.
+    async fn tutor_template(&self) -> String;
+}
+
+/// The template shipped with the binary, optionally replaced by
+/// `[learn].system_prompt_template`. Resolved once at construction.
+pub struct BundledPromptSource {
+    template: String,
+}
+
+impl BundledPromptSource {
+    pub fn new(override_template: Option<&str>) -> Self {
+        Self {
+            template: tutor_system_template(override_template),
+        }
+    }
+}
+
+#[async_trait]
+impl LessonPromptSource for BundledPromptSource {
+    async fn tutor_template(&self) -> String {
+        self.template.clone()
+    }
+}
+
+/// Resolves the tutor prompt from the prompt library by slug at generation
+/// time, so admins can edit it there without a redeploy. Falls back to the
+/// bundled template when the prompt is missing, empty, or unreadable.
+pub struct RepositoryPromptSource {
+    slug: String,
+    prompt_repo: Arc<dyn PromptRepository>,
+    storage: Arc<dyn StorageClient>,
+    fallback: String,
+}
+
+impl RepositoryPromptSource {
+    pub fn new(
+        slug: String,
+        prompt_repo: Arc<dyn PromptRepository>,
+        storage: Arc<dyn StorageClient>,
+        override_template: Option<&str>,
+    ) -> Self {
+        Self {
+            slug,
+            prompt_repo,
+            storage,
+            fallback: tutor_system_template(override_template),
+        }
+    }
+
+    async fn load(&self) -> Result<Option<String>, AppError> {
+        let Some(prompt) = self.prompt_repo.find_by_slug(&self.slug).await? else {
+            return Ok(None);
+        };
+        let Some(bytes) = self.storage.get_object(&prompt.s3_key).await? else {
+            return Ok(None);
+        };
+        // Prompt bodies are stored as a YAML blob; we only need the body.
+        #[derive(serde::Deserialize)]
+        struct Blob {
+            prompt_body: String,
+        }
+        let blob: Blob = serde_yaml::from_slice(&bytes)
+            .map_err(|e| AppError::Internal(format!("learn: invalid prompt blob: {e}")))?;
+        Ok(Some(blob.prompt_body))
+    }
+}
+
+#[async_trait]
+impl LessonPromptSource for RepositoryPromptSource {
+    async fn tutor_template(&self) -> String {
+        match self.load().await {
+            Ok(Some(body)) if !body.trim().is_empty() => body,
+            Ok(_) => {
+                tracing::warn!(
+                    slug = %self.slug,
+                    "learn: tutor prompt not found/empty in library — using bundled template"
+                );
+                self.fallback.clone()
+            }
+            Err(e) => {
+                tracing::warn!(
+                    slug = %self.slug,
+                    "learn: could not load tutor prompt from library ({e}) — using bundled template"
+                );
+                self.fallback.clone()
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn bundled_source_uses_override_then_default() {
+        let overridden = BundledPromptSource::new(Some("CUSTOM TUTOR PROMPT"));
+        assert_eq!(overridden.tutor_template().await, "CUSTOM TUTOR PROMPT");
+
+        // A blank override falls back to the bundled template.
+        let blank = BundledPromptSource::new(Some("   "));
+        assert!(blank.tutor_template().await.contains("expert tutor"));
+
+        let default = BundledPromptSource::new(None);
+        assert!(default.tutor_template().await.contains("expert tutor"));
+    }
+}

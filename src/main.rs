@@ -934,6 +934,24 @@ async fn main() {
         let resolved = config.resolve_learn_llm();
         match lekton::rag::provider::LlmProvider::initialize(&resolved).await {
             Ok(provider) => {
+                // Resolve the tutor prompt: from the prompt library when a slug
+                // is configured (and no inline override), else the bundled
+                // template. Both fall back to bundled on any lookup miss.
+                let override_template = config.learn.system_prompt_template.as_deref();
+                let prompt_source: Arc<dyn lekton::learn::prompt::LessonPromptSource> =
+                    match &config.learn.prompt_slug {
+                        Some(slug) if override_template.is_none() => {
+                            Arc::new(lekton::learn::prompt::RepositoryPromptSource::new(
+                                slug.clone(),
+                                prompt_repo.clone(),
+                                storage_client.clone(),
+                                override_template,
+                            ))
+                        }
+                        _ => Arc::new(lekton::learn::prompt::BundledPromptSource::new(
+                            override_template,
+                        )),
+                    };
                 let generator = lekton::learn::generator::LessonGenerator::new(
                     chat_svc,
                     document_repo.clone(),
@@ -941,9 +959,7 @@ async fn main() {
                     Arc::new(provider),
                     resolved.model.clone(),
                     resolved.headers.clone(),
-                    lekton::learn::prompt::tutor_system_template(
-                        config.learn.system_prompt_template.as_deref(),
-                    ),
+                    prompt_source,
                     config.learn.max_context_chars,
                     config.learn.max_source_documents,
                 );

@@ -18,7 +18,7 @@ use std::sync::Arc;
 use async_openai::types::chat::{
     ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage,
     ChatCompletionRequestSystemMessageContent, ChatCompletionRequestUserMessage,
-    ChatCompletionRequestUserMessageContent, CreateChatCompletionRequest,
+    ChatCompletionRequestUserMessageContent, CreateChatCompletionRequest, ResponseFormat,
 };
 use serde::Deserialize;
 
@@ -146,8 +146,14 @@ impl LessonGenerator {
             ));
         }
         let source_slugs: Vec<String> = docs.iter().map(|d| d.slug.clone()).collect();
-        let allowed: HashSet<String> = source_slugs.iter().cloned().collect();
-        let (context, truncated) = assemble_context(&docs, self.max_context_chars);
+        let (body, truncated) = assemble_context(&docs, self.max_context_chars);
+        // Prefix the exact slugs so the model can echo them verbatim in citations.
+        let context = format!(
+            "Available document slugs (use these EXACT strings in every citation's \
+             \"document_slug\" field): {}\n\n{}",
+            source_slugs.join(", "),
+            body
+        );
         if truncated {
             tracing::info!(
                 slugs = ?source_slugs,
@@ -156,13 +162,12 @@ impl LessonGenerator {
             );
         }
 
-        // ── Stage 3: generate ─────────────────────────────────────────────
+        // ── Stage 3: generate (JSON mode, with a corrective retry) ────────
         let system_prompt = self.render_system_prompt(&target, covered, directive)?;
-        let raw = self.call_llm(&system_prompt, &context).await?;
+        let parsed = self.generate_parsed(&system_prompt, &context).await?;
 
         // ── Stage 4: validate + sanitize ──────────────────────────────────
-        let parsed = extract_json(&raw)?;
-        let mut lesson = validate_and_build(parsed, &allowed)?;
+        let mut lesson = validate_and_build(parsed, &source_slugs);
         lesson.source_slugs = source_slugs;
         lesson.context_truncated = truncated;
         Ok(lesson)
@@ -246,16 +251,44 @@ impl LessonGenerator {
             .map_err(|e| AppError::Internal(format!("learn: tutor template render failed: {e}")))
     }
 
-    async fn call_llm(&self, system_prompt: &str, context: &str) -> Result<String, AppError> {
+    /// Generate and parse a lesson, retrying once without JSON mode and with a
+    /// corrective instruction when the first reply is not valid JSON — small
+    /// models often ignore `response_format` or wrap the object in prose.
+    async fn generate_parsed(
+        &self,
+        system_prompt: &str,
+        context: &str,
+    ) -> Result<RawLesson, AppError> {
+        let user = format!("Documentation context:\n\n{context}");
+        match self.call_llm(system_prompt, &user, true).await {
+            Ok(reply) => match extract_json(&reply) {
+                Ok(parsed) => return Ok(parsed),
+                Err(e) => tracing::warn!("learn: first lesson reply was not JSON ({e}) — retrying"),
+            },
+            Err(e) => tracing::warn!("learn: JSON-mode lesson call failed ({e}) — retrying"),
+        }
+
+        let corrective = format!(
+            "{user}\n\nIMPORTANT: your previous reply was rejected. Respond with ONLY the JSON \
+             object described in the instructions — no prose, no markdown code fences, nothing else."
+        );
+        let reply = self.call_llm(system_prompt, &corrective, false).await?;
+        extract_json(&reply)
+    }
+
+    async fn call_llm(
+        &self,
+        system_prompt: &str,
+        user: &str,
+        json_mode: bool,
+    ) -> Result<String, AppError> {
         let messages = vec![
             ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage {
                 content: ChatCompletionRequestSystemMessageContent::Text(system_prompt.to_string()),
                 name: None,
             }),
             ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
-                content: ChatCompletionRequestUserMessageContent::Text(format!(
-                    "Documentation context:\n\n{context}"
-                )),
+                content: ChatCompletionRequestUserMessageContent::Text(user.to_string()),
                 name: None,
             }),
         ];
@@ -266,6 +299,7 @@ impl LessonGenerator {
             max_completion_tokens: Some(LESSON_MAX_TOKENS),
             stream: Some(false),
             temperature: Some(0.2),
+            response_format: json_mode.then_some(ResponseFormat::JsonObject),
             ..Default::default()
         };
 
@@ -339,29 +373,51 @@ fn extract_json(raw: &str) -> Result<RawLesson, AppError> {
         .map_err(|e| AppError::Internal(format!("learn: could not parse lesson JSON: {e}")))
 }
 
-/// Drop hallucinated citations (slugs not among the provided documents),
-/// sanitize the body, validate quiz questions, and require at least one
-/// grounded citation.
-fn validate_and_build(
-    raw: RawLesson,
-    allowed_slugs: &HashSet<String>,
-) -> Result<GeneratedLesson, AppError> {
-    let citations: Vec<LessonCitation> = raw
+/// Resolve a model-supplied slug to the canonical source slug, tolerating case
+/// differences (small models don't always echo the slug verbatim).
+fn resolve_slug(slug: &str, source_slugs: &[String]) -> Option<String> {
+    let s = slug.trim();
+    source_slugs
+        .iter()
+        .find(|c| c.eq_ignore_ascii_case(s))
+        .cloned()
+}
+
+/// Sanitize the body, canonicalize/keep only citations that resolve to a
+/// provided document, and validate quiz questions.
+///
+/// The lesson is grounded on the provided documents by construction (they are
+/// the only context), so if the model's citations don't resolve we backfill
+/// citations from the source documents rather than discarding the lesson.
+fn validate_and_build(raw: RawLesson, source_slugs: &[String]) -> GeneratedLesson {
+    let mut citations: Vec<LessonCitation> = raw
         .citations
         .into_iter()
-        .filter(|c| allowed_slugs.contains(&c.document_slug))
+        .filter_map(|mut c| {
+            resolve_slug(&c.document_slug, source_slugs).map(|canon| {
+                c.document_slug = canon;
+                c
+            })
+        })
         .collect();
 
     if citations.is_empty() {
-        return Err(AppError::Internal(
-            "learn: generated lesson had no citation resolving to a provided document".into(),
-        ));
+        citations = source_slugs
+            .iter()
+            .map(|slug| LessonCitation {
+                document_slug: slug.clone(),
+                section_anchor: None,
+                quote: String::new(),
+            })
+            .collect();
     }
 
-    // Keep the primary source only if it points at a provided document.
-    let primary_source = raw
-        .primary_source
-        .filter(|s| allowed_slugs.contains(&s.document_slug));
+    let primary_source = raw.primary_source.and_then(|s| {
+        resolve_slug(&s.document_slug, source_slugs).map(|canon| LessonSource {
+            document_slug: canon,
+            section_anchor: s.section_anchor,
+        })
+    });
 
     // Keep only well-formed quiz questions (≥2 options, in-range answer).
     let quiz: Vec<QuizQuestion> = raw
@@ -370,7 +426,7 @@ fn validate_and_build(
         .filter(|q| q.options.len() >= 2 && q.correct_index < q.options.len())
         .collect();
 
-    Ok(GeneratedLesson {
+    GeneratedLesson {
         title: raw.title.trim().to_string(),
         body_html: sanitize_html(&raw.body_html),
         citations,
@@ -378,7 +434,7 @@ fn validate_and_build(
         quiz,
         source_slugs: Vec::new(),
         context_truncated: false,
-    })
+    }
 }
 
 #[cfg(test)]
@@ -423,8 +479,8 @@ mod tests {
         assert!(extract_json("no json here").is_err());
     }
 
-    fn allowed() -> HashSet<String> {
-        ["docs/kafka".to_string()].into_iter().collect()
+    fn allowed() -> Vec<String> {
+        vec!["docs/kafka".to_string()]
     }
 
     #[test]
@@ -470,7 +526,7 @@ mod tests {
             ],
         };
 
-        let lesson = validate_and_build(raw, &allowed()).unwrap();
+        let lesson = validate_and_build(raw, &allowed());
         assert_eq!(lesson.title, "Partitions");
         assert!(!lesson.body_html.contains("<script"));
         assert!(lesson.body_html.contains("<p>ok</p>"));
@@ -484,7 +540,10 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_lesson_without_valid_citation() {
+    fn validate_backfills_citations_when_none_resolve() {
+        // The model only cited a document that isn't among the sources: since
+        // the lesson is grounded on the provided docs, citations are backfilled
+        // rather than the lesson being rejected.
         let raw = RawLesson {
             title: "T".into(),
             body_html: "<p>x</p>".into(),
@@ -496,6 +555,27 @@ mod tests {
             primary_source: None,
             quiz: vec![],
         };
-        assert!(validate_and_build(raw, &allowed()).is_err());
+        let lesson = validate_and_build(raw, &allowed());
+        assert_eq!(lesson.citations.len(), 1);
+        assert_eq!(lesson.citations[0].document_slug, "docs/kafka");
+    }
+
+    #[test]
+    fn validate_resolves_citation_slug_case_insensitively() {
+        let raw = RawLesson {
+            title: "T".into(),
+            body_html: "<p>x</p>".into(),
+            citations: vec![LessonCitation {
+                document_slug: "Docs/Kafka".into(),
+                section_anchor: None,
+                quote: "q".into(),
+            }],
+            primary_source: None,
+            quiz: vec![],
+        };
+        let lesson = validate_and_build(raw, &allowed());
+        // Canonicalized to the source slug's exact casing.
+        assert_eq!(lesson.citations.len(), 1);
+        assert_eq!(lesson.citations[0].document_slug, "docs/kafka");
     }
 }

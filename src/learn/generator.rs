@@ -116,6 +116,7 @@ impl LessonGenerator {
         user_ctx: &UserContext,
         scope: &LearningScope,
         covered: &[String],
+        directive: Option<&str>,
     ) -> Result<GeneratedLesson, AppError> {
         // ── Stage 1: which documents ──────────────────────────────────────
         let (target, candidate_slugs) = match scope {
@@ -156,7 +157,7 @@ impl LessonGenerator {
         }
 
         // ── Stage 3: generate ─────────────────────────────────────────────
-        let system_prompt = self.render_system_prompt(&target, covered)?;
+        let system_prompt = self.render_system_prompt(&target, covered, directive)?;
         let raw = self.call_llm(&system_prompt, &context).await?;
 
         // ── Stage 4: validate + sanitize ──────────────────────────────────
@@ -228,13 +229,19 @@ impl LessonGenerator {
         Ok(out)
     }
 
-    fn render_system_prompt(&self, target: &str, covered: &[String]) -> Result<String, AppError> {
+    fn render_system_prompt(
+        &self,
+        target: &str,
+        covered: &[String],
+        directive: Option<&str>,
+    ) -> Result<String, AppError> {
         let mut tera = tera::Tera::default();
         tera.add_raw_template("tutor", &self.system_template)
             .map_err(|e| AppError::Internal(format!("learn: invalid tutor template: {e}")))?;
         let mut ctx = tera::Context::new();
         ctx.insert("target", target);
         ctx.insert("covered", &covered.join("; "));
+        ctx.insert("directive", &directive.unwrap_or(""));
         tera.render("tutor", &ctx)
             .map_err(|e| AppError::Internal(format!("learn: tutor template render failed: {e}")))
     }

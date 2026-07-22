@@ -12,6 +12,9 @@ tightly-scoped, self-contained concept about: {{ target }}.
 Ground every statement ONLY in the provided documentation context. Never use
 outside knowledge. If the context is insufficient, teach the most useful thing
 it does support.
+{% if directive %}
+{{ directive }}
+{% endif %}
 {% if covered %}
 Avoid re-teaching these already-covered points: {{ covered }}.
 {% endif %}

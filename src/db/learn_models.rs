@@ -71,6 +71,15 @@ pub struct QuizQuestion {
     pub explanation: String,
 }
 
+/// Per-user Learn-mode preference document.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LearnPreference {
+    pub user_id: String,
+    /// When false, lessons/records/paths are generated in-session but never
+    /// persisted (privacy opt-out).
+    pub persist: bool,
+}
+
 /// The graded outcome of a quiz submission, returned to the client.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QuizGrade {

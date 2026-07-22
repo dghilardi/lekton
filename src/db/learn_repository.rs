@@ -5,6 +5,9 @@ use async_trait::async_trait;
 use crate::db::learn_models::{LearningPath, LearningRecord, Lesson};
 use crate::error::AppError;
 
+#[cfg(feature = "ssr")]
+use crate::db::learn_models::LearnPreference;
+
 #[async_trait]
 pub trait LearnRepository: Send + Sync {
     /// Create a new learning path.
@@ -43,6 +46,13 @@ pub trait LearnRepository: Send + Sync {
 
     /// Privacy: delete all learning data (paths, lessons, records) for a user.
     async fn delete_all_for_user(&self, user_id: &str) -> Result<(), AppError>;
+
+    /// Whether the user opted into persisting learning data. Defaults to `true`
+    /// when no preference has been set.
+    async fn get_persist(&self, user_id: &str) -> Result<bool, AppError>;
+
+    /// Set the user's persistence preference.
+    async fn set_persist(&self, user_id: &str, persist: bool) -> Result<(), AppError>;
 }
 
 // ── MongoDB implementation ───────────────────────────────────────────────────
@@ -52,6 +62,7 @@ pub struct MongoLearnRepository {
     paths: mongodb::Collection<LearningPath>,
     lessons: mongodb::Collection<Lesson>,
     records: mongodb::Collection<LearningRecord>,
+    preferences: mongodb::Collection<LearnPreference>,
 }
 
 #[cfg(feature = "ssr")]
@@ -61,6 +72,7 @@ impl MongoLearnRepository {
             paths: db.collection("learn_paths"),
             lessons: db.collection("learn_lessons"),
             records: db.collection("learn_records"),
+            preferences: db.collection("learn_preferences"),
         }
     }
 }
@@ -203,6 +215,27 @@ impl LearnRepository for MongoLearnRepository {
             .delete_many(filter)
             .await
             .map_err(|e| AppError::Internal(format!("mongo delete learn_paths for user: {e}")))?;
+        Ok(())
+    }
+
+    async fn get_persist(&self, user_id: &str) -> Result<bool, AppError> {
+        let pref = self
+            .preferences
+            .find_one(mongodb::bson::doc! { "user_id": user_id })
+            .await
+            .map_err(|e| AppError::Internal(format!("mongo find learn_preference: {e}")))?;
+        Ok(pref.map(|p| p.persist).unwrap_or(true))
+    }
+
+    async fn set_persist(&self, user_id: &str, persist: bool) -> Result<(), AppError> {
+        self.preferences
+            .update_one(
+                mongodb::bson::doc! { "user_id": user_id },
+                mongodb::bson::doc! { "$set": { "persist": persist } },
+            )
+            .upsert(true)
+            .await
+            .map_err(|e| AppError::Internal(format!("mongo upsert learn_preference: {e}")))?;
         Ok(())
     }
 }

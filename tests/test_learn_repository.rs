@@ -134,3 +134,22 @@ async fn delete_path_cascades_and_delete_all_for_user() {
     assert!(repo.list_paths_for_user("u1").await.unwrap().is_empty());
     assert!(repo.get_lesson("l3").await.unwrap().is_none());
 }
+
+#[tokio::test]
+async fn persist_preference_defaults_true_and_roundtrips() {
+    let env = common::TestEnv::start().await;
+    let repo = env.learn_repo.clone();
+
+    // Unset preference defaults to persisting.
+    assert!(repo.get_persist("u1").await.unwrap());
+
+    repo.set_persist("u1", false).await.unwrap();
+    assert!(!repo.get_persist("u1").await.unwrap());
+
+    // Upsert (not insert) on the second set.
+    repo.set_persist("u1", true).await.unwrap();
+    assert!(repo.get_persist("u1").await.unwrap());
+
+    // Preferences are per-user.
+    assert!(repo.get_persist("u2").await.unwrap());
+}

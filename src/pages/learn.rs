@@ -5,12 +5,12 @@ use leptos::prelude::*;
 use leptos_router::hooks::{use_navigate, use_params_map};
 
 use crate::app::{
-    delete_my_learning_data, generate_next_lesson, get_learning_path, list_my_learning_paths,
-    start_learning_path, submit_quiz,
+    delete_my_learning_data, generate_ephemeral_lesson, generate_next_lesson, get_learn_privacy,
+    get_learning_path, list_my_learning_paths, set_learn_privacy, start_learning_path, submit_quiz,
 };
 use crate::auth::refresh_client::with_auth_retry;
 use crate::components::MarkdownContent;
-use crate::db::learn_models::{LearningScope, Lesson};
+use crate::db::learn_models::{LearningScope, Lesson, QuizGrade, QuizQuestion};
 
 /// Dashboard at `/learn`: start a new path and browse existing ones.
 #[component]
@@ -21,30 +21,58 @@ pub fn LearnDashboardPage() -> impl IntoView {
         with_auth_retry(list_my_learning_paths)
     });
 
+    // Privacy: persistence preference (default on). `persist_override` reflects
+    // the pending toggle before the server round-trips.
+    let persist_override = RwSignal::new(None::<bool>);
+    let persist_res = LocalResource::new(|| with_auth_retry(get_learn_privacy));
+    let persist = Signal::derive(move || {
+        persist_override
+            .get()
+            .or_else(|| persist_res.get().and_then(|r| r.ok()))
+            .unwrap_or(true)
+    });
+    let toggle_privacy = Action::new_local(move |new: &bool| {
+        let new = *new;
+        async move {
+            persist_override.set(Some(new));
+            let _ = with_auth_retry(move || set_learn_privacy(new)).await;
+        }
+    });
+
     let scope_kind = RwSignal::new("tag".to_string());
     let scope_value = RwSignal::new(String::new());
     let error = RwSignal::new(None::<String>);
     let starting = RwSignal::new(false);
+    let ephemeral = RwSignal::new(None::<Lesson>);
     let navigate = use_navigate();
 
     let start = Action::new_local(move |_: &()| {
         let navigate = navigate.clone();
         let kind = scope_kind.get();
         let value = scope_value.get().trim().to_string();
+        let do_persist = persist.get();
         async move {
             if value.is_empty() {
                 return;
             }
             starting.set(true);
             error.set(None);
+            ephemeral.set(None);
             let scope = match kind.as_str() {
                 "document" => LearningScope::Document { slug: value },
                 "topic" => LearningScope::Topic { text: value },
                 _ => LearningScope::Tag { tag: value },
             };
-            match with_auth_retry(move || start_learning_path(scope.clone())).await {
-                Ok(path) => navigate(&format!("/learn/{}", path.id), Default::default()),
-                Err(e) => error.set(Some(e.to_string())),
+            if do_persist {
+                match with_auth_retry(move || start_learning_path(scope.clone())).await {
+                    Ok(path) => navigate(&format!("/learn/{}", path.id), Default::default()),
+                    Err(e) => error.set(Some(e.to_string())),
+                }
+            } else {
+                match with_auth_retry(move || generate_ephemeral_lesson(scope.clone())).await {
+                    Ok(lesson) => ephemeral.set(Some(lesson)),
+                    Err(e) => error.set(Some(e.to_string())),
+                }
             }
             starting.set(false);
         }
@@ -66,9 +94,30 @@ pub fn LearnDashboardPage() -> impl IntoView {
                 </p>
             </div>
 
+            <div class="flex items-center justify-between rounded-box bg-base-200 px-4 py-3">
+                <div>
+                    <p class="text-sm font-medium">"Save my progress"</p>
+                    <p class="text-xs text-base-content/60">
+                        {move || if persist.get() {
+                            "Paths, lessons and quiz results are saved so lessons adapt to you."
+                        } else {
+                            "Off — lessons are generated for this session only and never stored."
+                        }}
+                    </p>
+                </div>
+                <input
+                    type="checkbox"
+                    class="toggle toggle-primary"
+                    prop:checked=move || persist.get()
+                    on:change=move |_| { toggle_privacy.dispatch(!persist.get()); }
+                />
+            </div>
+
             <div class="card bg-base-200">
                 <div class="card-body gap-3">
-                    <h2 class="card-title text-base">"Start a new path"</h2>
+                    <h2 class="card-title text-base">
+                        {move || if persist.get() { "Start a new path" } else { "Generate a one-off lesson" }}
+                    </h2>
                     {move || error.get().map(|e| view! {
                         <div class="alert alert-error py-2 text-sm">{e}</div>
                     })}
@@ -101,13 +150,22 @@ pub fn LearnDashboardPage() -> impl IntoView {
                         >
                             {move || if starting.get() {
                                 view! { <span class="loading loading-spinner loading-sm" /> }.into_any()
-                            } else {
+                            } else if persist.get() {
                                 view! { "Start" }.into_any()
+                            } else {
+                                view! { "Generate" }.into_any()
                             }}
                         </button>
                     </div>
                 </div>
             </div>
+
+            {move || ephemeral.get().map(|l| view! {
+                <div class="space-y-2">
+                    <p class="text-xs text-base-content/60">"This lesson is not saved."</p>
+                    <LessonCard lesson=l persist=false />
+                </div>
+            })}
 
             <div class="space-y-3">
                 <h2 class="text-lg font-medium">"Your paths"</h2>
@@ -203,7 +261,7 @@ pub fn LearnPathPage() -> impl IntoView {
                             } else {
                                 view! {
                                     <div class="space-y-6">
-                                        {pw.lessons.into_iter().map(|l| view! { <LessonCard lesson=l /> }).collect::<Vec<_>>()}
+                                        {pw.lessons.into_iter().map(|l| view! { <LessonCard lesson=l persist=true /> }).collect::<Vec<_>>()}
                                     </div>
                                 }.into_any()
                             }}
@@ -236,9 +294,10 @@ pub fn LearnPathPage() -> impl IntoView {
     }
 }
 
-/// A single lesson: body, citations, and its interactive quiz.
+/// A single lesson: body, citations, and its interactive quiz. `persist`
+/// controls whether quiz submission is recorded server-side.
 #[component]
-fn LessonCard(lesson: Lesson) -> impl IntoView {
+fn LessonCard(lesson: Lesson, persist: bool) -> impl IntoView {
     let citations = lesson.citations.clone();
     let quiz = lesson.quiz.clone();
     let lesson_id = lesson.id.clone();
@@ -264,35 +323,51 @@ fn LessonCard(lesson: Lesson) -> impl IntoView {
                     </div>
                 })}
 
-                {(!quiz.is_empty()).then(|| view! { <QuizWidget lesson_id=lesson_id.clone() quiz=quiz.clone() /> })}
+                {(!quiz.is_empty()).then(|| view! { <QuizWidget lesson_id=lesson_id.clone() quiz=quiz.clone() persist=persist /> })}
             </div>
         </div>
     }
 }
 
-/// Interactive multiple-choice quiz with immediate feedback on submit.
+/// Interactive multiple-choice quiz with immediate feedback on submit. When
+/// `persist` is false (ephemeral/privacy-off) the quiz is graded client-side
+/// and nothing is sent to the server.
 #[component]
-fn QuizWidget(
-    lesson_id: String,
-    quiz: Vec<crate::db::learn_models::QuizQuestion>,
-) -> impl IntoView {
+fn QuizWidget(lesson_id: String, quiz: Vec<QuizQuestion>, persist: bool) -> impl IntoView {
     let n = quiz.len();
     let answers = RwSignal::new(vec![None::<usize>; n]);
-    let grade = RwSignal::new(None::<crate::db::learn_models::QuizGrade>);
+    let grade = RwSignal::new(None::<QuizGrade>);
     let error = RwSignal::new(None::<String>);
+    // Correct answers, kept for client-side grading in ephemeral mode.
+    let correct: Vec<usize> = quiz.iter().map(|q| q.correct_index).collect();
 
     let submit = Action::new_local(move |_: &()| {
         let lesson_id = lesson_id.clone();
-        let ans: Vec<usize> = answers
-            .get()
-            .into_iter()
-            .map(|o| o.unwrap_or(usize::MAX))
-            .collect();
+        let correct = correct.clone();
+        let selected: Vec<Option<usize>> = answers.get();
         async move {
             error.set(None);
-            match with_auth_retry(move || submit_quiz(lesson_id.clone(), ans.clone())).await {
-                Ok(g) => grade.set(Some(g)),
-                Err(e) => error.set(Some(e.to_string())),
+            if persist {
+                let ans: Vec<usize> = selected.iter().map(|o| o.unwrap_or(usize::MAX)).collect();
+                match with_auth_retry(move || submit_quiz(lesson_id.clone(), ans.clone())).await {
+                    Ok(g) => grade.set(Some(g)),
+                    Err(e) => error.set(Some(e.to_string())),
+                }
+            } else {
+                let per_question: Vec<bool> = correct
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| selected.get(i).copied().flatten() == Some(*c))
+                    .collect();
+                let score = if per_question.is_empty() {
+                    0.0
+                } else {
+                    per_question.iter().filter(|&&b| b).count() as f32 / per_question.len() as f32
+                };
+                grade.set(Some(QuizGrade {
+                    per_question,
+                    score,
+                }));
             }
         }
     });

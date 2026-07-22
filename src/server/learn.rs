@@ -103,3 +103,39 @@ pub async fn delete_my_learning_data() -> Result<(), ServerFnError> {
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
 }
+
+/// Whether the caller persists learning data (privacy preference).
+#[server(GetLearnPrivacy, "/api")]
+pub async fn get_learn_privacy() -> Result<bool, ServerFnError> {
+    let state = expect_context::<AppState>();
+    let user_ctx = require_user_context(&state).await?;
+    let service = learn_service(&state)?;
+    service
+        .get_persist(&user_ctx)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+/// Set the caller's persistence preference. When off, learning is ephemeral.
+#[server(SetLearnPrivacy, "/api")]
+pub async fn set_learn_privacy(persist: bool) -> Result<(), ServerFnError> {
+    let state = expect_context::<AppState>();
+    let user_ctx = require_user_context(&state).await?;
+    let service = learn_service(&state)?;
+    service
+        .set_persist(&user_ctx, persist)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+/// Generate a one-off lesson without persisting anything (privacy opt-out).
+#[server(GenerateEphemeralLesson, "/api")]
+pub async fn generate_ephemeral_lesson(scope: LearningScope) -> Result<Lesson, ServerFnError> {
+    let state = expect_context::<AppState>();
+    let user_ctx = require_user_context(&state).await?;
+    let service = learn_service(&state)?;
+    service
+        .generate_ephemeral(&user_ctx, &scope)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
+}

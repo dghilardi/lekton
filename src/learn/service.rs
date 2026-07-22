@@ -13,7 +13,8 @@ use crate::db::learn_models::{
 };
 use crate::db::learn_repository::LearnRepository;
 use crate::error::AppError;
-use crate::learn::generator::LessonGenerator;
+use crate::learn::calibration::{calibrate, NextFocus};
+use crate::learn::generator::{GeneratedLesson, LessonGenerator};
 
 pub struct LearnService {
     repo: Arc<dyn LearnRepository>,
@@ -53,30 +54,35 @@ impl LearnService {
     ) -> Result<Lesson, AppError> {
         let path = self.owned_path(user_ctx, path_id).await?;
 
+        // Calibrate from quiz history: when struggling, reinforce (revisit)
+        // rather than advancing past covered material.
+        let records = self.repo.list_records_for_path(path_id).await?;
+        let focus = calibrate(&records);
+        let covered: &[String] = match focus {
+            NextFocus::Reinforce => &[],
+            NextFocus::Advance => &path.covered_anchors,
+        };
+
         let generated = self
             .generator
-            .generate(user_ctx, &path.scope, &path.covered_anchors)
+            .generate(user_ctx, &path.scope, covered, Some(focus.directive()))
             .await?;
 
         let seq = self.repo.list_lessons_for_path(path_id).await?.len() as u32 + 1;
-        let lesson = Lesson {
-            id: Uuid::new_v4().to_string(),
-            path_id: path_id.to_string(),
-            user_id: user_ctx.user.user_id.clone(),
+        let source_slugs = generated.source_slugs.clone();
+        let lesson = into_lesson(
+            Uuid::new_v4().to_string(),
+            path_id.to_string(),
             seq,
-            title: generated.title,
-            body_html: generated.body_html,
-            citations: generated.citations,
-            primary_source: generated.primary_source,
-            quiz: generated.quiz,
-            created_at: Utc::now(),
-        };
+            &user_ctx.user.user_id,
+            generated,
+        );
         self.repo.add_lesson(lesson.clone()).await?;
 
         // Record the documents this lesson drew on, so the next lesson avoids
-        // re-teaching the same ground (basic calibration; refined in a later step).
+        // re-teaching the same ground.
         let mut covered = path.covered_anchors;
-        for slug in generated.source_slugs {
+        for slug in source_slugs {
             if !covered.contains(&slug) {
                 covered.push(slug);
             }
@@ -141,6 +147,33 @@ impl LearnService {
         self.repo.delete_all_for_user(&user_ctx.user.user_id).await
     }
 
+    /// Whether the user persists learning data (privacy preference).
+    pub async fn get_persist(&self, user_ctx: &UserContext) -> Result<bool, AppError> {
+        self.repo.get_persist(&user_ctx.user.user_id).await
+    }
+
+    /// Update the user's persistence preference.
+    pub async fn set_persist(&self, user_ctx: &UserContext, persist: bool) -> Result<(), AppError> {
+        self.repo.set_persist(&user_ctx.user.user_id, persist).await
+    }
+
+    /// Generate a one-off lesson without persisting anything (privacy opt-out).
+    /// The returned lesson has a synthetic id and no path.
+    pub async fn generate_ephemeral(
+        &self,
+        user_ctx: &UserContext,
+        scope: &LearningScope,
+    ) -> Result<Lesson, AppError> {
+        let generated = self.generator.generate(user_ctx, scope, &[], None).await?;
+        Ok(into_lesson(
+            Uuid::new_v4().to_string(),
+            String::new(),
+            0,
+            &user_ctx.user.user_id,
+            generated,
+        ))
+    }
+
     /// Load a path and verify it belongs to the requesting user.
     async fn owned_path(
         &self,
@@ -156,6 +189,28 @@ impl LearnService {
             return Err(AppError::Forbidden("not your learning path".into()));
         }
         Ok(path)
+    }
+}
+
+/// Assemble a persisted/ephemeral [`Lesson`] from generator output.
+fn into_lesson(
+    id: String,
+    path_id: String,
+    seq: u32,
+    user_id: &str,
+    generated: GeneratedLesson,
+) -> Lesson {
+    Lesson {
+        id,
+        path_id,
+        user_id: user_id.to_string(),
+        seq,
+        title: generated.title,
+        body_html: generated.body_html,
+        citations: generated.citations,
+        primary_source: generated.primary_source,
+        quiz: generated.quiz,
+        created_at: Utc::now(),
     }
 }
 

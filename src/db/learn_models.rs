@@ -115,6 +115,16 @@ impl From<&QuizQuestion> for QuizQuestionView {
     }
 }
 
+/// A community recommendation: a scope other learners have studied, with how
+/// many distinct learners have a path over it. Aggregated only above a minimum
+/// learner count so it never traces back to one person.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScopeRecommendation {
+    pub scope: LearningScope,
+    /// Number of distinct learners who have started a path over this scope.
+    pub learners: u32,
+}
+
 /// A glossary term: a short, reusable definition introduced while learning.
 /// Kept per user so terminology stays consistent across lessons and paths — a
 /// term defined once is reused (and not redefined) in later lessons.

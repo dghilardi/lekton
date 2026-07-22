@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::auth::models::UserContext;
 use crate::db::learn_models::{
     LearningPath, LearningRecord, LearningRecordKind, LearningScope, Lesson, LessonSource,
-    LessonView, QuizGrade, QuizQuestion,
+    LessonView, QuizGrade, QuizQuestion, ScopeRecommendation,
 };
 use crate::db::learn_repository::LearnRepository;
 use crate::error::AppError;
@@ -178,6 +178,34 @@ impl LearnService {
     /// All of the user's paths, most recent first.
     pub async fn list_paths(&self, user_ctx: &UserContext) -> Result<Vec<LearningPath>, AppError> {
         self.repo.list_paths_for_user(&user_ctx.user.user_id).await
+    }
+
+    /// Scopes popular with other learners, excluding ones this user already
+    /// studies. Aggregate-only (min two learners) so nothing traces to a person.
+    pub async fn recommendations(
+        &self,
+        user_ctx: &UserContext,
+    ) -> Result<Vec<ScopeRecommendation>, AppError> {
+        const MIN_LEARNERS: u32 = 2;
+        const LIMIT: usize = 5;
+
+        // Over-fetch so filtering out the user's own scopes still leaves LIMIT.
+        let raw = self
+            .repo
+            .recommend_scopes(MIN_LEARNERS, (LIMIT + 10) as i64)
+            .await?;
+        let mine: Vec<LearningScope> = self
+            .repo
+            .list_paths_for_user(&user_ctx.user.user_id)
+            .await?
+            .into_iter()
+            .map(|p| p.scope)
+            .collect();
+        Ok(raw
+            .into_iter()
+            .filter(|r| !mine.contains(&r.scope))
+            .take(LIMIT)
+            .collect())
     }
 
     /// Privacy: delete all of the user's learning data.

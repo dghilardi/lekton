@@ -3,7 +3,9 @@
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::db::learn_models::{LearningPath, LearningScope, LessonView, QuizGrade};
+use crate::db::learn_models::{
+    LearningPath, LearningScope, LessonView, QuizGrade, ScopeRecommendation,
+};
 
 #[cfg(feature = "ssr")]
 use crate::app::AppState;
@@ -93,6 +95,19 @@ pub async fn list_my_learning_paths() -> Result<Vec<LearningPath>, ServerFnError
     let service = learn_service(&state)?;
     service
         .list_paths(&user_ctx)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+/// Scopes popular with other learners, excluding ones the caller already
+/// studies. Aggregate-only, so it never reveals an individual's learning.
+#[server(RecommendedLearningPaths, "/api")]
+pub async fn recommended_learning_paths() -> Result<Vec<ScopeRecommendation>, ServerFnError> {
+    let state = expect_context::<AppState>();
+    let user_ctx = require_user_context(&state).await?;
+    let service = learn_service(&state)?;
+    service
+        .recommendations(&user_ctx)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
 }

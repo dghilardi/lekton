@@ -2,7 +2,9 @@
 
 use async_trait::async_trait;
 
-use crate::db::learn_models::{GlossaryTerm, LearningPath, LearningRecord, Lesson};
+use crate::db::learn_models::{
+    GlossaryTerm, LearningPath, LearningRecord, Lesson, ScopeRecommendation,
+};
 use crate::error::AppError;
 
 #[cfg(feature = "ssr")]
@@ -46,6 +48,15 @@ pub trait LearnRepository: Send + Sync {
 
     /// Privacy: delete all learning data (paths, lessons, records) for a user.
     async fn delete_all_for_user(&self, user_id: &str) -> Result<(), AppError>;
+
+    /// Scopes studied by at least `min_learners` distinct users, most popular
+    /// first, capped at `limit`. Aggregate-only (a scope with fewer learners is
+    /// excluded), so it never reveals an individual's learning.
+    async fn recommend_scopes(
+        &self,
+        min_learners: u32,
+        limit: i64,
+    ) -> Result<Vec<ScopeRecommendation>, AppError>;
 
     /// List the user's glossary terms.
     async fn list_glossary(&self, user_id: &str) -> Result<Vec<GlossaryTerm>, AppError>;
@@ -232,6 +243,46 @@ impl LearnRepository for MongoLearnRepository {
             AppError::Internal(format!("mongo delete learn_glossary for user: {e}"))
         })?;
         Ok(())
+    }
+
+    async fn recommend_scopes(
+        &self,
+        min_learners: u32,
+        limit: i64,
+    ) -> Result<Vec<ScopeRecommendation>, AppError> {
+        use futures::TryStreamExt;
+
+        // Group paths by scope, count distinct learners, keep scopes above the
+        // privacy threshold, most popular first.
+        let pipeline = vec![
+            mongodb::bson::doc! { "$group": {
+                "_id": "$scope",
+                "users": { "$addToSet": "$user_id" },
+            } },
+            mongodb::bson::doc! { "$project": {
+                "_id": 0,
+                "scope": "$_id",
+                "learners": { "$size": "$users" },
+            } },
+            mongodb::bson::doc! { "$match": { "learners": { "$gte": min_learners as i64 } } },
+            mongodb::bson::doc! { "$sort": { "learners": -1 } },
+            mongodb::bson::doc! { "$limit": limit },
+        ];
+
+        let cursor = self.paths.aggregate(pipeline).await.map_err(|e| {
+            AppError::Internal(format!("mongo aggregate learn recommendations: {e}"))
+        })?;
+        let docs: Vec<mongodb::bson::Document> = cursor
+            .try_collect()
+            .await
+            .map_err(|e| AppError::Internal(format!("mongo collect learn recommendations: {e}")))?;
+
+        docs.into_iter()
+            .map(|d| {
+                mongodb::bson::from_document(d)
+                    .map_err(|e| AppError::Internal(format!("decode learn recommendation: {e}")))
+            })
+            .collect()
     }
 
     async fn list_glossary(&self, user_id: &str) -> Result<Vec<GlossaryTerm>, AppError> {

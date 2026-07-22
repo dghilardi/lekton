@@ -8,12 +8,20 @@ use lekton::db::learn_models::{
 };
 
 fn path(id: &str, user: &str) -> LearningPath {
+    path_scoped(
+        id,
+        user,
+        LearningScope::Tag {
+            tag: "kafka".into(),
+        },
+    )
+}
+
+fn path_scoped(id: &str, user: &str, scope: LearningScope) -> LearningPath {
     LearningPath {
         id: id.into(),
         user_id: user.into(),
-        scope: LearningScope::Tag {
-            tag: "kafka".into(),
-        },
+        scope,
         title: "Kafka basics".into(),
         mission: None,
         covered_anchors: vec![],
@@ -154,6 +162,39 @@ async fn persist_preference_defaults_true_and_roundtrips() {
 
     // Preferences are per-user.
     assert!(repo.get_persist("u2").await.unwrap());
+}
+
+#[tokio::test]
+async fn recommend_scopes_aggregates_distinct_learners_above_threshold() {
+    let env = common::TestEnv::start().await;
+    let repo = env.learn_repo.clone();
+
+    let kafka = || LearningScope::Tag {
+        tag: "kafka".into(),
+    };
+    let rabbit = || LearningScope::Tag {
+        tag: "rabbitmq".into(),
+    };
+
+    // kafka: two distinct learners (u1 twice counts once); rabbitmq: one.
+    repo.create_path(path_scoped("p1", "u1", kafka()))
+        .await
+        .unwrap();
+    repo.create_path(path_scoped("p2", "u1", kafka()))
+        .await
+        .unwrap();
+    repo.create_path(path_scoped("p3", "u2", kafka()))
+        .await
+        .unwrap();
+    repo.create_path(path_scoped("p4", "u3", rabbit()))
+        .await
+        .unwrap();
+
+    let recs = repo.recommend_scopes(2, 10).await.unwrap();
+    // Only kafka clears the 2-distinct-learner threshold.
+    assert_eq!(recs.len(), 1);
+    assert_eq!(recs[0].scope, kafka());
+    assert_eq!(recs[0].learners, 2);
 }
 
 #[tokio::test]

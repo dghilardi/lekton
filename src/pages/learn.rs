@@ -6,12 +6,30 @@ use leptos_router::hooks::{use_navigate, use_params_map};
 
 use crate::app::{
     delete_my_learning_data, generate_ephemeral_lesson, generate_next_lesson, get_learn_privacy,
-    get_learning_path, list_my_learning_paths, set_learn_privacy, start_learning_path,
-    submit_ephemeral_quiz, submit_quiz,
+    get_learning_path, list_my_learning_paths, recommended_learning_paths, set_learn_privacy,
+    start_learning_path, submit_ephemeral_quiz, submit_quiz,
 };
 use crate::auth::refresh_client::with_auth_retry;
 use crate::components::MarkdownContent;
 use crate::db::learn_models::{LearningScope, LessonView, QuizGrade, QuizQuestionView};
+
+/// Map a scope to the dashboard picker's (kind, value) pair.
+fn scope_kv(scope: &LearningScope) -> (&'static str, String) {
+    match scope {
+        LearningScope::Document { slug } => ("document", slug.clone()),
+        LearningScope::Tag { tag } => ("tag", tag.clone()),
+        LearningScope::Topic { text } => ("topic", text.clone()),
+    }
+}
+
+/// A short human label for a scope, shown on a recommendation button.
+fn scope_label(scope: &LearningScope) -> String {
+    match scope {
+        LearningScope::Document { slug } => slug.rsplit('/').next().unwrap_or(slug).to_string(),
+        LearningScope::Tag { tag } => format!("#{tag}"),
+        LearningScope::Topic { text } => text.clone(),
+    }
+}
 
 /// Dashboard at `/learn`: start a new path and browse existing ones.
 #[component]
@@ -20,6 +38,10 @@ pub fn LearnDashboardPage() -> impl IntoView {
     let paths = LocalResource::new(move || {
         refresh.track();
         with_auth_retry(list_my_learning_paths)
+    });
+    let recs = LocalResource::new(move || {
+        refresh.track();
+        with_auth_retry(recommended_learning_paths)
     });
 
     // Privacy: persistence preference (default on). `persist_override` reflects
@@ -181,6 +203,33 @@ pub fn LearnDashboardPage() -> impl IntoView {
                 <div class="space-y-2">
                     <p class="text-xs text-base-content/60">"This lesson is not saved."</p>
                     <LessonCard lesson=l />
+                </div>
+            })}
+
+            {move || recs.get().and_then(|r| r.ok()).filter(|l| !l.is_empty()).map(|list| view! {
+                <div class="space-y-2">
+                    <h2 class="text-lg font-medium">"Popular with others"</h2>
+                    <div class="flex flex-wrap gap-2">
+                        {list.into_iter().map(|rec| {
+                            let (kind, value) = scope_kv(&rec.scope);
+                            let label = scope_label(&rec.scope);
+                            let learners = rec.learners;
+                            view! {
+                                <button
+                                    class="btn btn-sm btn-outline"
+                                    disabled=move || starting.get()
+                                    on:click=move |_| {
+                                        scope_kind.set(kind.to_string());
+                                        scope_value.set(value.clone());
+                                        start.dispatch(());
+                                    }
+                                >
+                                    {label}
+                                    <span class="badge badge-ghost badge-sm ml-1">{learners}</span>
+                                </button>
+                            }
+                        }).collect::<Vec<_>>()}
+                    </div>
                 </div>
             })}
 

@@ -8,12 +8,12 @@ use uuid::Uuid;
 
 use crate::auth::models::UserContext;
 use crate::db::learn_models::{
-    LearningPath, LearningRecord, LearningRecordKind, LearningScope, Lesson, LessonView, QuizGrade,
-    QuizQuestion,
+    LearningPath, LearningRecord, LearningRecordKind, LearningScope, Lesson, LessonSource,
+    LessonView, QuizGrade, QuizQuestion,
 };
 use crate::db::learn_repository::LearnRepository;
 use crate::error::AppError;
-use crate::learn::calibration::{calibrate, NextFocus};
+use crate::learn::calibration::{plan_next, LessonOutcome};
 use crate::learn::generator::{GeneratedLesson, LessonGenerator};
 use crate::learn::token::{QuizKey, QuizSealer};
 
@@ -65,28 +65,26 @@ impl LearnService {
     ) -> Result<LessonView, AppError> {
         let path = self.owned_path(user_ctx, path_id).await?;
 
-        // Calibrate from quiz history: when struggling, reinforce (revisit)
-        // rather than advancing past covered material.
+        // Per-section calibration: build the learner's history (which section
+        // each graded lesson taught, and how they scored) and plan the next
+        // lesson — avoid mastered sections, reinforce weak ones, else advance.
+        let lessons = self.repo.list_lessons_for_path(path_id).await?;
         let records = self.repo.list_records_for_path(path_id).await?;
-        let focus = calibrate(&records);
-        let covered: &[String] = match focus {
-            NextFocus::Reinforce => &[],
-            NextFocus::Advance => &path.covered_anchors,
-        };
+        let history = build_history(&lessons, &records);
+        let plan = plan_next(&history);
 
         let generated = self
             .generator
             .generate(
                 user_ctx,
                 &path.scope,
-                covered,
-                Some(focus.directive()),
+                &plan.mastered,
+                Some(&plan.directive()),
                 path.mission.as_deref(),
             )
             .await?;
 
-        let seq = self.repo.list_lessons_for_path(path_id).await?.len() as u32 + 1;
-        let source_slugs = generated.source_slugs.clone();
+        let seq = lessons.len() as u32 + 1;
         let lesson = into_lesson(
             Uuid::new_v4().to_string(),
             path_id.to_string(),
@@ -96,12 +94,17 @@ impl LearnService {
         );
         self.repo.add_lesson(lesson.clone()).await?;
 
-        // Record the documents this lesson drew on, so the next lesson avoids
-        // re-teaching the same ground.
+        // Record the section this lesson taught, so coverage reflects what the
+        // learner has seen at section granularity.
         let mut covered = path.covered_anchors;
-        for slug in source_slugs {
-            if !covered.contains(&slug) {
-                covered.push(slug);
+        let taught = lesson
+            .primary_source
+            .as_ref()
+            .map(LessonSource::key)
+            .or_else(|| lesson.citations.first().map(|c| c.document_slug.clone()));
+        if let Some(key) = taught {
+            if !covered.contains(&key) {
+                covered.push(key);
             }
         }
         self.repo.update_path_progress(path_id, &covered).await?;
@@ -297,6 +300,36 @@ fn quiz_key(quiz: &[QuizQuestion]) -> QuizKey {
     }
 }
 
+/// Build the per-section calibration history (most-recent-first) by joining
+/// quiz records to the section their lesson taught (its `primary_source`).
+/// Records the lesson of which has no primary source are skipped — there is no
+/// section to attribute the score to.
+fn build_history(lessons: &[Lesson], records: &[LearningRecord]) -> Vec<LessonOutcome> {
+    let lesson_key: std::collections::HashMap<&str, String> = lessons
+        .iter()
+        .filter_map(|l| {
+            l.primary_source
+                .as_ref()
+                .map(|ps| (l.id.as_str(), ps.key()))
+        })
+        .collect();
+
+    records
+        .iter()
+        .filter_map(|r| match &r.kind {
+            LearningRecordKind::QuizResult { score, .. } => {
+                let lesson_id = r.lesson_id.as_deref()?;
+                let section_key = lesson_key.get(lesson_id)?.clone();
+                Some(LessonOutcome {
+                    section_key,
+                    score: *score,
+                })
+            }
+            LearningRecordKind::Insight { .. } => None,
+        })
+        .collect()
+}
+
 /// Trim a learner-supplied mission, treating blank input as "no mission".
 fn normalize_mission(mission: Option<String>) -> Option<String> {
     mission
@@ -328,6 +361,7 @@ fn default_title(scope: &LearningScope) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
 
     fn q(correct: usize) -> QuizQuestion {
         QuizQuestion {
@@ -336,6 +370,64 @@ mod tests {
             correct_index: correct,
             explanation: "e".into(),
         }
+    }
+
+    fn lesson_with_source(id: &str, slug: &str, anchor: Option<&str>) -> Lesson {
+        Lesson {
+            id: id.into(),
+            path_id: "p".into(),
+            user_id: "u".into(),
+            seq: 1,
+            title: "T".into(),
+            body_html: "<p>x</p>".into(),
+            citations: vec![],
+            primary_source: Some(LessonSource {
+                document_slug: slug.into(),
+                section_anchor: anchor.map(Into::into),
+            }),
+            quiz: vec![],
+            created_at: Utc::now(),
+        }
+    }
+
+    fn quiz_record(lesson_id: &str, score: f32) -> LearningRecord {
+        LearningRecord {
+            id: "r".into(),
+            path_id: "p".into(),
+            lesson_id: Some(lesson_id.into()),
+            user_id: "u".into(),
+            kind: LearningRecordKind::QuizResult {
+                per_question: vec![],
+                score,
+            },
+            created_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn build_history_joins_records_to_the_section_taught() {
+        let lessons = vec![
+            lesson_with_source("l1", "docs/kafka", Some("partitions")),
+            lesson_with_source("l2", "docs/kafka", Some("offsets")),
+        ];
+        // Records come most-recent-first from the repo.
+        let records = vec![quiz_record("l2", 0.4), quiz_record("l1", 1.0)];
+        let history = build_history(&lessons, &records);
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].section_key, "docs/kafka#offsets");
+        assert_eq!(history[0].score, 0.4);
+        assert_eq!(history[1].section_key, "docs/kafka#partitions");
+    }
+
+    #[test]
+    fn build_history_skips_records_without_a_matching_lesson_source() {
+        let lessons = vec![lesson_with_source("l1", "docs/kafka", None)];
+        // A record for an unknown lesson id is dropped.
+        let records = vec![quiz_record("missing", 0.5), quiz_record("l1", 0.9)];
+        let history = build_history(&lessons, &records);
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].section_key, "docs/kafka");
+        assert_eq!(history[0].score, 0.9);
     }
 
     #[test]

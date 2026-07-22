@@ -64,6 +64,22 @@ pub struct LessonSource {
     pub section_anchor: Option<String>,
 }
 
+impl LessonSource {
+    /// Stable per-section key used for calibration/coverage: `slug#anchor`, or
+    /// just `slug` when the source has no section anchor.
+    pub fn key(&self) -> String {
+        section_key(&self.document_slug, self.section_anchor.as_deref())
+    }
+}
+
+/// Build the stable per-section key `slug#anchor` (or `slug` when no anchor).
+pub fn section_key(slug: &str, anchor: Option<&str>) -> String {
+    match anchor {
+        Some(a) if !a.is_empty() => format!("{slug}#{a}"),
+        _ => slug.to_string(),
+    }
+}
+
 /// A single multiple-choice quiz question. Options should be uniform in length
 /// so formatting gives no clue to the answer.
 ///

@@ -1,119 +1,168 @@
-//! Coarse calibration: decide whether the next lesson should advance to new
-//! material or reinforce, based on recent quiz performance.
-
-use crate::db::learn_models::{LearningRecord, LearningRecordKind};
+//! Per-section calibration: decide what the next lesson should do, based on how
+//! the learner has performed on each section they've been taught.
+//!
+//! This is a Zone-of-Proximal-Development proxy: don't re-teach sections the
+//! learner has mastered, revisit the ones they're weak on before moving on, and
+//! otherwise advance to new material.
 
 /// What the next lesson should do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NextFocus {
     /// Move on to new, uncovered material.
     Advance,
-    /// Revisit and re-explain; the learner is struggling.
+    /// Revisit and re-explain; the learner is struggling on a section.
     Reinforce,
 }
 
-/// Below this average recent score, reinforce instead of advancing.
-const REINFORCE_THRESHOLD: f32 = 0.6;
-/// How many recent quiz results to average over.
-const RECENT_WINDOW: usize = 3;
+/// A graded lesson outcome tied to the section it taught. Callers pass these
+/// most-recent-first.
+#[derive(Debug, Clone)]
+pub struct LessonOutcome {
+    /// The section this lesson taught (see `LessonSource::key`).
+    pub section_key: String,
+    /// Quiz score in `0.0..=1.0`.
+    pub score: f32,
+}
 
-impl NextFocus {
+/// The plan for the next lesson.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NextPlan {
+    pub focus: NextFocus,
+    /// Section keys the learner has mastered — the tutor should avoid
+    /// re-teaching these.
+    pub mastered: Vec<String>,
+    /// When reinforcing, the specific weak section to revisit.
+    pub reinforce_key: Option<String>,
+}
+
+/// At or above this (latest) score, a section counts as mastered.
+const MASTERY_THRESHOLD: f32 = 0.8;
+/// Below this (latest) score, a section is weak and worth reinforcing.
+const REINFORCE_THRESHOLD: f32 = 0.6;
+
+impl NextPlan {
     /// A short instruction handed to the tutor prompt.
-    pub fn directive(self) -> &'static str {
-        match self {
-            NextFocus::Advance => {
-                "The learner is doing well — advance to a new sub-topic they have not seen yet."
-            }
-            NextFocus::Reinforce => {
-                "The learner struggled on recent quizzes — reinforce the fundamentals and \
-                 re-explain the last concepts more simply before introducing anything new."
-            }
+    pub fn directive(&self) -> String {
+        match (self.focus, &self.reinforce_key) {
+            (NextFocus::Reinforce, Some(key)) => format!(
+                "The learner struggled with the section \"{key}\" — revisit it and \
+                 re-explain those fundamentals more simply before introducing \
+                 anything new."
+            ),
+            (NextFocus::Reinforce, None) => "The learner has been struggling — \
+                 reinforce the fundamentals before advancing."
+                .to_string(),
+            (NextFocus::Advance, _) => "The learner is doing well — advance to a new \
+                 sub-topic they have not seen yet."
+                .to_string(),
         }
     }
 }
 
-/// Decide the next focus from a path's records (expected most-recent-first).
-/// With no quiz history, advance.
-pub fn calibrate(records: &[LearningRecord]) -> NextFocus {
-    let recent: Vec<f32> = records
+/// Plan the next lesson from the learner's per-section history (most-recent
+/// first). With no history, advance.
+///
+/// Mastery is judged from each section's **latest** attempt, so a section the
+/// learner initially failed but later passed counts as mastered (and is no
+/// longer flagged weak). The section to reinforce is the most recently attempted
+/// one still below the reinforce threshold.
+pub fn plan_next(history: &[LessonOutcome]) -> NextPlan {
+    // Latest score per section (history is most-recent-first, so the first time
+    // we see a key is its latest attempt), preserving recency order.
+    let mut latest: Vec<(&str, f32)> = Vec::new();
+    for o in history {
+        if !latest.iter().any(|(k, _)| *k == o.section_key) {
+            latest.push((&o.section_key, o.score));
+        }
+    }
+
+    let mastered: Vec<String> = latest
         .iter()
-        .filter_map(|r| match &r.kind {
-            LearningRecordKind::QuizResult { score, .. } => Some(*score),
-            _ => None,
-        })
-        .take(RECENT_WINDOW)
+        .filter(|(_, s)| *s >= MASTERY_THRESHOLD)
+        .map(|(k, _)| (*k).to_string())
         .collect();
 
-    if recent.is_empty() {
-        return NextFocus::Advance;
-    }
-    let avg = recent.iter().sum::<f32>() / recent.len() as f32;
-    if avg < REINFORCE_THRESHOLD {
+    let reinforce_key = latest
+        .iter()
+        .find(|(_, s)| *s < REINFORCE_THRESHOLD)
+        .map(|(k, _)| (*k).to_string());
+
+    let focus = if reinforce_key.is_some() {
         NextFocus::Reinforce
     } else {
         NextFocus::Advance
+    };
+
+    NextPlan {
+        focus,
+        mastered,
+        reinforce_key,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
 
-    fn quiz_record(score: f32) -> LearningRecord {
-        LearningRecord {
-            id: "r".into(),
-            path_id: "p".into(),
-            lesson_id: None,
-            user_id: "u".into(),
-            kind: LearningRecordKind::QuizResult {
-                per_question: vec![],
-                score,
-            },
-            created_at: Utc::now(),
+    fn outcome(key: &str, score: f32) -> LessonOutcome {
+        LessonOutcome {
+            section_key: key.into(),
+            score,
         }
     }
 
     #[test]
     fn no_history_advances() {
-        assert_eq!(calibrate(&[]), NextFocus::Advance);
+        let plan = plan_next(&[]);
+        assert_eq!(plan.focus, NextFocus::Advance);
+        assert!(plan.mastered.is_empty());
+        assert!(plan.reinforce_key.is_none());
     }
 
     #[test]
-    fn low_recent_scores_reinforce() {
-        let records = vec![quiz_record(0.3), quiz_record(0.5)];
-        assert_eq!(calibrate(&records), NextFocus::Reinforce);
+    fn a_weak_section_is_reinforced_by_name() {
+        let history = vec![outcome("docs/kafka#partitions", 0.33)];
+        let plan = plan_next(&history);
+        assert_eq!(plan.focus, NextFocus::Reinforce);
+        assert_eq!(plan.reinforce_key.as_deref(), Some("docs/kafka#partitions"));
+        assert!(plan.directive().contains("docs/kafka#partitions"));
     }
 
     #[test]
-    fn high_recent_scores_advance() {
-        let records = vec![quiz_record(1.0), quiz_record(0.8)];
-        assert_eq!(calibrate(&records), NextFocus::Advance);
-    }
-
-    #[test]
-    fn only_recent_window_counts() {
-        // Most-recent-first: three perfect recent scores outweigh older failures.
-        let records = vec![
-            quiz_record(1.0),
-            quiz_record(1.0),
-            quiz_record(1.0),
-            quiz_record(0.0),
-            quiz_record(0.0),
+    fn mastered_sections_are_listed_and_not_reinforced() {
+        let history = vec![
+            outcome("docs/kafka#offsets", 1.0),
+            outcome("docs/kafka#partitions", 0.8),
         ];
-        assert_eq!(calibrate(&records), NextFocus::Advance);
+        let plan = plan_next(&history);
+        assert_eq!(plan.focus, NextFocus::Advance);
+        assert!(plan.mastered.contains(&"docs/kafka#offsets".to_string()));
+        assert!(plan.mastered.contains(&"docs/kafka#partitions".to_string()));
     }
 
     #[test]
-    fn insights_are_ignored() {
-        let records = vec![LearningRecord {
-            id: "r".into(),
-            path_id: "p".into(),
-            lesson_id: None,
-            user_id: "u".into(),
-            kind: LearningRecordKind::Insight { text: "x".into() },
-            created_at: Utc::now(),
-        }];
-        assert_eq!(calibrate(&records), NextFocus::Advance);
+    fn improving_on_a_section_clears_the_weakness() {
+        // Most-recent-first: the learner retried partitions and passed, so the
+        // old failure no longer counts.
+        let history = vec![
+            outcome("docs/kafka#partitions", 1.0), // latest
+            outcome("docs/kafka#partitions", 0.0), // earlier
+        ];
+        let plan = plan_next(&history);
+        assert_eq!(plan.focus, NextFocus::Advance);
+        assert!(plan.reinforce_key.is_none());
+        assert!(plan.mastered.contains(&"docs/kafka#partitions".to_string()));
+    }
+
+    #[test]
+    fn reinforces_the_most_recent_weak_section() {
+        let history = vec![
+            outcome("docs/kafka#consumers", 0.5), // most recent weak
+            outcome("docs/kafka#brokers", 0.9),
+            outcome("docs/kafka#topics", 0.2), // older weak
+        ];
+        let plan = plan_next(&history);
+        assert_eq!(plan.focus, NextFocus::Reinforce);
+        assert_eq!(plan.reinforce_key.as_deref(), Some("docs/kafka#consumers"));
     }
 }

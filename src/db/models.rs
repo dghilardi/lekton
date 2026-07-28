@@ -72,6 +72,22 @@ pub struct Document {
     /// was introduced.
     #[serde(default)]
     pub source_id: Option<String>,
+    /// The product release this document belongs to (e.g. `"1.2.0"`), as tagged
+    /// by `lekton-sync --version`. `None` means the source is not
+    /// release-managed: it has a single, unversioned set of documents, which is
+    /// the pre-versioning behaviour and remains the default.
+    #[serde(default)]
+    pub release: Option<String>,
+    /// `true` when this row belongs to the release currently aliased `latest`
+    /// for its source.
+    ///
+    /// Denormalized from the alias in `source_release_aliases` so the default
+    /// resolution (everything at `latest`) is a single indexed predicate rather
+    /// than an `$or` with one clause per release-managed source — navigation is
+    /// the hottest read path, while alias moves happen once per release.
+    /// Unversioned documents (`release: None`) are always `true`.
+    #[serde(default = "default_true")]
+    pub is_latest: bool,
     /// `true` when the last ingest failed to (re)index this document in
     /// Meilisearch and/or the RAG vector store, so search/chat are known to be
     /// stale relative to MongoDB. Cleared on the next successful ingest. Lets
@@ -412,6 +428,8 @@ mod tests {
             is_archived: false,
             source_path: Some("engineering/deployment-guide.md".to_string()),
             source_id: Some("test-source".to_string()),
+            release: None,
+            is_latest: true,
             needs_reindex: false,
             skip_rag: false,
         };
@@ -506,6 +524,8 @@ mod tests {
             is_archived: false,
             source_path: None,
             source_id: None,
+            release: None,
+            is_latest: true,
             needs_reindex: false,
             skip_rag: false,
         };

@@ -75,6 +75,11 @@ mod inner {
                 "davide.ghilardi@comelit.it",
                 add_document_sources_index,
             )
+            .register(
+                "014_add_document_release_fields",
+                "davide.ghilardi@comelit.it",
+                add_document_release_fields,
+            )
     }
 
     fn format_duplicate_group_id(id: &bson::Bson) -> String {
@@ -711,6 +716,115 @@ mod inner {
                     .build(),
             )
             .await?;
+        Ok(())
+    }
+
+    /// Introduces per-source release versioning on `documents`.
+    ///
+    /// Backfills `is_latest: true` on every existing document (they keep
+    /// `release` absent, i.e. "not release-managed"), then replaces the unique
+    /// `slug` index created by migration 008 with a unique `(slug, release)`
+    /// index — `slug` alone can no longer be unique once one slug exists in
+    /// several releases.
+    ///
+    /// The invariant that a slug is owned by exactly one source, previously
+    /// implied by the unique `slug` index, is enforced from here on by a
+    /// pre-upload check in the sync API.
+    ///
+    /// Runs the same duplicate pre-flight as 008 so a pre-existing duplicate
+    /// surfaces as an actionable message rather than an opaque E11000 from the
+    /// index build.
+    async fn add_document_release_fields(db: Database) -> Result<(), mongodb::error::Error> {
+        use mongodb::options::IndexOptions;
+        use mongodb::IndexModel;
+
+        let col = db.collection::<bson::Document>("documents");
+
+        // 1. Backfill: every existing document belongs to its source's `latest`.
+        col.update_many(
+            bson::doc! { "is_latest": { "$exists": false } },
+            bson::doc! { "$set": { "is_latest": true } },
+        )
+        .await?;
+
+        // 2. Pre-flight on the compound key before building the unique index.
+        let pipeline = vec![
+            bson::doc! { "$group": {
+                "_id": { "slug": "$slug", "release": "$release" },
+                "count": { "$sum": 1 },
+            }},
+            bson::doc! { "$match": { "count": { "$gt": 1 } } },
+            bson::doc! { "$sort": { "_id": 1 } },
+        ];
+        let mut cursor = col.aggregate(pipeline).await?;
+        let mut duplicates: Vec<String> = Vec::new();
+        while let Some(doc) = cursor.try_next().await? {
+            if let Some(id) = doc.get("_id") {
+                duplicates.push(format_duplicate_group_id(id));
+            }
+        }
+        if !duplicates.is_empty() {
+            return Err(mongodb::error::Error::custom(format!(
+                "Migration 014 pre-flight failed: {} duplicate (slug, release) pair(s) found \
+                 in the 'documents' collection. Resolve them before restarting, then retry.\n\
+                 Duplicates: {}",
+                duplicates.len(),
+                duplicates.join(", ")
+            )));
+        }
+
+        // 3. Drop the now-invalid unique index on `slug` alone. Checked rather
+        //    than assumed so a retry after a partial run is a no-op instead of
+        //    an IndexNotFound failure.
+        let existing = col.list_index_names().await?;
+        if existing.iter().any(|name| name == "slug_1") {
+            col.drop_index("slug_1").await?;
+        }
+
+        // 4. Unique per release: one document per slug within a given release.
+        col.create_index(
+            IndexModel::builder()
+                .keys(bson::doc! { "slug": 1, "release": 1 })
+                .options(IndexOptions::builder().unique(true).build())
+                .build(),
+        )
+        .await?;
+
+        // 5. Sync path: scope a source's documents to one release.
+        col.create_index(
+            IndexModel::builder()
+                .keys(bson::doc! { "source_id": 1, "release": 1 })
+                .build(),
+        )
+        .await?;
+
+        // 6. Default resolution path (everything at `latest`).
+        col.create_index(
+            IndexModel::builder()
+                .keys(bson::doc! { "is_latest": 1, "source_id": 1 })
+                .build(),
+        )
+        .await?;
+
+        // 7. Release catalogue and the movable `latest` alias.
+        db.collection::<bson::Document>("source_releases")
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "source_id": 1, "release": 1 })
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+            )
+            .await?;
+
+        db.collection::<bson::Document>("source_release_aliases")
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "source_id": 1 })
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+            )
+            .await?;
+
         Ok(())
     }
 

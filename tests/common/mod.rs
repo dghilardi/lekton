@@ -51,6 +51,9 @@ pub struct TestEnv {
     _minio: ContainerAsync<MinIO>,
     _meili: ContainerAsync<Meilisearch>,
     pub router: Router,
+    /// Raw handle to the test database. Migrations are **not** applied by
+    /// `start()`, so a test that needs them runs `build_plan()` itself.
+    pub db: mongodb::Database,
     pub repo: Arc<dyn DocumentRepository>,
     pub schema_repo: Arc<dyn SchemaRepository>,
     pub settings_repo: Arc<dyn SettingsRepository>,
@@ -344,6 +347,7 @@ impl TestEnv {
             _minio: minio_container,
             _meili: meili_container,
             router,
+            db: mongo_db.clone(),
             repo,
             schema_repo,
             settings_repo,

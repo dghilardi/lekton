@@ -351,6 +351,8 @@ pub async fn process_ingest(
         is_archived: false,
         source_path: Some(request.source_path.clone()),
         source_id: Some(request.source_id.clone()),
+        release: None,
+        is_latest: true,
         needs_reindex: false,
         skip_rag: request.skip_rag,
     };
@@ -1438,6 +1440,8 @@ mod tests {
             is_archived: false,
             source_path: Some("docs/hello.md".to_string()),
             source_id: Some("test-source-id".to_string()),
+            release: None,
+            is_latest: true,
             needs_reindex: false,
             skip_rag: false,
         })

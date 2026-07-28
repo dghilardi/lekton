@@ -693,6 +693,8 @@ mod tests {
             is_archived: false,
             source_path: Some(format!("{slug}.md")),
             source_id: Some("test-source".to_string()),
+            release: None,
+            is_latest: true,
             needs_reindex: false,
             skip_rag: false,
         }

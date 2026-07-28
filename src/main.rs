@@ -862,6 +862,7 @@ async fn main() {
         document_upload: config.features.document_upload,
         sources: config.features.sources,
         learn: config.features.learn && chat_service.is_some(),
+        doc_versioning: config.features.doc_versioning,
     };
 
     // Spawn the attachment extraction worker when attachment indexing is enabled.

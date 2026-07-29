@@ -25,7 +25,7 @@ pub fn HomePage() -> impl IntoView {
             .read()
             .get_all(crate::versioning::PIN_PARAM)
             .unwrap_or_default();
-        with_auth_retry(move || get_navigation(pins.clone()))
+        with_auth_retry(move || get_navigation(Some(pins.clone())))
     });
     let schema_registry_enabled = crate::app::use_feature(|f| f.schema_registry);
 

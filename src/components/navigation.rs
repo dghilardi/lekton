@@ -66,7 +66,7 @@ pub fn NavigationTree() -> impl IntoView {
             .read()
             .get_all(crate::versioning::PIN_PARAM)
             .unwrap_or_default();
-        with_auth_retry(move || get_navigation(pins.clone()))
+        with_auth_retry(move || get_navigation(Some(pins.clone())))
     });
 
     let location = leptos_router::hooks::use_location();

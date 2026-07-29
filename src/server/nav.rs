@@ -16,14 +16,14 @@ use crate::db::settings_repository::NavGroup;
 /// function is POSTed to its own endpoint and never sees the page query string,
 /// so the client reads them and passes them down.
 #[server(GetNavigation, "/api")]
-pub async fn get_navigation(pins: Vec<String>) -> Result<Vec<NavItem>, ServerFnError> {
+pub async fn get_navigation(pins: Option<Vec<String>>) -> Result<Vec<NavItem>, ServerFnError> {
     use std::collections::HashMap;
 
     let state = expect_context::<AppState>();
 
     let (allowed_levels, include_draft) = request_document_visibility(&state).await?;
     // Bound outside the join: a temporary would not outlive the future.
-    let pins = crate::server::resolve_release_pins(&state, &pins).await?;
+    let pins = crate::server::resolve_release_pins(&state, &pins.unwrap_or_default()).await?;
     let (docs, nav_order_entries) = tokio::join!(
         state
             .document_repo

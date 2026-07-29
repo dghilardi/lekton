@@ -363,7 +363,7 @@ pub fn EditorPage() -> impl IntoView {
     #[allow(clippy::redundant_closure)]
     let doc_resource = Resource::new(move || route_slug(), |slug| get_doc_content(slug));
     let levels_resource = LocalResource::new(list_levels);
-    let nav_resource = LocalResource::new(|| crate::server::nav::get_navigation(vec![]));
+    let nav_resource = LocalResource::new(|| crate::server::nav::get_navigation(None));
 
     let (msg, set_msg) = signal(TiptapInstanceMsg::Noop);
     let (value, set_value) = signal(String::new());

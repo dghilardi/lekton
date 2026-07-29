@@ -220,7 +220,7 @@ pub fn DocPage() -> impl IntoView {
     let doc_resource = LocalResource::new(move || {
         let slug = slug();
         let pins = pins();
-        with_auth_retry(move || get_doc_html(slug.clone(), pins.clone()))
+        with_auth_retry(move || get_doc_html(slug.clone(), Some(pins.clone())))
     });
 
     let show_archive_confirm = RwSignal::new(false);

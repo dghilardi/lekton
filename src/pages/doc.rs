@@ -207,9 +207,20 @@ pub fn DocPage() -> impl IntoView {
     let params = leptos_router::hooks::use_params_map();
     let slug = move || params.read().get("slug").unwrap_or_default();
 
+    // Release pins live in the URL, so changing one re-runs the resource and the
+    // page re-resolves against the newly pinned release.
+    let query = leptos_router::hooks::use_query_map();
+    let pins = move || {
+        query
+            .read()
+            .get_all(crate::versioning::PIN_PARAM)
+            .unwrap_or_default()
+    };
+
     let doc_resource = LocalResource::new(move || {
         let slug = slug();
-        with_auth_retry(move || get_doc_html(slug.clone()))
+        let pins = pins();
+        with_auth_retry(move || get_doc_html(slug.clone(), pins.clone()))
     });
 
     let show_archive_confirm = RwSignal::new(false);

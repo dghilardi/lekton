@@ -31,7 +31,15 @@ fn TopNavbarLinksSkeleton() -> impl IntoView {
 
 #[component]
 pub fn TopNavbarLinks() -> impl IntoView {
-    let nav_resource = LocalResource::new(|| with_auth_retry(get_navigation));
+    // Reader-facing navbar: follows the URL's release pins like the sidebar.
+    let nav_query = leptos_router::hooks::use_query_map();
+    let nav_resource = LocalResource::new(move || {
+        let pins = nav_query
+            .read()
+            .get_all(crate::versioning::PIN_PARAM)
+            .unwrap_or_default();
+        with_auth_retry(move || get_navigation(pins.clone()))
+    });
     let groups_resource = Resource::new(|| (), |_| get_navbar_groups());
     let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
     let is_rag = use_context::<crate::app::IsRagEnabled>();

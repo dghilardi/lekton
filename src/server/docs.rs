@@ -8,13 +8,14 @@ use crate::server::request_document_visibility;
 #[server(GetDocHtml, "/api")]
 pub async fn get_doc_html(
     slug: String,
+    pins: Vec<String>,
 ) -> Result<Option<crate::pages::DocPageData>, ServerFnError> {
     use crate::rendering::markdown::{extract_headings, render_markdown};
 
     let state = expect_context::<AppState>();
 
     // Resolves to the pinned release when one is active, otherwise `latest`.
-    let pins = crate::versioning::ReleasePins::default();
+    let pins = crate::server::resolve_release_pins(&state, &pins).await?;
     let doc = crate::db::repository::resolve_by_release(
         state
             .document_repo

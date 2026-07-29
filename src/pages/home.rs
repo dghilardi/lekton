@@ -18,7 +18,15 @@ fn first_doc_href(items: &[NavItem]) -> Option<String> {
 /// Home page component.
 #[component]
 pub fn HomePage() -> impl IntoView {
-    let navigation_resource = LocalResource::new(|| with_auth_retry(get_navigation));
+    // The landing page follows the URL's release pins like the rest of the shell.
+    let nav_query = leptos_router::hooks::use_query_map();
+    let navigation_resource = LocalResource::new(move || {
+        let pins = nav_query
+            .read()
+            .get_all(crate::versioning::PIN_PARAM)
+            .unwrap_or_default();
+        with_auth_retry(move || get_navigation(pins.clone()))
+    });
     let schema_registry_enabled = crate::app::use_feature(|f| f.schema_registry);
 
     let get_started_href = Signal::derive(move || {

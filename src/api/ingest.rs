@@ -831,6 +831,7 @@ mod tests {
             &self,
             allowed_levels: Option<&[String]>,
             include_draft: bool,
+            _pins: &crate::versioning::ReleasePins,
         ) -> Result<Vec<Document>, AppError> {
             Ok(self
                 .documents
@@ -1567,7 +1568,11 @@ mod tests {
 
         // Should have only one document
         let docs = repo
-            .list_by_access_levels(Some(&["internal".to_string()]), false)
+            .list_by_access_levels(
+                Some(&["internal".to_string()]),
+                false,
+                &crate::versioning::ReleasePins::default(),
+            )
             .await
             .unwrap();
         assert_eq!(docs.len(), 1);

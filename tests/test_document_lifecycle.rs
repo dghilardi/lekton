@@ -95,7 +95,11 @@ async fn document_hierarchy_navigation() {
         .await;
 
     // list_accessible should return them sorted by order
-    let docs = env.repo.list_by_access_levels(None, false).await.unwrap();
+    let docs = env
+        .repo
+        .list_by_access_levels(None, false, &lekton::versioning::ReleasePins::default())
+        .await
+        .unwrap();
     let our_docs: Vec<_> = docs
         .iter()
         .filter(|d| d.slug.starts_with(&prefix))
@@ -147,7 +151,11 @@ async fn hidden_documents_excluded_from_listing() {
         .await;
 
     // list_accessible should NOT include the hidden doc
-    let docs = env.repo.list_by_access_levels(None, false).await.unwrap();
+    let docs = env
+        .repo
+        .list_by_access_levels(None, false, &lekton::versioning::ReleasePins::default())
+        .await
+        .unwrap();
     let slugs: Vec<&str> = docs.iter().map(|d| d.slug.as_str()).collect();
 
     assert!(
@@ -211,7 +219,11 @@ async fn archived_documents_excluded_from_listing() {
 
     let docs = env
         .repo
-        .list_by_access_levels(Some(&["public".to_string()]), false)
+        .list_by_access_levels(
+            Some(&["public".to_string()]),
+            false,
+            &lekton::versioning::ReleasePins::default(),
+        )
         .await
         .unwrap();
     let slugs: Vec<&str> = docs.iter().map(|d| d.slug.as_str()).collect();
@@ -294,7 +306,11 @@ async fn access_level_enforcement() {
     // Public access: only sees public docs
     let public_docs = env
         .repo
-        .list_by_access_levels(Some(&["public".to_string()]), false)
+        .list_by_access_levels(
+            Some(&["public".to_string()]),
+            false,
+            &lekton::versioning::ReleasePins::default(),
+        )
         .await
         .unwrap();
     let public_slugs: Vec<&str> = public_docs.iter().map(|d| d.slug.as_str()).collect();
@@ -310,7 +326,11 @@ async fn access_level_enforcement() {
     ];
     let dev_docs = env
         .repo
-        .list_by_access_levels(Some(&dev_allowed), false)
+        .list_by_access_levels(
+            Some(&dev_allowed),
+            false,
+            &lekton::versioning::ReleasePins::default(),
+        )
         .await
         .unwrap();
     let dev_slugs: Vec<&str> = dev_docs.iter().map(|d| d.slug.as_str()).collect();
@@ -319,7 +339,11 @@ async fn access_level_enforcement() {
     assert!(!dev_slugs.contains(&arch_slug.as_str()));
 
     // Admin access (None = no restriction): sees everything
-    let admin_docs = env.repo.list_by_access_levels(None, false).await.unwrap();
+    let admin_docs = env
+        .repo
+        .list_by_access_levels(None, false, &lekton::versioning::ReleasePins::default())
+        .await
+        .unwrap();
     let admin_slugs: Vec<&str> = admin_docs.iter().map(|d| d.slug.as_str()).collect();
     assert!(admin_slugs.contains(&public_slug.as_str()));
     assert!(admin_slugs.contains(&dev_slug.as_str()));

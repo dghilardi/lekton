@@ -11,6 +11,58 @@ pub struct SourceDocCount {
     pub document_count: u64,
 }
 
+/// The Mongo clause selecting which release of each source a reader sees.
+///
+/// Unpinned sources resolve to whichever release currently carries the `latest`
+/// alias, which is denormalized onto the document as `is_latest`. A pinned
+/// source resolves to its exact release instead.
+///
+/// `is_latest` is matched permissively (`$exists: false` counts as `true`) to
+/// match how the neighbouring `is_hidden` / `is_archived` / `is_draft` filters
+/// treat documents written before their field existed.
+///
+/// `$nin` also matches documents with no `source_id` at all, so documents
+/// ingested before source tracking keep resolving.
+#[cfg(feature = "ssr")]
+pub(crate) fn release_resolution_clause(
+    pins: &crate::versioning::ReleasePins,
+) -> mongodb::bson::Document {
+    use mongodb::bson::{doc, Bson};
+
+    let at_latest = doc! {
+        "$or": [
+            { "is_latest": { "$exists": false } },
+            { "is_latest": true },
+        ]
+    };
+
+    if pins.is_empty() {
+        return at_latest;
+    }
+
+    let pinned_sources: Vec<Bson> = pins
+        .source_ids()
+        .into_iter()
+        .map(|s| Bson::String(s.to_string()))
+        .collect();
+
+    let mut branches = vec![doc! {
+        "$and": [
+            { "source_id": { "$nin": pinned_sources } },
+            at_latest,
+        ]
+    }];
+
+    for pin in pins.iter() {
+        branches.push(doc! {
+            "source_id": &pin.source_id,
+            "release": &pin.release,
+        });
+    }
+
+    doc! { "$or": branches }
+}
+
 /// Repository trait for document operations.
 ///
 /// This trait allows mocking the database layer in tests.
@@ -46,10 +98,15 @@ pub trait DocumentRepository: Send + Sync {
     ///
     /// Hidden documents (`is_hidden = true`) are always excluded — they can only
     /// be fetched by slug.
+    /// - `pins`: which release of each source to resolve. Pass
+    ///   [`ReleasePins::default()`](crate::versioning::ReleasePins) for the
+    ///   default view, where every source resolves to its `latest` release —
+    ///   that is the right choice for indexing and machine-facing callers.
     async fn list_by_access_levels(
         &self,
         allowed_levels: Option<&[String]>,
         include_draft: bool,
+        pins: &crate::versioning::ReleasePins,
     ) -> Result<Vec<Document>, AppError>;
 
     /// Update backlinks when a document's outgoing links change.
@@ -184,6 +241,7 @@ impl DocumentRepository for MongoDocumentRepository {
         &self,
         allowed_levels: Option<&[String]>,
         include_draft: bool,
+        pins: &crate::versioning::ReleasePins,
     ) -> Result<Vec<Document>, AppError> {
         use futures::TryStreamExt;
         use mongodb::bson::{doc, Bson};
@@ -206,6 +264,8 @@ impl DocumentRepository for MongoDocumentRepository {
                     { "is_archived": false }
                 ]
             },
+            // Resolve each source to its pinned release, or to `latest`.
+            release_resolution_clause(pins),
         ];
 
         if let Some(levels) = allowed_levels {
@@ -413,4 +473,83 @@ fn regex_escape(s: &str) -> String {
         escaped.push(c);
     }
     escaped
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod tests {
+    use super::*;
+    use crate::versioning::ReleasePins;
+    use mongodb::bson::doc;
+
+    #[test]
+    fn unpinned_resolution_accepts_latest_and_pre_field_documents() {
+        let clause = release_resolution_clause(&ReleasePins::default());
+
+        assert_eq!(
+            clause,
+            doc! {
+                "$or": [
+                    { "is_latest": { "$exists": false } },
+                    { "is_latest": true },
+                ]
+            },
+            "with no pins every source must resolve to its latest release"
+        );
+    }
+
+    #[test]
+    fn a_pin_scopes_only_its_own_source() {
+        let mut pins = ReleasePins::default();
+        pins.set("assets-manager", "1.1.0");
+
+        let clause = release_resolution_clause(&pins);
+        let branches = clause
+            .get_array("$or")
+            .expect("pinned resolution is a disjunction");
+
+        assert_eq!(
+            branches.len(),
+            2,
+            "one branch for the unpinned sources, one for the pin"
+        );
+
+        let unpinned = branches[0].as_document().expect("branch is a document");
+        let and = unpinned
+            .get_array("$and")
+            .expect("unpinned branch is a conjunction");
+        assert_eq!(
+            and[0].as_document().unwrap(),
+            &doc! { "source_id": { "$nin": ["assets-manager"] } },
+            "the unpinned branch must exclude exactly the pinned sources"
+        );
+
+        assert_eq!(
+            branches[1].as_document().unwrap(),
+            &doc! { "source_id": "assets-manager", "release": "1.1.0" },
+            "the pinned branch must select the exact release"
+        );
+    }
+
+    #[test]
+    fn every_pin_gets_its_own_branch() {
+        let mut pins = ReleasePins::default();
+        pins.set("a", "1.0.0");
+        pins.set("b", "2.0.0");
+
+        let clause = release_resolution_clause(&pins);
+        let branches = clause.get_array("$or").expect("disjunction");
+
+        assert_eq!(branches.len(), 3, "one unpinned branch plus one per pin");
+
+        let unpinned = branches[0].as_document().unwrap();
+        let and = unpinned.get_array("$and").unwrap();
+        let nin = and[0]
+            .as_document()
+            .unwrap()
+            .get_document("source_id")
+            .unwrap()
+            .get_array("$nin")
+            .unwrap();
+        assert_eq!(nin.len(), 2, "both pinned sources must be excluded");
+    }
 }

@@ -982,7 +982,11 @@ impl LektonMcpServer {
 
         let docs = self
             .document_repo
-            .list_by_access_levels(levels.as_deref(), include_draft)
+            .list_by_access_levels(
+                levels.as_deref(),
+                include_draft,
+                &crate::versioning::ReleasePins::default(),
+            )
             .await
             .map_err(app_err)?;
 
@@ -2009,7 +2013,11 @@ impl ServerHandler for LektonMcpServer {
 
         let docs = self
             .document_repo
-            .list_by_access_levels(levels.as_deref(), include_draft)
+            .list_by_access_levels(
+                levels.as_deref(),
+                include_draft,
+                &crate::versioning::ReleasePins::default(),
+            )
             .await
             .map_err(app_err)?;
 

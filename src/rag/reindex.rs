@@ -50,7 +50,13 @@ pub async fn run_reindex(
     let _guard = crate::jobs::RunningGuard::new(reindex.clone());
 
     // Load all non-archived documents (None = no access level filter, true = include drafts)
-    let documents: Vec<Document> = match document_repo.list_by_access_levels(None, true).await {
+    // Indexing always follows `latest`: older releases mostly repeat content
+    // that is already indexed (identical bodies are deduplicated by hash), so
+    // embedding them would spend vectors on duplicates.
+    let documents: Vec<Document> = match document_repo
+        .list_by_access_levels(None, true, &crate::versioning::ReleasePins::default())
+        .await
+    {
         Ok(docs) => docs.into_iter().filter(|d| !d.is_archived).collect(),
         Err(e) => {
             tracing::error!("RAG reindex: failed to list documents: {e}");
@@ -380,6 +386,7 @@ mod tests {
             &self,
             _: Option<&[String]>,
             _: bool,
+            _: &crate::versioning::ReleasePins,
         ) -> Result<Vec<Document>, AppError> {
             Ok(self.docs.clone())
         }

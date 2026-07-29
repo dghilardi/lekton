@@ -23,7 +23,11 @@ pub async fn get_doc_html(
         let (allowed_levels, include_draft) = request_document_visibility(&state).await?;
         let all_docs = state
             .document_repo
-            .list_by_access_levels(allowed_levels.as_deref(), include_draft)
+            .list_by_access_levels(
+                allowed_levels.as_deref(),
+                include_draft,
+                &crate::versioning::ReleasePins::default(),
+            )
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
 

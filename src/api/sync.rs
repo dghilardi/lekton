@@ -41,6 +41,21 @@ pub struct SyncRequest {
     /// client list will be automatically archived.
     #[serde(default)]
     pub archive_missing: bool,
+    /// The release being synced (from `lekton-sync --version`).
+    ///
+    /// `None` targets the source's unversioned bucket, which is the behaviour
+    /// for sources that never published a release. Once a source *has* published
+    /// one, omitting this is an error rather than a silent write to a bucket
+    /// nobody resolves.
+    #[serde(default)]
+    pub release: Option<String>,
+    /// When `true`, compute the delta without performing any write.
+    ///
+    /// Sync is the first call `lekton-sync` makes even under `--dry-run`, and it
+    /// archives and registers releases as a side effect, so a preview needs a
+    /// way to ask for the plan only.
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 /// A single entry in the `to_upload` list returned by the sync endpoint.
@@ -71,6 +86,7 @@ pub struct SyncResponse {
 #[allow(clippy::too_many_arguments)]
 pub async fn process_sync(
     repo: &dyn crate::db::repository::DocumentRepository,
+    release_repo: &dyn crate::db::release_repository::ReleaseRepository,
     service_token_repo: &dyn crate::db::service_token_repository::ServiceTokenRepository,
     search: Option<&dyn SearchService>,
     rag: Option<&dyn RagService>,
@@ -99,11 +115,42 @@ pub async fn process_sync(
         }
     }
 
-    // 3. Fetch all server documents for this source.
+    // 2b. A source that has published a release must keep naming one. Writing
+    // to the unversioned bucket instead would create documents that nothing
+    // resolves (the source's readers go through releases from now on), and
+    // writing over `latest` would mutate an already-tagged release.
+    if request.release.is_none() && release_repo.is_release_managed(&request.source_id).await? {
+        return Err(AppError::BadRequest(format!(
+            "source '{}' is release-managed; --version is required",
+            request.source_id
+        )));
+    }
+
+    // 2c. A slug belongs to exactly one source. Until this release the unique
+    // `slug` index enforced that implicitly; now that a slug may legitimately
+    // repeat across releases, the check has to be explicit.
+    let requested_slugs: Vec<String> = request.documents.iter().map(|e| e.slug.clone()).collect();
+    for existing in repo.find_by_slugs(&requested_slugs).await? {
+        match existing.source_id.as_deref() {
+            Some(owner) if owner != request.source_id => {
+                return Err(AppError::BadRequest(format!(
+                    "slug '{}' is already owned by source '{}'",
+                    existing.slug, owner
+                )));
+            }
+            _ => {}
+        }
+    }
+
+    // 3. Fetch the server documents for this source *within the release being
+    // synced*, so the archive computation below cannot touch another release.
     let mut server_by_slug: HashMap<String, ServerDocInfo> = HashMap::new();
     let mut server_by_source_path: HashMap<String, String> = HashMap::new();
 
-    for doc in repo.find_all_by_source_id(&request.source_id).await? {
+    for doc in repo
+        .find_all_by_source_id_and_release(&request.source_id, request.release.as_deref())
+        .await?
+    {
         if let Some(ref sp) = doc.source_path {
             server_by_source_path.insert(sp.clone(), doc.slug.clone());
         }
@@ -200,8 +247,10 @@ pub async fn process_sync(
         }
     }
 
-    // 6. Archive missing docs if requested
-    if request.archive_missing {
+    // 6. Archive missing docs if requested. Skipped under `dry_run`, which asks
+    // for the plan only — `to_archive` is still reported so the caller can show
+    // what would happen.
+    if request.archive_missing && !request.dry_run {
         for slug in &to_archive {
             repo.set_archived(slug, true).await?;
             if let Some(svc) = search {
@@ -237,6 +286,13 @@ pub async fn process_sync(
                 }
             }
         }
+    }
+
+    // 7. Record the release in the catalogue. Done here rather than on ingest so
+    // a re-sync with no changes still marks the release as published, which is
+    // what the version selector lists.
+    if let (Some(release), false) = (request.release.as_deref(), request.dry_run) {
+        release_repo.register(&request.source_id, release).await?;
     }
 
     // Sort for deterministic output
@@ -302,6 +358,7 @@ pub async fn sync_handler(
 ) -> Result<axum::Json<SyncResponse>, AppError> {
     let response = process_sync(
         state.document_repo.as_ref(),
+        state.release_repo.as_ref(),
         state.service_token_repo.as_ref(),
         state.search_service.as_deref(),
         state.rag_service.as_deref(),
@@ -552,6 +609,57 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct MockReleaseRepo {
+        /// Releases already published, which is what makes a source
+        /// release-managed.
+        published: Vec<(String, String)>,
+        /// Registrations performed during the call under test.
+        registered: std::sync::Mutex<Vec<(String, String)>>,
+    }
+
+    impl MockReleaseRepo {
+        fn with_published(pairs: &[(&str, &str)]) -> Self {
+            Self {
+                published: pairs
+                    .iter()
+                    .map(|(s, r)| (s.to_string(), r.to_string()))
+                    .collect(),
+                ..Default::default()
+            }
+        }
+
+        fn registrations(&self) -> Vec<(String, String)> {
+            self.registered.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl crate::db::release_repository::ReleaseRepository for MockReleaseRepo {
+        async fn register(&self, source_id: &str, release: &str) -> Result<(), AppError> {
+            self.registered
+                .lock()
+                .unwrap()
+                .push((source_id.to_string(), release.to_string()));
+            Ok(())
+        }
+        async fn list_by_source(
+            &self,
+            _: &str,
+        ) -> Result<Vec<crate::db::release_repository::SourceRelease>, AppError> {
+            Ok(vec![])
+        }
+        async fn is_release_managed(&self, source_id: &str) -> Result<bool, AppError> {
+            Ok(self.published.iter().any(|(s, _)| s == source_id))
+        }
+        async fn latest(&self, _: &str) -> Result<Option<String>, AppError> {
+            Ok(None)
+        }
+        async fn set_latest(&self, _: &str, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+
     struct MockServiceTokenRepo;
 
     #[async_trait]
@@ -726,15 +834,19 @@ mod tests {
     async fn test_sync_identifies_uploads_for_new_docs() {
         let repo = MockRepo::new();
         let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::default();
         let request = SyncRequest {
             service_token: "legacy".to_string(),
             source_id: "test-source".to_string(),
             documents: vec![entry("docs/new", "sha256:abc")],
             archive_missing: false,
+            release: None,
+            dry_run: false,
         };
 
         let result = process_sync(
             &repo,
+            &release_repo,
             &token_repo,
             None,
             None,
@@ -755,15 +867,19 @@ mod tests {
     async fn test_sync_identifies_unchanged() {
         let repo = MockRepo::with_docs(vec![make_doc("docs/a", "sha256:abc")]);
         let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::default();
         let request = SyncRequest {
             service_token: "legacy".to_string(),
             source_id: "test-source".to_string(),
             documents: vec![entry("docs/a", "sha256:abc")],
             archive_missing: false,
+            release: None,
+            dry_run: false,
         };
 
         let result = process_sync(
             &repo,
+            &release_repo,
             &token_repo,
             None,
             None,
@@ -784,15 +900,19 @@ mod tests {
     async fn test_sync_identifies_changed_hash() {
         let repo = MockRepo::with_docs(vec![make_doc("docs/a", "sha256:old")]);
         let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::default();
         let request = SyncRequest {
             service_token: "legacy".to_string(),
             source_id: "test-source".to_string(),
             documents: vec![entry("docs/a", "sha256:new")],
             archive_missing: false,
+            release: None,
+            dry_run: false,
         };
 
         let result = process_sync(
             &repo,
+            &release_repo,
             &token_repo,
             None,
             None,
@@ -815,15 +935,19 @@ mod tests {
             make_doc("docs/old", "sha256:def"),
         ]);
         let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::default();
         let request = SyncRequest {
             service_token: "legacy".to_string(),
             source_id: "test-source".to_string(),
             documents: vec![entry("docs/a", "sha256:abc")],
             archive_missing: false,
+            release: None,
+            dry_run: false,
         };
 
         let result = process_sync(
             &repo,
+            &release_repo,
             &token_repo,
             None,
             None,
@@ -846,15 +970,19 @@ mod tests {
             make_doc("docs/old", "sha256:def"),
         ]);
         let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::default();
         let request = SyncRequest {
             service_token: "legacy".to_string(),
             source_id: "test-source".to_string(),
             documents: vec![entry("docs/a", "sha256:abc")],
             archive_missing: true,
+            release: None,
+            dry_run: false,
         };
 
         process_sync(
             &repo,
+            &release_repo,
             &token_repo,
             None,
             None,
@@ -877,15 +1005,19 @@ mod tests {
     async fn test_sync_scope_validation() {
         let repo = MockRepo::new();
         let token_repo = ScopedTokenRepo(make_service_token(vec!["protocols/*"], true));
+        let release_repo = MockReleaseRepo::default();
         let request = SyncRequest {
             service_token: "scoped-tok".to_string(),
             source_id: "test-source".to_string(),
             documents: vec![entry("docs/outside", "sha256:abc")],
             archive_missing: false,
+            release: None,
+            dry_run: false,
         };
 
         let result = process_sync(
             &repo,
+            &release_repo,
             &token_repo,
             None,
             None,
@@ -909,15 +1041,19 @@ mod tests {
         // precursor to uploads), even when the slug is within its scope.
         let repo = MockRepo::new();
         let token_repo = ScopedTokenRepo(make_service_token(vec!["*"], false));
+        let release_repo = MockReleaseRepo::default();
         let request = SyncRequest {
             service_token: "scoped-tok".to_string(),
             source_id: "test-source".to_string(),
             documents: vec![entry("docs/a", "sha256:abc")],
             archive_missing: false,
+            release: None,
+            dry_run: false,
         };
 
         let result = process_sync(
             &repo,
+            &release_repo,
             &token_repo,
             None,
             None,
@@ -941,16 +1077,20 @@ mod tests {
             make_doc("docs/old", "sha256:def"),
         ]);
         let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::default();
         let search = MockSearchService::new();
         let request = SyncRequest {
             service_token: "legacy".to_string(),
             source_id: "test-source".to_string(),
             documents: vec![entry("docs/a", "sha256:abc")],
             archive_missing: true,
+            release: None,
+            dry_run: false,
         };
 
         process_sync(
             &repo,
+            &release_repo,
             &token_repo,
             Some(&search),
             None,
@@ -973,16 +1113,20 @@ mod tests {
             make_doc("docs/old", "sha256:def"),
         ]);
         let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::default();
         let rag = MockRagService::new();
         let request = SyncRequest {
             service_token: "legacy".to_string(),
             source_id: "test-source".to_string(),
             documents: vec![entry("docs/a", "sha256:abc")],
             archive_missing: true,
+            release: None,
+            dry_run: false,
         };
 
         process_sync(
             &repo,
+            &release_repo,
             &token_repo,
             None,
             Some(&rag),
@@ -1005,16 +1149,20 @@ mod tests {
             make_doc("docs/old", "sha256:def"),
         ]);
         let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::default();
         let search = MockSearchService::new();
         let request = SyncRequest {
             service_token: "legacy".to_string(),
             source_id: "test-source".to_string(),
             documents: vec![entry("docs/a", "sha256:abc")],
             archive_missing: false,
+            release: None,
+            dry_run: false,
         };
 
         process_sync(
             &repo,
+            &release_repo,
             &token_repo,
             Some(&search),
             None,
@@ -1046,6 +1194,7 @@ mod tests {
             "sha256:meta",
         )]);
         let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::default();
         let request = SyncRequest {
             service_token: "legacy".to_string(),
             source_id: "test-source".to_string(),
@@ -1057,10 +1206,13 @@ mod tests {
                 legacy_slug: None,
             }],
             archive_missing: false,
+            release: None,
+            dry_run: false,
         };
 
         let result = process_sync(
             &repo,
+            &release_repo,
             &token_repo,
             None,
             None,
@@ -1087,6 +1239,7 @@ mod tests {
             "sha256:old-meta",
         )]);
         let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::default();
         let request = SyncRequest {
             service_token: "legacy".to_string(),
             source_id: "test-source".to_string(),
@@ -1098,10 +1251,13 @@ mod tests {
                 legacy_slug: None,
             }],
             archive_missing: false,
+            release: None,
+            dry_run: false,
         };
 
         let result = process_sync(
             &repo,
+            &release_repo,
             &token_repo,
             None,
             None,
@@ -1125,6 +1281,7 @@ mod tests {
     async fn test_sync_metadata_hash_absent_on_server_triggers_upload() {
         let repo = MockRepo::with_docs(vec![make_doc("docs/a", "sha256:content")]);
         let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::default();
         let request = SyncRequest {
             service_token: "legacy".to_string(),
             source_id: "test-source".to_string(),
@@ -1136,10 +1293,13 @@ mod tests {
                 legacy_slug: None,
             }],
             archive_missing: false,
+            release: None,
+            dry_run: false,
         };
 
         let result = process_sync(
             &repo,
+            &release_repo,
             &token_repo,
             None,
             None,
@@ -1166,15 +1326,19 @@ mod tests {
             "sha256:meta",
         )]);
         let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::default();
         let request = SyncRequest {
             service_token: "legacy".to_string(),
             source_id: "test-source".to_string(),
             documents: vec![entry("docs/a", "sha256:content")],
             archive_missing: false,
+            release: None,
+            dry_run: false,
         };
 
         let result = process_sync(
             &repo,
+            &release_repo,
             &token_repo,
             None,
             None,
@@ -1201,6 +1365,7 @@ mod tests {
         old_doc.source_path = None; // simulate old document without source_path
         let repo = MockRepo::with_docs(vec![old_doc]);
         let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::default();
         let request = SyncRequest {
             service_token: "legacy".to_string(),
             source_id: "test-source".to_string(),
@@ -1212,10 +1377,13 @@ mod tests {
                 legacy_slug: Some("docs/my-guide".to_string()), // path-derived (old)
             }],
             archive_missing: false,
+            release: None,
+            dry_run: false,
         };
 
         let result = process_sync(
             &repo,
+            &release_repo,
             &token_repo,
             None,
             None,
@@ -1245,6 +1413,7 @@ mod tests {
         // Sync should detect the rename and return the doc in to_upload with the new slug.
         let repo = MockRepo::with_docs(vec![make_doc("docs/my-guide", "sha256:content")]);
         let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::default();
         let request = SyncRequest {
             service_token: "legacy".to_string(),
             source_id: "test-source".to_string(),
@@ -1256,10 +1425,13 @@ mod tests {
                 legacy_slug: Some("docs/my-guide".to_string()),
             }],
             archive_missing: false,
+            release: None,
+            dry_run: false,
         };
 
         let result = process_sync(
             &repo,
+            &release_repo,
             &token_repo,
             None,
             None,
@@ -1289,6 +1461,7 @@ mod tests {
         // After migration, doc has source_path set and slug hasn't changed — nothing to do.
         let repo = MockRepo::with_docs(vec![make_doc("docs/my-guide", "sha256:content")]);
         let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::default();
         let request = SyncRequest {
             service_token: "legacy".to_string(),
             source_id: "test-source".to_string(),
@@ -1300,10 +1473,13 @@ mod tests {
                 legacy_slug: None,
             }],
             archive_missing: false,
+            release: None,
+            dry_run: false,
         };
 
         let result = process_sync(
             &repo,
+            &release_repo,
             &token_repo,
             None,
             None,
@@ -1327,6 +1503,7 @@ mod tests {
             make_doc("docs/taken", "sha256:bbb"),
         ]);
         let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::default();
         let request = SyncRequest {
             service_token: "legacy".to_string(),
             source_id: "test-source".to_string(),
@@ -1338,10 +1515,13 @@ mod tests {
                 legacy_slug: None,
             }],
             archive_missing: false,
+            release: None,
+            dry_run: false,
         };
 
         let result = process_sync(
             &repo,
+            &release_repo,
             &token_repo,
             None,
             None,
@@ -1372,15 +1552,19 @@ mod tests {
 
         let repo = MockRepo::with_docs(vec![doc_a, doc_b, doc_c]);
         let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::default();
         let request = SyncRequest {
             service_token: "legacy".to_string(),
             source_id: "source-a".to_string(),
             documents: vec![entry("docs/a", "sha256:aaa")],
             archive_missing: true,
+            release: None,
+            dry_run: false,
         };
 
         process_sync(
             &repo,
+            &release_repo,
             &token_repo,
             None,
             None,
@@ -1399,5 +1583,263 @@ mod tests {
         // docs/c must NOT be archived (belongs to source-b)
         let doc_c = repo.find_by_slug("docs/c").await.unwrap().unwrap();
         assert!(!doc_c.is_archived, "docs/c must not be archived");
+    }
+
+    // ── Release versioning ───────────────────────────────────────────────
+
+    fn make_doc_in_release(slug: &str, hash: &str, release: &str) -> Document {
+        Document {
+            release: Some(release.to_string()),
+            ..make_doc(slug, hash)
+        }
+    }
+
+    fn versioned_request(release: Option<&str>, docs: Vec<SyncDocumentEntry>) -> SyncRequest {
+        SyncRequest {
+            service_token: "legacy".to_string(),
+            source_id: "test-source".to_string(),
+            documents: docs,
+            archive_missing: true,
+            release: release.map(str::to_string),
+            dry_run: false,
+        }
+    }
+
+    /// The core promise of versioning: dropping a document in a newer release
+    /// must not touch the copy that older releases still ship.
+    #[tokio::test]
+    async fn archiving_is_scoped_to_the_release_being_synced() {
+        let repo = MockRepo::with_docs(vec![
+            make_doc_in_release("docs/removed", "sha256:abc", "1.0.0"),
+            make_doc_in_release("docs/kept", "sha256:def", "1.2.0"),
+        ]);
+        let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::with_published(&[("test-source", "1.0.0")]);
+
+        // Syncing 1.2.0 with only docs/kept present.
+        let result = process_sync(
+            &repo,
+            &release_repo,
+            &token_repo,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            versioned_request(Some("1.2.0"), vec![entry("docs/kept", "sha256:def")]),
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            result.to_archive.is_empty(),
+            "1.0.0's document is invisible to a 1.2.0 sync, so it cannot be archived: {:?}",
+            result.to_archive
+        );
+        let survivor = repo.find_by_slug("docs/removed").await.unwrap().unwrap();
+        assert!(
+            !survivor.is_archived,
+            "the 1.0.0 copy must survive a 1.2.0 sync that omits it"
+        );
+    }
+
+    /// Within one release the archive behaviour is unchanged.
+    #[tokio::test]
+    async fn archiving_still_applies_inside_the_synced_release() {
+        let repo = MockRepo::with_docs(vec![
+            make_doc_in_release("docs/gone", "sha256:abc", "1.2.0"),
+            make_doc_in_release("docs/kept", "sha256:def", "1.2.0"),
+        ]);
+        let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::with_published(&[("test-source", "1.2.0")]);
+
+        let result = process_sync(
+            &repo,
+            &release_repo,
+            &token_repo,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            versioned_request(Some("1.2.0"), vec![entry("docs/kept", "sha256:def")]),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.to_archive, vec!["docs/gone".to_string()]);
+        let gone = repo.find_by_slug("docs/gone").await.unwrap().unwrap();
+        assert!(
+            gone.is_archived,
+            "re-syncing a release must drop its removals"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_release_managed_source_must_name_a_release() {
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::with_published(&[("test-source", "1.0.0")]);
+
+        let err = process_sync(
+            &repo,
+            &release_repo,
+            &token_repo,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            versioned_request(None, vec![entry("docs/a", "sha256:abc")]),
+        )
+        .await
+        .expect_err("omitting the release must fail rather than write somewhere invisible");
+
+        match err {
+            AppError::BadRequest(msg) => assert!(
+                msg.contains("release-managed") && msg.contains("--version"),
+                "the error must tell the operator what to do, got: {msg}"
+            ),
+            other => panic!("expected BadRequest, got {other:?}"),
+        }
+    }
+
+    /// A source that never published a release keeps working exactly as before.
+    #[tokio::test]
+    async fn an_unversioned_source_still_syncs_without_a_release() {
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::default();
+
+        let result = process_sync(
+            &repo,
+            &release_repo,
+            &token_repo,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            versioned_request(None, vec![entry("docs/a", "sha256:abc")]),
+        )
+        .await
+        .expect("an unversioned source needs no release");
+
+        assert_eq!(result.to_upload.len(), 1);
+        assert!(
+            release_repo.registrations().is_empty(),
+            "no release named means nothing to register"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_slug_owned_by_another_source_is_rejected() {
+        let foreign = Document {
+            source_id: Some("other-source".to_string()),
+            ..make_doc("docs/shared", "sha256:abc")
+        };
+        let repo = MockRepo::with_docs(vec![foreign]);
+        let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::default();
+
+        let err = process_sync(
+            &repo,
+            &release_repo,
+            &token_repo,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            versioned_request(None, vec![entry("docs/shared", "sha256:new")]),
+        )
+        .await
+        .expect_err("the unique slug index no longer guards this, so sync must");
+
+        match err {
+            AppError::BadRequest(msg) => assert!(
+                msg.contains("docs/shared") && msg.contains("other-source"),
+                "the error must name the slug and its owner, got: {msg}"
+            ),
+            other => panic!("expected BadRequest, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn syncing_a_release_registers_it() {
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::default();
+
+        process_sync(
+            &repo,
+            &release_repo,
+            &token_repo,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            versioned_request(Some("1.2.0"), vec![entry("docs/a", "sha256:abc")]),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            release_repo.registrations(),
+            vec![("test-source".to_string(), "1.2.0".to_string())],
+            "the release must be catalogued so the version selector can list it"
+        );
+    }
+
+    /// `--dry-run` reports the plan and writes nothing: neither the archive nor
+    /// the release registration.
+    #[tokio::test]
+    async fn dry_run_reports_the_plan_without_writing() {
+        let repo = MockRepo::with_docs(vec![make_doc_in_release(
+            "docs/gone",
+            "sha256:abc",
+            "1.2.0",
+        )]);
+        let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::with_published(&[("test-source", "1.2.0")]);
+
+        let request = SyncRequest {
+            dry_run: true,
+            ..versioned_request(Some("1.2.0"), vec![])
+        };
+
+        let result = process_sync(
+            &repo,
+            &release_repo,
+            &token_repo,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            request,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result.to_archive,
+            vec!["docs/gone".to_string()],
+            "the plan must still be reported"
+        );
+        let doc = repo.find_by_slug("docs/gone").await.unwrap().unwrap();
+        assert!(!doc.is_archived, "a dry run must not archive anything");
+        assert!(
+            release_repo.registrations().is_empty(),
+            "a dry run must not register the release"
+        );
     }
 }

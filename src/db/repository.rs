@@ -145,6 +145,29 @@ pub trait DocumentRepository: Send + Sync {
     /// link resolution. Returns an empty vec for unknown source ids.
     async fn find_all_by_source_id(&self, source_id: &str) -> Result<Vec<Document>, AppError>;
 
+    /// Return the non-archived documents of one source belonging to exactly one
+    /// release.
+    ///
+    /// `release: None` selects the *unversioned* bucket — documents with no
+    /// release at all — not "any release". This is the scoping primitive the
+    /// sync protocol needs: archiving must only consider the release being
+    /// synced, so dropping a document in 1.2.0 leaves the 1.0.0 copy alone.
+    ///
+    /// The default implementation filters in memory on top of
+    /// [`Self::find_all_by_source_id`]; the MongoDB backend overrides it with an
+    /// indexed query.
+    async fn find_all_by_source_id_and_release(
+        &self,
+        source_id: &str,
+        release: Option<&str>,
+    ) -> Result<Vec<Document>, AppError> {
+        let documents = self.find_all_by_source_id(source_id).await?;
+        Ok(documents
+            .into_iter()
+            .filter(|d| d.release.as_deref() == release)
+            .collect())
+    }
+
     /// List distinct non-empty `source_id` values across all documents, each
     /// with its document count. Used by the source registry to discover which
     /// import sources exist.
@@ -414,6 +437,38 @@ impl DocumentRepository for MongoDocumentRepository {
 
         let filter = doc! {
             "source_id": source_id,
+            "$or": [
+                { "is_archived": { "$exists": false } },
+                { "is_archived": false }
+            ]
+        };
+
+        let mut cursor = self.collection.find(filter).await?;
+        let mut documents = Vec::new();
+        while let Some(document) = cursor.try_next().await? {
+            documents.push(document);
+        }
+        Ok(documents)
+    }
+
+    async fn find_all_by_source_id_and_release(
+        &self,
+        source_id: &str,
+        release: Option<&str>,
+    ) -> Result<Vec<Document>, AppError> {
+        use futures::TryStreamExt;
+        use mongodb::bson::{doc, Bson};
+
+        // `Bson::Null` matches both an absent field and an explicit null, which
+        // together form the unversioned bucket.
+        let release_match = match release {
+            Some(r) => Bson::String(r.to_string()),
+            None => Bson::Null,
+        };
+
+        let filter = doc! {
+            "source_id": source_id,
+            "release": release_match,
             "$or": [
                 { "is_archived": { "$exists": false } },
                 { "is_archived": false }

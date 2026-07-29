@@ -357,6 +357,17 @@ pub async fn sync_handler(
     axum::extract::State(state): axum::extract::State<crate::app::AppState>,
     axum::Json(request): axum::Json<SyncRequest>,
 ) -> Result<axum::Json<SyncResponse>, AppError> {
+    // Refuse release-scoped writes while the feature is off. Accepting them
+    // would publish releases the reader cannot reach — the version selector is
+    // hidden — leaving older releases stranded behind `latest`.
+    if request.release.is_some() && !state.features.doc_versioning {
+        return Err(AppError::BadRequest(
+            "documentation versioning is disabled on this instance; \
+             remove --version or enable LKN__FEATURES__DOC_VERSIONING"
+                .into(),
+        ));
+    }
+
     let response = process_sync(
         state.document_repo.as_ref(),
         state.release_repo.as_ref(),

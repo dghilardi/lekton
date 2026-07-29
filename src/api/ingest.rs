@@ -268,7 +268,7 @@ pub async fn process_ingest(
         && old_s3_key_before_rename.is_none()
         && !old_doc_needs_reindex
     {
-        let s3_key = format!("docs/{}.md", request.slug.replace('/', "_"));
+        let s3_key = document_s3_key(&request.slug, request.release.as_deref());
         return Ok(ProcessIngestOutcome {
             response: IngestResponse {
                 message: "Document unchanged".to_string(),
@@ -286,12 +286,12 @@ pub async fn process_ingest(
     //    so we don't reference a non-existent object.
     let s3_key = if let Some(ref old_key) = old_s3_key_before_rename {
         if content_changed {
-            format!("docs/{}.md", request.slug.replace('/', "_"))
+            document_s3_key(&request.slug, request.release.as_deref())
         } else {
             old_key.clone()
         }
     } else {
-        format!("docs/{}.md", request.slug.replace('/', "_"))
+        document_s3_key(&request.slug, request.release.as_deref())
     };
 
     // Keep raw content for search indexing
@@ -634,6 +634,28 @@ async fn resolve_token_name(ctx: &IngestContext<'_>, raw_token: &str) -> String 
     }
 }
 
+/// The S3 key holding a document's markdown body.
+///
+/// Unversioned documents keep the historical slug-derived key, so nothing needs
+/// migrating. Release-scoped documents get the release in the key: without it,
+/// every release of a slug would share one object and publishing a new release
+/// would overwrite the body that older releases still point at.
+///
+/// Identical content across releases is therefore stored once per release rather
+/// than deduplicated by hash. That trades a few kilobytes of markdown for
+/// leaving the rename, history and unchanged-detection paths untouched.
+#[cfg(feature = "ssr")]
+pub(crate) fn document_s3_key(slug: &str, release: Option<&str>) -> String {
+    let flat_slug = slug.replace('/', "_");
+    match release {
+        None => format!("docs/{flat_slug}.md"),
+        Some(release) => {
+            let flat_release = release.replace('/', "_");
+            format!("docs/{flat_slug}@{flat_release}.md")
+        }
+    }
+}
+
 /// Axum handler for `POST /api/v1/ingest`.
 ///
 /// Only available when the `ssr` feature is enabled.
@@ -642,6 +664,16 @@ pub async fn ingest_handler(
     axum::extract::State(state): axum::extract::State<crate::app::AppState>,
     axum::Json(request): axum::Json<IngestRequest>,
 ) -> Result<axum::Json<IngestResponse>, AppError> {
+    // Same gate as sync: a release-scoped write is meaningless while the reader
+    // side of versioning is off.
+    if request.release.is_some() && !state.features.doc_versioning {
+        return Err(AppError::BadRequest(
+            "documentation versioning is disabled on this instance; \
+             remove --version or enable LKN__FEATURES__DOC_VERSIONING"
+                .into(),
+        ));
+    }
+
     let ctx = IngestContext {
         repo: state.document_repo.as_ref(),
         asset_repo: state.asset_repo.as_ref(),
@@ -2174,6 +2206,48 @@ mod tests {
         assert_eq!(
             got, "sha256:zwiTusSDUfQZa8E3I2cGxlQ21XSoiQW4u3R8GgXT0bc",
             "document metadata hash wire contract with CLI"
+        );
+    }
+
+    // ── S3 key derivation ────────────────────────────────────────────────
+
+    #[test]
+    fn unversioned_documents_keep_the_historical_key() {
+        assert_eq!(
+            document_s3_key("guides/intro", None),
+            "docs/guides_intro.md",
+            "changing the key for unversioned documents would orphan every stored object"
+        );
+    }
+
+    /// The bug this guards: with a slug-only key, publishing 1.2.0 would
+    /// overwrite the body that the 1.0.0 row still points at.
+    #[test]
+    fn releases_of_one_slug_get_distinct_keys() {
+        let a = document_s3_key("api/auth", Some("1.0.0"));
+        let b = document_s3_key("api/auth", Some("1.2.0"));
+
+        assert_ne!(a, b, "two releases must never share one S3 object");
+        assert_eq!(a, "docs/api_auth@1.0.0.md");
+        assert_eq!(b, "docs/api_auth@1.2.0.md");
+    }
+
+    #[test]
+    fn the_same_release_of_a_slug_is_stable() {
+        assert_eq!(
+            document_s3_key("api/auth", Some("1.0.0")),
+            document_s3_key("api/auth", Some("1.0.0")),
+            "re-ingesting a release must target the same object, not accumulate copies"
+        );
+    }
+
+    /// Release tags are free-form, so a slash in one must not create a nested
+    /// key that collides with another document's path.
+    #[test]
+    fn slashes_in_a_release_tag_are_flattened() {
+        assert_eq!(
+            document_s3_key("api/auth", Some("release/2024-06")),
+            "docs/api_auth@release_2024-06.md"
         );
     }
 }

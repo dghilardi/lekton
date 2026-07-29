@@ -48,6 +48,21 @@ struct Args {
     #[arg(long)]
     archive_missing: bool,
 
+    /// Publish this sync as a named release (e.g. `1.2.0`).
+    ///
+    /// Documents are scoped to it: removing a file only archives it from this
+    /// release, leaving the copies older releases ship. Required once the source
+    /// has published any release.
+    #[arg(long, value_name = "RELEASE")]
+    version: Option<String>,
+
+    /// After a successful sync, point the `latest` alias at `--version`.
+    ///
+    /// Like a Docker tag: combine with `--version` to publish the concrete
+    /// release and move `latest` in one run.
+    #[arg(long)]
+    latest: bool,
+
     /// Show what would be done without making any changes
     #[arg(long)]
     dry_run: bool,
@@ -66,6 +81,12 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+
+    // A bad flag combination is worth reporting before we touch the filesystem,
+    // the environment or the network.
+    if args.latest && args.version.is_none() {
+        anyhow::bail!("--latest requires --version (the release to alias as latest)");
+    }
 
     // ── Load .lekton.yml ──────────────────────────────────────────────────────
     let config_path = args
@@ -108,6 +129,8 @@ async fn main() -> Result<()> {
         std::env::var("LEKTON_TOKEN").context("LEKTON_TOKEN environment variable is required")?;
 
     // ── Determine options ─────────────────────────────────────────────────────
+    let release = args.version.clone();
+
     let archive_missing = args.archive_missing || config.archive_missing.unwrap_or(false);
     let archive_missing_schemas =
         args.archive_missing || config.archive_missing_schemas.unwrap_or(false);
@@ -175,6 +198,8 @@ async fn main() -> Result<()> {
             source_id: source_id.clone(),
             documents: sync_entries,
             archive_missing,
+            release: release.clone(),
+            dry_run: args.dry_run,
         };
         let sync_resp = send_with_retry(|| client.post(&sync_url).json(&sync_request))
             .await
@@ -563,6 +588,7 @@ async fn main() -> Result<()> {
             parent_slug: doc.parent_slug.clone(),
             order,
             is_hidden: doc.is_hidden,
+            release: release.clone(),
         };
 
         let result = send_with_retry(|| client.post(&ingest_url).json(&ingest_body)).await;
@@ -763,6 +789,42 @@ async fn main() -> Result<()> {
     let total_errors = errors + attachment_errors + prompt_errors + schema_errors;
     if total_errors > 0 {
         bail!("{total_errors} upload(s) failed");
+    }
+
+    // ── Move the `latest` alias ───────────────────────────────────────────────
+    // Deliberately last: the alias must only ever point at a fully published
+    // release, so a run that failed above leaves readers on the previous one.
+    if args.latest {
+        let release = release
+            .clone()
+            .expect("--latest requires --version, validated at startup");
+        let promote_url = format!("{base_url}/api/v1/releases/promote");
+        let body = api::PromoteReleaseRequest {
+            service_token: token.clone(),
+            source_id: source_id.clone(),
+            release: release.clone(),
+        };
+
+        let resp = send_with_retry(|| client.post(&promote_url).json(&body))
+            .await
+            .context("Failed to call the release promotion API")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let detail = resp.text().await.unwrap_or_default();
+            bail!("Failed to promote release '{release}' to latest ({status}): {detail}");
+        }
+
+        let promoted: api::PromoteReleaseResponse =
+            resp.json().await.context("Invalid promotion response")?;
+        println!("Release {release} is now 'latest'");
+        if promoted.reindex_pending > 0 {
+            println!(
+                "  {} document(s) changed 'latest' membership and are flagged for re-indexing \
+                 (run a re-index so search and chat follow the new release)",
+                promoted.reindex_pending
+            );
+        }
     }
 
     Ok(())

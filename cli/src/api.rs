@@ -10,6 +10,28 @@ pub struct SyncRequest {
     pub source_id: String,
     pub documents: Vec<SyncDocEntry>,
     pub archive_missing: bool,
+    /// The release being published, from `--version`. Omitted for unversioned
+    /// sources so older servers keep accepting the payload unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release: Option<String>,
+    /// Ask the server for the plan only. Sync runs even under `--dry-run` and it
+    /// writes (archiving, release registration), so the preview has to say so.
+    pub dry_run: bool,
+}
+
+// ── Release promotion ─────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct PromoteReleaseRequest {
+    pub service_token: String,
+    pub source_id: String,
+    pub release: String,
+}
+
+#[derive(Deserialize)]
+pub struct PromoteReleaseResponse {
+    /// Documents whose `latest` membership changed and now need re-indexing.
+    pub reindex_pending: usize,
 }
 
 #[derive(Serialize)]
@@ -99,6 +121,9 @@ pub struct IngestRequest {
     pub parent_slug: Option<String>,
     pub order: u32,
     pub is_hidden: bool,
+    /// The release this document belongs to, echoed from the sync request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release: Option<String>,
 }
 
 #[derive(Deserialize)]

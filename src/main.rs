@@ -81,6 +81,10 @@ fn api_routes(features: &lekton::app::FeatureFlags) -> axum::Router<lekton::app:
         )
         .route("/api/v1/sync", axum::routing::post(api::sync::sync_handler))
         .route(
+            "/api/v1/releases/promote",
+            axum::routing::post(api::releases::promote_release_handler),
+        )
+        .route(
             "/api/v1/assets",
             axum::routing::get(api::assets::list_assets_handler),
         )

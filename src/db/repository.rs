@@ -187,6 +187,23 @@ pub trait DocumentRepository: Send + Sync {
     /// Does nothing if `old_slug` is not found.
     async fn rename_slug(&self, old_slug: &str, new_slug: &str) -> Result<(), AppError>;
 
+    /// Point the denormalized `is_latest` flag of one source at `release`.
+    ///
+    /// Sets it on every document of that release and clears it on the source's
+    /// other releases, so the flag keeps matching the alias it mirrors. Returns
+    /// the slugs whose flag changed, which is what needs re-indexing: search and
+    /// RAG only carry `latest`, so a promotion has to add the new release's
+    /// documents and drop the old one's.
+    /// Defaults to a no-op returning no affected slugs so test mocks need not
+    /// implement it; the MongoDB backend overrides it.
+    async fn promote_release(
+        &self,
+        _source_id: &str,
+        _release: &str,
+    ) -> Result<Vec<String>, AppError> {
+        Ok(vec![])
+    }
+
     /// Find a document by its source file path (e.g. `docs/guides/intro.md`).
     ///
     /// Returns `None` for documents ingested before `source_path` was introduced.
@@ -292,6 +309,52 @@ impl DocumentRepository for MongoDocumentRepository {
             documents.push(document);
         }
         Ok(documents)
+    }
+
+    async fn promote_release(
+        &self,
+        source_id: &str,
+        release: &str,
+    ) -> Result<Vec<String>, AppError> {
+        use futures::TryStreamExt;
+        use mongodb::bson::doc;
+
+        // Collect the affected slugs before writing: afterwards the two sets are
+        // no longer distinguishable by `is_latest`.
+        let mut affected = Vec::new();
+        let mut cursor = self
+            .collection
+            .find(doc! {
+                "source_id": source_id,
+                "$or": [
+                    // Gaining the flag.
+                    { "release": release, "is_latest": { "$ne": true } },
+                    // Losing it.
+                    { "release": { "$ne": release }, "is_latest": true },
+                ]
+            })
+            .await?;
+        while let Some(document) = cursor.try_next().await? {
+            affected.push(document.slug);
+        }
+
+        // Both updates are conditioned on the flag actually changing, so
+        // re-promoting the release that is already latest is a no-op instead of
+        // marking the whole release stale for re-indexing.
+        self.collection
+            .update_many(
+                doc! { "source_id": source_id, "release": release, "is_latest": { "$ne": true } },
+                doc! { "$set": { "is_latest": true, "needs_reindex": true } },
+            )
+            .await?;
+        self.collection
+            .update_many(
+                doc! { "source_id": source_id, "release": { "$ne": release }, "is_latest": true },
+                doc! { "$set": { "is_latest": false, "needs_reindex": true } },
+            )
+            .await?;
+
+        Ok(affected)
     }
 
     async fn find_by_slugs(&self, slugs: &[String]) -> Result<Vec<Document>, AppError> {

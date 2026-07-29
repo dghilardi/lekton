@@ -17,6 +17,7 @@ pub mod pat;
 pub mod prompts;
 #[cfg(feature = "ssr")]
 pub mod rag;
+pub mod releases;
 pub mod schemas;
 #[cfg(feature = "ssr")]
 pub mod search;

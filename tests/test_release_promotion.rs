@@ -1,0 +1,220 @@
+mod common;
+
+use lekton::db::models::Document;
+
+fn doc(slug: &str, release: &str, is_latest: bool) -> Document {
+    Document {
+        slug: slug.to_string(),
+        title: slug.to_string(),
+        summary: None,
+        s3_key: format!("docs/{}.md", slug.replace('/', "_")),
+        access_level: "public".to_string(),
+        is_draft: false,
+        service_owner: "team".to_string(),
+        last_updated: chrono::Utc::now(),
+        tags: vec![],
+        links_out: vec![],
+        backlinks: vec![],
+        parent_slug: None,
+        order: 0,
+        is_hidden: false,
+        content_hash: None,
+        metadata_hash: None,
+        is_archived: false,
+        source_path: Some(format!("{slug}.md")),
+        source_id: Some("assets-manager".to_string()),
+        release: Some(release.to_string()),
+        is_latest,
+        needs_reindex: false,
+        skip_rag: false,
+    }
+}
+
+/// The flag mirrors the alias, so promoting has to move it off the old release
+/// and onto the new one in a single sweep.
+#[tokio::test]
+async fn promotion_moves_the_is_latest_flag_across_releases() {
+    let env = common::TestEnv::start().await;
+
+    env.repo
+        .create_or_update(doc("api/auth", "1.0.0", true))
+        .await
+        .unwrap();
+    env.repo
+        .create_or_update(doc("api/auth", "1.2.0", false))
+        .await
+        .unwrap();
+
+    let affected = env
+        .repo
+        .promote_release("assets-manager", "1.2.0")
+        .await
+        .expect("promote");
+
+    assert_eq!(
+        affected.len(),
+        2,
+        "both the release gaining the flag and the one losing it are affected"
+    );
+
+    let copies = env.repo.find_all_by_slug("api/auth").await.unwrap();
+    let latest: Vec<&str> = copies
+        .iter()
+        .filter(|d| d.is_latest)
+        .map(|d| d.release.as_deref().unwrap())
+        .collect();
+    assert_eq!(
+        latest,
+        vec!["1.2.0"],
+        "exactly one release may carry the flag"
+    );
+
+    assert!(
+        copies.iter().all(|d| d.needs_reindex),
+        "both copies changed latest membership, so search and RAG are stale for both"
+    );
+}
+
+/// Re-running a promotion must not mark the whole release stale again, otherwise
+/// every idempotent sync would trigger a pointless re-index.
+#[tokio::test]
+async fn re_promoting_the_current_release_is_a_no_op() {
+    let env = common::TestEnv::start().await;
+
+    env.repo
+        .create_or_update(doc("api/auth", "1.2.0", true))
+        .await
+        .unwrap();
+
+    let affected = env
+        .repo
+        .promote_release("assets-manager", "1.2.0")
+        .await
+        .expect("promote");
+
+    assert!(
+        affected.is_empty(),
+        "nothing changed, so nothing needs re-indexing: {affected:?}"
+    );
+    let stored = env
+        .repo
+        .find_all_by_slug("api/auth")
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert!(stored.is_latest);
+    assert!(
+        !stored.needs_reindex,
+        "an unchanged document must not be flagged stale"
+    );
+}
+
+#[tokio::test]
+async fn promotion_only_touches_its_own_source() {
+    let env = common::TestEnv::start().await;
+
+    env.repo
+        .create_or_update(doc("api/auth", "1.0.0", true))
+        .await
+        .unwrap();
+    let other = Document {
+        source_id: Some("cloud-common".to_string()),
+        ..doc("common/amqp", "5.0.0", true)
+    };
+    env.repo.create_or_update(other).await.unwrap();
+
+    env.repo
+        .create_or_update(doc("api/auth", "1.2.0", false))
+        .await
+        .unwrap();
+    env.repo
+        .promote_release("assets-manager", "1.2.0")
+        .await
+        .unwrap();
+
+    let untouched = env
+        .repo
+        .find_all_by_slug("common/amqp")
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert!(
+        untouched.is_latest && !untouched.needs_reindex,
+        "another source's alias must be unaffected"
+    );
+}
+
+#[tokio::test]
+async fn promoting_an_unpublished_release_is_rejected() {
+    let env = common::TestEnv::start().await;
+
+    env.release_repo
+        .register("assets-manager", "1.0.0")
+        .await
+        .unwrap();
+
+    let err = lekton::api::releases::process_promote_release(
+        env.repo.as_ref(),
+        env.release_repo.as_ref(),
+        env.service_token_repo.as_ref(),
+        Some("test-token"),
+        lekton::api::releases::PromoteReleaseRequest {
+            service_token: "test-token".to_string(),
+            source_id: "assets-manager".to_string(),
+            release: "9.9.9".to_string(),
+        },
+    )
+    .await
+    .expect_err("a typo must not point latest at nothing");
+
+    assert!(
+        err.to_string().contains("not published"),
+        "the error must say the release does not exist, got: {err}"
+    );
+    assert_eq!(
+        env.release_repo.latest("assets-manager").await.unwrap(),
+        None,
+        "the alias must be left alone"
+    );
+}
+
+#[tokio::test]
+async fn promotion_sets_the_alias_and_reports_the_reindex_backlog() {
+    let env = common::TestEnv::start().await;
+
+    env.release_repo
+        .register("assets-manager", "1.2.0")
+        .await
+        .unwrap();
+    env.repo
+        .create_or_update(doc("api/auth", "1.0.0", true))
+        .await
+        .unwrap();
+    env.repo
+        .create_or_update(doc("api/auth", "1.2.0", false))
+        .await
+        .unwrap();
+
+    let response = lekton::api::releases::process_promote_release(
+        env.repo.as_ref(),
+        env.release_repo.as_ref(),
+        env.service_token_repo.as_ref(),
+        Some("test-token"),
+        lekton::api::releases::PromoteReleaseRequest {
+            service_token: "test-token".to_string(),
+            source_id: "assets-manager".to_string(),
+            release: "1.2.0".to_string(),
+        },
+    )
+    .await
+    .expect("promote");
+
+    assert_eq!(response.reindex_pending, 2);
+    assert_eq!(
+        env.release_repo.latest("assets-manager").await.unwrap(),
+        Some("1.2.0".to_string()),
+        "the alias must follow the promotion"
+    );
+}

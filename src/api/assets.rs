@@ -860,7 +860,7 @@ mod tests {
         async fn find_by_slug_prefix(&self, _: &str) -> Result<Vec<Document>, AppError> {
             unimplemented!()
         }
-        async fn set_archived(&self, _: &str, _: bool) -> Result<(), AppError> {
+        async fn set_archived(&self, _: &str, _: Option<&str>, _: bool) -> Result<(), AppError> {
             unimplemented!()
         }
         async fn rename_slug(&self, _: &str, _: &str) -> Result<(), AppError> {

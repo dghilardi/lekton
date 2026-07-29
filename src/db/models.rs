@@ -376,6 +376,10 @@ pub struct IngestRequest {
     /// `.lekton.yml`. Used together with `source_path` to resolve relative
     /// cross-links between documents in the same repository.
     pub source_id: String,
+    /// The release this document belongs to, echoed from the sync that produced
+    /// the upload plan. `None` targets the source's unversioned bucket.
+    #[serde(default)]
+    pub release: Option<String>,
 }
 
 /// The response from a successful ingest operation.

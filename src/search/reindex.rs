@@ -168,7 +168,7 @@ mod tests {
             Ok(self.documents.clone())
         }
 
-        async fn set_archived(&self, _: &str, _: bool) -> Result<(), AppError> {
+        async fn set_archived(&self, _: &str, _: Option<&str>, _: bool) -> Result<(), AppError> {
             Ok(())
         }
         async fn rename_slug(&self, _: &str, _: &str) -> Result<(), AppError> {

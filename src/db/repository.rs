@@ -125,8 +125,16 @@ pub trait DocumentRepository: Send + Sync {
     /// If `prefix` is empty, returns all non-archived documents.
     async fn find_by_slug_prefix(&self, prefix: &str) -> Result<Vec<Document>, AppError>;
 
-    /// Set the `is_archived` flag on a document.
-    async fn set_archived(&self, slug: &str, archived: bool) -> Result<(), AppError>;
+    /// Set the `is_archived` flag on one release of a document.
+    ///
+    /// `release` identifies which copy to touch; `None` is the unversioned
+    /// bucket. Archiving by slug alone would hit an arbitrary release.
+    async fn set_archived(
+        &self,
+        slug: &str,
+        release: Option<&str>,
+        archived: bool,
+    ) -> Result<(), AppError>;
 
     /// Rename a document's slug in-place, preserving all other fields and history.
     ///
@@ -200,10 +208,17 @@ impl MongoDocumentRepository {
 #[async_trait]
 impl DocumentRepository for MongoDocumentRepository {
     async fn create_or_update(&self, doc: Document) -> Result<(), AppError> {
-        use mongodb::bson::doc;
+        use mongodb::bson::{doc, Bson};
         use mongodb::options::ReplaceOptions;
 
-        let filter = doc! { "slug": &doc.slug };
+        // Matched on (slug, release), mirroring the unique index: a slug may now
+        // exist in several releases, and replacing by slug alone would overwrite
+        // whichever copy Mongo happened to return.
+        let release_match = match doc.release.as_deref() {
+            Some(r) => Bson::String(r.to_string()),
+            None => Bson::Null,
+        };
+        let filter = doc! { "slug": &doc.slug, "release": release_match };
         let options = ReplaceOptions::builder().upsert(true).build();
 
         self.collection
@@ -400,12 +415,22 @@ impl DocumentRepository for MongoDocumentRepository {
         Ok(documents)
     }
 
-    async fn set_archived(&self, slug: &str, archived: bool) -> Result<(), AppError> {
-        use mongodb::bson::doc;
+    async fn set_archived(
+        &self,
+        slug: &str,
+        release: Option<&str>,
+        archived: bool,
+    ) -> Result<(), AppError> {
+        use mongodb::bson::{doc, Bson};
+
+        let release_match = match release {
+            Some(r) => Bson::String(r.to_string()),
+            None => Bson::Null,
+        };
 
         self.collection
             .update_one(
-                doc! { "slug": slug },
+                doc! { "slug": slug, "release": release_match },
                 doc! { "$set": { "is_archived": archived } },
             )
             .await?;

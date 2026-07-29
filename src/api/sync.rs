@@ -252,7 +252,8 @@ pub async fn process_sync(
     // what would happen.
     if request.archive_missing && !request.dry_run {
         for slug in &to_archive {
-            repo.set_archived(slug, true).await?;
+            repo.set_archived(slug, request.release.as_deref(), true)
+                .await?;
             if let Some(svc) = search {
                 if let Err(e) = svc.delete_document(slug).await {
                     tracing::warn!("Failed to deindex archived document '{slug}' from search: {e}");
@@ -571,7 +572,12 @@ mod tests {
                 .cloned()
                 .collect())
         }
-        async fn set_archived(&self, slug: &str, archived: bool) -> Result<(), AppError> {
+        async fn set_archived(
+            &self,
+            slug: &str,
+            _: Option<&str>,
+            archived: bool,
+        ) -> Result<(), AppError> {
             let mut docs = self.documents.lock().unwrap();
             if let Some(doc) = docs.iter_mut().find(|d| d.slug == slug) {
                 doc.is_archived = archived;

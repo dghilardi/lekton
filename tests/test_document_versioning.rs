@@ -227,7 +227,7 @@ async fn find_by_slug_prefix_excludes_archived() {
     env.ingest(&server, &slug2, "Archived", "# Archived", "public")
         .await;
 
-    env.repo.set_archived(&slug2, true).await.unwrap();
+    env.repo.set_archived(&slug2, None, true).await.unwrap();
 
     let results = env.repo.find_by_slug_prefix(&prefix).await.unwrap();
     let slugs: Vec<&str> = results.iter().map(|d| d.slug.as_str()).collect();
@@ -248,12 +248,12 @@ async fn set_archived_toggles_flag() {
     env.ingest(&server, &slug, "Doc", "# Doc", "public").await;
 
     // Archive
-    env.repo.set_archived(&slug, true).await.unwrap();
+    env.repo.set_archived(&slug, None, true).await.unwrap();
     let doc = env.repo.find_by_slug(&slug).await.unwrap().unwrap();
     assert!(doc.is_archived);
 
     // Unarchive
-    env.repo.set_archived(&slug, false).await.unwrap();
+    env.repo.set_archived(&slug, None, false).await.unwrap();
     let doc = env.repo.find_by_slug(&slug).await.unwrap().unwrap();
     assert!(!doc.is_archived);
 }

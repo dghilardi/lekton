@@ -193,6 +193,7 @@ pub async fn save_document_with_attachment(
         skip_rag: true,
         source_path: format!("document-upload/{slug}.md"),
         source_id: "document-upload".to_string(),
+        release: None,
     };
 
     let ctx = crate::api::ingest::IngestContext {
@@ -203,6 +204,7 @@ pub async fn save_document_with_attachment(
         access_level_repo: state.access_level_repo.as_ref(),
         service_token_repo: state.service_token_repo.as_ref(),
         version_repo: state.document_version_repo.as_ref(),
+        release_repo: state.release_repo.as_ref(),
         rag: state.rag_service.as_deref(),
         legacy_token: Some(&state.service_token),
     };
@@ -370,7 +372,7 @@ pub async fn archive_document(slug: String) -> Result<(), ServerFnError> {
 
     state
         .document_repo
-        .set_archived(&slug, true)
+        .set_archived(&slug, None, true)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 

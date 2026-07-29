@@ -764,7 +764,7 @@ mod tests {
         async fn find_by_slug_prefix(&self, _: &str) -> Result<Vec<Document>, AppError> {
             Ok(vec![])
         }
-        async fn set_archived(&self, _: &str, _: bool) -> Result<(), AppError> {
+        async fn set_archived(&self, _: &str, _: Option<&str>, _: bool) -> Result<(), AppError> {
             Ok(())
         }
         async fn rename_slug(&self, _: &str, _: &str) -> Result<(), AppError> {

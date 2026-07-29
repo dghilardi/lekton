@@ -45,6 +45,9 @@ pub struct IngestContext<'a> {
     pub access_level_repo: &'a dyn AccessLevelRepository,
     pub service_token_repo: &'a dyn ServiceTokenRepository,
     pub version_repo: &'a dyn DocumentVersionRepository,
+    /// Release catalogue, consulted to decide whether the document being
+    /// ingested lands in the release currently aliased `latest`.
+    pub release_repo: &'a dyn crate::db::release_repository::ReleaseRepository,
     pub rag: Option<&'a dyn RagService>,
     /// The legacy global token from the `SERVICE_TOKEN` env var (if set).
     pub legacy_token: Option<&'a str>,
@@ -331,6 +334,22 @@ pub async fn process_ingest(
     }
 
     // 9. Build the document. `needs_reindex` is set below from the indexing outcome.
+    //
+    // `is_latest` is derived from the alias rather than assumed: re-syncing the
+    // release that currently *is* latest must keep it resolvable, and publishing
+    // an older release must not steal the alias. Unversioned documents are
+    // always latest — they are the only copy their source has.
+    let is_latest = match request.release.as_deref() {
+        None => true,
+        Some(release) => {
+            ctx.release_repo
+                .latest(&request.source_id)
+                .await?
+                .as_deref()
+                == Some(release)
+        }
+    };
+
     let mut doc = Document {
         slug: request.slug.clone(),
         title: request.title,
@@ -351,8 +370,8 @@ pub async fn process_ingest(
         is_archived: false,
         source_path: Some(request.source_path.clone()),
         source_id: Some(request.source_id.clone()),
-        release: None,
-        is_latest: true,
+        release: request.release.clone(),
+        is_latest,
         needs_reindex: false,
         skip_rag: request.skip_rag,
     };
@@ -623,6 +642,7 @@ pub async fn ingest_handler(
         access_level_repo: state.access_level_repo.as_ref(),
         service_token_repo: state.service_token_repo.as_ref(),
         version_repo: state.document_version_repo.as_ref(),
+        release_repo: state.release_repo.as_ref(),
         rag: state.rag_service.as_deref(),
         legacy_token: Some(&state.service_token),
     };
@@ -900,7 +920,12 @@ mod tests {
                 .collect())
         }
 
-        async fn set_archived(&self, slug: &str, archived: bool) -> Result<(), AppError> {
+        async fn set_archived(
+            &self,
+            slug: &str,
+            _: Option<&str>,
+            archived: bool,
+        ) -> Result<(), AppError> {
             let mut docs = self.documents.lock().unwrap();
             if let Some(doc) = docs.iter_mut().find(|d| d.slug == slug) {
                 doc.is_archived = archived;
@@ -956,6 +981,33 @@ mod tests {
             order: 0,
             is_hidden: false,
             skip_rag: false,
+            release: None,
+        }
+    }
+
+    /// No source is release-managed and no alias is set, so every ingest in
+    /// these tests lands in the unversioned bucket — the pre-versioning path.
+    struct MockReleaseRepo;
+
+    #[async_trait]
+    impl crate::db::release_repository::ReleaseRepository for MockReleaseRepo {
+        async fn register(&self, _: &str, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn list_by_source(
+            &self,
+            _: &str,
+        ) -> Result<Vec<crate::db::release_repository::SourceRelease>, AppError> {
+            Ok(vec![])
+        }
+        async fn is_release_managed(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        async fn latest(&self, _: &str) -> Result<Option<String>, AppError> {
+            Ok(None)
+        }
+        async fn set_latest(&self, _: &str, _: &str) -> Result<(), AppError> {
+            Ok(())
         }
     }
 
@@ -1118,6 +1170,7 @@ mod tests {
             access_level_repo: &MockAccessLevelRepo,
             service_token_repo: token_repo,
             version_repo: &MockVersionRepo,
+            release_repo: &MockReleaseRepo,
             rag: None,
             legacy_token,
         }
@@ -2009,7 +2062,9 @@ mod tests {
         let mut req_a = make_request("valid-token", "docs/migrated");
         req_a.source_id = "source-a".to_string();
         process_ingest(&ctx, req_a).await.unwrap();
-        repo.set_archived("docs/migrated", true).await.unwrap();
+        repo.set_archived("docs/migrated", None, true)
+            .await
+            .unwrap();
 
         // source-b can now claim the slug (the document was archived by source-a)
         let mut req_b = make_request("valid-token", "docs/migrated");

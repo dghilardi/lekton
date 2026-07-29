@@ -109,6 +109,9 @@ use std::sync::Arc;
 #[derive(Clone, axum::extract::FromRef)]
 pub struct AppState {
     pub document_repo: Arc<dyn crate::db::repository::DocumentRepository>,
+    /// Release catalogue and the `latest` alias, backing the version selector
+    /// and the release-scoped sync.
+    pub release_repo: Arc<dyn crate::db::release_repository::ReleaseRepository>,
     pub schema_repo: Arc<dyn crate::db::schema_repository::SchemaRepository>,
     pub settings_repo: Arc<dyn crate::db::settings_repository::SettingsRepository>,
     pub asset_repo: Arc<dyn crate::db::asset_repository::AssetRepository>,

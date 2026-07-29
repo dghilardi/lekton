@@ -543,6 +543,9 @@ async fn main() {
     let mongo_db = mongo_client.database(&config.database.name);
     let document_repo: Arc<dyn lekton::db::repository::DocumentRepository> =
         Arc::new(MongoDocumentRepository::new(&mongo_db));
+    let release_repo: Arc<dyn lekton::db::release_repository::ReleaseRepository> = Arc::new(
+        lekton::db::release_repository::MongoReleaseRepository::new(&mongo_db),
+    );
     let schema_repo: Arc<dyn lekton::db::schema_repository::SchemaRepository> =
         Arc::new(MongoSchemaRepository::new(&mongo_db));
     let settings_repo: Arc<dyn lekton::db::settings_repository::SettingsRepository> =
@@ -967,6 +970,7 @@ async fn main() {
     // Build application state
     let app_state = lekton::app::AppState {
         document_repo,
+        release_repo,
         schema_repo,
         settings_repo,
         asset_repo,

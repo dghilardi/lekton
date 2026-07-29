@@ -17,6 +17,7 @@ pub mod navigation_order_repository;
 pub mod prompt_models;
 pub mod prompt_repository;
 pub mod prompt_version_repository;
+pub mod release_repository;
 pub mod repository;
 pub mod schema_repository;
 pub mod service_token_models;

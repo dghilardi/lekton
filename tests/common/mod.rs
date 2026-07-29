@@ -30,6 +30,7 @@ use lekton::db::prompt_repository::{MongoPromptRepository, PromptRepository};
 use lekton::db::prompt_version_repository::{
     MongoPromptVersionRepository, PromptVersionRepository,
 };
+use lekton::db::release_repository::{MongoReleaseRepository, ReleaseRepository};
 use lekton::db::repository::{DocumentRepository, MongoDocumentRepository};
 use lekton::db::schema_repository::{MongoSchemaRepository, SchemaRepository};
 use lekton::db::service_token_repository::{MongoServiceTokenRepository, ServiceTokenRepository};
@@ -55,6 +56,7 @@ pub struct TestEnv {
     /// `start()`, so a test that needs them runs `build_plan()` itself.
     pub db: mongodb::Database,
     pub repo: Arc<dyn DocumentRepository>,
+    pub release_repo: Arc<dyn ReleaseRepository>,
     pub schema_repo: Arc<dyn SchemaRepository>,
     pub settings_repo: Arc<dyn SettingsRepository>,
     pub asset_repo: Arc<dyn AssetRepository>,
@@ -98,6 +100,8 @@ impl TestEnv {
             .expect("Failed to connect to MongoDB");
         let mongo_db = mongo_client.database("lekton_test");
         let repo: Arc<dyn DocumentRepository> = Arc::new(MongoDocumentRepository::new(&mongo_db));
+        let release_repo: Arc<dyn ReleaseRepository> =
+            Arc::new(MongoReleaseRepository::new(&mongo_db));
         let schema_repo: Arc<dyn SchemaRepository> =
             Arc::new(MongoSchemaRepository::new(&mongo_db));
         let settings_repo: Arc<dyn SettingsRepository> =
@@ -189,6 +193,7 @@ impl TestEnv {
 
         let app_state = AppState {
             document_repo: repo.clone(),
+            release_repo: release_repo.clone(),
             schema_repo: schema_repo.clone(),
             settings_repo: settings_repo.clone(),
             asset_repo: asset_repo.clone(),
@@ -349,6 +354,7 @@ impl TestEnv {
             router,
             db: mongo_db.clone(),
             repo,
+            release_repo,
             schema_repo,
             settings_repo,
             asset_repo,
@@ -517,6 +523,7 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
 
     let app_state = AppState {
         document_repo: env.repo.clone(),
+        release_repo: env.release_repo.clone(),
         schema_repo: env.schema_repo.clone(),
         settings_repo: env.settings_repo.clone(),
         asset_repo: env.asset_repo.clone(),

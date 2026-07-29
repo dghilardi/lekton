@@ -1,0 +1,159 @@
+//! Registry of per-source documentation releases and the movable `latest` alias.
+//!
+//! A source becomes *release-managed* the first time it is synced with an
+//! explicit release. From then on its documents are partitioned by `release`,
+//! and exactly one release carries the `latest` alias that unpinned readers
+//! resolve to.
+
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+use crate::error::AppError;
+
+/// One published release of a source's documentation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SourceRelease {
+    /// Matches `Document.source_id`.
+    pub source_id: String,
+    /// The release tag as passed to `lekton-sync --version` (e.g. `"1.2.0"`).
+    pub release: String,
+    /// When this release was first synced.
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+    pub first_synced_at: DateTime<Utc>,
+    /// When this release was last re-synced.
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+    pub last_synced_at: DateTime<Utc>,
+}
+
+/// Persistence for the release catalogue and the `latest` alias.
+#[async_trait]
+pub trait ReleaseRepository: Send + Sync {
+    /// Record a sync of `release` for `source_id`, creating the catalogue entry
+    /// on first sight and refreshing `last_synced_at` afterwards.
+    async fn register(&self, source_id: &str, release: &str) -> Result<(), AppError>;
+
+    /// Releases of a source, most recently first *published* first.
+    ///
+    /// Ordered by `first_synced_at` rather than by parsing the tag: release
+    /// strings are free-form (`1.2.0`, `2024-06`, `v3-rc1`), so publication
+    /// order is the only ordering that is always meaningful.
+    async fn list_by_source(&self, source_id: &str) -> Result<Vec<SourceRelease>, AppError>;
+
+    /// Whether the source has at least one release — i.e. whether a sync of it
+    /// must carry an explicit release.
+    async fn is_release_managed(&self, source_id: &str) -> Result<bool, AppError>;
+
+    /// The release currently aliased `latest`, if the alias has been set.
+    async fn latest(&self, source_id: &str) -> Result<Option<String>, AppError>;
+
+    /// Point `latest` at `release`.
+    ///
+    /// A single-document upsert, so the alias is never briefly absent or
+    /// duplicated — which is why it lives here and not as a boolean spread over
+    /// the catalogue rows.
+    async fn set_latest(&self, source_id: &str, release: &str) -> Result<(), AppError>;
+}
+
+/// Deserialization view over a `source_release_aliases` row.
+///
+/// Only the field we read: `source_id` comes from the query filter, and writes
+/// go through a raw update document, so there is nothing else to model.
+#[cfg(feature = "ssr")]
+#[derive(Deserialize)]
+struct ReleaseAlias {
+    latest_release: String,
+}
+
+#[cfg(feature = "ssr")]
+pub struct MongoReleaseRepository {
+    releases: mongodb::Collection<SourceRelease>,
+    aliases: mongodb::Collection<ReleaseAlias>,
+}
+
+#[cfg(feature = "ssr")]
+impl MongoReleaseRepository {
+    pub fn new(db: &mongodb::Database) -> Self {
+        Self {
+            releases: db.collection("source_releases"),
+            aliases: db.collection("source_release_aliases"),
+        }
+    }
+}
+
+#[cfg(feature = "ssr")]
+#[async_trait]
+impl ReleaseRepository for MongoReleaseRepository {
+    async fn register(&self, source_id: &str, release: &str) -> Result<(), AppError> {
+        use mongodb::bson::{doc, DateTime};
+        use mongodb::options::UpdateOptions;
+
+        let now = DateTime::from_millis(Utc::now().timestamp_millis());
+        let update = doc! {
+            "$set": { "last_synced_at": now },
+            "$setOnInsert": {
+                "source_id": source_id,
+                "release": release,
+                "first_synced_at": now,
+            },
+        };
+
+        self.releases
+            .update_one(doc! { "source_id": source_id, "release": release }, update)
+            .with_options(UpdateOptions::builder().upsert(true).build())
+            .await
+            .map_err(|e| AppError::Database(format!("register source release: {e}")))?;
+        Ok(())
+    }
+
+    async fn list_by_source(&self, source_id: &str) -> Result<Vec<SourceRelease>, AppError> {
+        use futures::TryStreamExt;
+        use mongodb::bson::doc;
+
+        self.releases
+            .find(doc! { "source_id": source_id })
+            .sort(doc! { "first_synced_at": -1 })
+            .await
+            .map_err(|e| AppError::Database(format!("list source releases: {e}")))?
+            .try_collect()
+            .await
+            .map_err(|e| AppError::Database(format!("collect source releases: {e}")))
+    }
+
+    async fn is_release_managed(&self, source_id: &str) -> Result<bool, AppError> {
+        use mongodb::bson::doc;
+
+        let count = self
+            .releases
+            .count_documents(doc! { "source_id": source_id })
+            .await
+            .map_err(|e| AppError::Database(format!("count source releases: {e}")))?;
+        Ok(count > 0)
+    }
+
+    async fn latest(&self, source_id: &str) -> Result<Option<String>, AppError> {
+        use mongodb::bson::doc;
+
+        Ok(self
+            .aliases
+            .find_one(doc! { "source_id": source_id })
+            .await
+            .map_err(|e| AppError::Database(format!("find latest alias: {e}")))?
+            .map(|a| a.latest_release))
+    }
+
+    async fn set_latest(&self, source_id: &str, release: &str) -> Result<(), AppError> {
+        use mongodb::bson::doc;
+        use mongodb::options::UpdateOptions;
+
+        self.aliases
+            .update_one(
+                doc! { "source_id": source_id },
+                doc! { "$set": { "latest_release": release } },
+            )
+            .with_options(UpdateOptions::builder().upsert(true).build())
+            .await
+            .map_err(|e| AppError::Database(format!("set latest alias: {e}")))?;
+        Ok(())
+    }
+}

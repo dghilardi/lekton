@@ -2081,17 +2081,21 @@ impl ServerHandler for LektonMcpServer {
         let user_ctx = user_context(&context)?;
         let slug = slug_from_docs_uri(&request.uri)?;
 
-        let doc = self
-            .document_repo
-            .find_by_slug(slug)
-            .await
-            .map_err(app_err)?
-            .ok_or_else(|| {
-                McpError::invalid_params(
-                    format!("Document resource '{}' not found", request.uri),
-                    None,
-                )
-            })?;
+        // MCP reads follow `latest`; a release-scoped parameter is the natural
+        // extension once version-aware retrieval lands.
+        let doc = crate::db::repository::resolve_by_release(
+            self.document_repo
+                .find_all_by_slug(slug)
+                .await
+                .map_err(app_err)?,
+            &crate::versioning::ReleasePins::default(),
+        )
+        .ok_or_else(|| {
+            McpError::invalid_params(
+                format!("Document resource '{}' not found", request.uri),
+                None,
+            )
+        })?;
 
         if doc.is_archived || !can_read_document(&user_ctx, &doc) {
             return Err(McpError::invalid_params(

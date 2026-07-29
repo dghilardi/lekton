@@ -169,7 +169,15 @@ pub async fn process_ingest(
     // 6. Get old document to diff backlinks and detect changes.
     //    If the slug is new or archived, check for an in-place rename via source_path:
     //    a doc with the same source_path + source_id but a different slug was renamed.
-    let by_slug = ctx.repo.find_by_slug(&request.slug).await?;
+    //    Scoped to the release being written: `create_or_update` upserts on
+    //    (slug, release), so the existence check has to match the same key or a
+    //    new release would be mistaken for an update of an older one.
+    let by_slug = ctx
+        .repo
+        .find_all_by_slug(&request.slug)
+        .await?
+        .into_iter()
+        .find(|d| d.release.as_deref() == request.release.as_deref());
     let (old_doc, old_s3_key_before_rename) =
         if by_slug.as_ref().map(|d| d.is_archived).unwrap_or(true) {
             let by_source = ctx.repo.find_by_source_path(&request.source_path).await?;

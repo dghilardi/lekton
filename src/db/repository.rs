@@ -63,6 +63,33 @@ pub(crate) fn release_resolution_clause(
     doc! { "$or": branches }
 }
 
+/// Pick, among every release of one slug, the copy a reader at `pins` sees.
+///
+/// The single-document counterpart of [`release_resolution_clause`], kept as a
+/// pure function so both share one definition of "which release wins" and it can
+/// be tested without a database.
+///
+/// A pin naming a release that does not exist for this slug falls through to
+/// `latest`, so a stale shared link degrades instead of 404-ing.
+pub fn resolve_by_release(
+    candidates: Vec<Document>,
+    pins: &crate::versioning::ReleasePins,
+) -> Option<Document> {
+    let pinned = candidates.iter().position(|doc| {
+        let Some(source_id) = doc.source_id.as_deref() else {
+            return false;
+        };
+        match (pins.release_for(source_id), doc.release.as_deref()) {
+            (Some(wanted), Some(actual)) => wanted == actual,
+            _ => false,
+        }
+    });
+
+    let chosen = pinned.or_else(|| candidates.iter().position(|doc| doc.is_latest));
+
+    chosen.map(|idx| candidates.into_iter().nth(idx).expect("index just found"))
+}
+
 /// Repository trait for document operations.
 ///
 /// This trait allows mocking the database layer in tests.
@@ -72,7 +99,26 @@ pub trait DocumentRepository: Send + Sync {
     async fn create_or_update(&self, doc: Document) -> Result<(), AppError>;
 
     /// Find a document by its slug.
+    ///
+    /// Returns an arbitrary copy when the slug exists in several releases. Use
+    /// it only where that cannot happen or does not matter (an unversioned
+    /// source, or a check that any copy exists); reader and writer paths that
+    /// mean a specific release go through [`Self::find_all_by_slug`] plus
+    /// [`resolve_by_release`].
     async fn find_by_slug(&self, slug: &str) -> Result<Option<Document>, AppError>;
+
+    /// Every release of one slug.
+    ///
+    /// The single primitive behind release-aware lookup: callers pick the copy
+    /// they mean — [`resolve_by_release`] for readers, an exact `release` match
+    /// for the ingest write path.
+    ///
+    /// Includes archived documents, like [`Self::find_by_slug`], because callers
+    /// apply their own visibility rules.
+    async fn find_all_by_slug(&self, slug: &str) -> Result<Vec<Document>, AppError> {
+        self.find_by_slugs(std::slice::from_ref(&slug.to_string()))
+            .await
+    }
 
     /// Find all documents whose slug is in `slugs`.
     ///
@@ -233,6 +279,19 @@ impl DocumentRepository for MongoDocumentRepository {
         use mongodb::bson::doc;
 
         Ok(self.collection.find_one(doc! { "slug": slug }).await?)
+    }
+
+    async fn find_all_by_slug(&self, slug: &str) -> Result<Vec<Document>, AppError> {
+        use futures::TryStreamExt;
+        use mongodb::bson::doc;
+
+        // Served by the unique (slug, release) index.
+        let mut cursor = self.collection.find(doc! { "slug": slug }).await?;
+        let mut documents = Vec::new();
+        while let Some(document) = cursor.try_next().await? {
+            documents.push(document);
+        }
+        Ok(documents)
     }
 
     async fn find_by_slugs(&self, slugs: &[String]) -> Result<Vec<Document>, AppError> {
@@ -631,5 +690,105 @@ mod tests {
             .get_array("$nin")
             .unwrap();
         assert_eq!(nin.len(), 2, "both pinned sources must be excluded");
+    }
+
+    fn doc_in(slug: &str, source: &str, release: Option<&str>, is_latest: bool) -> Document {
+        Document {
+            slug: slug.to_string(),
+            title: slug.to_string(),
+            summary: None,
+            s3_key: format!("docs/{slug}.md"),
+            access_level: "public".to_string(),
+            is_draft: false,
+            service_owner: "team".to_string(),
+            last_updated: chrono::Utc::now(),
+            tags: vec![],
+            links_out: vec![],
+            backlinks: vec![],
+            parent_slug: None,
+            order: 0,
+            is_hidden: false,
+            content_hash: None,
+            metadata_hash: None,
+            is_archived: false,
+            source_path: None,
+            source_id: Some(source.to_string()),
+            release: release.map(str::to_string),
+            is_latest,
+            needs_reindex: false,
+            skip_rag: false,
+        }
+    }
+
+    #[test]
+    fn resolves_to_latest_without_pins() {
+        let candidates = vec![
+            doc_in("api/auth", "svc", Some("1.0.0"), false),
+            doc_in("api/auth", "svc", Some("1.2.0"), true),
+        ];
+
+        let resolved =
+            resolve_by_release(candidates, &ReleasePins::default()).expect("latest must resolve");
+        assert_eq!(resolved.release.as_deref(), Some("1.2.0"));
+    }
+
+    #[test]
+    fn a_pin_wins_over_latest() {
+        let candidates = vec![
+            doc_in("api/auth", "svc", Some("1.0.0"), false),
+            doc_in("api/auth", "svc", Some("1.2.0"), true),
+        ];
+        let mut pins = ReleasePins::default();
+        pins.set("svc", "1.0.0");
+
+        let resolved = resolve_by_release(candidates, &pins).expect("pin must resolve");
+        assert_eq!(resolved.release.as_deref(), Some("1.0.0"));
+    }
+
+    #[test]
+    fn a_pin_for_another_source_does_not_apply() {
+        let candidates = vec![doc_in("api/auth", "svc", Some("1.2.0"), true)];
+        let mut pins = ReleasePins::default();
+        pins.set("other-svc", "9.9.9");
+
+        let resolved = resolve_by_release(candidates, &pins).expect("falls back to latest");
+        assert_eq!(resolved.release.as_deref(), Some("1.2.0"));
+    }
+
+    /// A shared link whose release was deleted must degrade, not 404.
+    #[test]
+    fn a_pin_naming_a_missing_release_falls_back_to_latest() {
+        let candidates = vec![doc_in("api/auth", "svc", Some("1.2.0"), true)];
+        let mut pins = ReleasePins::default();
+        pins.set("svc", "0.9.0");
+
+        let resolved = resolve_by_release(candidates, &pins).expect("must not vanish");
+        assert_eq!(resolved.release.as_deref(), Some("1.2.0"));
+    }
+
+    #[test]
+    fn an_unversioned_document_resolves_as_itself() {
+        let candidates = vec![doc_in("guide", "svc", None, true)];
+
+        let resolved =
+            resolve_by_release(candidates, &ReleasePins::default()).expect("must resolve");
+        assert_eq!(resolved.release, None);
+    }
+
+    #[test]
+    fn nothing_resolves_when_there_is_no_candidate() {
+        assert!(resolve_by_release(vec![], &ReleasePins::default()).is_none());
+    }
+
+    /// Defensive: if no copy carries the alias (an interrupted promotion), the
+    /// lookup reports nothing rather than silently serving an arbitrary release.
+    #[test]
+    fn no_latest_and_no_matching_pin_resolves_to_nothing() {
+        let candidates = vec![
+            doc_in("api/auth", "svc", Some("1.0.0"), false),
+            doc_in("api/auth", "svc", Some("1.2.0"), false),
+        ];
+
+        assert!(resolve_by_release(candidates, &ReleasePins::default()).is_none());
     }
 }

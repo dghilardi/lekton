@@ -13,11 +13,16 @@ pub async fn get_doc_html(
 
     let state = expect_context::<AppState>();
 
-    let doc = state
-        .document_repo
-        .find_by_slug(&slug)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    // Resolves to the pinned release when one is active, otherwise `latest`.
+    let pins = crate::versioning::ReleasePins::default();
+    let doc = crate::db::repository::resolve_by_release(
+        state
+            .document_repo
+            .find_all_by_slug(&slug)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?,
+        &pins,
+    );
 
     let Some(doc) = doc else {
         let (allowed_levels, include_draft) = request_document_visibility(&state).await?;

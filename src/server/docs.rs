@@ -134,6 +134,10 @@ pub async fn get_doc_html(
                 is_sync_doc: false,
                 pdf_asset_key: None,
                 source_view_url: None,
+                source_id: None,
+                current_release: None,
+                releases: vec![],
+                latest_release: None,
             }));
         }
 
@@ -189,6 +193,10 @@ pub async fn get_doc_html(
             is_sync_doc: false,
             pdf_asset_key: None,
             source_view_url: None,
+            source_id: None,
+            current_release: None,
+            releases: vec![],
+            latest_release: None,
         }));
     };
 
@@ -261,9 +269,12 @@ pub async fn get_doc_html(
             use crate::rendering::link_transform::{
                 build_siblings_map, rewrite_links_in_html, LinkContext, TransformTarget,
             };
+            // Scoped to this document's own release: a relative link inside 1.0.0
+            // must resolve against 1.0.0's tree, not whichever release happens to
+            // share the source path.
             let siblings_docs = state
                 .document_repo
-                .find_all_by_source_id(source_id)
+                .find_all_by_source_id_and_release(source_id, doc.release.as_deref())
                 .await
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
             let siblings = build_siblings_map(&siblings_docs);
@@ -287,6 +298,29 @@ pub async fn get_doc_html(
     };
     metrics::counter!("lekton_document_views_total", "kind" => kind).increment(1);
 
+    // Release selector data. Only looked up when versioning is on and the
+    // document belongs to a source, so the common case costs nothing.
+    let (releases, latest_release) = match (state.features.doc_versioning, doc.source_id.as_deref())
+    {
+        (true, Some(source_id)) => {
+            let published = state
+                .release_repo
+                .list_by_source(source_id)
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))?;
+            let latest = state
+                .release_repo
+                .latest(source_id)
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))?;
+            (
+                published.into_iter().map(|r| r.release).collect::<Vec<_>>(),
+                latest,
+            )
+        }
+        _ => (Vec::new(), None),
+    };
+
     Ok(Some(crate::pages::DocPageData {
         title: doc.title,
         html,
@@ -297,5 +331,9 @@ pub async fn get_doc_html(
         is_sync_doc,
         pdf_asset_key,
         source_view_url,
+        source_id: doc.source_id,
+        current_release: doc.release,
+        releases,
+        latest_release,
     }))
 }

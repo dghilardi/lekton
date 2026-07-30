@@ -194,6 +194,24 @@ pub trait DocumentRepository: Send + Sync {
     /// the slugs whose flag changed, which is what needs re-indexing: search and
     /// RAG only carry `latest`, so a promotion has to add the new release's
     /// documents and drop the old one's.
+    /// Clear `needs_reindex` on one release of a document.
+    ///
+    /// A targeted field update rather than a full write: the caller reached this
+    /// point from a snapshot read taken before a possibly slow indexing pass, and
+    /// replacing the whole document from that snapshot would clobber anything
+    /// changed meanwhile — notably `is_latest`, resurrecting a release that has
+    /// since been demoted.
+    ///
+    /// Defaults to a no-op so test mocks need not implement it; the MongoDB
+    /// backend overrides it.
+    async fn clear_needs_reindex(
+        &self,
+        _slug: &str,
+        _release: Option<&str>,
+    ) -> Result<(), AppError> {
+        Ok(())
+    }
+
     /// Defaults to a no-op returning no affected slugs so test mocks need not
     /// implement it; the MongoDB backend overrides it.
     async fn promote_release(
@@ -309,6 +327,23 @@ impl DocumentRepository for MongoDocumentRepository {
             documents.push(document);
         }
         Ok(documents)
+    }
+
+    async fn clear_needs_reindex(&self, slug: &str, release: Option<&str>) -> Result<(), AppError> {
+        use mongodb::bson::{doc, Bson};
+
+        let release_match = match release {
+            Some(r) => Bson::String(r.to_string()),
+            None => Bson::Null,
+        };
+
+        self.collection
+            .update_one(
+                doc! { "slug": slug, "release": release_match },
+                doc! { "$set": { "needs_reindex": false } },
+            )
+            .await?;
+        Ok(())
     }
 
     async fn promote_release(

@@ -111,7 +111,7 @@ pub async fn reindex_promoted(
         )
         .filter(|d| !d.is_archived);
 
-        let Some(mut doc) = latest else {
+        let Some(doc) = latest else {
             // Dropped by the promoted release: nothing is latest under this slug.
             if let Some(search) = search {
                 if let Err(e) = search.delete_document(slug).await {
@@ -170,9 +170,14 @@ pub async fn reindex_promoted(
             }
         }
 
+        // Field-scoped, never a full write: indexing above may have taken long
+        // enough for another promotion to land, and replacing the document from
+        // this stale snapshot would undo it.
         if ok && doc.needs_reindex {
-            doc.needs_reindex = false;
-            if let Err(e) = repo.create_or_update(doc).await {
+            if let Err(e) = repo
+                .clear_needs_reindex(&doc.slug, doc.release.as_deref())
+                .await
+            {
                 tracing::warn!(slug = %slug, "promotion reindex: cannot clear needs_reindex: {e}");
             }
         }

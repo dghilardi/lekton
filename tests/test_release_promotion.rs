@@ -294,3 +294,77 @@ async fn promotion_reindex_follows_the_new_latest_and_drops_removed_slugs() {
         "a slug the promoted release dropped must not be latest anywhere"
     );
 }
+
+/// Regression: a slow reindex must not resurrect a demotion.
+///
+/// Publishing two releases back to back leaves the first promotion's reindex
+/// still running while the second lands. That task holds a snapshot taken when
+/// its document was latest; writing the whole document back from it re-set
+/// `is_latest`, leaving two releases of one source claiming the alias.
+#[tokio::test]
+async fn a_stale_reindex_snapshot_cannot_undo_a_later_demotion() {
+    let env = common::TestEnv::start().await;
+
+    env.repo
+        .create_or_update(doc("api/only-in-old", "1.0.0", true))
+        .await
+        .unwrap();
+    env.storage
+        .put_object("docs/api_only-in-old.md", b"# Old\n\nbody".to_vec())
+        .await
+        .unwrap();
+
+    // Snapshot taken while it is still latest — what the in-flight task holds.
+    let stale = env
+        .repo
+        .find_all_by_slug("api/only-in-old")
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert!(stale.is_latest);
+
+    // A newer release lands and takes the alias.
+    env.repo
+        .create_or_update(doc("api/other", "1.2.0", false))
+        .await
+        .unwrap();
+    env.repo
+        .promote_release("assets-manager", "1.2.0")
+        .await
+        .unwrap();
+
+    // The late task finishes and clears its flag.
+    env.repo
+        .clear_needs_reindex(&stale.slug, stale.release.as_deref())
+        .await
+        .unwrap();
+
+    let after = env
+        .repo
+        .find_all_by_slug("api/only-in-old")
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert!(
+        !after.is_latest,
+        "clearing the flag must not resurrect a demoted release"
+    );
+    assert!(!after.needs_reindex, "and must still clear the flag");
+
+    let claiming: Vec<String> = env
+        .repo
+        .list_all()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|d| d.source_id.as_deref() == Some("assets-manager") && d.is_latest)
+        .map(|d| d.release.unwrap_or_default())
+        .collect();
+    assert_eq!(
+        claiming,
+        vec!["1.2.0".to_string()],
+        "exactly one release may claim the alias"
+    );
+}

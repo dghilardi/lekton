@@ -63,6 +63,13 @@ pub struct ChunkPayload {
     pub section_path: Vec<String>,
     /// URL-safe anchor for the deepest heading (e.g. `"storage-layer"`).
     pub section_anchor: String,
+    /// The import source owning the document (`None` for documents with no
+    /// source, and for attachment chunks).
+    pub source_id: Option<String>,
+    /// The release this chunk's content comes from. Only `latest` is indexed
+    /// today, so this records *which* release the vectors reflect. Stored now
+    /// because adding it later would mean re-embedding the whole corpus.
+    pub release: Option<String>,
 }
 
 /// A vector point ready for upsert into Qdrant.
@@ -288,6 +295,12 @@ impl VectorStore for QdrantVectorStore {
                 );
                 payload.insert("is_draft", p.payload.is_draft);
                 payload.insert("source_kind", p.payload.source_kind.as_str());
+                if let Some(source_id) = p.payload.source_id {
+                    payload.insert("source_id", source_id);
+                }
+                if let Some(release) = p.payload.release {
+                    payload.insert("release", release);
+                }
                 if let Some(key) = p.payload.attachment_key {
                     payload.insert("attachment_key", key);
                 }

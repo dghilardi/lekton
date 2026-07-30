@@ -28,6 +28,10 @@ pub trait RagService: Send + Sync {
     /// Index (or re-index) a document: split, embed, upsert new chunks, then
     /// delete stale ones (upsert-then-delete-stale, so a failed embedding never
     /// leaves the document missing from the store).
+    /// `source_id` and `release` are recorded on every chunk. Only `latest` is
+    /// indexed today, so `release` says which release the vectors reflect;
+    /// storing it now avoids re-embedding the corpus to add it later.
+    #[allow(clippy::too_many_arguments)]
     async fn index_document(
         &self,
         slug: &str,
@@ -36,6 +40,8 @@ pub trait RagService: Send + Sync {
         access_level: &str,
         is_draft: bool,
         tags: &[String],
+        source_id: Option<&str>,
+        release: Option<&str>,
     ) -> Result<(), AppError>;
 
     /// Remove all chunks for a document.
@@ -120,6 +126,8 @@ impl RagService for DefaultRagService {
         access_level: &str,
         is_draft: bool,
         tags: &[String],
+        source_id: Option<&str>,
+        release: Option<&str>,
     ) -> Result<(), AppError> {
         // 1. Split content into token-aware chunks
         let chunks = split_document(content, self.chunk_size_tokens, self.chunk_overlap_tokens);
@@ -178,6 +186,8 @@ impl RagService for DefaultRagService {
                         is_draft,
                         tags: tags.to_vec(),
                         chunk_index: chunk.chunk_index,
+                        source_id: source_id.map(str::to_string),
+                        release: release.map(str::to_string),
                     },
                 })
             })
@@ -284,6 +294,11 @@ impl RagService for DefaultRagService {
                         chunk_index: idx,
                         section_path: Vec::new(),
                         section_anchor: String::new(),
+                        // An attachment may be referenced by documents from
+                        // several sources and releases, so neither is a property
+                        // of the attachment itself.
+                        source_id: None,
+                        release: None,
                     },
                 })
             })

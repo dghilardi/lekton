@@ -732,6 +732,8 @@ mod tests {
             _: &str,
             _: bool,
             _: &[String],
+            _: Option<&str>,
+            _: Option<&str>,
         ) -> Result<(), AppError> {
             Ok(())
         }

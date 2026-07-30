@@ -388,9 +388,14 @@ pub async fn process_ingest(
     //     document records whether it is in sync with the indexes. A transient
     //     search/embedding outage now leaves a durable `needs_reindex` flag and
     //     an `indexed: false` response instead of silently drifting from MongoDB.
+    //     Search and RAG carry only `latest`, so a write to an older release is
+    //     not indexed at all. Note it must not *delete* either: the slug's index
+    //     entry belongs to whichever release currently is latest, and clearing it
+    //     would take that release's content down with it.
     let search_doc = ctx
         .search
         .as_ref()
+        .filter(|_| doc.is_latest)
         .map(|_| crate::search::client::build_search_document(&doc, &raw_content));
 
     let mut indexed_ok = true;
@@ -402,7 +407,7 @@ pub async fn process_ingest(
         }
     }
 
-    if let Some(rag) = ctx.rag {
+    if let Some(rag) = ctx.rag.filter(|_| doc.is_latest) {
         if doc.skip_rag {
             // Deliberately excluded from RAG (e.g. PDF upload stub — the linked
             // attachment is indexed instead). Delete any chunks a previous
@@ -419,6 +424,8 @@ pub async fn process_ingest(
                 &doc.access_level,
                 doc.is_draft,
                 &doc.tags,
+                doc.source_id.as_deref(),
+                doc.release.as_deref(),
             )
             .await
         {
@@ -1230,6 +1237,8 @@ mod tests {
             _access_level: &str,
             _is_draft: bool,
             _tags: &[String],
+            _: Option<&str>,
+            _: Option<&str>,
         ) -> Result<(), AppError> {
             Err(AppError::Internal("rag down".to_string()))
         }
@@ -1298,6 +1307,8 @@ mod tests {
             _access_level: &str,
             _is_draft: bool,
             _tags: &[String],
+            _: Option<&str>,
+            _: Option<&str>,
         ) -> Result<(), AppError> {
             self.indexed
                 .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -1348,6 +1359,8 @@ mod tests {
             _access_level: &str,
             _is_draft: bool,
             _tags: &[String],
+            _: Option<&str>,
+            _: Option<&str>,
         ) -> Result<(), AppError> {
             Ok(())
         }
@@ -1410,6 +1423,46 @@ mod tests {
         let doc = repo.find_by_slug("docs/hello").await.unwrap().unwrap();
         assert!(!doc.needs_reindex);
         assert!(doc.skip_rag);
+    }
+
+    /// Search and RAG carry only `latest`. Publishing an older release must not
+    /// index it — doing so would put two releases of one slug in the index — and
+    /// must not delete either, since the existing entry belongs to whichever
+    /// release currently is latest.
+    #[tokio::test]
+    async fn ingesting_a_non_latest_release_does_not_touch_the_indexes() {
+        use std::sync::atomic::Ordering::SeqCst;
+
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let mut ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+        let rag = RecordingRagService::default();
+        ctx.rag = Some(&rag);
+
+        // The mock release repo reports no alias, so a release-scoped write is by
+        // definition not latest.
+        let mut request = make_request("valid-token", "docs/hello");
+        request.release = Some("1.0.0".to_string());
+        let outcome = process_ingest(&ctx, request).await.unwrap();
+
+        assert!(
+            !rag.indexed.load(SeqCst),
+            "an older release must not be indexed alongside latest"
+        );
+        assert!(
+            !rag.deleted.load(SeqCst),
+            "and must not delete the entry that belongs to latest"
+        );
+
+        let doc = repo.find_by_slug("docs/hello").await.unwrap().unwrap();
+        assert_eq!(doc.release.as_deref(), Some("1.0.0"));
+        assert!(!doc.is_latest, "no alias points here, so it is not latest");
+        assert!(
+            !doc.needs_reindex,
+            "skipping by design is not drift, so the document must not be flagged stale"
+        );
+        assert!(outcome.response.indexed);
     }
 
     #[tokio::test]

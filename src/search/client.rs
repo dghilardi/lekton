@@ -24,6 +24,15 @@ pub struct SearchDocument {
     pub content_preview: String,
     /// Last updated as Unix timestamp (seconds).
     pub last_updated: i64,
+    /// The import source owning the document. Carried so a future release-scoped
+    /// search is a filter rather than a full re-index of the corpus.
+    #[serde(default)]
+    pub source_id: Option<String>,
+    /// The release this document belongs to. Only `latest` is indexed today, so
+    /// this records *which* release the entry reflects; adding it later would
+    /// have meant re-indexing everything.
+    #[serde(default)]
+    pub release: Option<String>,
 }
 
 /// A search result returned to the client.
@@ -198,7 +207,16 @@ impl SearchService for MeilisearchService {
         let index = self.index();
 
         let _: meilisearch_sdk::task_info::TaskInfo = index
-            .set_filterable_attributes(["access_level", "is_draft", "service_owner", "tags"])
+            .set_filterable_attributes([
+                "access_level",
+                "is_draft",
+                "service_owner",
+                "tags",
+                // Filterable now so a release-scoped search later needs no
+                // settings change and no re-index.
+                "source_id",
+                "release",
+            ])
             .await
             .map_err(|e| AppError::Internal(format!("Meilisearch config error: {e}")))?;
 
@@ -250,6 +268,8 @@ pub fn build_search_document(
         tags: doc.tags.clone(),
         content_preview: preview,
         last_updated: doc.last_updated.timestamp(),
+        source_id: doc.source_id.clone(),
+        release: doc.release.clone(),
     }
 }
 

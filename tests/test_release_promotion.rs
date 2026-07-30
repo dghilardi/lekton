@@ -197,7 +197,7 @@ async fn promotion_sets_the_alias_and_reports_the_reindex_backlog() {
         .await
         .unwrap();
 
-    let response = lekton::api::releases::process_promote_release(
+    let (response, _affected) = lekton::api::releases::process_promote_release(
         env.repo.as_ref(),
         env.release_repo.as_ref(),
         env.service_token_repo.as_ref(),
@@ -216,5 +216,73 @@ async fn promotion_sets_the_alias_and_reports_the_reindex_backlog() {
         env.release_repo.latest("assets-manager").await.unwrap(),
         Some("1.2.0".to_string()),
         "the alias must follow the promotion"
+    );
+}
+
+/// The promotion reindex must repoint the index at the new release and drop the
+/// slugs the new release no longer ships.
+#[tokio::test]
+async fn promotion_reindex_follows_the_new_latest_and_drops_removed_slugs() {
+    let env = common::TestEnv::start().await;
+
+    // `kept` exists in both releases; `dropped` only in the old one.
+    for (slug, release, latest) in [
+        ("api/kept", "1.0.0", true),
+        ("api/kept", "1.2.0", false),
+        ("api/dropped", "1.0.0", true),
+    ] {
+        env.repo
+            .create_or_update(doc(slug, release, latest))
+            .await
+            .unwrap();
+    }
+    // Bodies must exist in storage for the reindex to have something to index.
+    for slug in ["api/kept", "api/dropped"] {
+        env.storage
+            .put_object(
+                &format!("docs/{}.md", slug.replace('/', "_")),
+                format!("# {slug}\n\nbody").into_bytes(),
+            )
+            .await
+            .unwrap();
+    }
+
+    let affected = env
+        .repo
+        .promote_release("assets-manager", "1.2.0")
+        .await
+        .unwrap();
+
+    lekton::api::releases::reindex_promoted(
+        env.repo.as_ref(),
+        env.storage.as_ref(),
+        Some(env.search.as_ref()),
+        None,
+        &affected,
+    )
+    .await;
+
+    // `kept` is latest under 1.2.0 now, and indexing it succeeded, so the stale
+    // flag is cleared.
+    let kept_latest = env
+        .repo
+        .find_all_by_slug("api/kept")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|d| d.is_latest)
+        .expect("one copy is latest");
+    assert_eq!(kept_latest.release.as_deref(), Some("1.2.0"));
+    assert!(
+        !kept_latest.needs_reindex,
+        "a successfully re-indexed document must not stay flagged stale"
+    );
+
+    // `dropped` is latest nowhere: it was removed from the index, and there is no
+    // latest row left to clear a flag on.
+    let dropped = env.repo.find_all_by_slug("api/dropped").await.unwrap();
+    assert!(
+        dropped.iter().all(|d| !d.is_latest),
+        "a slug the promoted release dropped must not be latest anywhere"
     );
 }

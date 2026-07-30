@@ -232,6 +232,8 @@ async fn reindex_items(
                 &doc.access_level,
                 doc.is_draft,
                 &doc.tags,
+                doc.source_id.as_deref(),
+                doc.release.as_deref(),
             )
             .await
         {
@@ -496,6 +498,8 @@ mod tests {
             _: &str,
             _: bool,
             _: &[String],
+            _: Option<&str>,
+            _: Option<&str>,
         ) -> Result<(), AppError> {
             // Record every attempt, then fail the ones marked to fail.
             self.indexed_slugs.lock().unwrap().push(slug.to_string());

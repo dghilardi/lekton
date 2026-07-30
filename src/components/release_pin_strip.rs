@@ -90,8 +90,15 @@ pub fn ReleasePinStrip() -> impl IntoView {
                                     };
                                     let aria = format!("Stop viewing {source_id} at {release}");
                                     view! {
-                                        <span class="badge badge-sm shrink-0 gap-1 border-primary/30 bg-base-100 py-3 text-base-content">
-                                            <span class="text-xs font-medium">{source_id.clone()}</span>
+                                        // Deliberately not `.badge`: the house badge is
+                                        // uppercase, bold and tracked, which is right for
+                                        // labels but wrong here — a source id is a verbatim
+                                        // identifier, and `ALPHA-SVC` would disagree with the
+                                        // `alpha-svc` sitting in the URL bar.
+                                        <span class="flex shrink-0 items-center gap-1 rounded-md border border-primary/30 bg-base-100 px-2 py-0.5">
+                                            <span class="text-xs font-medium text-base-content">
+                                                {source_id.clone()}
+                                            </span>
                                             <span class="font-mono text-xs text-primary">
                                                 {format!("@{release}")}
                                             </span>

@@ -820,8 +820,8 @@ async fn main() -> Result<()> {
         println!("Release {release} is now 'latest'");
         if promoted.reindex_pending > 0 {
             println!(
-                "  {} document(s) changed 'latest' membership and are flagged for re-indexing \
-                 (run a re-index so search and chat follow the new release)",
+                "  re-indexing {} document(s) in the background so search and chat \
+                 follow the new release",
                 promoted.reindex_pending
             );
         }

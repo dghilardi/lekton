@@ -347,10 +347,15 @@ impl DocumentRepository for MongoDocumentRepository {
                 doc! { "$set": { "is_latest": true, "needs_reindex": true } },
             )
             .await?;
+        // Losing the alias clears the flag rather than setting it: only `latest`
+        // is ever indexed, so a demoted release is not *stale* — it is out of
+        // scope. Flagging it would leave a false positive nothing can clear, and
+        // every promotion would accumulate more. Its slug still needs its index
+        // entry revisited, which is what the returned list is for.
         self.collection
             .update_many(
                 doc! { "source_id": source_id, "release": { "$ne": release }, "is_latest": true },
-                doc! { "$set": { "is_latest": false, "needs_reindex": true } },
+                doc! { "$set": { "is_latest": false, "needs_reindex": false } },
             )
             .await?;
 

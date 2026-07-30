@@ -69,9 +69,17 @@ async fn promotion_moves_the_is_latest_flag_across_releases() {
         "exactly one release may carry the flag"
     );
 
+    // Only the copy that *gained* the alias is stale: it is the one that must
+    // now appear in the index. The demoted copy is out of scope for indexing, so
+    // flagging it would leave a false positive nothing can ever clear.
+    let gained = copies.iter().find(|d| d.is_latest).expect("one is latest");
+    assert!(gained.needs_reindex, "the new latest must be flagged stale");
     assert!(
-        copies.iter().all(|d| d.needs_reindex),
-        "both copies changed latest membership, so search and RAG are stale for both"
+        copies
+            .iter()
+            .filter(|d| !d.is_latest)
+            .all(|d| !d.needs_reindex),
+        "a demoted release must not be left permanently flagged"
     );
 }
 

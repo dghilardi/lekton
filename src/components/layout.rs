@@ -3,6 +3,7 @@ use leptos::prelude::*;
 use super::contextual_sidebars::{AdminSidebar, ChatSidebar, DocsSidebar, RegistrySidebar};
 use super::custom_css::RuntimeCustomCss;
 use super::logo::BrandedLogo;
+use super::release_pin_strip::ReleasePinStrip;
 use super::search::SearchModal;
 use super::theme::ThemeToggle;
 use super::user_menu::UserMenu;
@@ -422,6 +423,10 @@ pub fn Layout(children: Children) -> impl IntoView {
             }>
                 <input id="sidebar-drawer" type="checkbox" class="drawer-toggle" aria-label="Toggle navigation sidebar" />
                 <div class="drawer-content lg:col-start-2 flex flex-col bg-base-100 min-w-0">
+                    // Sticky under the fixed header. Lives in the shell rather than
+                    // the document page because pins govern navigation and links
+                    // everywhere, including search results.
+                    <ReleasePinStrip />
                     <div class=move || {
                         if is_chat_layout.get() {
                             "w-full h-[calc(100vh-4rem)] flex flex-col overflow-hidden lekton-content-enter"

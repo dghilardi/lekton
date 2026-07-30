@@ -6,7 +6,7 @@
 
 use leptos::prelude::*;
 
-use crate::versioning::{ReleasePins, PIN_PARAM};
+use crate::versioning::{encode_pin_param, ReleasePins, PIN_PARAM};
 
 /// Build the URL for reading `slug` at `release`, preserving any pin on other
 /// sources.
@@ -36,31 +36,10 @@ fn href_for(
 
     let query = values
         .iter()
-        .map(|v| format!("{PIN_PARAM}={}", encode_param_value(v)))
+        .map(|v| format!("{PIN_PARAM}={}", encode_pin_param(v)))
         .collect::<Vec<_>>()
         .join("&");
     format!("{pathname}?{query}")
-}
-
-/// Percent-encode the characters that would otherwise break a query value.
-///
-/// Hand-rolled because the component compiles for the browser too, where the
-/// crate's `urlencoding` dependency is not available. `:` and `/` are left as-is:
-/// both are legal in a query value, and keeping them makes a pinned URL readable.
-fn encode_param_value(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for c in value.chars() {
-        match c {
-            '%' | '&' | '=' | '#' | '?' | '+' | ' ' => {
-                let mut buf = [0u8; 4];
-                for byte in c.encode_utf8(&mut buf).as_bytes() {
-                    out.push_str(&format!("%{byte:02X}"));
-                }
-            }
-            _ => out.push(c),
-        }
-    }
-    out
 }
 
 #[component]
@@ -224,12 +203,12 @@ mod tests {
     #[test]
     fn only_query_breaking_characters_are_encoded() {
         assert_eq!(
-            encode_param_value("svc:1.0.0"),
+            encode_pin_param("svc:1.0.0"),
             "svc:1.0.0",
             "a colon is legal in a query value, so a pinned URL stays readable"
         );
-        assert_eq!(encode_param_value("a&b=c"), "a%26b%3Dc");
-        assert_eq!(encode_param_value("a b"), "a%20b");
-        assert_eq!(encode_param_value("100%"), "100%25");
+        assert_eq!(encode_pin_param("a&b=c"), "a%26b%3Dc");
+        assert_eq!(encode_pin_param("a b"), "a%20b");
+        assert_eq!(encode_pin_param("100%"), "100%25");
     }
 }

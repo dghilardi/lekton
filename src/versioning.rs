@@ -46,6 +46,27 @@ impl ReleasePin {
     }
 }
 
+/// Percent-encode a pin for use as a query-parameter value.
+///
+/// Hand-rolled because this compiles for the browser too, where the crate's
+/// `urlencoding` dependency is unavailable. `:` and `/` are left as-is: both are
+/// legal in a query value, and keeping them makes a pinned URL readable.
+pub fn encode_pin_param(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '%' | '&' | '=' | '#' | '?' | '+' | ' ' => {
+                let mut buf = [0u8; 4];
+                for byte in c.encode_utf8(&mut buf).as_bytes() {
+                    out.push_str(&format!("%{byte:02X}"));
+                }
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// The set of pins active for a request.
 ///
 /// At most one pin per source: a URL naming the same source twice is a

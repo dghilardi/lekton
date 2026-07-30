@@ -425,7 +425,7 @@ async fn main() {
     use lekton::auth::token_service::TokenService;
     use lekton::db::access_level_repository::MongoAccessLevelRepository;
     use lekton::db::asset_repository::MongoAssetRepository;
-    use lekton::db::document_version_repository::MongoDocumentVersionRepository;
+    use lekton::db::document_revision_repository::MongoDocumentRevisionRepository;
     use lekton::db::documentation_feedback_repository::MongoDocumentationFeedbackRepository;
     use lekton::db::navigation_order_repository::MongoNavigationOrderRepository;
     use lekton::db::prompt_repository::MongoPromptRepository;
@@ -562,9 +562,9 @@ async fn main() {
         Arc::new(MongoAccessLevelRepository::new(&mongo_db));
     let service_token_repo: Arc<dyn lekton::db::service_token_repository::ServiceTokenRepository> =
         Arc::new(MongoServiceTokenRepository::new(&mongo_db));
-    let document_version_repo: Arc<
-        dyn lekton::db::document_version_repository::DocumentVersionRepository,
-    > = Arc::new(MongoDocumentVersionRepository::new(&mongo_db));
+    let document_revision_repo: Arc<
+        dyn lekton::db::document_revision_repository::DocumentRevisionRepository,
+    > = Arc::new(MongoDocumentRevisionRepository::new(&mongo_db));
     let prompt_repo: Arc<dyn lekton::db::prompt_repository::PromptRepository> =
         Arc::new(MongoPromptRepository::new(&mongo_db));
     let prompt_version_repo: Arc<
@@ -983,7 +983,7 @@ async fn main() {
         leptos_options: leptos_options.clone(),
         service_token,
         service_token_repo,
-        document_version_repo,
+        document_revision_repo,
         prompt_repo,
         prompt_version_repo,
         user_prompt_preference_repo,

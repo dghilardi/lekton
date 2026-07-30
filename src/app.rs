@@ -119,8 +119,8 @@ pub struct AppState {
     pub search_service: Option<Arc<dyn crate::search::client::SearchService>>,
     pub service_token: String,
     pub service_token_repo: Arc<dyn crate::db::service_token_repository::ServiceTokenRepository>,
-    pub document_version_repo:
-        Arc<dyn crate::db::document_version_repository::DocumentVersionRepository>,
+    pub document_revision_repo:
+        Arc<dyn crate::db::document_revision_repository::DocumentRevisionRepository>,
     pub prompt_repo: Arc<dyn crate::db::prompt_repository::PromptRepository>,
     pub prompt_version_repo: Arc<dyn crate::db::prompt_version_repository::PromptVersionRepository>,
     pub user_prompt_preference_repo:

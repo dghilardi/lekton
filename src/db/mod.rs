@@ -3,7 +3,7 @@ pub mod asset_repository;
 pub mod auth_models;
 pub mod chat_models;
 pub mod chat_repository;
-pub mod document_version_repository;
+pub mod document_revision_repository;
 pub mod documentation_feedback_models;
 pub mod documentation_feedback_repository;
 pub mod embedding_cache_repository;

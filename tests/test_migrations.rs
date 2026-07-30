@@ -213,3 +213,85 @@ async fn plan_refuses_to_run_over_duplicate_slugs() {
         "the changelog entry must name the offending slug so an operator can fix it, got: {recorded}"
     );
 }
+
+/// The rename must carry existing history over, field and all.
+#[tokio::test]
+async fn migration_015_renames_the_history_collection_and_its_field() {
+    let env = common::TestEnv::start().await;
+
+    // Legacy history, as written before the rename.
+    env.db
+        .collection::<mongodb::bson::Document>("document_versions")
+        .insert_one(doc! {
+            "id": "rev-1",
+            "slug": "guides/intro",
+            "version": 3i64,
+            "content_hash": "sha256:abc",
+            "s3_key": "docs/history/guides_intro/3.md",
+            "updated_by": "legacy",
+            "created_at": mongodb::bson::DateTime::now(),
+        })
+        .await
+        .expect("insert legacy revision");
+
+    run_plan(&env.db).await;
+
+    let names = env
+        .db
+        .list_collection_names()
+        .await
+        .expect("list collections");
+    assert!(
+        !names.iter().any(|n| n == "document_versions"),
+        "the ambiguous name must be gone, found: {names:?}"
+    );
+
+    let moved = env
+        .db
+        .collection::<mongodb::bson::Document>("document_revisions")
+        .find_one(doc! { "id": "rev-1" })
+        .await
+        .expect("query")
+        .expect("history must survive the rename");
+
+    assert_eq!(moved.get_i64("revision"), Ok(3), "got: {moved:?}");
+    assert!(
+        moved.get("version").is_none(),
+        "the old field must not linger alongside the new one"
+    );
+
+    let indexes = env
+        .db
+        .collection::<mongodb::bson::Document>("document_revisions")
+        .list_index_names()
+        .await
+        .expect("list indexes");
+    assert!(
+        indexes.iter().any(|n| n == "slug_1_revision_1"),
+        "the unique index must follow the field rename, found: {indexes:?}"
+    );
+    assert!(
+        !indexes.iter().any(|n| n.contains("version")),
+        "no index may be left pointing at a field that no longer exists: {indexes:?}"
+    );
+}
+
+/// A database that never wrote history has no collection to rename; the plan must
+/// still complete and leave usable indexes behind.
+#[tokio::test]
+async fn migration_015_is_safe_with_no_history_at_all() {
+    let env = common::TestEnv::start().await;
+
+    run_plan(&env.db).await;
+
+    let indexes = env
+        .db
+        .collection::<mongodb::bson::Document>("document_revisions")
+        .list_index_names()
+        .await
+        .expect("list indexes");
+    assert!(
+        indexes.iter().any(|n| n == "slug_1_revision_1"),
+        "found: {indexes:?}"
+    );
+}

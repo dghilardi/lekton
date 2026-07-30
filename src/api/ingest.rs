@@ -8,7 +8,7 @@ use crate::db::access_level_repository::AccessLevelRepository;
 #[cfg(feature = "ssr")]
 use crate::db::asset_repository::AssetRepository;
 #[cfg(feature = "ssr")]
-use crate::db::document_version_repository::DocumentVersionRepository;
+use crate::db::document_revision_repository::DocumentRevisionRepository;
 #[cfg(feature = "ssr")]
 use crate::db::models::Document;
 #[cfg(feature = "ssr")]
@@ -44,7 +44,7 @@ pub struct IngestContext<'a> {
     pub search: Option<&'a dyn SearchService>,
     pub access_level_repo: &'a dyn AccessLevelRepository,
     pub service_token_repo: &'a dyn ServiceTokenRepository,
-    pub version_repo: &'a dyn DocumentVersionRepository,
+    pub revision_repo: &'a dyn DocumentRevisionRepository,
     /// Release catalogue, consulted to decide whether the document being
     /// ingested lands in the release currently aliased `latest`.
     pub release_repo: &'a dyn crate::db::release_repository::ReleaseRepository,
@@ -297,40 +297,44 @@ pub async fn process_ingest(
     // Keep raw content for search indexing
     let raw_content = request.content.clone();
 
-    // 8. Create version history before overwriting (only when content changed and old doc exists)
+    // 8. Record a revision of the outgoing content before overwriting it (only
+    //    when the content changed and there is an old document to preserve).
     if content_changed {
         if let Some(ref old) = old_doc {
             if let Some(ref old_content_hash) = old.content_hash {
                 // Copy old content to history
-                let version_num = ctx.version_repo.next_version_number(&request.slug).await?;
+                let revision_num = ctx
+                    .revision_repo
+                    .next_revision_number(&request.slug)
+                    .await?;
                 let history_key = format!(
                     "docs/history/{}/{}.md",
                     request.slug.replace('/', "_"),
-                    version_num
+                    revision_num
                 );
 
                 // Read old content from S3 and copy to history
                 if let Ok(Some(old_content)) = ctx.storage.get_object(&old.s3_key).await {
                     if let Err(e) = ctx.storage.put_object(&history_key, old_content).await {
-                        tracing::warn!("Failed to archive old version to S3: {e}");
+                        tracing::warn!("Failed to archive the previous revision to S3: {e}");
                     }
                 }
 
                 // Determine who is updating (token name or "legacy")
                 let updated_by = resolve_token_name(ctx, &request.service_token).await;
 
-                let version = crate::db::document_version_repository::DocumentVersion {
+                let revision = crate::db::document_revision_repository::DocumentRevision {
                     id: uuid::Uuid::new_v4().to_string(),
                     slug: request.slug.clone(),
-                    version: version_num,
+                    revision: revision_num,
                     content_hash: old_content_hash.clone(),
                     s3_key: history_key,
                     updated_by,
                     created_at: Utc::now(),
                 };
 
-                if let Err(e) = ctx.version_repo.create(version).await {
-                    tracing::warn!("Failed to create version record: {e}");
+                if let Err(e) = ctx.revision_repo.create(revision).await {
+                    tracing::warn!("Failed to create revision record: {e}");
                 }
             }
         }
@@ -688,7 +692,7 @@ pub async fn ingest_handler(
         search: state.search_service.as_deref(),
         access_level_repo: state.access_level_repo.as_ref(),
         service_token_repo: state.service_token_repo.as_ref(),
-        version_repo: state.document_version_repo.as_ref(),
+        revision_repo: state.document_revision_repo.as_ref(),
         release_repo: state.release_repo.as_ref(),
         rag: state.rag_service.as_deref(),
         legacy_token: Some(&state.service_token),
@@ -1058,31 +1062,31 @@ mod tests {
         }
     }
 
-    struct MockVersionRepo;
+    struct MockRevisionRepo;
 
     #[async_trait]
-    impl crate::db::document_version_repository::DocumentVersionRepository for MockVersionRepo {
+    impl crate::db::document_revision_repository::DocumentRevisionRepository for MockRevisionRepo {
         async fn create(
             &self,
-            _: crate::db::document_version_repository::DocumentVersion,
+            _: crate::db::document_revision_repository::DocumentRevision,
         ) -> Result<(), AppError> {
             Ok(())
         }
         async fn find_latest(
             &self,
             _: &str,
-        ) -> Result<Option<crate::db::document_version_repository::DocumentVersion>, AppError>
+        ) -> Result<Option<crate::db::document_revision_repository::DocumentRevision>, AppError>
         {
             Ok(None)
         }
         async fn list_by_slug(
             &self,
             _: &str,
-        ) -> Result<Vec<crate::db::document_version_repository::DocumentVersion>, AppError>
+        ) -> Result<Vec<crate::db::document_revision_repository::DocumentRevision>, AppError>
         {
             Ok(vec![])
         }
-        async fn next_version_number(&self, _: &str) -> Result<u64, AppError> {
+        async fn next_revision_number(&self, _: &str) -> Result<u64, AppError> {
             Ok(1)
         }
     }
@@ -1216,7 +1220,7 @@ mod tests {
             search: None,
             access_level_repo: &MockAccessLevelRepo,
             service_token_repo: token_repo,
-            version_repo: &MockVersionRepo,
+            revision_repo: &MockRevisionRepo,
             release_repo: &MockReleaseRepo,
             rag: None,
             legacy_token,

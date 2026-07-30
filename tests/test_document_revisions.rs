@@ -94,7 +94,11 @@ async fn ingest_content_change_creates_version() {
         .await;
 
     // Verify no versions yet (first ingest doesn't create a version record)
-    let versions = env.document_version_repo.list_by_slug(&slug).await.unwrap();
+    let versions = env
+        .document_revision_repo
+        .list_by_slug(&slug)
+        .await
+        .unwrap();
     assert!(
         versions.is_empty(),
         "No versions should exist after first ingest"
@@ -105,9 +109,13 @@ async fn ingest_content_change_creates_version() {
         .await;
 
     // Now there should be a version record for the old content
-    let versions = env.document_version_repo.list_by_slug(&slug).await.unwrap();
+    let versions = env
+        .document_revision_repo
+        .list_by_slug(&slug)
+        .await
+        .unwrap();
     assert_eq!(versions.len(), 1, "One version should exist after update");
-    assert_eq!(versions[0].version, 1);
+    assert_eq!(versions[0].revision, 1);
     assert!(versions[0].content_hash.starts_with("sha256:"));
     assert_eq!(versions[0].updated_by, "legacy");
 
@@ -115,11 +123,15 @@ async fn ingest_content_change_creates_version() {
     env.ingest(&server, &slug, "Doc v3", "# Version 3", "public")
         .await;
 
-    let versions = env.document_version_repo.list_by_slug(&slug).await.unwrap();
+    let versions = env
+        .document_revision_repo
+        .list_by_slug(&slug)
+        .await
+        .unwrap();
     assert_eq!(versions.len(), 2, "Two versions after two updates");
     // Versions should be ordered descending
-    assert_eq!(versions[0].version, 2);
-    assert_eq!(versions[1].version, 1);
+    assert_eq!(versions[0].revision, 2);
+    assert_eq!(versions[1].revision, 1);
 }
 
 #[tokio::test]
@@ -133,7 +145,11 @@ async fn ingest_unchanged_content_does_not_create_version() {
     env.ingest(&server, &slug, "Doc", "# Same", "public").await;
     env.ingest(&server, &slug, "Doc", "# Same", "public").await;
 
-    let versions = env.document_version_repo.list_by_slug(&slug).await.unwrap();
+    let versions = env
+        .document_revision_repo
+        .list_by_slug(&slug)
+        .await
+        .unwrap();
     assert!(versions.is_empty(), "No versions for unchanged content");
 }
 
@@ -153,7 +169,11 @@ async fn version_old_content_copied_to_s3_history() {
         .await;
 
     // Check the version record has an S3 key in history path
-    let versions = env.document_version_repo.list_by_slug(&slug).await.unwrap();
+    let versions = env
+        .document_revision_repo
+        .list_by_slug(&slug)
+        .await
+        .unwrap();
     assert_eq!(versions.len(), 1);
     assert!(
         versions[0].s3_key.contains("docs/history/"),
@@ -174,13 +194,13 @@ async fn version_old_content_copied_to_s3_history() {
 }
 
 #[tokio::test]
-async fn version_next_version_number() {
+async fn next_revision_number_starts_at_one() {
     let env = common::TestEnv::start().await;
 
     // No versions: should return 1
     let num = env
-        .document_version_repo
-        .next_version_number("nonexistent-slug")
+        .document_revision_repo
+        .next_revision_number("nonexistent-slug")
         .await
         .unwrap();
     assert_eq!(num, 1);

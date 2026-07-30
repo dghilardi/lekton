@@ -80,6 +80,11 @@ mod inner {
                 "davide.ghilardi@comelit.it",
                 add_document_release_fields,
             )
+            .register(
+                "015_rename_document_versions_to_revisions",
+                "davide.ghilardi@comelit.it",
+                rename_document_versions_to_revisions,
+            )
     }
 
     fn format_duplicate_group_id(id: &bson::Bson) -> String {
@@ -824,6 +829,73 @@ mod inner {
                     .build(),
             )
             .await?;
+
+        Ok(())
+    }
+
+    /// Renames the editorial history to `document_revisions`, with `version`
+    /// becoming `revision`.
+    ///
+    /// The two concepts were both called "version": the per-slug counter bumped
+    /// on every content change, and the product release a document belongs to.
+    /// Leaving the collection named `document_versions` next to a `release` field
+    /// keeps that ambiguity alive for anyone reading the database directly.
+    ///
+    /// Idempotent and safe on a database that never wrote history: the rename is
+    /// skipped when the old collection is absent, and the field rename touches
+    /// only documents that still carry `version`.
+    async fn rename_document_versions_to_revisions(
+        db: Database,
+    ) -> Result<(), mongodb::error::Error> {
+        use mongodb::options::IndexOptions;
+        use mongodb::IndexModel;
+
+        let names = db.list_collection_names().await?;
+        let old_exists = names.iter().any(|n| n == "document_versions");
+        let new_exists = names.iter().any(|n| n == "document_revisions");
+
+        if old_exists && !new_exists {
+            // `renameCollection` runs against the admin database.
+            let admin = db.client().database("admin");
+            let db_name = db.name();
+            admin
+                .run_command(bson::doc! {
+                    "renameCollection": format!("{db_name}.document_versions"),
+                    "to": format!("{db_name}.document_revisions"),
+                })
+                .await?;
+        }
+
+        let col = db.collection::<bson::Document>("document_revisions");
+
+        col.update_many(
+            bson::doc! { "version": { "$exists": true } },
+            bson::doc! { "$rename": { "version": "revision" } },
+        )
+        .await?;
+
+        // The indexes from migration 011 were built on the old field name and
+        // travelled with the rename, so they are now indexing a field that no
+        // longer exists. Replace them.
+        for stale in ["slug_1_version_1", "slug_1_version_-1"] {
+            if col.list_index_names().await?.iter().any(|n| n == stale) {
+                col.drop_index(stale).await?;
+            }
+        }
+
+        col.create_index(
+            IndexModel::builder()
+                .keys(bson::doc! { "slug": 1, "revision": 1 })
+                .options(IndexOptions::builder().unique(true).build())
+                .build(),
+        )
+        .await?;
+        col.create_index(
+            IndexModel::builder()
+                .keys(bson::doc! { "slug": 1, "revision": -1 })
+                .build(),
+        )
+        .await?;
 
         Ok(())
     }

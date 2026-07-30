@@ -79,6 +79,14 @@ pub struct SyncResponse {
     pub to_archive: Vec<String>,
     /// Source paths with no pending changes.
     pub unchanged: Vec<String>,
+    /// Slugs archived because this sync is the source's *first* release, which
+    /// supersedes the unversioned set it used to publish. Empty otherwise.
+    ///
+    /// Reported so the caller can say so out loud: it is the one archive this
+    /// protocol performs without being asked, and the operator should know their
+    /// previously-live documents just moved out of the way.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub superseded_unversioned: Vec<String>,
 }
 
 /// Core sync logic — separated from the HTTP layer for testability.
@@ -119,7 +127,8 @@ pub async fn process_sync(
     // to the unversioned bucket instead would create documents that nothing
     // resolves (the source's readers go through releases from now on), and
     // writing over `latest` would mutate an already-tagged release.
-    if request.release.is_none() && release_repo.is_release_managed(&request.source_id).await? {
+    let was_release_managed = release_repo.is_release_managed(&request.source_id).await?;
+    if request.release.is_none() && was_release_managed {
         return Err(AppError::BadRequest(format!(
             "source '{}' is release-managed; --version is required",
             request.source_id
@@ -289,6 +298,52 @@ pub async fn process_sync(
         }
     }
 
+    // 6b. First release for a source that used to publish an unversioned set:
+    // that set is now unreachable, because readers of this source resolve through
+    // releases from here on. Archive it rather than delete it — the rows stay
+    // recoverable — and report it, since this is the only archive the protocol
+    // performs without being asked for it.
+    let mut superseded_unversioned = Vec::new();
+    if request.release.is_some() && !was_release_managed {
+        for doc in repo
+            .find_all_by_source_id_and_release(&request.source_id, None)
+            .await?
+        {
+            superseded_unversioned.push(doc.slug);
+        }
+        superseded_unversioned.sort();
+
+        if !request.dry_run {
+            for slug in &superseded_unversioned {
+                repo.set_archived(slug, None, true).await?;
+                // The unversioned copy was `latest` until now, so it is in the
+                // indexes and has to leave them. A slug the new release also
+                // ships is re-indexed right after, by its ingest.
+                if let Some(svc) = search {
+                    if let Err(e) = svc.delete_document(slug).await {
+                        tracing::warn!(
+                            "Failed to deindex superseded unversioned document '{slug}': {e}"
+                        );
+                    }
+                }
+                if let Some(rag_svc) = rag {
+                    if let Err(e) = rag_svc.delete_document(slug).await {
+                        tracing::warn!(
+                            "Failed to remove superseded unversioned document '{slug}' from RAG: {e}"
+                        );
+                    }
+                }
+            }
+            if !superseded_unversioned.is_empty() {
+                tracing::info!(
+                    source_id = %request.source_id,
+                    count = superseded_unversioned.len(),
+                    "first release supersedes the source's unversioned documents; archived"
+                );
+            }
+        }
+    }
+
     // 7. Record the release in the catalogue. Done here rather than on ingest so
     // a re-sync with no changes still marks the release as published, which is
     // what the version selector lists.
@@ -305,6 +360,7 @@ pub async fn process_sync(
         to_upload,
         to_archive,
         unchanged,
+        superseded_unversioned,
     })
 }
 
@@ -1860,5 +1916,115 @@ mod tests {
             release_repo.registrations().is_empty(),
             "a dry run must not register the release"
         );
+    }
+
+    /// The one archive this protocol performs unasked: a source's first release
+    /// supersedes the unversioned set it used to publish, which nothing resolves
+    /// any more.
+    #[tokio::test]
+    async fn the_first_release_supersedes_the_unversioned_set() {
+        let unversioned = Document {
+            release: None,
+            ..make_doc("docs/legacy", "sha256:old")
+        };
+        let repo = MockRepo::with_docs(vec![unversioned]);
+        let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::default();
+        let search = MockSearchService::new();
+
+        let result = process_sync(
+            &repo,
+            &release_repo,
+            &token_repo,
+            Some(&search),
+            None,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            versioned_request(Some("1.0.0"), vec![entry("docs/legacy", "sha256:old")]),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result.superseded_unversioned,
+            vec!["docs/legacy".to_string()],
+            "the operator must be told which documents moved out of the way"
+        );
+        let archived = repo.find_by_slug("docs/legacy").await.unwrap().unwrap();
+        assert!(
+            archived.is_archived,
+            "archived, not deleted, so the rows stay recoverable"
+        );
+        assert_eq!(
+            search.deleted_slugs(),
+            vec!["docs/legacy".to_string()],
+            "it was latest until now, so it has to leave the index"
+        );
+    }
+
+    /// Only the *transition* supersedes. A source already publishing releases has
+    /// no unversioned set to retire, and must not have one invented for it.
+    #[tokio::test]
+    async fn a_later_release_supersedes_nothing() {
+        let repo = MockRepo::with_docs(vec![make_doc_in_release("docs/a", "sha256:abc", "1.0.0")]);
+        let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::with_published(&[("test-source", "1.0.0")]);
+
+        let result = process_sync(
+            &repo,
+            &release_repo,
+            &token_repo,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            versioned_request(Some("1.2.0"), vec![entry("docs/a", "sha256:abc")]),
+        )
+        .await
+        .unwrap();
+
+        assert!(result.superseded_unversioned.is_empty());
+    }
+
+    #[tokio::test]
+    async fn dry_run_reports_the_supersede_without_performing_it() {
+        let unversioned = Document {
+            release: None,
+            ..make_doc("docs/legacy", "sha256:old")
+        };
+        let repo = MockRepo::with_docs(vec![unversioned]);
+        let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::default();
+
+        let request = SyncRequest {
+            dry_run: true,
+            ..versioned_request(Some("1.0.0"), vec![entry("docs/legacy", "sha256:old")])
+        };
+
+        let result = process_sync(
+            &repo,
+            &release_repo,
+            &token_repo,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            request,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result.superseded_unversioned,
+            vec!["docs/legacy".to_string()]
+        );
+        let doc = repo.find_by_slug("docs/legacy").await.unwrap().unwrap();
+        assert!(!doc.is_archived, "a dry run must not archive anything");
     }
 }

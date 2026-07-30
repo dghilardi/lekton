@@ -55,6 +55,11 @@ pub struct SyncResponse {
     pub to_upload: Vec<SyncUploadEntry>,
     pub to_archive: Vec<String>,
     pub unchanged: Vec<String>,
+    /// Slugs the server archived because this is the source's first release,
+    /// superseding the unversioned set it used to publish. Absent on older
+    /// servers.
+    #[serde(default)]
+    pub superseded_unversioned: Vec<String>,
 }
 
 // ── Prompt sync ───────────────────────────────────────────────────────────────

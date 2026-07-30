@@ -228,6 +228,7 @@ async fn main() -> Result<()> {
             to_upload: vec![],
             to_archive: vec![],
             unchanged: vec![],
+            superseded_unversioned: vec![],
         }
     };
 
@@ -775,6 +776,20 @@ async fn main() -> Result<()> {
         sync_result.unchanged.len(),
         sync_result.to_archive.len(),
     );
+    // The one archive the server performs without being asked, so say it plainly
+    // rather than folding it into the count above.
+    if !sync_result.superseded_unversioned.is_empty() {
+        println!(
+            "  first release for this source: archived {} previously unversioned document(s), \
+             now superseded",
+            sync_result.superseded_unversioned.len()
+        );
+        if args.verbose {
+            for slug in &sync_result.superseded_unversioned {
+                println!("    - {slug}");
+            }
+        }
+    }
     println!(
         "Prompts: {prompts_uploaded} uploaded, {} unchanged, {} archived",
         prompt_sync_result.unchanged.len(),

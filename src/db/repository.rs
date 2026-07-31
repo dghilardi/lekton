@@ -182,10 +182,30 @@ pub trait DocumentRepository: Send + Sync {
         archived: bool,
     ) -> Result<(), AppError>;
 
-    /// Rename a document's slug in-place, preserving all other fields and history.
+    /// Rename an unversioned document's slug in-place, preserving all other
+    /// fields and history.
     ///
     /// Does nothing if `old_slug` is not found.
     async fn rename_slug(&self, old_slug: &str, new_slug: &str) -> Result<(), AppError>;
+
+    /// Rename one exact release of a document's slug in-place.
+    ///
+    /// The default retains compatibility with repositories that only store
+    /// unversioned documents. Release-aware implementations must override it.
+    async fn rename_slug_in_release(
+        &self,
+        old_slug: &str,
+        new_slug: &str,
+        release: Option<&str>,
+    ) -> Result<(), AppError> {
+        if release.is_none() {
+            self.rename_slug(old_slug, new_slug).await
+        } else {
+            Err(AppError::Internal(
+                "release-aware slug rename is not implemented".into(),
+            ))
+        }
+    }
 
     /// Point the denormalized `is_latest` flag of one source at `release`.
     ///
@@ -222,11 +242,31 @@ pub trait DocumentRepository: Send + Sync {
         Ok(vec![])
     }
 
-    /// Find a document by its source file path (e.g. `docs/guides/intro.md`).
+    /// Find an unversioned document by its source file path.
     ///
     /// Returns `None` for documents ingested before `source_path` was introduced.
     /// Includes archived documents — callers must check `is_archived` if needed.
     async fn find_by_source_path(&self, source_path: &str) -> Result<Option<Document>, AppError>;
+
+    /// Find a document by source, source file path, and exact release.
+    ///
+    /// The default retains compatibility with repositories that only store
+    /// unversioned documents. Release-aware implementations should override it
+    /// with an indexed query.
+    async fn find_by_source_path_and_release(
+        &self,
+        source_id: &str,
+        source_path: &str,
+        release: Option<&str>,
+    ) -> Result<Option<Document>, AppError> {
+        Ok(self
+            .find_by_source_path(source_path)
+            .await?
+            .filter(|document| {
+                document.source_id.as_deref() == Some(source_id)
+                    && document.release.as_deref() == release
+            }))
+    }
 
     /// Return all non-archived documents belonging to the given import source.
     ///
@@ -600,10 +640,25 @@ impl DocumentRepository for MongoDocumentRepository {
     }
 
     async fn rename_slug(&self, old_slug: &str, new_slug: &str) -> Result<(), AppError> {
-        use mongodb::bson::doc;
+        self.rename_slug_in_release(old_slug, new_slug, None).await
+    }
+
+    async fn rename_slug_in_release(
+        &self,
+        old_slug: &str,
+        new_slug: &str,
+        release: Option<&str>,
+    ) -> Result<(), AppError> {
+        use mongodb::bson::{doc, Bson};
+
+        let release_match = match release {
+            Some(r) => Bson::String(r.to_string()),
+            None => Bson::Null,
+        };
+
         self.collection
             .update_one(
-                doc! { "slug": old_slug },
+                doc! { "slug": old_slug, "release": release_match },
                 doc! { "$set": { "slug": new_slug } },
             )
             .await?;
@@ -611,10 +666,34 @@ impl DocumentRepository for MongoDocumentRepository {
     }
 
     async fn find_by_source_path(&self, source_path: &str) -> Result<Option<Document>, AppError> {
-        use mongodb::bson::doc;
+        self.find_by_source_path_and_release("", source_path, None)
+            .await
+    }
+
+    async fn find_by_source_path_and_release(
+        &self,
+        source_id: &str,
+        source_path: &str,
+        release: Option<&str>,
+    ) -> Result<Option<Document>, AppError> {
+        use mongodb::bson::{doc, Bson};
+
+        let release_match = match release {
+            Some(r) => Bson::String(r.to_string()),
+            None => Bson::Null,
+        };
+
         Ok(self
             .collection
-            .find_one(doc! { "source_path": source_path })
+            .find_one(if source_id.is_empty() {
+                doc! { "source_path": source_path, "release": release_match }
+            } else {
+                doc! {
+                    "source_id": source_id,
+                    "source_path": source_path,
+                    "release": release_match,
+                }
+            })
             .await?)
     }
 

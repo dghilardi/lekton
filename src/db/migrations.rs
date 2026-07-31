@@ -85,6 +85,11 @@ mod inner {
                 "davide.ghilardi@comelit.it",
                 rename_document_versions_to_revisions,
             )
+            .register(
+                "016_make_asset_references_release_aware",
+                "davide.ghilardi@comelit.it",
+                make_asset_references_release_aware,
+            )
     }
 
     fn format_duplicate_group_id(id: &bson::Bson) -> String {
@@ -901,6 +906,38 @@ mod inner {
         )
         .await?;
 
+        Ok(())
+    }
+
+    /// Rewrites legacy asset references from a bare document slug to the exact
+    /// unversioned document identity. New release-managed references are stored
+    /// as `{ slug, release }`, so assets shared by several releases can derive
+    /// access from the intended documents instead of an arbitrary slug match.
+    async fn make_asset_references_release_aware(
+        db: Database,
+    ) -> Result<(), mongodb::error::Error> {
+        db.collection::<bson::Document>("assets")
+            .update_many(
+                bson::doc! { "referenced_by": { "$type": "array" } },
+                vec![bson::doc! {
+                    "$set": {
+                        "referenced_by": {
+                            "$map": {
+                                "input": { "$ifNull": ["$referenced_by", []] },
+                                "as": "reference",
+                                "in": {
+                                    "$cond": [
+                                        { "$eq": [{ "$type": "$$reference" }, "string"] },
+                                        { "slug": "$$reference", "release": bson::Bson::Null },
+                                        "$$reference",
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }],
+            )
+            .await?;
         Ok(())
     }
 

@@ -10,7 +10,7 @@ use crate::db::asset_repository::AssetRepository;
 #[cfg(feature = "ssr")]
 use crate::db::document_revision_repository::DocumentRevisionRepository;
 #[cfg(feature = "ssr")]
-use crate::db::models::Document;
+use crate::db::models::{Document, DocumentReference};
 #[cfg(feature = "ssr")]
 use crate::db::repository::DocumentRepository;
 #[cfg(feature = "ssr")]
@@ -178,30 +178,39 @@ pub async fn process_ingest(
         .await?
         .into_iter()
         .find(|d| d.release.as_deref() == request.release.as_deref());
-    let (old_doc, old_s3_key_before_rename) =
-        if by_slug.as_ref().map(|d| d.is_archived).unwrap_or(true) {
-            let by_source = ctx.repo.find_by_source_path(&request.source_path).await?;
-            if let Some(found) = by_source {
-                if found.slug != request.slug
-                    && found.source_id.as_deref() == Some(request.source_id.as_str())
-                    && !found.is_archived
-                {
-                    ctx.repo.rename_slug(&found.slug, &request.slug).await?;
-                    let old_key = found.s3_key.clone();
-                    let renamed = Document {
-                        slug: request.slug.clone(),
-                        ..found
-                    };
-                    (Some(renamed), Some(old_key))
-                } else {
-                    (by_slug, None)
-                }
+    let (old_doc, old_s3_key_before_rename) = if by_slug
+        .as_ref()
+        .map(|d| d.is_archived)
+        .unwrap_or(true)
+    {
+        let by_source = ctx
+            .repo
+            .find_by_source_path_and_release(
+                &request.source_id,
+                &request.source_path,
+                request.release.as_deref(),
+            )
+            .await?;
+        if let Some(found) = by_source {
+            if found.slug != request.slug && !found.is_archived {
+                ctx.repo
+                    .rename_slug_in_release(&found.slug, &request.slug, request.release.as_deref())
+                    .await?;
+                let old_key = found.s3_key.clone();
+                let renamed = Document {
+                    slug: request.slug.clone(),
+                    ..found
+                };
+                (Some(renamed), Some(old_key))
             } else {
                 (by_slug, None)
             }
         } else {
             (by_slug, None)
-        };
+        }
+    } else {
+        (by_slug, None)
+    };
 
     let (old_links, old_backlinks, old_hash) = match &old_doc {
         Some(d) => (
@@ -455,9 +464,10 @@ pub async fn process_ingest(
     //     document in its `referenced_by` (and drops it where no longer linked).
     //     This drives attachment access levels for RAG and asset-serve access.
     let asset_keys = extract_asset_keys(&raw_content);
+    let document_reference = DocumentReference::new(request.slug.clone(), request.release.clone());
     let assets_to_recompute = match ctx
         .asset_repo
-        .set_references(&request.slug, &asset_keys)
+        .set_release_references(&document_reference, &asset_keys)
         .await
     {
         Ok(affected) => {
@@ -1605,7 +1615,7 @@ mod tests {
             s3_key: "assets/pdfs/hello.pdf".to_string(),
             uploaded_at: Utc::now(),
             uploaded_by: "tester@example.com".to_string(),
-            referenced_by: vec!["docs/hello".to_string()],
+            referenced_by: vec!["docs/hello".into()],
             content_hash: None,
             extraction_status: ExtractionStatus::Done,
             extraction_error: None,

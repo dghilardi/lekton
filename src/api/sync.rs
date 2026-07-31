@@ -276,7 +276,11 @@ pub async fn process_sync(
                 // recompute their access levels, so an attachment no longer
                 // inherits an archived document's visibility.
                 if let (Some(asset_repo), Some(storage)) = (asset_repo, storage) {
-                    match asset_repo.set_references(slug, &[]).await {
+                    let reference = crate::db::models::DocumentReference::new(
+                        slug.clone(),
+                        request.release.clone(),
+                    );
+                    match asset_repo.set_release_references(&reference, &[]).await {
                         Ok(affected) if !affected.is_empty() => {
                             crate::rag::attachment_extraction::recompute_access_levels(
                                 rag_svc,

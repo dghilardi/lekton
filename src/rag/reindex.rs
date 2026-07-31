@@ -351,7 +351,7 @@ mod tests {
             s3_key: format!("assets/{key}"),
             uploaded_at: Utc::now(),
             uploaded_by: "test".to_string(),
-            referenced_by,
+            referenced_by: referenced_by.into_iter().map(Into::into).collect(),
             content_hash: Some("sha256:same".to_string()),
             extraction_status: ExtractionStatus::Done,
             extraction_error: None,

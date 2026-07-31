@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
-use crate::db::models::{Asset, ExtractionStatus};
+use crate::db::models::{Asset, DocumentReference, ExtractionStatus};
 use crate::error::AppError;
 
 /// The extraction-tracking fields to write, leaving the rest of the asset
@@ -44,15 +44,31 @@ pub trait AssetRepository: Send + Sync {
     /// key does not exist.
     async fn update_extraction(&self, key: &str, update: ExtractionUpdate) -> Result<(), AppError>;
 
-    /// Reconcile `referenced_by` so that `source_slug` references exactly `keys`:
-    /// add it to those assets and remove it from every other asset that still
-    /// lists it. Idempotent. Returns the keys whose reference set actually
-    /// changed (added or removed), so callers can recompute derived state.
+    /// Reconcile references for an unversioned document slug.
     async fn set_references(
         &self,
         source_slug: &str,
         keys: &[String],
     ) -> Result<Vec<String>, AppError>;
+
+    /// Reconcile `referenced_by` so that `source` references exactly `keys`:
+    /// add the release-aware reference to those assets and remove it from every
+    /// other asset that still lists it. Idempotent. Returns the keys whose
+    /// reference set actually changed (added or removed), so callers can
+    /// recompute derived state.
+    async fn set_release_references(
+        &self,
+        source: &DocumentReference,
+        keys: &[String],
+    ) -> Result<Vec<String>, AppError> {
+        if source.release.is_none() {
+            self.set_references(&source.slug, keys).await
+        } else {
+            Err(AppError::Internal(
+                "release-aware asset references are not implemented".into(),
+            ))
+        }
+    }
 
     /// List assets whose extraction was left unfinished — `Pending` (never
     /// started) or `InProgress` (interrupted mid-flight). Used by a startup
@@ -212,13 +228,26 @@ impl AssetRepository for MongoAssetRepository {
         source_slug: &str,
         keys: &[String],
     ) -> Result<Vec<String>, AppError> {
-        use futures::TryStreamExt;
-        use mongodb::bson::doc;
+        self.set_release_references(&source_slug.into(), keys).await
+    }
 
-        // Keys currently referencing this slug, to compute the exact diff.
+    async fn set_release_references(
+        &self,
+        source: &DocumentReference,
+        keys: &[String],
+    ) -> Result<Vec<String>, AppError> {
+        use futures::TryStreamExt;
+        use mongodb::bson::{doc, to_bson};
+
+        let source = to_bson(source).map_err(|e| {
+            AppError::Internal(format!("failed to serialize asset document reference: {e}"))
+        })?;
+
+        // Keys currently referencing this exact document release, to compute the
+        // exact diff without detaching references from older releases.
         let mut cursor = self
             .collection
-            .find(doc! { "referenced_by": source_slug })
+            .find(doc! { "referenced_by": &source })
             .await?;
         let mut current = Vec::new();
         while let Some(asset) = cursor.try_next().await? {
@@ -241,7 +270,7 @@ impl AssetRepository for MongoAssetRepository {
             self.collection
                 .update_many(
                     doc! { "key": { "$in": &removed_refs } },
-                    doc! { "$pull": { "referenced_by": source_slug } },
+                    doc! { "$pull": { "referenced_by": &source } },
                 )
                 .await?;
         }
@@ -251,7 +280,7 @@ impl AssetRepository for MongoAssetRepository {
             self.collection
                 .update_many(
                     doc! { "key": { "$in": &added_refs } },
-                    doc! { "$addToSet": { "referenced_by": source_slug } },
+                    doc! { "$addToSet": { "referenced_by": &source } },
                 )
                 .await?;
         }

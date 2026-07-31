@@ -396,7 +396,7 @@ fn QuizWidget(lesson_id: String, quiz: Vec<QuizQuestion>, persist: bool) -> impl
                                 type="radio"
                                 class="radio radio-sm"
                                 name=format!("{}-q{}", "quiz", qi)
-                                disabled=move || graded()
+                                disabled=move || grade.get().is_some()
                                 prop:checked=move || answers.get().get(qi).copied().flatten() == Some(oi)
                                 on:change=move |_| answers.update(|v| v[qi] = Some(oi))
                             />

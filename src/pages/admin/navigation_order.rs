@@ -48,7 +48,7 @@ pub fn NavigationOrderEditor() -> impl IntoView {
     let (dragging_idx, set_dragging_idx) = signal(Option::<usize>::None);
 
     // Load nav tree and existing weights
-    let nav_resource = LocalResource::new(|| with_auth_retry(get_navigation));
+    let nav_resource = LocalResource::new(|| with_auth_retry(|| get_navigation(None)));
     let order_resource = LocalResource::new(|| with_auth_retry(get_navigation_order));
 
     // Merge nav tree with existing weights to build the orderable list

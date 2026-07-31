@@ -13,7 +13,7 @@ use chrono::Utc;
 use tokio::sync::mpsc::{self, error::TrySendError};
 
 use crate::db::asset_repository::{AssetRepository, ExtractionUpdate};
-use crate::db::models::ExtractionStatus;
+use crate::db::models::{DocumentReference, ExtractionStatus};
 use crate::db::repository::DocumentRepository;
 use crate::error::AppError;
 use crate::rag::attachment_acl::{attachment_access_levels, ReferencingDoc};
@@ -245,20 +245,24 @@ impl AttachmentExtractionService {
                 // links a PDF to a single stub document); a shared attachment
                 // simply shows up under that first document's page.
                 if let Some(search) = &self.attachment_search {
-                    if let Some(doc_slug) = asset.referenced_by.first() {
+                    if let Some(reference) = asset.referenced_by.first() {
                         let doc_title = self
                             .document_repo
-                            .find_by_slug(doc_slug)
+                            .find_by_slugs(std::slice::from_ref(&reference.slug))
                             .await
                             .ok()
-                            .flatten()
+                            .and_then(|documents| {
+                                documents.into_iter().find(|document| {
+                                    document.release.as_deref() == reference.release.as_deref()
+                                })
+                            })
                             .map(|d| d.title)
-                            .unwrap_or_else(|| doc_slug.clone());
+                            .unwrap_or_else(|| reference.slug.clone());
                         if let Err(e) = search
                             .index_pages(
                                 key,
                                 &filename,
-                                doc_slug,
+                                &reference.slug,
                                 &doc_title,
                                 &pages,
                                 &access_levels,
@@ -493,18 +497,28 @@ async fn mark_orphan_cleanup_failure(
 /// ends up no more visible than what could be resolved).
 async fn referencing_acl(
     document_repo: &dyn DocumentRepository,
-    slugs: &[String],
+    references: &[DocumentReference],
 ) -> (Vec<String>, Vec<String>) {
     let mut docs: Vec<(String, bool, bool)> = Vec::new();
     let mut tag_set = BTreeSet::new();
-    for slug in slugs {
-        if let Ok(Some(doc)) = document_repo.find_by_slug(slug).await {
+    let slugs: Vec<_> = references
+        .iter()
+        .map(|reference| reference.slug.clone())
+        .collect();
+    let resolved = document_repo
+        .find_by_slugs(&slugs)
+        .await
+        .unwrap_or_default();
+    for reference in references {
+        if let Some(doc) = resolved.iter().find(|doc| {
+            doc.slug == reference.slug && doc.release.as_deref() == reference.release.as_deref()
+        }) {
             if !doc.is_draft && !doc.is_archived {
                 for t in &doc.tags {
                     tag_set.insert(t.clone());
                 }
             }
-            docs.push((doc.access_level, doc.is_draft, doc.is_archived));
+            docs.push((doc.access_level.clone(), doc.is_draft, doc.is_archived));
         }
     }
     let refs: Vec<ReferencingDoc> = docs
@@ -556,7 +570,7 @@ mod tests {
             s3_key: format!("assets/{key}"),
             uploaded_at: Utc::now(),
             uploaded_by: "test".to_string(),
-            referenced_by,
+            referenced_by: referenced_by.into_iter().map(Into::into).collect(),
             content_hash: None,
             extraction_status: ExtractionStatus::Done,
             extraction_error: None,
@@ -645,7 +659,11 @@ mod tests {
             }
             Ok(())
         }
-        async fn set_references(&self, _: &str, _: &[String]) -> Result<Vec<String>, AppError> {
+        async fn set_release_references(
+            &self,
+            _: &crate::db::models::DocumentReference,
+            _: &[String],
+        ) -> Result<Vec<String>, AppError> {
             Ok(vec![])
         }
         async fn list_unfinished_extractions(&self) -> Result<Vec<Asset>, AppError> {
@@ -685,6 +703,7 @@ mod tests {
             &self,
             _: Option<&[String]>,
             _: bool,
+            _: &crate::versioning::ReleasePins,
         ) -> Result<Vec<Document>, AppError> {
             Ok(vec![])
         }
@@ -699,7 +718,7 @@ mod tests {
         async fn find_by_slug_prefix(&self, _: &str) -> Result<Vec<Document>, AppError> {
             Ok(vec![])
         }
-        async fn set_archived(&self, _: &str, _: bool) -> Result<(), AppError> {
+        async fn set_archived(&self, _: &str, _: Option<&str>, _: bool) -> Result<(), AppError> {
             Ok(())
         }
         async fn rename_slug(&self, _: &str, _: &str) -> Result<(), AppError> {
@@ -731,6 +750,8 @@ mod tests {
             _: &str,
             _: bool,
             _: &[String],
+            _: Option<&str>,
+            _: Option<&str>,
         ) -> Result<(), AppError> {
             Ok(())
         }

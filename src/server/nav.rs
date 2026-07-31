@@ -12,17 +12,22 @@ pub use crate::db::navigation_order_repository::NavigationOrderEntry;
 
 use crate::db::settings_repository::NavGroup;
 
+/// `pins` carries the page URL's `v=<source>:<release>` values: a server
+/// function is POSTed to its own endpoint and never sees the page query string,
+/// so the client reads them and passes them down.
 #[server(GetNavigation, "/api")]
-pub async fn get_navigation() -> Result<Vec<NavItem>, ServerFnError> {
+pub async fn get_navigation(pins: Option<Vec<String>>) -> Result<Vec<NavItem>, ServerFnError> {
     use std::collections::HashMap;
 
     let state = expect_context::<AppState>();
 
     let (allowed_levels, include_draft) = request_document_visibility(&state).await?;
+    // Bound outside the join: a temporary would not outlive the future.
+    let pins = crate::server::resolve_release_pins(&state, &pins.unwrap_or_default()).await?;
     let (docs, nav_order_entries) = tokio::join!(
         state
             .document_repo
-            .list_by_access_levels(allowed_levels.as_deref(), include_draft),
+            .list_by_access_levels(allowed_levels.as_deref(), include_draft, &pins),
         state.navigation_order_repo.list_all(),
     );
     let docs = docs.map_err(|e| ServerFnError::new(e.to_string()))?;

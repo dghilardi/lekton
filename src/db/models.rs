@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Represents a documentation entry stored in MongoDB.
 ///
@@ -72,6 +72,22 @@ pub struct Document {
     /// was introduced.
     #[serde(default)]
     pub source_id: Option<String>,
+    /// The product release this document belongs to (e.g. `"1.2.0"`), as tagged
+    /// by `lekton-sync --version`. `None` means the source is not
+    /// release-managed: it has a single, unversioned set of documents, which is
+    /// the pre-versioning behaviour and remains the default.
+    #[serde(default)]
+    pub release: Option<String>,
+    /// `true` when this row belongs to the release currently aliased `latest`
+    /// for its source.
+    ///
+    /// Denormalized from the alias in `source_release_aliases` so the default
+    /// resolution (everything at `latest`) is a single indexed predicate rather
+    /// than an `$or` with one clause per release-managed source — navigation is
+    /// the hottest read path, while alias moves happen once per release.
+    /// Unversioned documents (`release: None`) are always `true`.
+    #[serde(default = "default_true")]
+    pub is_latest: bool,
     /// `true` when the last ingest failed to (re)index this document in
     /// Meilisearch and/or the RAG vector store, so search/chat are known to be
     /// stale relative to MongoDB. Cleared on the next successful ingest. Lets
@@ -267,6 +283,60 @@ pub enum ExtractionStatus {
     Skipped,
 }
 
+/// Identifies the exact release of a document that references an asset.
+///
+/// Legacy string values deserialize as unversioned references so rolling
+/// upgrades remain safe while migration 016 rewrites stored records.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+pub struct DocumentReference {
+    pub slug: String,
+    pub release: Option<String>,
+}
+
+impl DocumentReference {
+    pub fn new(slug: impl Into<String>, release: Option<String>) -> Self {
+        Self {
+            slug: slug.into(),
+            release,
+        }
+    }
+}
+
+impl From<&str> for DocumentReference {
+    fn from(slug: &str) -> Self {
+        Self::new(slug, None)
+    }
+}
+
+impl From<String> for DocumentReference {
+    fn from(slug: String) -> Self {
+        Self::new(slug, None)
+    }
+}
+
+impl<'de> Deserialize<'de> for DocumentReference {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum StoredReference {
+            Legacy(String),
+            ReleaseAware {
+                slug: String,
+                #[serde(default)]
+                release: Option<String>,
+            },
+        }
+
+        match StoredReference::deserialize(deserializer)? {
+            StoredReference::Legacy(slug) => Ok(Self::new(slug, None)),
+            StoredReference::ReleaseAware { slug, release } => Ok(Self::new(slug, release)),
+        }
+    }
+}
+
 /// Represents a binary asset stored in MongoDB with content in S3.
 ///
 /// Assets are identified by a caller-defined key (e.g., "project-a/configs/nginx.conf").
@@ -285,9 +355,9 @@ pub struct Asset {
     pub uploaded_at: DateTime<Utc>,
     /// Identifier of who uploaded the asset.
     pub uploaded_by: String,
-    /// Document slugs that reference this asset (managed during document save).
+    /// Release-aware documents that reference this asset (managed during document save).
     #[serde(default)]
-    pub referenced_by: Vec<String>,
+    pub referenced_by: Vec<DocumentReference>,
     /// SHA-256 hash of the asset content (format: `"sha256:<base64url>"`).
     /// Used for deduplication during sync. `None` for assets uploaded before
     /// content hashing was introduced.
@@ -360,6 +430,10 @@ pub struct IngestRequest {
     /// `.lekton.yml`. Used together with `source_path` to resolve relative
     /// cross-links between documents in the same repository.
     pub source_id: String,
+    /// The release this document belongs to, echoed from the sync that produced
+    /// the upload plan. `None` targets the source's unversioned bucket.
+    #[serde(default)]
+    pub release: Option<String>,
 }
 
 /// The response from a successful ingest operation.
@@ -412,6 +486,8 @@ mod tests {
             is_archived: false,
             source_path: Some("engineering/deployment-guide.md".to_string()),
             source_id: Some("test-source".to_string()),
+            release: None,
+            is_latest: true,
             needs_reindex: false,
             skip_rag: false,
         };
@@ -506,6 +582,8 @@ mod tests {
             is_archived: false,
             source_path: None,
             source_id: None,
+            release: None,
+            is_latest: true,
             needs_reindex: false,
             skip_rag: false,
         };
@@ -603,7 +681,7 @@ mod tests {
             s3_key: "assets/project-a/configs/nginx.conf".to_string(),
             uploaded_at: Utc::now(),
             uploaded_by: "ci-pipeline".to_string(),
-            referenced_by: vec!["deployment-guide".to_string()],
+            referenced_by: vec!["deployment-guide".into()],
             content_hash: Some("sha256:abc123".to_string()),
             extraction_status: ExtractionStatus::Pending,
             extraction_error: None,
@@ -617,6 +695,14 @@ mod tests {
         assert_eq!(deserialized.key, "project-a/configs/nginx.conf");
         assert_eq!(deserialized.size_bytes, 2048);
         assert_eq!(deserialized.referenced_by.len(), 1);
+        assert_eq!(deserialized.referenced_by[0].slug, "deployment-guide");
+        assert_eq!(deserialized.referenced_by[0].release, None);
+    }
+
+    #[test]
+    fn test_asset_deserializes_legacy_slug_references() {
+        let reference: DocumentReference = serde_json::from_str("\"docs/legacy\"").unwrap();
+        assert_eq!(reference, "docs/legacy".into());
     }
 
     #[test]

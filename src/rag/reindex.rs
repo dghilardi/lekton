@@ -50,7 +50,13 @@ pub async fn run_reindex(
     let _guard = crate::jobs::RunningGuard::new(reindex.clone());
 
     // Load all non-archived documents (None = no access level filter, true = include drafts)
-    let documents: Vec<Document> = match document_repo.list_by_access_levels(None, true).await {
+    // Indexing always follows `latest`: older releases mostly repeat content
+    // that is already indexed (identical bodies are deduplicated by hash), so
+    // embedding them would spend vectors on duplicates.
+    let documents: Vec<Document> = match document_repo
+        .list_by_access_levels(None, true, &crate::versioning::ReleasePins::default())
+        .await
+    {
         Ok(docs) => docs.into_iter().filter(|d| !d.is_archived).collect(),
         Err(e) => {
             tracing::error!("RAG reindex: failed to list documents: {e}");
@@ -226,6 +232,8 @@ async fn reindex_items(
                 &doc.access_level,
                 doc.is_draft,
                 &doc.tags,
+                doc.source_id.as_deref(),
+                doc.release.as_deref(),
             )
             .await
         {
@@ -328,6 +336,8 @@ mod tests {
             is_archived: false,
             source_path: None,
             source_id: None,
+            release: None,
+            is_latest: true,
             needs_reindex: false,
             skip_rag,
         }
@@ -341,7 +351,7 @@ mod tests {
             s3_key: format!("assets/{key}"),
             uploaded_at: Utc::now(),
             uploaded_by: "test".to_string(),
-            referenced_by,
+            referenced_by: referenced_by.into_iter().map(Into::into).collect(),
             content_hash: Some("sha256:same".to_string()),
             extraction_status: ExtractionStatus::Done,
             extraction_error: None,
@@ -378,6 +388,7 @@ mod tests {
             &self,
             _: Option<&[String]>,
             _: bool,
+            _: &crate::versioning::ReleasePins,
         ) -> Result<Vec<Document>, AppError> {
             Ok(self.docs.clone())
         }
@@ -392,7 +403,7 @@ mod tests {
         async fn find_by_slug_prefix(&self, _: &str) -> Result<Vec<Document>, AppError> {
             Ok(vec![])
         }
-        async fn set_archived(&self, _: &str, _: bool) -> Result<(), AppError> {
+        async fn set_archived(&self, _: &str, _: Option<&str>, _: bool) -> Result<(), AppError> {
             Ok(())
         }
         async fn rename_slug(&self, _: &str, _: &str) -> Result<(), AppError> {
@@ -461,7 +472,11 @@ mod tests {
                 .push(key.to_string());
             Ok(())
         }
-        async fn set_references(&self, _: &str, _: &[String]) -> Result<Vec<String>, AppError> {
+        async fn set_release_references(
+            &self,
+            _: &crate::db::models::DocumentReference,
+            _: &[String],
+        ) -> Result<Vec<String>, AppError> {
             Ok(vec![])
         }
         async fn list_unfinished_extractions(&self) -> Result<Vec<Asset>, AppError> {
@@ -487,6 +502,8 @@ mod tests {
             _: &str,
             _: bool,
             _: &[String],
+            _: Option<&str>,
+            _: Option<&str>,
         ) -> Result<(), AppError> {
             // Record every attempt, then fail the ones marked to fail.
             self.indexed_slugs.lock().unwrap().push(slug.to_string());

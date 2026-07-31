@@ -402,7 +402,16 @@ mod ssr {
 
         for doc in docs {
             rag_service
-                .index_document(&doc.slug, &doc.title, &doc.content, "public", false, &[])
+                .index_document(
+                    &doc.slug,
+                    &doc.title,
+                    &doc.content,
+                    "public",
+                    false,
+                    &[],
+                    None,
+                    None,
+                )
                 .await
                 .map_err(|e| format!("[{}] index_document '{}': {e}", bench.name, doc.slug))?;
         }

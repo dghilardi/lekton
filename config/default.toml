@@ -35,6 +35,10 @@ metrics = false
 # Learn mode: teach-style personalized lessons grounded on the internal docs.
 # Requires rag = true (retrieval + LLM generation). Off by default.
 learn = false
+# Documentation release versioning: per-source releases, the `latest` alias and
+# the release pin selector. When off, documents resolve exactly as before.
+# Off by default.
+doc_versioning = false
 
 [learn]
 # Learn mode (teach-style lessons). The LLM used for lesson generation falls

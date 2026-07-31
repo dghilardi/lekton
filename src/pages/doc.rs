@@ -31,6 +31,19 @@ pub struct DocPageData {
     /// `None` when the source is unregistered, has no repo URL, or the host is
     /// not a known provider. Shown to all users.
     pub source_view_url: Option<String>,
+    /// The import source owning this document, needed to build a release pin.
+    /// `None` for documents with no source.
+    pub source_id: Option<String>,
+    /// The release being shown. `None` when the source is not release-managed.
+    pub current_release: Option<String>,
+    /// Every release this source has published, newest-published first. Empty
+    /// unless versioning is enabled and the source publishes releases; the
+    /// selector stays hidden below two entries, since a single release is not a
+    /// choice.
+    pub releases: Vec<String>,
+    /// Which release currently carries the `latest` alias, so the selector can
+    /// mark it and link to the unpinned URL for it.
+    pub latest_release: Option<String>,
 }
 
 /// Breadcrumbs component to show document hierarchy based on slug.
@@ -72,9 +85,15 @@ fn Breadcrumbs(slug: String) -> impl IntoView {
                             <li>{label}</li>
                         }.into_any()
                     } else {
+                        let href = format!("/docs/{}", path);
                         view! {
                             <li>
-                                <a href=format!("/docs/{}", path) class="hover:underline">{label}</a>
+                                <a
+                                    href=move || crate::components::pinned_doc_href(&href)
+                                    class="hover:underline"
+                                >
+                                    {label}
+                                </a>
                             </li>
                         }.into_any()
                     }
@@ -207,9 +226,20 @@ pub fn DocPage() -> impl IntoView {
     let params = leptos_router::hooks::use_params_map();
     let slug = move || params.read().get("slug").unwrap_or_default();
 
+    // Release pins live in the URL, so changing one re-runs the resource and the
+    // page re-resolves against the newly pinned release.
+    let query = leptos_router::hooks::use_query_map();
+    let pins = move || {
+        query
+            .read()
+            .get_all(crate::versioning::PIN_PARAM)
+            .unwrap_or_default()
+    };
+
     let doc_resource = LocalResource::new(move || {
         let slug = slug();
-        with_auth_retry(move || get_doc_html(slug.clone()))
+        let pins = pins();
+        with_auth_retry(move || get_doc_html(slug.clone(), Some(pins.clone())))
     });
 
     let show_archive_confirm = RwSignal::new(false);
@@ -253,6 +283,13 @@ pub fn DocPage() -> impl IntoView {
                         // when their source repo is registered with a recognized
                         // provider we link out to the file. Shown to all users.
                         let source_view_url = data.source_view_url.clone();
+
+                        // Release selector inputs; the component hides itself when
+                        // the source has fewer than two releases.
+                        let sel_source_id = data.source_id.clone();
+                        let sel_current = data.current_release.clone();
+                        let sel_releases = data.releases.clone();
+                        let sel_latest = data.latest_release.clone();
 
                         // Upload documents backed by a PDF get a specialized layout
                         // (download card + summary, no table of contents); everything
@@ -298,6 +335,12 @@ pub fn DocPage() -> impl IntoView {
                                     // Breadcrumb row + edit button — single meta strip
                                     <div class="flex items-center justify-between gap-4 mb-5">
                                         <Breadcrumbs slug=current_slug.clone() />
+                                        <crate::components::ReleaseSelector
+                                            source_id=sel_source_id.clone()
+                                            current_release=sel_current.clone()
+                                            releases=sel_releases.clone()
+                                            latest_release=sel_latest.clone()
+                                        />
                                         <Show when=can_edit>
                                             <a
                                                 href=edit_href.clone()

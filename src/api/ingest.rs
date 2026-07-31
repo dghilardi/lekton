@@ -8,9 +8,9 @@ use crate::db::access_level_repository::AccessLevelRepository;
 #[cfg(feature = "ssr")]
 use crate::db::asset_repository::AssetRepository;
 #[cfg(feature = "ssr")]
-use crate::db::document_version_repository::DocumentVersionRepository;
+use crate::db::document_revision_repository::DocumentRevisionRepository;
 #[cfg(feature = "ssr")]
-use crate::db::models::Document;
+use crate::db::models::{Document, DocumentReference};
 #[cfg(feature = "ssr")]
 use crate::db::repository::DocumentRepository;
 #[cfg(feature = "ssr")]
@@ -44,7 +44,10 @@ pub struct IngestContext<'a> {
     pub search: Option<&'a dyn SearchService>,
     pub access_level_repo: &'a dyn AccessLevelRepository,
     pub service_token_repo: &'a dyn ServiceTokenRepository,
-    pub version_repo: &'a dyn DocumentVersionRepository,
+    pub revision_repo: &'a dyn DocumentRevisionRepository,
+    /// Release catalogue, consulted to decide whether the document being
+    /// ingested lands in the release currently aliased `latest`.
+    pub release_repo: &'a dyn crate::db::release_repository::ReleaseRepository,
     pub rag: Option<&'a dyn RagService>,
     /// The legacy global token from the `SERVICE_TOKEN` env var (if set).
     pub legacy_token: Option<&'a str>,
@@ -166,31 +169,48 @@ pub async fn process_ingest(
     // 6. Get old document to diff backlinks and detect changes.
     //    If the slug is new or archived, check for an in-place rename via source_path:
     //    a doc with the same source_path + source_id but a different slug was renamed.
-    let by_slug = ctx.repo.find_by_slug(&request.slug).await?;
-    let (old_doc, old_s3_key_before_rename) =
-        if by_slug.as_ref().map(|d| d.is_archived).unwrap_or(true) {
-            let by_source = ctx.repo.find_by_source_path(&request.source_path).await?;
-            if let Some(found) = by_source {
-                if found.slug != request.slug
-                    && found.source_id.as_deref() == Some(request.source_id.as_str())
-                    && !found.is_archived
-                {
-                    ctx.repo.rename_slug(&found.slug, &request.slug).await?;
-                    let old_key = found.s3_key.clone();
-                    let renamed = Document {
-                        slug: request.slug.clone(),
-                        ..found
-                    };
-                    (Some(renamed), Some(old_key))
-                } else {
-                    (by_slug, None)
-                }
+    //    Scoped to the release being written: `create_or_update` upserts on
+    //    (slug, release), so the existence check has to match the same key or a
+    //    new release would be mistaken for an update of an older one.
+    let by_slug = ctx
+        .repo
+        .find_all_by_slug(&request.slug)
+        .await?
+        .into_iter()
+        .find(|d| d.release.as_deref() == request.release.as_deref());
+    let (old_doc, old_s3_key_before_rename) = if by_slug
+        .as_ref()
+        .map(|d| d.is_archived)
+        .unwrap_or(true)
+    {
+        let by_source = ctx
+            .repo
+            .find_by_source_path_and_release(
+                &request.source_id,
+                &request.source_path,
+                request.release.as_deref(),
+            )
+            .await?;
+        if let Some(found) = by_source {
+            if found.slug != request.slug && !found.is_archived {
+                ctx.repo
+                    .rename_slug_in_release(&found.slug, &request.slug, request.release.as_deref())
+                    .await?;
+                let old_key = found.s3_key.clone();
+                let renamed = Document {
+                    slug: request.slug.clone(),
+                    ..found
+                };
+                (Some(renamed), Some(old_key))
             } else {
                 (by_slug, None)
             }
         } else {
             (by_slug, None)
-        };
+        }
+    } else {
+        (by_slug, None)
+    };
 
     let (old_links, old_backlinks, old_hash) = match &old_doc {
         Some(d) => (
@@ -257,7 +277,7 @@ pub async fn process_ingest(
         && old_s3_key_before_rename.is_none()
         && !old_doc_needs_reindex
     {
-        let s3_key = format!("docs/{}.md", request.slug.replace('/', "_"));
+        let s3_key = document_s3_key(&request.slug, request.release.as_deref());
         return Ok(ProcessIngestOutcome {
             response: IngestResponse {
                 message: "Document unchanged".to_string(),
@@ -275,51 +295,55 @@ pub async fn process_ingest(
     //    so we don't reference a non-existent object.
     let s3_key = if let Some(ref old_key) = old_s3_key_before_rename {
         if content_changed {
-            format!("docs/{}.md", request.slug.replace('/', "_"))
+            document_s3_key(&request.slug, request.release.as_deref())
         } else {
             old_key.clone()
         }
     } else {
-        format!("docs/{}.md", request.slug.replace('/', "_"))
+        document_s3_key(&request.slug, request.release.as_deref())
     };
 
     // Keep raw content for search indexing
     let raw_content = request.content.clone();
 
-    // 8. Create version history before overwriting (only when content changed and old doc exists)
+    // 8. Record a revision of the outgoing content before overwriting it (only
+    //    when the content changed and there is an old document to preserve).
     if content_changed {
         if let Some(ref old) = old_doc {
             if let Some(ref old_content_hash) = old.content_hash {
                 // Copy old content to history
-                let version_num = ctx.version_repo.next_version_number(&request.slug).await?;
+                let revision_num = ctx
+                    .revision_repo
+                    .next_revision_number(&request.slug)
+                    .await?;
                 let history_key = format!(
                     "docs/history/{}/{}.md",
                     request.slug.replace('/', "_"),
-                    version_num
+                    revision_num
                 );
 
                 // Read old content from S3 and copy to history
                 if let Ok(Some(old_content)) = ctx.storage.get_object(&old.s3_key).await {
                     if let Err(e) = ctx.storage.put_object(&history_key, old_content).await {
-                        tracing::warn!("Failed to archive old version to S3: {e}");
+                        tracing::warn!("Failed to archive the previous revision to S3: {e}");
                     }
                 }
 
                 // Determine who is updating (token name or "legacy")
                 let updated_by = resolve_token_name(ctx, &request.service_token).await;
 
-                let version = crate::db::document_version_repository::DocumentVersion {
+                let revision = crate::db::document_revision_repository::DocumentRevision {
                     id: uuid::Uuid::new_v4().to_string(),
                     slug: request.slug.clone(),
-                    version: version_num,
+                    revision: revision_num,
                     content_hash: old_content_hash.clone(),
                     s3_key: history_key,
                     updated_by,
                     created_at: Utc::now(),
                 };
 
-                if let Err(e) = ctx.version_repo.create(version).await {
-                    tracing::warn!("Failed to create version record: {e}");
+                if let Err(e) = ctx.revision_repo.create(revision).await {
+                    tracing::warn!("Failed to create revision record: {e}");
                 }
             }
         }
@@ -331,6 +355,22 @@ pub async fn process_ingest(
     }
 
     // 9. Build the document. `needs_reindex` is set below from the indexing outcome.
+    //
+    // `is_latest` is derived from the alias rather than assumed: re-syncing the
+    // release that currently *is* latest must keep it resolvable, and publishing
+    // an older release must not steal the alias. Unversioned documents are
+    // always latest — they are the only copy their source has.
+    let is_latest = match request.release.as_deref() {
+        None => true,
+        Some(release) => {
+            ctx.release_repo
+                .latest(&request.source_id)
+                .await?
+                .as_deref()
+                == Some(release)
+        }
+    };
+
     let mut doc = Document {
         slug: request.slug.clone(),
         title: request.title,
@@ -351,6 +391,8 @@ pub async fn process_ingest(
         is_archived: false,
         source_path: Some(request.source_path.clone()),
         source_id: Some(request.source_id.clone()),
+        release: request.release.clone(),
+        is_latest,
         needs_reindex: false,
         skip_rag: request.skip_rag,
     };
@@ -359,9 +401,14 @@ pub async fn process_ingest(
     //     document records whether it is in sync with the indexes. A transient
     //     search/embedding outage now leaves a durable `needs_reindex` flag and
     //     an `indexed: false` response instead of silently drifting from MongoDB.
+    //     Search and RAG carry only `latest`, so a write to an older release is
+    //     not indexed at all. Note it must not *delete* either: the slug's index
+    //     entry belongs to whichever release currently is latest, and clearing it
+    //     would take that release's content down with it.
     let search_doc = ctx
         .search
         .as_ref()
+        .filter(|_| doc.is_latest)
         .map(|_| crate::search::client::build_search_document(&doc, &raw_content));
 
     let mut indexed_ok = true;
@@ -373,7 +420,7 @@ pub async fn process_ingest(
         }
     }
 
-    if let Some(rag) = ctx.rag {
+    if let Some(rag) = ctx.rag.filter(|_| doc.is_latest) {
         if doc.skip_rag {
             // Deliberately excluded from RAG (e.g. PDF upload stub — the linked
             // attachment is indexed instead). Delete any chunks a previous
@@ -390,6 +437,8 @@ pub async fn process_ingest(
                 &doc.access_level,
                 doc.is_draft,
                 &doc.tags,
+                doc.source_id.as_deref(),
+                doc.release.as_deref(),
             )
             .await
         {
@@ -415,9 +464,10 @@ pub async fn process_ingest(
     //     document in its `referenced_by` (and drops it where no longer linked).
     //     This drives attachment access levels for RAG and asset-serve access.
     let asset_keys = extract_asset_keys(&raw_content);
+    let document_reference = DocumentReference::new(request.slug.clone(), request.release.clone());
     let assets_to_recompute = match ctx
         .asset_repo
-        .set_references(&request.slug, &asset_keys)
+        .set_release_references(&document_reference, &asset_keys)
         .await
     {
         Ok(affected) => {
@@ -605,6 +655,28 @@ async fn resolve_token_name(ctx: &IngestContext<'_>, raw_token: &str) -> String 
     }
 }
 
+/// The S3 key holding a document's markdown body.
+///
+/// Unversioned documents keep the historical slug-derived key, so nothing needs
+/// migrating. Release-scoped documents get the release in the key: without it,
+/// every release of a slug would share one object and publishing a new release
+/// would overwrite the body that older releases still point at.
+///
+/// Identical content across releases is therefore stored once per release rather
+/// than deduplicated by hash. That trades a few kilobytes of markdown for
+/// leaving the rename, history and unchanged-detection paths untouched.
+#[cfg(feature = "ssr")]
+pub(crate) fn document_s3_key(slug: &str, release: Option<&str>) -> String {
+    let flat_slug = slug.replace('/', "_");
+    match release {
+        None => format!("docs/{flat_slug}.md"),
+        Some(release) => {
+            let flat_release = release.replace('/', "_");
+            format!("docs/{flat_slug}@{flat_release}.md")
+        }
+    }
+}
+
 /// Axum handler for `POST /api/v1/ingest`.
 ///
 /// Only available when the `ssr` feature is enabled.
@@ -613,6 +685,16 @@ pub async fn ingest_handler(
     axum::extract::State(state): axum::extract::State<crate::app::AppState>,
     axum::Json(request): axum::Json<IngestRequest>,
 ) -> Result<axum::Json<IngestResponse>, AppError> {
+    // Same gate as sync: a release-scoped write is meaningless while the reader
+    // side of versioning is off.
+    if request.release.is_some() && !state.features.doc_versioning {
+        return Err(AppError::BadRequest(
+            "documentation versioning is disabled on this instance; \
+             remove --version or enable LKN__FEATURES__DOC_VERSIONING"
+                .into(),
+        ));
+    }
+
     let ctx = IngestContext {
         repo: state.document_repo.as_ref(),
         asset_repo: state.asset_repo.as_ref(),
@@ -620,7 +702,8 @@ pub async fn ingest_handler(
         search: state.search_service.as_deref(),
         access_level_repo: state.access_level_repo.as_ref(),
         service_token_repo: state.service_token_repo.as_ref(),
-        version_repo: state.document_version_repo.as_ref(),
+        revision_repo: state.document_revision_repo.as_ref(),
+        release_repo: state.release_repo.as_ref(),
         rag: state.rag_service.as_deref(),
         legacy_token: Some(&state.service_token),
     };
@@ -829,6 +912,7 @@ mod tests {
             &self,
             allowed_levels: Option<&[String]>,
             include_draft: bool,
+            _pins: &crate::versioning::ReleasePins,
         ) -> Result<Vec<Document>, AppError> {
             Ok(self
                 .documents
@@ -897,7 +981,12 @@ mod tests {
                 .collect())
         }
 
-        async fn set_archived(&self, slug: &str, archived: bool) -> Result<(), AppError> {
+        async fn set_archived(
+            &self,
+            slug: &str,
+            _: Option<&str>,
+            archived: bool,
+        ) -> Result<(), AppError> {
             let mut docs = self.documents.lock().unwrap();
             if let Some(doc) = docs.iter_mut().find(|d| d.slug == slug) {
                 doc.is_archived = archived;
@@ -953,34 +1042,87 @@ mod tests {
             order: 0,
             is_hidden: false,
             skip_rag: false,
+            release: None,
         }
     }
 
-    struct MockVersionRepo;
+    /// No source is release-managed and no alias is set, so every ingest in
+    /// these tests lands in the unversioned bucket — the pre-versioning path.
+    struct MockReleaseRepo;
 
     #[async_trait]
-    impl crate::db::document_version_repository::DocumentVersionRepository for MockVersionRepo {
+    impl crate::db::release_repository::ReleaseRepository for MockReleaseRepo {
+        async fn stage(
+            &self,
+            _: &str,
+            _: &str,
+            _: &[crate::db::release_repository::ReleaseDocumentExpectation],
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn find(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<Option<crate::db::release_repository::SourceRelease>, AppError> {
+            Ok(None)
+        }
+        async fn finalize(&self, _: &str, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn list_by_source(
+            &self,
+            _: &str,
+        ) -> Result<Vec<crate::db::release_repository::SourceRelease>, AppError> {
+            Ok(vec![])
+        }
+        async fn is_release_managed(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        async fn latest(&self, _: &str) -> Result<Option<String>, AppError> {
+            Ok(None)
+        }
+        async fn set_latest_with_pending(
+            &self,
+            _: &str,
+            _: &str,
+            _: &[String],
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn pending_reindex(&self, _: &str) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
+        async fn clear_reindex_pending(&self, _: &str, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+
+    struct MockRevisionRepo;
+
+    #[async_trait]
+    impl crate::db::document_revision_repository::DocumentRevisionRepository for MockRevisionRepo {
         async fn create(
             &self,
-            _: crate::db::document_version_repository::DocumentVersion,
+            _: crate::db::document_revision_repository::DocumentRevision,
         ) -> Result<(), AppError> {
             Ok(())
         }
         async fn find_latest(
             &self,
             _: &str,
-        ) -> Result<Option<crate::db::document_version_repository::DocumentVersion>, AppError>
+        ) -> Result<Option<crate::db::document_revision_repository::DocumentRevision>, AppError>
         {
             Ok(None)
         }
         async fn list_by_slug(
             &self,
             _: &str,
-        ) -> Result<Vec<crate::db::document_version_repository::DocumentVersion>, AppError>
+        ) -> Result<Vec<crate::db::document_revision_repository::DocumentRevision>, AppError>
         {
             Ok(vec![])
         }
-        async fn next_version_number(&self, _: &str) -> Result<u64, AppError> {
+        async fn next_revision_number(&self, _: &str) -> Result<u64, AppError> {
             Ok(1)
         }
     }
@@ -1019,7 +1161,11 @@ mod tests {
         ) -> Result<(), AppError> {
             Ok(())
         }
-        async fn set_references(&self, _: &str, _: &[String]) -> Result<Vec<String>, AppError> {
+        async fn set_release_references(
+            &self,
+            _: &crate::db::models::DocumentReference,
+            _: &[String],
+        ) -> Result<Vec<String>, AppError> {
             Ok(vec![])
         }
         async fn list_unfinished_extractions(
@@ -1091,7 +1237,11 @@ mod tests {
         ) -> Result<(), AppError> {
             Ok(())
         }
-        async fn set_references(&self, _: &str, _: &[String]) -> Result<Vec<String>, AppError> {
+        async fn set_release_references(
+            &self,
+            _: &crate::db::models::DocumentReference,
+            _: &[String],
+        ) -> Result<Vec<String>, AppError> {
             Ok(vec![])
         }
         async fn list_unfinished_extractions(
@@ -1114,7 +1264,8 @@ mod tests {
             search: None,
             access_level_repo: &MockAccessLevelRepo,
             service_token_repo: token_repo,
-            version_repo: &MockVersionRepo,
+            revision_repo: &MockRevisionRepo,
+            release_repo: &MockReleaseRepo,
             rag: None,
             legacy_token,
         }
@@ -1134,6 +1285,8 @@ mod tests {
             _access_level: &str,
             _is_draft: bool,
             _tags: &[String],
+            _: Option<&str>,
+            _: Option<&str>,
         ) -> Result<(), AppError> {
             Err(AppError::Internal("rag down".to_string()))
         }
@@ -1202,6 +1355,8 @@ mod tests {
             _access_level: &str,
             _is_draft: bool,
             _tags: &[String],
+            _: Option<&str>,
+            _: Option<&str>,
         ) -> Result<(), AppError> {
             self.indexed
                 .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -1252,6 +1407,8 @@ mod tests {
             _access_level: &str,
             _is_draft: bool,
             _tags: &[String],
+            _: Option<&str>,
+            _: Option<&str>,
         ) -> Result<(), AppError> {
             Ok(())
         }
@@ -1314,6 +1471,46 @@ mod tests {
         let doc = repo.find_by_slug("docs/hello").await.unwrap().unwrap();
         assert!(!doc.needs_reindex);
         assert!(doc.skip_rag);
+    }
+
+    /// Search and RAG carry only `latest`. Publishing an older release must not
+    /// index it — doing so would put two releases of one slug in the index — and
+    /// must not delete either, since the existing entry belongs to whichever
+    /// release currently is latest.
+    #[tokio::test]
+    async fn ingesting_a_non_latest_release_does_not_touch_the_indexes() {
+        use std::sync::atomic::Ordering::SeqCst;
+
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let mut ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+        let rag = RecordingRagService::default();
+        ctx.rag = Some(&rag);
+
+        // The mock release repo reports no alias, so a release-scoped write is by
+        // definition not latest.
+        let mut request = make_request("valid-token", "docs/hello");
+        request.release = Some("1.0.0".to_string());
+        let outcome = process_ingest(&ctx, request).await.unwrap();
+
+        assert!(
+            !rag.indexed.load(SeqCst),
+            "an older release must not be indexed alongside latest"
+        );
+        assert!(
+            !rag.deleted.load(SeqCst),
+            "and must not delete the entry that belongs to latest"
+        );
+
+        let doc = repo.find_by_slug("docs/hello").await.unwrap().unwrap();
+        assert_eq!(doc.release.as_deref(), Some("1.0.0"));
+        assert!(!doc.is_latest, "no alias points here, so it is not latest");
+        assert!(
+            !doc.needs_reindex,
+            "skipping by design is not drift, so the document must not be flagged stale"
+        );
+        assert!(outcome.response.indexed);
     }
 
     #[tokio::test]
@@ -1438,6 +1635,8 @@ mod tests {
             is_archived: false,
             source_path: Some("docs/hello.md".to_string()),
             source_id: Some("test-source-id".to_string()),
+            release: None,
+            is_latest: true,
             needs_reindex: false,
             skip_rag: false,
         })
@@ -1450,7 +1649,7 @@ mod tests {
             s3_key: "assets/pdfs/hello.pdf".to_string(),
             uploaded_at: Utc::now(),
             uploaded_by: "tester@example.com".to_string(),
-            referenced_by: vec!["docs/hello".to_string()],
+            referenced_by: vec!["docs/hello".into()],
             content_hash: None,
             extraction_status: ExtractionStatus::Done,
             extraction_error: None,
@@ -1563,7 +1762,11 @@ mod tests {
 
         // Should have only one document
         let docs = repo
-            .list_by_access_levels(Some(&["internal".to_string()]), false)
+            .list_by_access_levels(
+                Some(&["internal".to_string()]),
+                false,
+                &crate::versioning::ReleasePins::default(),
+            )
             .await
             .unwrap();
         assert_eq!(docs.len(), 1);
@@ -2000,7 +2203,9 @@ mod tests {
         let mut req_a = make_request("valid-token", "docs/migrated");
         req_a.source_id = "source-a".to_string();
         process_ingest(&ctx, req_a).await.unwrap();
-        repo.set_archived("docs/migrated", true).await.unwrap();
+        repo.set_archived("docs/migrated", None, true)
+            .await
+            .unwrap();
 
         // source-b can now claim the slug (the document was archived by source-a)
         let mut req_b = make_request("valid-token", "docs/migrated");
@@ -2102,6 +2307,48 @@ mod tests {
         assert_eq!(
             got, "sha256:zwiTusSDUfQZa8E3I2cGxlQ21XSoiQW4u3R8GgXT0bc",
             "document metadata hash wire contract with CLI"
+        );
+    }
+
+    // ── S3 key derivation ────────────────────────────────────────────────
+
+    #[test]
+    fn unversioned_documents_keep_the_historical_key() {
+        assert_eq!(
+            document_s3_key("guides/intro", None),
+            "docs/guides_intro.md",
+            "changing the key for unversioned documents would orphan every stored object"
+        );
+    }
+
+    /// The bug this guards: with a slug-only key, publishing 1.2.0 would
+    /// overwrite the body that the 1.0.0 row still points at.
+    #[test]
+    fn releases_of_one_slug_get_distinct_keys() {
+        let a = document_s3_key("api/auth", Some("1.0.0"));
+        let b = document_s3_key("api/auth", Some("1.2.0"));
+
+        assert_ne!(a, b, "two releases must never share one S3 object");
+        assert_eq!(a, "docs/api_auth@1.0.0.md");
+        assert_eq!(b, "docs/api_auth@1.2.0.md");
+    }
+
+    #[test]
+    fn the_same_release_of_a_slug_is_stable() {
+        assert_eq!(
+            document_s3_key("api/auth", Some("1.0.0")),
+            document_s3_key("api/auth", Some("1.0.0")),
+            "re-ingesting a release must target the same object, not accumulate copies"
+        );
+    }
+
+    /// Release tags are free-form, so a slash in one must not create a nested
+    /// key that collides with another document's path.
+    #[test]
+    fn slashes_in_a_release_tag_are_flattened() {
+        assert_eq!(
+            document_s3_key("api/auth", Some("release/2024-06")),
+            "docs/api_auth@release_2024-06.md"
         );
     }
 }

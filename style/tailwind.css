@@ -863,6 +863,35 @@ html.lekton-play .lekton-content-enter {
     animation-play-state: running;
 }
 
+/* Release pin strip — horizontal scroll for the chip row.
+ * Chips keep their natural width (like browser tabs) rather than shrinking to
+ * illegibility, so the row scrolls. The edge fades signal that there is more
+ * off-screen, which a hairline scrollbar in a 2rem-tall strip would not.
+ * The counter/reset control sits outside the scroller, so nothing is ever
+ * reachable only by scrolling. */
+.lekton-pin-scroll {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    -webkit-mask-image: linear-gradient(
+        to right,
+        transparent 0,
+        black 0.75rem,
+        black calc(100% - 0.75rem),
+        transparent 100%
+    );
+    mask-image: linear-gradient(
+        to right,
+        transparent 0,
+        black 0.75rem,
+        black calc(100% - 0.75rem),
+        transparent 100%
+    );
+}
+
+.lekton-pin-scroll::-webkit-scrollbar {
+    display: none;
+}
+
 /* Splash screen — shown while the access token is being validated.
  * Uses a CSS visibility transition so the fade-out completes before
  * the element stops intercepting events, with no JS timer needed. */

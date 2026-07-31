@@ -218,21 +218,28 @@ pub async fn process_serve_asset(
             return Err(AppError::Forbidden("Asset access denied".into()));
         }
     } else {
+        let slugs: Vec<_> = asset
+            .referenced_by
+            .iter()
+            .map(|reference| reference.slug.clone())
+            .collect();
         let documents: HashMap<_, _> = document_repo
-            .find_by_slugs(&asset.referenced_by)
+            .find_by_slugs(&slugs)
             .await?
             .into_iter()
-            .map(|doc| (doc.slug.clone(), doc))
+            .map(|doc| ((doc.slug.clone(), doc.release.clone()), doc))
             .collect();
-        let accessible = asset.referenced_by.iter().any(|slug| {
-            documents.get(slug).is_some_and(|doc| {
-                crate::app::doc_is_accessible(
-                    &doc.access_level,
-                    doc.is_draft,
-                    allowed_levels,
-                    include_draft,
-                )
-            })
+        let accessible = asset.referenced_by.iter().any(|reference| {
+            documents
+                .get(&(reference.slug.clone(), reference.release.clone()))
+                .is_some_and(|doc| {
+                    crate::app::doc_is_accessible(
+                        &doc.access_level,
+                        doc.is_draft,
+                        allowed_levels,
+                        include_draft,
+                    )
+                })
         });
         if !accessible {
             return Err(AppError::Forbidden("Asset access denied".into()));
@@ -845,6 +852,7 @@ mod tests {
             &self,
             _: Option<&[String]>,
             _: bool,
+            _: &crate::versioning::ReleasePins,
         ) -> Result<Vec<Document>, AppError> {
             unimplemented!()
         }
@@ -859,7 +867,7 @@ mod tests {
         async fn find_by_slug_prefix(&self, _: &str) -> Result<Vec<Document>, AppError> {
             unimplemented!()
         }
-        async fn set_archived(&self, _: &str, _: bool) -> Result<(), AppError> {
+        async fn set_archived(&self, _: &str, _: Option<&str>, _: bool) -> Result<(), AppError> {
             unimplemented!()
         }
         async fn rename_slug(&self, _: &str, _: &str) -> Result<(), AppError> {
@@ -963,21 +971,21 @@ mod tests {
             Ok(())
         }
 
-        async fn set_references(
+        async fn set_release_references(
             &self,
-            source_slug: &str,
+            source: &crate::db::models::DocumentReference,
             keys: &[String],
         ) -> Result<Vec<String>, AppError> {
             let mut assets = self.assets.lock().unwrap();
             let mut affected = Vec::new();
             for a in assets.iter_mut() {
                 let referenced = keys.contains(&a.key);
-                let has = a.referenced_by.iter().any(|s| s == source_slug);
+                let has = a.referenced_by.iter().any(|reference| reference == source);
                 if referenced && !has {
-                    a.referenced_by.push(source_slug.to_string());
+                    a.referenced_by.push(source.clone());
                     affected.push(a.key.clone());
                 } else if !referenced && has {
-                    a.referenced_by.retain(|s| s != source_slug);
+                    a.referenced_by.retain(|reference| reference != source);
                     affected.push(a.key.clone());
                 }
             }
@@ -1257,7 +1265,7 @@ mod tests {
         // Simulate referenced_by being set (as Phase 5b would do)
         {
             let mut assets = repo.assets.lock().unwrap();
-            assets[0].referenced_by = vec!["deployment-guide".to_string()];
+            assets[0].referenced_by = vec!["deployment-guide".into()];
         }
 
         // Upload replacement
@@ -1278,7 +1286,7 @@ mod tests {
 
         let asset = repo.find_by_key("logo.png").await.unwrap().unwrap();
         assert_eq!(asset.size_bytes, 4);
-        assert_eq!(asset.referenced_by, vec!["deployment-guide".to_string()]);
+        assert_eq!(asset.referenced_by, vec!["deployment-guide".into()]);
     }
 
     #[tokio::test]
@@ -1346,6 +1354,8 @@ mod tests {
                 is_archived: false,
                 source_path: None,
                 source_id: None,
+                release: None,
+                is_latest: true,
                 needs_reindex: false,
                 skip_rag: false,
             },
@@ -1369,6 +1379,8 @@ mod tests {
                 is_archived: false,
                 source_path: None,
                 source_id: None,
+                release: None,
+                is_latest: true,
                 needs_reindex: false,
                 skip_rag: false,
             },
@@ -1381,7 +1393,7 @@ mod tests {
             s3_key: "assets/docs/shared.pdf".to_string(),
             uploaded_at: Utc::now(),
             uploaded_by: "ci-bot".to_string(),
-            referenced_by: vec!["docs/a".to_string(), "docs/b".to_string()],
+            referenced_by: vec!["docs/a".into(), "docs/b".into()],
             content_hash: None,
             extraction_status: crate::db::models::ExtractionStatus::Pending,
             extraction_error: None,
@@ -1854,6 +1866,8 @@ mod tests {
             is_archived: false,
             source_path: None,
             source_id: None,
+            release: None,
+            is_latest: true,
             needs_reindex: false,
             skip_rag: false,
         }
@@ -1867,7 +1881,7 @@ mod tests {
             s3_key: format!("assets/{}", key),
             uploaded_at: Utc::now(),
             uploaded_by: uploaded_by.to_string(),
-            referenced_by,
+            referenced_by: referenced_by.into_iter().map(Into::into).collect(),
             content_hash: None,
             extraction_status: crate::db::models::ExtractionStatus::Pending,
             extraction_error: None,
@@ -2014,6 +2028,43 @@ mod tests {
             &storage,
             "img.png",
             Some(&allowed),
+            false,
+            None,
+        )
+        .await;
+
+        assert!(matches!(result.unwrap_err(), AppError::Forbidden(_)));
+    }
+
+    #[tokio::test]
+    async fn test_serve_asset_checks_the_referenced_release_not_another_slug_match() {
+        let asset_repo = MockAssetRepo::new();
+        let storage = MockStorage::new();
+
+        let mut asset = asset_with_refs("img.png", "ci-bot", vec![]);
+        asset.referenced_by = vec![crate::db::models::DocumentReference::new(
+            "guide",
+            Some("2.0.0".to_string()),
+        )];
+        asset_repo.assets.lock().unwrap().push(asset.clone());
+        storage
+            .objects
+            .lock()
+            .unwrap()
+            .insert(asset.s3_key.clone(), b"data".to_vec());
+
+        let mut public_release = test_doc("guide", "public", false);
+        public_release.release = Some("1.0.0".to_string());
+        let mut internal_release = test_doc("guide", "internal", false);
+        internal_release.release = Some("2.0.0".to_string());
+        let doc_repo = MockDocumentRepo::with(vec![public_release, internal_release]);
+
+        let result = process_serve_asset(
+            &asset_repo,
+            &doc_repo,
+            &storage,
+            "img.png",
+            Some(&["public".to_string()]),
             false,
             None,
         )

@@ -29,7 +29,21 @@ pub fn MarkdownContent(html: String) -> impl IntoView {
         Effect::new(move |_| {
             let _ = js_sys::eval("window.initCodeBlocks && window.initCodeBlocks()");
         });
+
+        // Rendered markdown arrives as HTML, outside Leptos' typed link
+        // components. Keep its internal documentation links in the same pinned
+        // release view as the surrounding navigation shell.
+        Effect::new(move |_| {
+            let _ = js_sys::eval(
+                "(()=>{const pins=new URLSearchParams(location.search).getAll('v');\
+                 document.querySelectorAll('[data-lekton-markdown] a[href]').forEach(a=>{\
+                 const u=new URL(a.getAttribute('href'),location.href);\
+                 if(u.origin!==location.origin||!u.pathname.startsWith('/docs/'))return;\
+                 u.searchParams.delete('v');pins.forEach(v=>u.searchParams.append('v',v));\
+                 a.setAttribute('href',u.pathname+u.search+u.hash)})})()",
+            );
+        });
     }
 
-    view! { <div inner_html=html /> }
+    view! { <div data-lekton-markdown inner_html=html /> }
 }

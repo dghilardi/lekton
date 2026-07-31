@@ -39,13 +39,13 @@ pub fn NavigationItem(item: NavItem, #[prop(optional)] level: u32) -> impl IntoV
         }
     } else {
         let location = leptos_router::hooks::use_location();
-        let href = format!("/docs/{}", slug);
-        let href_for_check = href.clone();
+        let path = format!("/docs/{}", slug);
+        let href_for_check = path.clone();
         let is_active = move || location.pathname.get() == href_for_check;
         view! {
             <li>
                 <a
-                    href=href
+                    href=move || crate::components::pinned_doc_href(&path)
                     aria-current=move || if is_active() { Some("page") } else { None }
                     class="hover:bg-base-200/50 hover:text-primary transition-colors text-base-content/70 text-sm py-1.5"
                 >
@@ -59,7 +59,15 @@ pub fn NavigationItem(item: NavItem, #[prop(optional)] level: u32) -> impl IntoV
 /// Navigation tree component that fetches and renders the sidebar navigation.
 #[component]
 pub fn NavigationTree() -> impl IntoView {
-    let nav_resource = LocalResource::new(|| with_auth_retry(get_navigation));
+    // The pins are part of the URL, so the tree re-resolves whenever they change.
+    let query = leptos_router::hooks::use_query_map();
+    let nav_resource = LocalResource::new(move || {
+        let pins = query
+            .read()
+            .get_all(crate::versioning::PIN_PARAM)
+            .unwrap_or_default();
+        with_auth_retry(move || get_navigation(Some(pins.clone())))
+    });
 
     let location = leptos_router::hooks::use_location();
 

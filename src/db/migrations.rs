@@ -75,6 +75,26 @@ mod inner {
                 "davide.ghilardi@comelit.it",
                 add_document_sources_index,
             )
+            .register(
+                "014_add_document_release_fields",
+                "davide.ghilardi@comelit.it",
+                add_document_release_fields,
+            )
+            .register(
+                "015_rename_document_versions_to_revisions",
+                "davide.ghilardi@comelit.it",
+                rename_document_versions_to_revisions,
+            )
+            .register(
+                "016_make_asset_references_release_aware",
+                "davide.ghilardi@comelit.it",
+                make_asset_references_release_aware,
+            )
+            .register(
+                "017_add_release_finalization_state",
+                "davide.ghilardi@comelit.it",
+                add_release_finalization_state,
+            )
     }
 
     fn format_duplicate_group_id(id: &bson::Bson) -> String {
@@ -709,6 +729,242 @@ mod inner {
                     .keys(bson::doc! { "id": 1 })
                     .options(IndexOptions::builder().unique(true).build())
                     .build(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Introduces per-source release versioning on `documents`.
+    ///
+    /// Backfills `is_latest: true` on every existing document (they keep
+    /// `release` absent, i.e. "not release-managed"), then replaces the unique
+    /// `slug` index created by migration 008 with a unique `(slug, release)`
+    /// index — `slug` alone can no longer be unique once one slug exists in
+    /// several releases.
+    ///
+    /// The invariant that a slug is owned by exactly one source, previously
+    /// implied by the unique `slug` index, is enforced from here on by a
+    /// pre-upload check in the sync API.
+    ///
+    /// Runs the same duplicate pre-flight as 008 so a pre-existing duplicate
+    /// surfaces as an actionable message rather than an opaque E11000 from the
+    /// index build.
+    async fn add_document_release_fields(db: Database) -> Result<(), mongodb::error::Error> {
+        use mongodb::options::IndexOptions;
+        use mongodb::IndexModel;
+
+        let col = db.collection::<bson::Document>("documents");
+
+        // 1. Backfill: every existing document belongs to its source's `latest`.
+        col.update_many(
+            bson::doc! { "is_latest": { "$exists": false } },
+            bson::doc! { "$set": { "is_latest": true } },
+        )
+        .await?;
+
+        // 2. Pre-flight on the compound key before building the unique index.
+        let pipeline = vec![
+            bson::doc! { "$group": {
+                "_id": { "slug": "$slug", "release": "$release" },
+                "count": { "$sum": 1 },
+            }},
+            bson::doc! { "$match": { "count": { "$gt": 1 } } },
+            bson::doc! { "$sort": { "_id": 1 } },
+        ];
+        let mut cursor = col.aggregate(pipeline).await?;
+        let mut duplicates: Vec<String> = Vec::new();
+        while let Some(doc) = cursor.try_next().await? {
+            if let Some(id) = doc.get("_id") {
+                duplicates.push(format_duplicate_group_id(id));
+            }
+        }
+        if !duplicates.is_empty() {
+            return Err(mongodb::error::Error::custom(format!(
+                "Migration 014 pre-flight failed: {} duplicate (slug, release) pair(s) found \
+                 in the 'documents' collection. Resolve them before restarting, then retry.\n\
+                 Duplicates: {}",
+                duplicates.len(),
+                duplicates.join(", ")
+            )));
+        }
+
+        // 3. Drop the now-invalid unique index on `slug` alone. Checked rather
+        //    than assumed so a retry after a partial run is a no-op instead of
+        //    an IndexNotFound failure.
+        let existing = col.list_index_names().await?;
+        if existing.iter().any(|name| name == "slug_1") {
+            col.drop_index("slug_1").await?;
+        }
+
+        // 4. Unique per release: one document per slug within a given release.
+        col.create_index(
+            IndexModel::builder()
+                .keys(bson::doc! { "slug": 1, "release": 1 })
+                .options(IndexOptions::builder().unique(true).build())
+                .build(),
+        )
+        .await?;
+
+        // 5. Sync path: scope a source's documents to one release.
+        col.create_index(
+            IndexModel::builder()
+                .keys(bson::doc! { "source_id": 1, "release": 1 })
+                .build(),
+        )
+        .await?;
+
+        // 6. Default resolution path (everything at `latest`).
+        col.create_index(
+            IndexModel::builder()
+                .keys(bson::doc! { "is_latest": 1, "source_id": 1 })
+                .build(),
+        )
+        .await?;
+
+        // 7. Release catalogue and the movable `latest` alias.
+        db.collection::<bson::Document>("source_releases")
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "source_id": 1, "release": 1 })
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+            )
+            .await?;
+
+        db.collection::<bson::Document>("source_release_aliases")
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "source_id": 1 })
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    /// Renames the editorial history to `document_revisions`, with `version`
+    /// becoming `revision`.
+    ///
+    /// The two concepts were both called "version": the per-slug counter bumped
+    /// on every content change, and the product release a document belongs to.
+    /// Leaving the collection named `document_versions` next to a `release` field
+    /// keeps that ambiguity alive for anyone reading the database directly.
+    ///
+    /// Idempotent and safe on a database that never wrote history: the rename is
+    /// skipped when the old collection is absent, and the field rename touches
+    /// only documents that still carry `version`.
+    async fn rename_document_versions_to_revisions(
+        db: Database,
+    ) -> Result<(), mongodb::error::Error> {
+        use mongodb::options::IndexOptions;
+        use mongodb::IndexModel;
+
+        let names = db.list_collection_names().await?;
+        let old_exists = names.iter().any(|n| n == "document_versions");
+        let new_exists = names.iter().any(|n| n == "document_revisions");
+
+        if old_exists && !new_exists {
+            // `renameCollection` runs against the admin database.
+            let admin = db.client().database("admin");
+            let db_name = db.name();
+            admin
+                .run_command(bson::doc! {
+                    "renameCollection": format!("{db_name}.document_versions"),
+                    "to": format!("{db_name}.document_revisions"),
+                })
+                .await?;
+        }
+
+        let col = db.collection::<bson::Document>("document_revisions");
+
+        // Drop the indexes migration 011 built on `version` *before* renaming the
+        // field. They travelled with the collection rename, and `$rename` is
+        // applied document by document: the moment two revisions of one slug have
+        // lost `version`, both index as `{slug, version: null}` and the unique
+        // index rejects the write, aborting the rename half-way.
+        for stale in ["slug_1_version_1", "slug_1_version_-1"] {
+            if col.list_index_names().await?.iter().any(|n| n == stale) {
+                col.drop_index(stale).await?;
+            }
+        }
+
+        // Only rows that still carry the old field, so a retry after a partial
+        // run finishes the job instead of failing on the ones already converted.
+        col.update_many(
+            bson::doc! { "version": { "$exists": true } },
+            bson::doc! { "$rename": { "version": "revision" } },
+        )
+        .await?;
+
+        col.create_index(
+            IndexModel::builder()
+                .keys(bson::doc! { "slug": 1, "revision": 1 })
+                .options(IndexOptions::builder().unique(true).build())
+                .build(),
+        )
+        .await?;
+        col.create_index(
+            IndexModel::builder()
+                .keys(bson::doc! { "slug": 1, "revision": -1 })
+                .build(),
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    /// Rewrites legacy asset references from a bare document slug to the exact
+    /// unversioned document identity. New release-managed references are stored
+    /// as `{ slug, release }`, so assets shared by several releases can derive
+    /// access from the intended documents instead of an arbitrary slug match.
+    async fn make_asset_references_release_aware(
+        db: Database,
+    ) -> Result<(), mongodb::error::Error> {
+        db.collection::<bson::Document>("assets")
+            .update_many(
+                bson::doc! { "referenced_by": { "$type": "array" } },
+                vec![bson::doc! {
+                    "$set": {
+                        "referenced_by": {
+                            "$map": {
+                                "input": { "$ifNull": ["$referenced_by", []] },
+                                "as": "reference",
+                                "in": {
+                                    "$cond": [
+                                        { "$eq": [{ "$type": "$$reference" }, "string"] },
+                                        { "slug": "$$reference", "release": bson::Bson::Null },
+                                        "$$reference",
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Existing catalogue rows were created only after a sync call completed,
+    /// so preserve them as finalized while adding the staged-release manifest.
+    async fn add_release_finalization_state(db: Database) -> Result<(), mongodb::error::Error> {
+        db.collection::<bson::Document>("source_releases")
+            .update_many(
+                bson::doc! {
+                    "$or": [
+                        { "finalized_at": { "$exists": false } },
+                        { "expected_documents": { "$exists": false } },
+                    ]
+                },
+                vec![bson::doc! {
+                    "$set": {
+                        "finalized_at": { "$ifNull": ["$finalized_at", "$last_synced_at"] },
+                        "expected_documents": {
+                            "$ifNull": ["$expected_documents", []]
+                        },
+                    }
+                }],
             )
             .await?;
         Ok(())

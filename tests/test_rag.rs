@@ -77,9 +77,18 @@ mod rag_integration {
         let slug = "test-doc";
         let content = "The capital of France is Paris. Paris is known for the Eiffel Tower.";
 
-        svc.index_document(slug, "Test Document", content, "public", false, &[])
-            .await
-            .expect("index_document failed");
+        svc.index_document(
+            slug,
+            "Test Document",
+            content,
+            "public",
+            false,
+            &[],
+            None,
+            None,
+        )
+        .await
+        .expect("index_document failed");
 
         // Embed the query with the same mock service and search
         let query = content.to_string();

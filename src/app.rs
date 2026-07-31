@@ -56,6 +56,7 @@ pub struct FeatureFlags {
     pub document_upload: bool,
     pub sources: bool,
     pub learn: bool,
+    pub doc_versioning: bool,
 }
 
 /// Newtype wrapper for the feature-flags signal, used as Leptos context.
@@ -108,6 +109,9 @@ use std::sync::Arc;
 #[derive(Clone, axum::extract::FromRef)]
 pub struct AppState {
     pub document_repo: Arc<dyn crate::db::repository::DocumentRepository>,
+    /// Release catalogue and the `latest` alias, backing the version selector
+    /// and the release-scoped sync.
+    pub release_repo: Arc<dyn crate::db::release_repository::ReleaseRepository>,
     pub schema_repo: Arc<dyn crate::db::schema_repository::SchemaRepository>,
     pub settings_repo: Arc<dyn crate::db::settings_repository::SettingsRepository>,
     pub asset_repo: Arc<dyn crate::db::asset_repository::AssetRepository>,
@@ -115,8 +119,8 @@ pub struct AppState {
     pub search_service: Option<Arc<dyn crate::search::client::SearchService>>,
     pub service_token: String,
     pub service_token_repo: Arc<dyn crate::db::service_token_repository::ServiceTokenRepository>,
-    pub document_version_repo:
-        Arc<dyn crate::db::document_version_repository::DocumentVersionRepository>,
+    pub document_revision_repo:
+        Arc<dyn crate::db::document_revision_repository::DocumentRevisionRepository>,
     pub prompt_repo: Arc<dyn crate::db::prompt_repository::PromptRepository>,
     pub prompt_version_repo: Arc<dyn crate::db::prompt_version_repository::PromptVersionRepository>,
     pub user_prompt_preference_repo:

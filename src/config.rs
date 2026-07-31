@@ -96,6 +96,13 @@ pub struct FeaturesConfig {
     /// default — opt in with `LKN__FEATURES__LEARN=true`.
     #[serde(default)]
     pub learn: bool,
+    /// Documentation release versioning: per-source releases, the `latest`
+    /// alias, and the release pin selector. When off, documents resolve exactly
+    /// as before (every row is `is_latest`) and the sync API rejects
+    /// release-scoped requests. Off by default — opt in with
+    /// `LKN__FEATURES__DOC_VERSIONING=true`.
+    #[serde(default)]
+    pub doc_versioning: bool,
 }
 
 fn default_true() -> bool {
@@ -117,6 +124,7 @@ impl Default for FeaturesConfig {
             sources: false,
             metrics: false,
             learn: false,
+            doc_versioning: false,
         }
     }
 }

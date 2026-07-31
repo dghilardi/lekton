@@ -618,22 +618,29 @@ async fn attachment_ref_is_accessible(
         return Ok(is_admin || user_ctx.user.email == asset.uploaded_by);
     }
 
+    let slugs: Vec<_> = asset
+        .referenced_by
+        .iter()
+        .map(|reference| reference.slug.clone())
+        .collect();
     let documents: HashMap<_, _> = state
         .document_repo
-        .find_by_slugs(&asset.referenced_by)
+        .find_by_slugs(&slugs)
         .await?
         .into_iter()
-        .map(|document| (document.slug.clone(), document))
+        .map(|document| ((document.slug.clone(), document.release.clone()), document))
         .collect();
 
-    Ok(asset.referenced_by.iter().any(|slug| {
-        documents.get(slug).is_some_and(|doc| {
-            crate::app::doc_is_accessible(
-                &doc.access_level,
-                doc.is_draft,
-                allowed_levels,
-                include_draft,
-            )
-        })
+    Ok(asset.referenced_by.iter().any(|reference| {
+        documents
+            .get(&(reference.slug.clone(), reference.release.clone()))
+            .is_some_and(|doc| {
+                crate::app::doc_is_accessible(
+                    &doc.access_level,
+                    doc.is_draft,
+                    allowed_levels,
+                    include_draft,
+                )
+            })
     }))
 }

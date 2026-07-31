@@ -317,7 +317,12 @@ fn LessonCard(lesson: Lesson, persist: bool) -> impl IntoView {
                                 None => format!("/docs/{}", c.document_slug),
                             };
                             view! {
-                                <a href=href class="link link-primary mr-2">{c.document_slug}</a>
+                                <a
+                                    href=move || crate::components::pinned_doc_href(&href)
+                                    class="link link-primary mr-2"
+                                >
+                                    {c.document_slug}
+                                </a>
                             }
                         }).collect::<Vec<_>>()}
                     </div>
@@ -391,7 +396,7 @@ fn QuizWidget(lesson_id: String, quiz: Vec<QuizQuestion>, persist: bool) -> impl
                                 type="radio"
                                 class="radio radio-sm"
                                 name=format!("{}-q{}", "quiz", qi)
-                                disabled=move || graded()
+                                disabled=move || grade.get().is_some()
                                 prop:checked=move || answers.get().get(qi).copied().flatten() == Some(oi)
                                 on:change=move |_| answers.update(|v| v[qi] = Some(oi))
                             />

@@ -33,6 +33,7 @@ pub mod static_assets;
 pub mod storage;
 #[cfg(test)]
 pub mod test_utils;
+pub mod versioning;
 
 /// Client-side hydration entry point.
 ///

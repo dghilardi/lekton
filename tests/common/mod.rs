@@ -16,8 +16,8 @@ use lekton::auth::token_service::TokenService;
 use lekton::db::access_level_repository::{AccessLevelRepository, MongoAccessLevelRepository};
 use lekton::db::asset_repository::{AssetRepository, MongoAssetRepository};
 use lekton::db::auth_models::User;
-use lekton::db::document_version_repository::{
-    DocumentVersionRepository, MongoDocumentVersionRepository,
+use lekton::db::document_revision_repository::{
+    DocumentRevisionRepository, MongoDocumentRevisionRepository,
 };
 use lekton::db::documentation_feedback_repository::{
     DocumentationFeedbackRepository, MongoDocumentationFeedbackRepository,
@@ -30,6 +30,7 @@ use lekton::db::prompt_repository::{MongoPromptRepository, PromptRepository};
 use lekton::db::prompt_version_repository::{
     MongoPromptVersionRepository, PromptVersionRepository,
 };
+use lekton::db::release_repository::{MongoReleaseRepository, ReleaseRepository};
 use lekton::db::repository::{DocumentRepository, MongoDocumentRepository};
 use lekton::db::schema_repository::{MongoSchemaRepository, SchemaRepository};
 use lekton::db::service_token_repository::{MongoServiceTokenRepository, ServiceTokenRepository};
@@ -51,14 +52,18 @@ pub struct TestEnv {
     _minio: ContainerAsync<MinIO>,
     _meili: ContainerAsync<Meilisearch>,
     pub router: Router,
+    /// Raw handle to the test database. Migrations are **not** applied by
+    /// `start()`, so a test that needs them runs `build_plan()` itself.
+    pub db: mongodb::Database,
     pub repo: Arc<dyn DocumentRepository>,
+    pub release_repo: Arc<dyn ReleaseRepository>,
     pub schema_repo: Arc<dyn SchemaRepository>,
     pub settings_repo: Arc<dyn SettingsRepository>,
     pub asset_repo: Arc<dyn AssetRepository>,
     pub user_repo: Arc<dyn UserRepository>,
     pub access_level_repo: Arc<dyn AccessLevelRepository>,
     pub service_token_repo: Arc<dyn ServiceTokenRepository>,
-    pub document_version_repo: Arc<dyn DocumentVersionRepository>,
+    pub document_revision_repo: Arc<dyn DocumentRevisionRepository>,
     pub prompt_repo: Arc<dyn PromptRepository>,
     pub prompt_version_repo: Arc<dyn PromptVersionRepository>,
     pub user_prompt_preference_repo: Arc<dyn UserPromptPreferenceRepository>,
@@ -95,6 +100,8 @@ impl TestEnv {
             .expect("Failed to connect to MongoDB");
         let mongo_db = mongo_client.database("lekton_test");
         let repo: Arc<dyn DocumentRepository> = Arc::new(MongoDocumentRepository::new(&mongo_db));
+        let release_repo: Arc<dyn ReleaseRepository> =
+            Arc::new(MongoReleaseRepository::new(&mongo_db));
         let schema_repo: Arc<dyn SchemaRepository> =
             Arc::new(MongoSchemaRepository::new(&mongo_db));
         let settings_repo: Arc<dyn SettingsRepository> =
@@ -105,8 +112,8 @@ impl TestEnv {
             Arc::new(MongoAccessLevelRepository::new(&mongo_db));
         let service_token_repo: Arc<dyn ServiceTokenRepository> =
             Arc::new(MongoServiceTokenRepository::new(&mongo_db));
-        let document_version_repo: Arc<dyn DocumentVersionRepository> =
-            Arc::new(MongoDocumentVersionRepository::new(&mongo_db));
+        let document_revision_repo: Arc<dyn DocumentRevisionRepository> =
+            Arc::new(MongoDocumentRevisionRepository::new(&mongo_db));
         let prompt_repo: Arc<dyn PromptRepository> =
             Arc::new(MongoPromptRepository::new(&mongo_db));
         let prompt_version_repo: Arc<dyn PromptVersionRepository> =
@@ -186,6 +193,7 @@ impl TestEnv {
 
         let app_state = AppState {
             document_repo: repo.clone(),
+            release_repo: release_repo.clone(),
             schema_repo: schema_repo.clone(),
             settings_repo: settings_repo.clone(),
             asset_repo: asset_repo.clone(),
@@ -203,10 +211,11 @@ impl TestEnv {
                 document_upload: false,
                 sources: false,
                 learn: false,
+                doc_versioning: false,
             },
             service_token: "test-token".to_string(),
             service_token_repo: service_token_repo.clone(),
-            document_version_repo: document_version_repo.clone(),
+            document_revision_repo: document_revision_repo.clone(),
             prompt_repo: prompt_repo.clone(),
             prompt_version_repo: prompt_version_repo.clone(),
             user_prompt_preference_repo: user_prompt_preference_repo.clone(),
@@ -343,14 +352,16 @@ impl TestEnv {
             _minio: minio_container,
             _meili: meili_container,
             router,
+            db: mongo_db.clone(),
             repo,
+            release_repo,
             schema_repo,
             settings_repo,
             asset_repo,
             user_repo,
             access_level_repo,
             service_token_repo,
-            document_version_repo,
+            document_revision_repo,
             prompt_repo,
             prompt_version_repo,
             user_prompt_preference_repo,
@@ -512,6 +523,7 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
 
     let app_state = AppState {
         document_repo: env.repo.clone(),
+        release_repo: env.release_repo.clone(),
         schema_repo: env.schema_repo.clone(),
         settings_repo: env.settings_repo.clone(),
         asset_repo: env.asset_repo.clone(),
@@ -529,10 +541,11 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
             document_upload: false,
             sources: false,
             learn: false,
+            doc_versioning: false,
         },
         service_token: "test-token".to_string(),
         service_token_repo: env.service_token_repo.clone(),
-        document_version_repo: env.document_version_repo.clone(),
+        document_revision_repo: env.document_revision_repo.clone(),
         prompt_repo: env.prompt_repo.clone(),
         prompt_version_repo: env.prompt_version_repo.clone(),
         user_prompt_preference_repo: env.user_prompt_preference_repo.clone(),

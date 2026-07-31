@@ -258,6 +258,8 @@ fn build_editor_document(
         is_archived: false,
         source_path: None,
         source_id: None,
+        release: None,
+        is_latest: true,
         needs_reindex: false,
         skip_rag: false,
     }
@@ -361,7 +363,7 @@ pub fn EditorPage() -> impl IntoView {
     #[allow(clippy::redundant_closure)]
     let doc_resource = Resource::new(move || route_slug(), |slug| get_doc_content(slug));
     let levels_resource = LocalResource::new(list_levels);
-    let nav_resource = LocalResource::new(crate::server::nav::get_navigation);
+    let nav_resource = LocalResource::new(|| crate::server::nav::get_navigation(None));
 
     let (msg, set_msg) = signal(TiptapInstanceMsg::Noop);
     let (value, set_value) = signal(String::new());
@@ -747,6 +749,7 @@ mod tests {
             &self,
             _: Option<&[String]>,
             _: bool,
+            _: &crate::versioning::ReleasePins,
         ) -> Result<Vec<Document>, AppError> {
             Ok(vec![])
         }
@@ -761,7 +764,7 @@ mod tests {
         async fn find_by_slug_prefix(&self, _: &str) -> Result<Vec<Document>, AppError> {
             Ok(vec![])
         }
-        async fn set_archived(&self, _: &str, _: bool) -> Result<(), AppError> {
+        async fn set_archived(&self, _: &str, _: Option<&str>, _: bool) -> Result<(), AppError> {
             Ok(())
         }
         async fn rename_slug(&self, _: &str, _: &str) -> Result<(), AppError> {
@@ -804,7 +807,11 @@ mod tests {
         async fn update_extraction(&self, _: &str, _: ExtractionUpdate) -> Result<(), AppError> {
             Ok(())
         }
-        async fn set_references(&self, _: &str, _: &[String]) -> Result<Vec<String>, AppError> {
+        async fn set_release_references(
+            &self,
+            _: &crate::db::models::DocumentReference,
+            _: &[String],
+        ) -> Result<Vec<String>, AppError> {
             if self.fail_set_references {
                 Err(AppError::Database(
                     "simulated set_references failure".to_string(),
@@ -875,6 +882,8 @@ mod tests {
             is_archived: false,
             source_path: None,
             source_id: None,
+            release: None,
+            is_latest: true,
             needs_reindex: false,
             skip_rag: false,
         }

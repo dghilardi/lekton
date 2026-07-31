@@ -17,6 +17,7 @@ pub mod users;
 #[cfg(feature = "ssr")]
 pub(crate) use helpers::{
     request_document_visibility, require_admin_user, require_any_user, require_user_context,
+    resolve_release_pins,
 };
 
 #[cfg(feature = "ssr")]
@@ -24,6 +25,54 @@ mod helpers {
     use crate::app::AppState;
     use crate::auth::demo_auth::resolve_demo_session_user;
     use leptos::prelude::*;
+
+    /// Turn the raw `v=<source>:<release>` values from the page URL into the
+    /// pins a request should actually resolve with.
+    ///
+    /// Two things are dropped rather than honoured:
+    /// - everything, when `doc_versioning` is off, so the flag fully governs the
+    ///   reader side;
+    /// - any pin naming a release the source never published, so a stale or
+    ///   hand-edited link degrades to `latest` instead of rendering an empty
+    ///   tree.
+    pub(crate) async fn resolve_release_pins(
+        state: &AppState,
+        raw: &[String],
+    ) -> Result<crate::versioning::ReleasePins, ServerFnError> {
+        use crate::versioning::ReleasePins;
+
+        if raw.is_empty() || !state.features.doc_versioning {
+            return Ok(ReleasePins::default());
+        }
+
+        let mut pins = ReleasePins::from_param_values(raw);
+        if pins.is_empty() {
+            return Ok(pins);
+        }
+
+        // One lookup per pinned source; in practice a handful at most, and zero
+        // on the overwhelmingly common unpinned path handled above.
+        let mut published: Vec<(String, Vec<String>)> = Vec::new();
+        for source_id in pins.source_ids() {
+            let releases = state
+                .release_repo
+                .list_by_source(source_id)
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))?;
+            published.push((
+                source_id.to_string(),
+                releases.into_iter().map(|r| r.release).collect(),
+            ));
+        }
+
+        pins.retain(|pin| {
+            published.iter().any(|(source, releases)| {
+                *source == pin.source_id && releases.contains(&pin.release)
+            })
+        });
+
+        Ok(pins)
+    }
 
     pub(crate) async fn request_document_visibility(
         state: &AppState,

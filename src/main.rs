@@ -81,6 +81,14 @@ fn api_routes(features: &lekton::app::FeatureFlags) -> axum::Router<lekton::app:
         )
         .route("/api/v1/sync", axum::routing::post(api::sync::sync_handler))
         .route(
+            "/api/v1/releases/promote",
+            axum::routing::post(api::releases::promote_release_handler),
+        )
+        .route(
+            "/api/v1/releases/finalize",
+            axum::routing::post(api::releases::finalize_release_handler),
+        )
+        .route(
             "/api/v1/assets",
             axum::routing::get(api::assets::list_assets_handler),
         )
@@ -421,7 +429,7 @@ async fn main() {
     use lekton::auth::token_service::TokenService;
     use lekton::db::access_level_repository::MongoAccessLevelRepository;
     use lekton::db::asset_repository::MongoAssetRepository;
-    use lekton::db::document_version_repository::MongoDocumentVersionRepository;
+    use lekton::db::document_revision_repository::MongoDocumentRevisionRepository;
     use lekton::db::documentation_feedback_repository::MongoDocumentationFeedbackRepository;
     use lekton::db::navigation_order_repository::MongoNavigationOrderRepository;
     use lekton::db::prompt_repository::MongoPromptRepository;
@@ -543,6 +551,9 @@ async fn main() {
     let mongo_db = mongo_client.database(&config.database.name);
     let document_repo: Arc<dyn lekton::db::repository::DocumentRepository> =
         Arc::new(MongoDocumentRepository::new(&mongo_db));
+    let release_repo: Arc<dyn lekton::db::release_repository::ReleaseRepository> = Arc::new(
+        lekton::db::release_repository::MongoReleaseRepository::new(&mongo_db),
+    );
     let schema_repo: Arc<dyn lekton::db::schema_repository::SchemaRepository> =
         Arc::new(MongoSchemaRepository::new(&mongo_db));
     let settings_repo: Arc<dyn lekton::db::settings_repository::SettingsRepository> =
@@ -555,9 +566,9 @@ async fn main() {
         Arc::new(MongoAccessLevelRepository::new(&mongo_db));
     let service_token_repo: Arc<dyn lekton::db::service_token_repository::ServiceTokenRepository> =
         Arc::new(MongoServiceTokenRepository::new(&mongo_db));
-    let document_version_repo: Arc<
-        dyn lekton::db::document_version_repository::DocumentVersionRepository,
-    > = Arc::new(MongoDocumentVersionRepository::new(&mongo_db));
+    let document_revision_repo: Arc<
+        dyn lekton::db::document_revision_repository::DocumentRevisionRepository,
+    > = Arc::new(MongoDocumentRevisionRepository::new(&mongo_db));
     let prompt_repo: Arc<dyn lekton::db::prompt_repository::PromptRepository> =
         Arc::new(MongoPromptRepository::new(&mongo_db));
     let prompt_version_repo: Arc<
@@ -862,6 +873,7 @@ async fn main() {
         document_upload: config.features.document_upload,
         sources: config.features.sources,
         learn: config.features.learn && chat_service.is_some(),
+        doc_versioning: config.features.doc_versioning,
     };
 
     // Spawn the attachment extraction worker when attachment indexing is enabled.
@@ -966,6 +978,7 @@ async fn main() {
     // Build application state
     let app_state = lekton::app::AppState {
         document_repo,
+        release_repo,
         schema_repo,
         settings_repo,
         asset_repo,
@@ -974,7 +987,7 @@ async fn main() {
         leptos_options: leptos_options.clone(),
         service_token,
         service_token_repo,
-        document_version_repo,
+        document_revision_repo,
         prompt_repo,
         prompt_version_repo,
         user_prompt_preference_repo,

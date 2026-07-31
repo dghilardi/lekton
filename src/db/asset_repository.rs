@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
-use crate::db::models::{Asset, ExtractionStatus};
+use crate::db::models::{Asset, DocumentReference, ExtractionStatus};
 use crate::error::AppError;
 
 /// The extraction-tracking fields to write, leaving the rest of the asset
@@ -44,15 +44,28 @@ pub trait AssetRepository: Send + Sync {
     /// key does not exist.
     async fn update_extraction(&self, key: &str, update: ExtractionUpdate) -> Result<(), AppError>;
 
-    /// Reconcile `referenced_by` so that `source_slug` references exactly `keys`:
-    /// add it to those assets and remove it from every other asset that still
-    /// lists it. Idempotent. Returns the keys whose reference set actually
-    /// changed (added or removed), so callers can recompute derived state.
+    /// Reconcile `referenced_by` so that `source` references exactly `keys`:
+    /// add the release-aware reference to those assets and remove it from every
+    /// other asset that still lists it. Idempotent. Returns the keys whose
+    /// reference set actually changed (added or removed), so callers can
+    /// recompute derived state.
+    async fn set_release_references(
+        &self,
+        source: &DocumentReference,
+        keys: &[String],
+    ) -> Result<Vec<String>, AppError>;
+
+    /// Reconcile references for an unversioned document slug.
+    ///
+    /// The release-agnostic spelling of [`Self::set_release_references`], for the
+    /// callers that operate on documents no release owns.
     async fn set_references(
         &self,
         source_slug: &str,
         keys: &[String],
-    ) -> Result<Vec<String>, AppError>;
+    ) -> Result<Vec<String>, AppError> {
+        self.set_release_references(&source_slug.into(), keys).await
+    }
 
     /// List assets whose extraction was left unfinished — `Pending` (never
     /// started) or `InProgress` (interrupted mid-flight). Used by a startup
@@ -207,18 +220,29 @@ impl AssetRepository for MongoAssetRepository {
         Ok(())
     }
 
-    async fn set_references(
+    async fn set_release_references(
         &self,
-        source_slug: &str,
+        source: &DocumentReference,
         keys: &[String],
     ) -> Result<Vec<String>, AppError> {
         use futures::TryStreamExt;
-        use mongodb::bson::doc;
+        use mongodb::bson::{doc, to_bson};
 
-        // Keys currently referencing this slug, to compute the exact diff.
+        // Matched, pulled and added as a whole subdocument, which in Mongo means
+        // *exact* equality including field order. That holds because both the
+        // stored form (migration 016) and this serialization come from
+        // `DocumentReference` itself — but it also means a new field on that
+        // struct silently stops matching existing rows. Add one only together
+        // with a migration, or move these three queries to `$elemMatch`.
+        let source = to_bson(source).map_err(|e| {
+            AppError::Internal(format!("failed to serialize asset document reference: {e}"))
+        })?;
+
+        // Keys currently referencing this exact document release, to compute the
+        // exact diff without detaching references from older releases.
         let mut cursor = self
             .collection
-            .find(doc! { "referenced_by": source_slug })
+            .find(doc! { "referenced_by": &source })
             .await?;
         let mut current = Vec::new();
         while let Some(asset) = cursor.try_next().await? {
@@ -241,7 +265,7 @@ impl AssetRepository for MongoAssetRepository {
             self.collection
                 .update_many(
                     doc! { "key": { "$in": &removed_refs } },
-                    doc! { "$pull": { "referenced_by": source_slug } },
+                    doc! { "$pull": { "referenced_by": &source } },
                 )
                 .await?;
         }
@@ -251,7 +275,7 @@ impl AssetRepository for MongoAssetRepository {
             self.collection
                 .update_many(
                     doc! { "key": { "$in": &added_refs } },
-                    doc! { "$addToSet": { "referenced_by": source_slug } },
+                    doc! { "$addToSet": { "referenced_by": &source } },
                 )
                 .await?;
         }

@@ -60,7 +60,7 @@ The system supports two methods of ingestion:
 
 * Microservices utilize a dedicated endpoint: `POST /api/v1/ingest`.
 * **Payload:** Service Token, Markdown content, Metadata (Category, Version).
-* **Behavior:** Atomic update. If the doc exists, create a new version; if not, create it.
+* **Behavior:** Atomic update. If the document body changes, preserve the outgoing body as a new editorial revision before replacing it; if the document does not exist, create it.
 
 **B. Web Editor (GUI)**
 
@@ -73,6 +73,29 @@ The system supports two methods of ingestion:
 * **Format:** Support for GitHub Flavored Markdown (GFM) and MDX-lite (custom Rust components injected into the stream).
 * **Performance:** Time to First Byte (TTFB) < 50ms.
 * **Navigation:** Dynamic sidebar generation based on the user's role and the MongoDB hierarchy tree.
+
+### 4.3.1. Documentation Release Versioning
+
+* Release versioning is source-scoped and feature-gated. A document identity is
+  `(slug, release)`, while a slug remains owned by exactly one source.
+* `lekton-sync --version` stages the complete expected manifest. The CLI
+  finalizes it only after every requested upload succeeds and the server verifies
+  source paths plus content and metadata hashes. Only finalized releases are
+  selectable or promotable.
+* `--latest` moves a source alias after finalization. The service token must have
+  write scope for every active document affected by the promotion.
+* Unpinned reads, full-text search, and RAG resolve one `latest` copy per slug.
+  Promotion reconciliation is persisted on the alias and acknowledged slug by
+  slug only after search/RAG succeeds, so failed deletes remain retryable across
+  restarts.
+* Older releases remain readable through repeated `v=source:release` query
+  parameters. All internal documentation navigation preserves the complete pin
+  set and URL fragments.
+* Asset references store both slug and release. Asset serving and attachment ACL
+  derivation must resolve that exact document copy, never an arbitrary slug
+  match from another release.
+* Editorial change history uses the term **revision** and is independent from
+  source releases.
 
 ### 4.4. Schema Registry
 
@@ -112,7 +135,12 @@ The system supports two methods of ingestion:
   "backlinks": [],
   "parent_slug": "engineering",
   "order": 10,
-  "is_hidden": false
+  "is_hidden": false,
+  "source_id": "payments/docs",
+  "source_path": "docs/deployment.md",
+  "release": "2.0.0",
+  "is_latest": true,
+  "needs_reindex": false
 }
 ```
 
@@ -214,9 +242,26 @@ Default levels seeded on first startup: `public` (system), `internal`,
   "size_bytes": 2048,
   "s3_key": "assets/project-a/configs/nginx.conf",
   "uploaded_at": "ISO8601",
-  "uploaded_by": "devops-bot"
+  "uploaded_by": "devops-bot",
+  "referenced_by": [
+    {
+      "slug": "engineering/deployment-guide",
+      "release": "2.0.0"
+    }
+  ]
 }
 ```
+
+### Collection: `source_releases`
+
+Stores a source/release catalogue row, the staged expected-document manifest,
+and `finalized_at`. Rows without `finalized_at` are incomplete and excluded from
+reader-facing release lists.
+
+### Collection: `source_release_aliases`
+
+Stores one `latest_release` per source plus the durable `reindex_pending` slug
+backlog for search/RAG reconciliation.
 
 ### Collection: `settings`
 

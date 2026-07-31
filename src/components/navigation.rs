@@ -39,13 +39,13 @@ pub fn NavigationItem(item: NavItem, #[prop(optional)] level: u32) -> impl IntoV
         }
     } else {
         let location = leptos_router::hooks::use_location();
-        let href = format!("/docs/{}", slug);
-        let href_for_check = href.clone();
+        let path = format!("/docs/{}", slug);
+        let href_for_check = path.clone();
         let is_active = move || location.pathname.get() == href_for_check;
         view! {
             <li>
                 <a
-                    href=href
+                    href=move || crate::components::pinned_doc_href(&path)
                     aria-current=move || if is_active() { Some("page") } else { None }
                     class="hover:bg-base-200/50 hover:text-primary transition-colors text-base-content/70 text-sm py-1.5"
                 >

@@ -67,6 +67,29 @@ pub fn encode_pin_param(value: &str) -> String {
     out
 }
 
+/// Append normalized release pins to an internal URL while preserving its
+/// existing query string and fragment.
+pub fn with_release_pins(url: &str, raw_pins: &[String]) -> String {
+    let pins = ReleasePins::from_param_values(raw_pins);
+    if pins.is_empty() {
+        return url.to_string();
+    }
+
+    let (base, fragment) = url
+        .split_once('#')
+        .map_or((url, None), |(base, fragment)| (base, Some(fragment)));
+    let separator = if base.contains('?') { '&' } else { '?' };
+    let query = pins
+        .to_param_values()
+        .iter()
+        .map(|value| format!("{PIN_PARAM}={}", encode_pin_param(value)))
+        .collect::<Vec<_>>()
+        .join("&");
+    let fragment = fragment.map_or_else(String::new, |value| format!("#{value}"));
+
+    format!("{base}{separator}{query}{fragment}")
+}
+
 /// The set of pins active for a request.
 ///
 /// At most one pin per source: a URL naming the same source twice is a
@@ -251,6 +274,24 @@ mod tests {
         assert_eq!(
             pins.to_param_values(),
             vec!["a:1.0.0".to_string(), "b:2.0.0".to_string()]
+        );
+    }
+
+    #[test]
+    fn pinned_urls_preserve_fragments_and_every_source() {
+        let url = with_release_pins(
+            "/docs/guide#install",
+            &["a:1.0.0".to_string(), "b:2.0.0".to_string()],
+        );
+
+        assert_eq!(url, "/docs/guide?v=a:1.0.0&v=b:2.0.0#install".to_string());
+    }
+
+    #[test]
+    fn pinned_urls_keep_existing_query_parameters() {
+        assert_eq!(
+            with_release_pins("/docs/guide?mode=print", &["a:1.0.0".to_string()]),
+            "/docs/guide?mode=print&v=a:1.0.0"
         );
     }
 }

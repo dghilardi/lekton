@@ -317,7 +317,12 @@ fn LessonCard(lesson: Lesson, persist: bool) -> impl IntoView {
                                 None => format!("/docs/{}", c.document_slug),
                             };
                             view! {
-                                <a href=href class="link link-primary mr-2">{c.document_slug}</a>
+                                <a
+                                    href=move || crate::components::pinned_doc_href(&href)
+                                    class="link link-primary mr-2"
+                                >
+                                    {c.document_slug}
+                                </a>
                             }
                         }).collect::<Vec<_>>()}
                     </div>

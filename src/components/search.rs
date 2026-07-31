@@ -8,13 +8,13 @@ use crate::search::client::SearchHit;
 const SEARCH_DEBOUNCE_MS: u32 = 250;
 const SEARCH_RESULTS_LIST_ID: &str = "global-search-results";
 
-fn search_hit_href(hit: &SearchHit) -> String {
+fn search_hit_href(hit: &SearchHit, pins: &[String]) -> String {
     match hit.attachment_key.as_deref() {
         Some(key) => match hit.page {
             Some(page) => format!("/api/v1/assets/{key}#page={page}"),
             None => format!("/api/v1/assets/{key}"),
         },
-        None => format!("/docs/{}", hit.slug),
+        None => crate::versioning::with_release_pins(&format!("/docs/{}", hit.slug), pins),
     }
 }
 
@@ -113,7 +113,8 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                     set_is_open.set(false);
                     #[cfg(feature = "hydrate")]
                     if let (Some(window), Some(hit)) = (web_sys::window(), hits.get(index)) {
-                        let href = search_hit_href(hit);
+                        let href =
+                            search_hit_href(hit, &crate::components::active_release_pin_values());
                         if search_hit_target(hit) == "_blank" {
                             let _ = window.open_with_url_and_target(&href, "_blank");
                         } else {
@@ -235,7 +236,10 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                         view! {
                                             <div role="listbox" class="divide-y divide-base-300">
                                                 {hits.into_iter().enumerate().map(|(idx, hit)| {
-                                                    let href = search_hit_href(&hit);
+                                                    let href = search_hit_href(
+                                                        &hit,
+                                                        &crate::components::active_release_pin_values(),
+                                                    );
                                                     let target = search_hit_target(&hit);
                                                     let title = hit.title.clone();
                                                     let preview = hit.content_preview.clone();
@@ -413,7 +417,10 @@ pub fn SearchBar() -> impl IntoView {
                                 Ok(hits) => {
                                     view! {
                                         {hits.into_iter().map(|hit| {
-                                            let href = search_hit_href(&hit);
+                                            let href = search_hit_href(
+                                                &hit,
+                                                &crate::components::active_release_pin_values(),
+                                            );
                                             let target = search_hit_target(&hit);
                                             let page_badge = hit.page.map(|p| format!(" · PDF p.{p}"));
                                             view! {
@@ -469,7 +476,7 @@ mod tests {
         };
 
         assert_eq!(
-            search_hit_href(&hit),
+            search_hit_href(&hit, &[]),
             "/api/v1/assets/files/manual.pdf#page=7"
         );
         assert_eq!(search_hit_target(&hit), "_blank");
@@ -486,7 +493,11 @@ mod tests {
             page: None,
         };
 
-        assert_eq!(search_hit_href(&hit), "/docs/manual");
+        assert_eq!(search_hit_href(&hit, &[]), "/docs/manual");
+        assert_eq!(
+            search_hit_href(&hit, &["svc:1.0.0".to_string()]),
+            "/docs/manual?v=svc:1.0.0"
+        );
         assert_eq!(search_hit_target(&hit), "_self");
     }
 }

@@ -85,9 +85,15 @@ fn Breadcrumbs(slug: String) -> impl IntoView {
                             <li>{label}</li>
                         }.into_any()
                     } else {
+                        let href = format!("/docs/{}", path);
                         view! {
                             <li>
-                                <a href=format!("/docs/{}", path) class="hover:underline">{label}</a>
+                                <a
+                                    href=move || crate::components::pinned_doc_href(&href)
+                                    class="hover:underline"
+                                >
+                                    {label}
+                                </a>
                             </li>
                         }.into_any()
                     }

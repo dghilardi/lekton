@@ -34,6 +34,7 @@ pub fn HomePage() -> impl IntoView {
             .get()
             .and_then(|result| result.ok())
             .and_then(|items| first_doc_href(&items))
+            .map(|href| crate::components::pinned_doc_href(&href))
             .unwrap_or_else(|| {
                 if schema_registry_enabled.get() {
                     "/schemas".to_string()

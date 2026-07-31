@@ -517,7 +517,11 @@ fn SourceReferencesBlock(sources: Vec<SourceReference>) -> impl IntoView {
                                     }
                                     _ => format!("/docs/{}", document_slug),
                                 };
-                                (href, "_self", document_slug.clone())
+                                (
+                                    crate::components::pinned_doc_href(&href),
+                                    "_self",
+                                    document_slug.clone(),
+                                )
                             }
                         };
                         view! {

@@ -88,7 +88,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                             <div class="flex flex-1 items-center gap-2 min-w-0 overflow-x-clip">
                             {t1_standalone.into_iter().map(|item| {
                                 view! {
-                                    <a href=format!("/docs/{}", item.slug)
+                                    <a href=crate::components::pinned_doc_href(&format!("/docs/{}", item.slug))
                                        class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">
                                         {item.title}
                                     </a>
@@ -112,7 +112,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                         </div>
                                         <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52 border border-base-200">
                                             {group_items.into_iter().map(|i| view! {
-                                                <li><a href=format!("/docs/{}", i.slug) class="active:!bg-primary active:!text-primary-content">{i.title.clone()}</a></li>
+                                                <li><a href=crate::components::pinned_doc_href(&format!("/docs/{}", i.slug)) class="active:!bg-primary active:!text-primary-content">{i.title.clone()}</a></li>
                                             }).collect::<Vec<_>>()}
                                         </ul>
                                     </div>
@@ -133,7 +133,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                         </div>
                                         <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52 border border-base-200">
                                             {altro_standalone.into_iter().map(|item| view! {
-                                                <li><a href=format!("/docs/{}", item.slug) class="active:!bg-primary active:!text-primary-content">{item.title}</a></li>
+                                                <li><a href=crate::components::pinned_doc_href(&format!("/docs/{}", item.slug)) class="active:!bg-primary active:!text-primary-content">{item.title}</a></li>
                                             }).collect::<Vec<_>>()}
                                             {altro_groups.into_iter().flat_map(|group| {
                                                 let gis: Vec<_> = items_altro.iter()
@@ -144,7 +144,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                                     view! { <li class="menu-title">{group.title}</li> }.into_any()
                                                 ];
                                                 all.extend(gis.into_iter().map(|i| view! {
-                                                    <li><a href=format!("/docs/{}", i.slug) class="active:!bg-primary active:!text-primary-content">{i.title}</a></li>
+                                                    <li><a href=crate::components::pinned_doc_href(&format!("/docs/{}", i.slug)) class="active:!bg-primary active:!text-primary-content">{i.title}</a></li>
                                                 }.into_any()));
                                                 all
                                             }).collect::<Vec<_>>()}
@@ -202,7 +202,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                 </div>
                                 <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52 border border-base-200">
                                     {t2_standalone.into_iter().map(|item| view! {
-                                        <li><a href=format!("/docs/{}", item.slug) class="active:!bg-primary active:!text-primary-content">{item.title}</a></li>
+                                        <li><a href=crate::components::pinned_doc_href(&format!("/docs/{}", item.slug)) class="active:!bg-primary active:!text-primary-content">{item.title}</a></li>
                                     }).collect::<Vec<_>>()}
                                     {t2_groups.into_iter().flat_map(|group| {
                                         let gis: Vec<_> = items_t2.iter()
@@ -213,7 +213,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                             view! { <li class="menu-title">{group.title}</li> }.into_any()
                                         ];
                                         all.extend(gis.into_iter().map(|i| view! {
-                                            <li><a href=format!("/docs/{}", i.slug) class="active:!bg-primary active:!text-primary-content">{i.title}</a></li>
+                                            <li><a href=crate::components::pinned_doc_href(&format!("/docs/{}", i.slug)) class="active:!bg-primary active:!text-primary-content">{i.title}</a></li>
                                         }.into_any()));
                                         all
                                     }).collect::<Vec<_>>()}
@@ -271,7 +271,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                 <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-56 border border-base-200 max-h-[70vh] flex-nowrap overflow-y-auto">
                                     <li class="menu-title">"Documentation"</li>
                                     {t3_standalone.into_iter().map(|item| view! {
-                                        <li><a href=format!("/docs/{}", item.slug) class="active:!bg-primary active:!text-primary-content">{item.title}</a></li>
+                                        <li><a href=crate::components::pinned_doc_href(&format!("/docs/{}", item.slug)) class="active:!bg-primary active:!text-primary-content">{item.title}</a></li>
                                     }).collect::<Vec<_>>()}
                                     {t3_groups.into_iter().flat_map(|group| {
                                         let gis: Vec<_> = items_t3.iter()
@@ -282,7 +282,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                             view! { <li class="menu-title">{group.title}</li> }.into_any()
                                         ];
                                         all.extend(gis.into_iter().map(|i| view! {
-                                            <li><a href=format!("/docs/{}", i.slug) class="active:!bg-primary active:!text-primary-content">{i.title}</a></li>
+                                            <li><a href=crate::components::pinned_doc_href(&format!("/docs/{}", i.slug)) class="active:!bg-primary active:!text-primary-content">{i.title}</a></li>
                                         }.into_any()));
                                         all
                                     }).collect::<Vec<_>>()}
@@ -326,6 +326,14 @@ pub fn TopNavbarLinks() -> impl IntoView {
 #[component]
 pub fn Layout(children: Children) -> impl IntoView {
     let (search_modal_open, set_search_modal_open) = signal(false);
+    let pin_query = leptos_router::hooks::use_query_map();
+    let active_release_pins = Memo::new(move |_| {
+        pin_query
+            .read()
+            .get_all(crate::versioning::PIN_PARAM)
+            .unwrap_or_default()
+    });
+    provide_context(super::ActiveReleasePins(active_release_pins));
     let search_enabled = crate::app::use_feature(|f| f.search);
     let location = leptos_router::hooks::use_location();
     let path = Memo::new(move |_| location.pathname.get());

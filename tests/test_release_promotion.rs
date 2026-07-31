@@ -263,6 +263,8 @@ async fn promotion_reindex_follows_the_new_latest_and_drops_removed_slugs() {
 
     lekton::api::releases::reindex_promoted(
         env.repo.as_ref(),
+        env.release_repo.as_ref(),
+        "assets-manager",
         env.storage.as_ref(),
         Some(env.search.as_ref()),
         None,

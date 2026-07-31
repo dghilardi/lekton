@@ -41,6 +41,20 @@ pub struct FinalizeReleaseRequest {
     pub release: String,
 }
 
+#[derive(Deserialize)]
+pub struct FinalizeReleaseResponse {
+    /// Slugs the server archived because this was the source's first release,
+    /// superseding the unversioned set it used to publish.
+    #[serde(default)]
+    pub superseded_unversioned: Vec<String>,
+    /// `true` when finalization also aliased this release as `latest`, which it
+    /// does for a source's first release.
+    #[serde(default)]
+    pub became_latest: bool,
+    #[serde(default)]
+    pub reindex_pending: usize,
+}
+
 #[derive(Serialize)]
 pub struct SyncDocEntry {
     pub source_path: String,

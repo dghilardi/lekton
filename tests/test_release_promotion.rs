@@ -219,11 +219,63 @@ async fn promotion_sets_the_alias_and_reports_the_reindex_backlog() {
     .await
     .expect("promote");
 
-    assert_eq!(response.reindex_pending, 2);
+    // One slug, not one document: the backlog is what `reindex_promoted` iterates,
+    // and it resolves a slug to a single copy.
+    assert_eq!(response.reindex_pending, 1);
     assert_eq!(
         env.release_repo.latest("assets-manager").await.unwrap(),
         Some("1.2.0".to_string()),
         "the alias must follow the promotion"
+    );
+}
+
+/// The backlog is the re-indexing bill, so it must list only the slugs whose
+/// `latest` membership actually moved — not every document the source ever
+/// published, which would re-embed the whole source on every tag.
+#[tokio::test]
+async fn the_promotion_backlog_covers_only_the_slugs_whose_latest_changed() {
+    let env = common::TestEnv::start().await;
+
+    env.release_repo
+        .register("assets-manager", "1.2.0")
+        .await
+        .unwrap();
+    for (slug, release, latest) in [
+        // Moves: loses the flag, then gains it.
+        ("api/auth", "1.0.0", true),
+        ("api/auth", "1.2.0", false),
+        // Untouched: an older release that was not latest and is not the target.
+        ("api/legacy", "0.9.0", false),
+    ] {
+        env.repo
+            .create_or_update(doc(slug, release, latest))
+            .await
+            .unwrap();
+    }
+
+    let (response, backlog) = lekton::api::releases::process_promote_release(
+        env.repo.as_ref(),
+        env.release_repo.as_ref(),
+        env.service_token_repo.as_ref(),
+        Some("test-token"),
+        lekton::api::releases::PromoteReleaseRequest {
+            service_token: "test-token".to_string(),
+            source_id: "assets-manager".to_string(),
+            release: "1.2.0".to_string(),
+        },
+    )
+    .await
+    .expect("promote");
+
+    assert_eq!(backlog, vec!["api/auth".to_string()]);
+    assert_eq!(response.reindex_pending, 1);
+    assert_eq!(
+        env.release_repo
+            .pending_reindex("assets-manager")
+            .await
+            .unwrap(),
+        vec!["api/auth".to_string()],
+        "the durable backlog must be as narrow as the reported one"
     );
 }
 
@@ -294,6 +346,230 @@ async fn promotion_reindex_follows_the_new_latest_and_drops_removed_slugs() {
     assert!(
         dropped.iter().all(|d| !d.is_latest),
         "a slug the promoted release dropped must not be latest anywhere"
+    );
+}
+
+// ── Finalization ─────────────────────────────────────────────────────────────
+
+fn hashed_doc(slug: &str, release: &str, content_hash: &str) -> Document {
+    Document {
+        content_hash: Some(content_hash.to_string()),
+        metadata_hash: Some("sha256:meta".to_string()),
+        ..doc(slug, release, false)
+    }
+}
+
+fn expectation(
+    slug: &str,
+    content_hash: &str,
+) -> lekton::db::release_repository::ReleaseDocumentExpectation {
+    lekton::db::release_repository::ReleaseDocumentExpectation {
+        slug: slug.to_string(),
+        source_path: format!("{slug}.md"),
+        content_hash: content_hash.to_string(),
+        metadata_hash: Some("sha256:meta".to_string()),
+    }
+}
+
+async fn finalize(
+    env: &common::TestEnv,
+    release: &str,
+) -> lekton::api::releases::FinalizeReleaseResponse {
+    lekton::api::releases::process_finalize_release(
+        env.repo.as_ref(),
+        env.release_repo.as_ref(),
+        env.service_token_repo.as_ref(),
+        Some("test-token"),
+        lekton::api::releases::FinalizeReleaseRequest {
+            service_token: "test-token".to_string(),
+            source_id: "assets-manager".to_string(),
+            release: release.to_string(),
+        },
+    )
+    .await
+    .expect("finalize")
+}
+
+/// A release nothing aliases resolves for nobody — not for unpinned readers, not
+/// for search, not for RAG. So the first release a source publishes has to take
+/// the alias by itself, or `--version` without `--latest` would leave the source
+/// with no reachable documents at all.
+#[tokio::test]
+async fn finalizing_a_sources_first_release_makes_it_latest() {
+    let env = common::TestEnv::start().await;
+
+    env.release_repo
+        .stage(
+            "assets-manager",
+            "1.0.0",
+            &[expectation("api/auth", "sha1")],
+        )
+        .await
+        .unwrap();
+    env.repo
+        .create_or_update(hashed_doc("api/auth", "1.0.0", "sha1"))
+        .await
+        .unwrap();
+
+    let response = finalize(&env, "1.0.0").await;
+
+    assert!(response.became_latest);
+    assert_eq!(
+        env.release_repo.latest("assets-manager").await.unwrap(),
+        Some("1.0.0".to_string()),
+    );
+    let stored = env
+        .repo
+        .find_all_by_slug("api/auth")
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert!(
+        stored.is_latest,
+        "the denormalized flag must follow the implicit promotion, \
+         or the document resolves for nobody"
+    );
+    assert_eq!(
+        response.reindex_pending, 1,
+        "the document was written before the alias existed, so it is not indexed yet"
+    );
+}
+
+/// Only the *first* release is implicit. Tagging later ones is the whole point of
+/// `--latest`, so finalization must leave the alias where it is.
+#[tokio::test]
+async fn finalizing_a_later_release_leaves_the_alias_alone() {
+    let env = common::TestEnv::start().await;
+
+    env.release_repo
+        .register("assets-manager", "1.0.0")
+        .await
+        .unwrap();
+    env.release_repo
+        .set_latest("assets-manager", "1.0.0")
+        .await
+        .unwrap();
+    env.release_repo
+        .stage(
+            "assets-manager",
+            "2.0.0",
+            &[expectation("api/auth", "sha2")],
+        )
+        .await
+        .unwrap();
+    env.repo
+        .create_or_update(hashed_doc("api/auth", "2.0.0", "sha2"))
+        .await
+        .unwrap();
+
+    let response = finalize(&env, "2.0.0").await;
+
+    assert!(!response.became_latest);
+    assert_eq!(
+        env.release_repo.latest("assets-manager").await.unwrap(),
+        Some("1.0.0".to_string()),
+        "readers stay on the tagged release until someone promotes"
+    );
+    assert!(response.superseded_unversioned.is_empty());
+}
+
+/// The one archive this protocol performs unasked, and it happens *here* rather
+/// than during sync: a run whose uploads fail must leave the previously-live
+/// documents exactly where they were.
+#[tokio::test]
+async fn the_first_release_supersedes_the_unversioned_set_at_finalization() {
+    let env = common::TestEnv::start().await;
+
+    let legacy = Document {
+        release: None,
+        is_latest: true,
+        ..hashed_doc("api/legacy", "unused", "sha-old")
+    };
+    env.repo.create_or_update(legacy).await.unwrap();
+    env.release_repo
+        .stage(
+            "assets-manager",
+            "1.0.0",
+            &[expectation("api/auth", "sha1")],
+        )
+        .await
+        .unwrap();
+    env.repo
+        .create_or_update(hashed_doc("api/auth", "1.0.0", "sha1"))
+        .await
+        .unwrap();
+
+    let response = finalize(&env, "1.0.0").await;
+
+    assert_eq!(
+        response.superseded_unversioned,
+        vec!["api/legacy".to_string()]
+    );
+    let archived = env
+        .repo
+        .find_all_by_slug("api/legacy")
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert!(
+        archived.is_archived,
+        "archived, not deleted, so the rows stay recoverable"
+    );
+}
+
+/// A staged release whose uploads never landed must not be finalizable, and so
+/// must not archive the set it would have replaced.
+#[tokio::test]
+async fn an_incomplete_first_release_supersedes_nothing() {
+    let env = common::TestEnv::start().await;
+
+    let legacy = Document {
+        release: None,
+        is_latest: true,
+        ..hashed_doc("api/legacy", "unused", "sha-old")
+    };
+    env.repo.create_or_update(legacy).await.unwrap();
+    env.release_repo
+        .stage(
+            "assets-manager",
+            "1.0.0",
+            &[expectation("api/auth", "sha1")],
+        )
+        .await
+        .unwrap();
+    // `api/auth` was never uploaded.
+
+    let err = lekton::api::releases::process_finalize_release(
+        env.repo.as_ref(),
+        env.release_repo.as_ref(),
+        env.service_token_repo.as_ref(),
+        Some("test-token"),
+        lekton::api::releases::FinalizeReleaseRequest {
+            service_token: "test-token".to_string(),
+            source_id: "assets-manager".to_string(),
+            release: "1.0.0".to_string(),
+        },
+    )
+    .await
+    .expect_err("an incomplete release must not finalize");
+
+    assert!(err.to_string().contains("incomplete"), "got: {err}");
+    let untouched = env
+        .repo
+        .find_all_by_slug("api/legacy")
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert!(
+        !untouched.is_archived,
+        "a failed publish must leave readers where they were"
+    );
+    assert_eq!(
+        env.release_repo.latest("assets-manager").await.unwrap(),
+        None
     );
 }
 

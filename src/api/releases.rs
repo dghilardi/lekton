@@ -41,6 +41,16 @@ pub struct FinalizeReleaseRequest {
 pub struct FinalizeReleaseResponse {
     pub source_id: String,
     pub release: String,
+    /// Slugs archived because this was the source's first release, superseding
+    /// the unversioned set it used to publish. Empty otherwise.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub superseded_unversioned: Vec<String>,
+    /// `true` when finalization also aliased this release as `latest`, because
+    /// the source had no alias yet.
+    pub became_latest: bool,
+    /// Documents whose `latest` membership changed, and which are therefore
+    /// marked stale for search and RAG. Non-zero only when `became_latest`.
+    pub reindex_pending: usize,
 }
 
 #[cfg(feature = "ssr")]
@@ -137,10 +147,124 @@ pub async fn process_finalize_release(
         .finalize(&request.source_id, &request.release)
         .await?;
 
+    // Everything below happens only for a source's *first* finalized release,
+    // and only now that the manifest above has been verified: this is the
+    // transition from "publishes one unversioned set" to "publishes releases".
+    let published = release_repo.list_by_source(&request.source_id).await?;
+    let is_first_release = published.len() == 1;
+
+    // The unversioned set is unreachable from here on, because readers of this
+    // source resolve through releases. Archive rather than delete, so the rows
+    // stay recoverable. Deferred to finalization on purpose: doing it during sync
+    // would take the previously-live documents down even when the uploads that
+    // were meant to replace them failed.
+    let mut superseded_unversioned = Vec::new();
+    if is_first_release {
+        let unversioned = repo
+            .find_all_by_source_id_and_release(&request.source_id, None)
+            .await?;
+        ensure_documents_in_scope(&unversioned, &scopes)?;
+        for document in unversioned {
+            if document.is_archived {
+                continue;
+            }
+            repo.set_archived(&document.slug, None, true).await?;
+            superseded_unversioned.push(document.slug);
+        }
+        superseded_unversioned.sort();
+        if !superseded_unversioned.is_empty() {
+            tracing::info!(
+                source_id = %request.source_id,
+                count = superseded_unversioned.len(),
+                "first release supersedes the source's unversioned documents; archived"
+            );
+        }
+    }
+
+    // A release nothing aliases resolves for nobody: unpinned readers, search and
+    // RAG all follow `latest`. So the first release a source publishes becomes
+    // `latest` — otherwise `--version` without `--latest` would archive the
+    // unversioned set above and leave the source with no reachable documents at
+    // all. Later releases still need an explicit `--latest`, which is the point
+    // of tagging them.
+    let mut pending = Vec::new();
+    let became_latest = release_repo.latest(&request.source_id).await?.is_none();
+    if became_latest {
+        pending =
+            promote_to_latest(repo, release_repo, &request.source_id, &request.release).await?;
+    }
+
     Ok(FinalizeReleaseResponse {
         source_id: request.source_id,
         release: request.release,
+        superseded_unversioned,
+        became_latest,
+        reindex_pending: pending.len(),
     })
+}
+
+/// Move a source's `latest` alias onto `release` and bring the denormalized
+/// `is_latest` flags in line, returning the slugs whose search and RAG state has
+/// to be reconciled.
+///
+/// The alias moves first (a single atomic write), then the flags. If the second
+/// step failed, the flags would be repaired by re-running the promotion — whereas
+/// flags without an alias would leave the two disagreeing with nothing to
+/// reconcile them.
+///
+/// Shared by explicit promotion and by the implicit one that finalization
+/// performs for a source's first release, so both record the same backlog.
+#[cfg(feature = "ssr")]
+async fn promote_to_latest(
+    repo: &dyn crate::db::repository::DocumentRepository,
+    release_repo: &dyn crate::db::release_repository::ReleaseRepository,
+    source_id: &str,
+    release: &str,
+) -> Result<Vec<String>, AppError> {
+    // The backlog has to be durable *before* the flags move, because afterwards
+    // the two sets are no longer distinguishable by `is_latest`. Computed here
+    // rather than taken from `promote_release`'s return value for that reason —
+    // and computed exactly, so promoting a release does not re-embed every
+    // document the source has ever published.
+    let pending_slugs = affected_by_promotion(repo, source_id, release).await?;
+
+    release_repo
+        .set_latest_with_pending(source_id, release, &pending_slugs)
+        .await?;
+    let affected = repo.promote_release(source_id, release).await?;
+
+    // Prefer the durable backlog: it also carries slugs left over by an earlier
+    // promotion whose re-indexing never completed.
+    let mut pending = release_repo.pending_reindex(source_id).await?;
+    if pending.is_empty() {
+        pending = affected;
+    }
+    Ok(pending)
+}
+
+/// The slugs whose `latest` membership would change if `release` became the
+/// source's `latest`: those gaining the flag, and those losing it.
+///
+/// Mirrors the filter [`DocumentRepository::promote_release`] applies, so the
+/// recorded backlog matches the documents actually touched.
+#[cfg(feature = "ssr")]
+async fn affected_by_promotion(
+    repo: &dyn crate::db::repository::DocumentRepository,
+    source_id: &str,
+    release: &str,
+) -> Result<Vec<String>, AppError> {
+    let affected = repo
+        .find_all_by_source_id(source_id)
+        .await?
+        .into_iter()
+        .filter(|document| {
+            let in_target_release = document.release.as_deref() == Some(release);
+            // Gaining the flag, or losing it.
+            (in_target_release && !document.is_latest) || (!in_target_release && document.is_latest)
+        })
+        .map(|document| document.slug)
+        .collect::<std::collections::BTreeSet<_>>();
+    Ok(affected.into_iter().collect())
 }
 
 /// Core promotion logic — separated from the HTTP layer for testability.
@@ -180,27 +304,9 @@ pub async fn process_promote_release(
 
     let source_documents = repo.find_all_by_source_id(&request.source_id).await?;
     ensure_documents_in_scope(&source_documents, &scopes)?;
-    let pending_slugs: Vec<_> = source_documents
-        .iter()
-        .map(|document| document.slug.clone())
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect();
 
-    // Alias first (a single atomic write), then bring the denormalized
-    // `is_latest` flags in line. If the second step failed, the flags would be
-    // repaired by re-running the promotion — whereas flags without an alias
-    // would leave the two disagreeing with nothing to reconcile them.
-    release_repo
-        .set_latest_with_pending(&request.source_id, &request.release, &pending_slugs)
-        .await?;
-    let affected = repo
-        .promote_release(&request.source_id, &request.release)
-        .await?;
-    let mut pending = release_repo.pending_reindex(&request.source_id).await?;
-    if pending.is_empty() {
-        pending = affected;
-    }
+    let pending =
+        promote_to_latest(repo, release_repo, &request.source_id, &request.release).await?;
 
     Ok((
         PromoteReleaseResponse {
@@ -233,7 +339,48 @@ pub async fn finalize_release_handler(
     )
     .await?;
 
+    // Finalizing a source's first release also aliases it, which makes the same
+    // index reconciliation due as an explicit promotion: the superseded
+    // unversioned entries have to leave search and RAG, and the slugs the new
+    // release ships have to enter them.
+    if response.became_latest {
+        let backlog = state
+            .release_repo
+            .pending_reindex(&response.source_id)
+            .await?;
+        spawn_promotion_reindex(&state, response.source_id.clone(), backlog);
+    }
+
     Ok(axum::Json(response))
+}
+
+/// Run [`reindex_promoted`] detached.
+///
+/// It re-embeds documents, which can take far longer than the CLI is willing to
+/// wait on a tag operation. `needs_reindex` and the alias backlog stay set until
+/// it succeeds, so nothing is lost if this task dies.
+#[cfg(feature = "ssr")]
+fn spawn_promotion_reindex(state: &crate::app::AppState, source_id: String, slugs: Vec<String>) {
+    if slugs.is_empty() {
+        return;
+    }
+    let repo = state.document_repo.clone();
+    let release_repo = state.release_repo.clone();
+    let storage = state.storage_client.clone();
+    let search = state.search_service.clone();
+    let rag = state.rag_service.clone();
+    tokio::spawn(async move {
+        reindex_promoted(
+            repo.as_ref(),
+            release_repo.as_ref(),
+            &source_id,
+            storage.as_ref(),
+            search.as_deref(),
+            rag.as_deref(),
+            &slugs,
+        )
+        .await;
+    });
 }
 
 /// Bring search and RAG in line with a promotion, for the documents whose
@@ -392,29 +539,7 @@ pub async fn promote_release_handler(
     )
     .await?;
 
-    // Re-indexing runs detached: it re-embeds documents, which can take far
-    // longer than the CLI is willing to wait on a tag operation. `needs_reindex`
-    // stays set until it succeeds, so nothing is lost if this task dies.
-    if !affected.is_empty() {
-        let repo = state.document_repo.clone();
-        let release_repo = state.release_repo.clone();
-        let source_id = response.source_id.clone();
-        let storage = state.storage_client.clone();
-        let search = state.search_service.clone();
-        let rag = state.rag_service.clone();
-        tokio::spawn(async move {
-            reindex_promoted(
-                repo.as_ref(),
-                release_repo.as_ref(),
-                &source_id,
-                storage.as_ref(),
-                search.as_deref(),
-                rag.as_deref(),
-                &affected,
-            )
-            .await;
-        });
-    }
+    spawn_promotion_reindex(&state, response.source_id.clone(), affected);
 
     Ok(axum::Json(response))
 }

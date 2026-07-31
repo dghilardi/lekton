@@ -384,6 +384,15 @@ async fn main() -> Result<()> {
                 println!("  - {slug}");
             }
         }
+        if !sync_result.superseded_unversioned.is_empty() {
+            println!(
+                "\nWould supersede (first release for this source archives its previously \
+                 unversioned documents):"
+            );
+            for slug in &sync_result.superseded_unversioned {
+                println!("  - {slug}");
+            }
+        }
         if !prompt_sync_result.to_archive.is_empty() {
             println!("\nWould archive prompts:");
             for slug in &prompt_sync_result.to_archive {
@@ -777,20 +786,8 @@ async fn main() -> Result<()> {
         sync_result.unchanged.len(),
         sync_result.to_archive.len(),
     );
-    // The one archive the server performs without being asked, so say it plainly
-    // rather than folding it into the count above.
-    if !sync_result.superseded_unversioned.is_empty() {
-        println!(
-            "  first release for this source: archived {} previously unversioned document(s), \
-             now superseded",
-            sync_result.superseded_unversioned.len()
-        );
-        if args.verbose {
-            for slug in &sync_result.superseded_unversioned {
-                println!("    - {slug}");
-            }
-        }
-    }
+    // The supersede is reported by finalization below, which is where it actually
+    // happens.
     println!(
         "Prompts: {prompts_uploaded} uploaded, {} unchanged, {} archived",
         prompt_sync_result.unchanged.len(),
@@ -826,7 +823,36 @@ async fn main() -> Result<()> {
             let detail = resp.text().await.unwrap_or_default();
             bail!("Failed to finalize release '{release}' ({status}): {detail}");
         }
+        let finalized: api::FinalizeReleaseResponse =
+            resp.json().await.context("Invalid finalization response")?;
         println!("Release {release} finalized");
+
+        // The one archive the server performs without being asked, so say it
+        // plainly rather than folding it into the sync counts above.
+        if !finalized.superseded_unversioned.is_empty() {
+            println!(
+                "  first release for this source: archived {} previously unversioned \
+                 document(s), now superseded",
+                finalized.superseded_unversioned.len()
+            );
+            if args.verbose {
+                for slug in &finalized.superseded_unversioned {
+                    println!("    - {slug}");
+                }
+            }
+        }
+        // A release nothing aliases resolves for nobody, so the first one a source
+        // publishes becomes `latest` on its own. Later ones need `--latest`.
+        if finalized.became_latest && !args.latest {
+            println!("  first release for this source, so it is now 'latest'");
+            if finalized.reindex_pending > 0 {
+                println!(
+                    "  re-indexing {} document(s) in the background so search and chat \
+                     follow it",
+                    finalized.reindex_pending
+                );
+            }
+        }
     }
 
     // ── Move the `latest` alias ───────────────────────────────────────────────

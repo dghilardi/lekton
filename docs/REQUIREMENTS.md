@@ -82,8 +82,14 @@ The system supports two methods of ingestion:
   finalizes it only after every requested upload succeeds and the server verifies
   source paths plus content and metadata hashes. Only finalized releases are
   selectable or promotable.
+* Finalizing a source's **first** release also aliases it as `latest`, and only
+  then archives the unversioned set that release supersedes. A release nothing
+  aliases resolves for nobody, so publishing without promoting must not leave a
+  source unreachable — and a run whose uploads fail must leave the previously
+  live documents in place.
 * `--latest` moves a source alias after finalization. The service token must have
-  write scope for every active document affected by the promotion.
+  write scope for every active document affected by the promotion. The recorded
+  re-index backlog covers exactly the slugs whose `latest` membership changed.
 * Unpinned reads, full-text search, and RAG resolve one `latest` copy per slug.
   Promotion reconciliation is persisted on the alias and acknowledged slug by
   slug only after search/RAG succeeds, so failed deletes remain retryable across

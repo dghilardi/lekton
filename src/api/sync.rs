@@ -79,12 +79,13 @@ pub struct SyncResponse {
     pub to_archive: Vec<String>,
     /// Source paths with no pending changes.
     pub unchanged: Vec<String>,
-    /// Slugs archived because this sync is the source's *first* release, which
-    /// supersedes the unversioned set it used to publish. Empty otherwise.
+    /// Slugs that will be archived because this sync is the source's *first*
+    /// release, which supersedes the unversioned set it used to publish. Empty
+    /// otherwise.
     ///
-    /// Reported so the caller can say so out loud: it is the one archive this
-    /// protocol performs without being asked, and the operator should know their
-    /// previously-live documents just moved out of the way.
+    /// A plan, not an outcome: the archiving itself happens at finalization, once
+    /// every upload has landed. Reported here so `--dry-run` can preview the one
+    /// archive this protocol performs without being asked for it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub superseded_unversioned: Vec<String>,
 }
@@ -324,10 +325,11 @@ pub async fn process_sync(
     }
 
     // 6b. First release for a source that used to publish an unversioned set:
-    // that set is now unreachable, because readers of this source resolve through
-    // releases from here on. Archive it rather than delete it — the rows stay
-    // recoverable — and report it, since this is the only archive the protocol
-    // performs without being asked for it.
+    // that set becomes unreachable, because readers of this source resolve
+    // through releases from here on. Reported here, but *performed* by
+    // finalization — a sync whose uploads then fail must not have taken the
+    // previously-live documents down. See `superseded_unversioned` on
+    // [`SyncResponse`].
     let mut superseded_unversioned = Vec::new();
     if request.release.is_some() && !was_release_managed {
         for doc in repo
@@ -337,36 +339,6 @@ pub async fn process_sync(
             superseded_unversioned.push(doc.slug);
         }
         superseded_unversioned.sort();
-
-        if !request.dry_run {
-            for slug in &superseded_unversioned {
-                repo.set_archived(slug, None, true).await?;
-                // The unversioned copy was `latest` until now, so it is in the
-                // indexes and has to leave them. A slug the new release also
-                // ships is re-indexed right after, by its ingest.
-                if let Some(svc) = search {
-                    if let Err(e) = svc.delete_document(slug).await {
-                        tracing::warn!(
-                            "Failed to deindex superseded unversioned document '{slug}': {e}"
-                        );
-                    }
-                }
-                if let Some(rag_svc) = rag {
-                    if let Err(e) = rag_svc.delete_document(slug).await {
-                        tracing::warn!(
-                            "Failed to remove superseded unversioned document '{slug}' from RAG: {e}"
-                        );
-                    }
-                }
-            }
-            if !superseded_unversioned.is_empty() {
-                tracing::info!(
-                    source_id = %request.source_id,
-                    count = superseded_unversioned.len(),
-                    "first release supersedes the source's unversioned documents; archived"
-                );
-            }
-        }
     }
 
     // 7. Stage the complete expected snapshot. It does not become selectable or
@@ -2016,9 +1988,11 @@ mod tests {
 
     /// The one archive this protocol performs unasked: a source's first release
     /// supersedes the unversioned set it used to publish, which nothing resolves
-    /// any more.
+    /// any more. Sync only *reports* it — performing it here would take the
+    /// previously-live documents down even when the uploads meant to replace them
+    /// then fail, so finalization owns the write.
     #[tokio::test]
-    async fn the_first_release_supersedes_the_unversioned_set() {
+    async fn the_first_release_reports_the_supersede_without_performing_it() {
         let unversioned = Document {
             release: None,
             ..make_doc("docs/legacy", "sha256:old")
@@ -2046,17 +2020,16 @@ mod tests {
         assert_eq!(
             result.superseded_unversioned,
             vec!["docs/legacy".to_string()],
-            "the operator must be told which documents moved out of the way"
+            "the operator must be told which documents will move out of the way"
         );
-        let archived = repo.find_by_slug("docs/legacy").await.unwrap().unwrap();
+        let still_live = repo.find_by_slug("docs/legacy").await.unwrap().unwrap();
         assert!(
-            archived.is_archived,
-            "archived, not deleted, so the rows stay recoverable"
+            !still_live.is_archived,
+            "the unversioned set stays live until the release is finalized"
         );
-        assert_eq!(
-            search.deleted_slugs(),
-            vec!["docs/legacy".to_string()],
-            "it was latest until now, so it has to leave the index"
+        assert!(
+            search.deleted_slugs().is_empty(),
+            "and stays in the index, so a failed run leaves readers where they were"
         );
     }
 

@@ -67,6 +67,37 @@ pub fn encode_pin_param(value: &str) -> String {
     out
 }
 
+/// Rebuild an internal URL with `pins` as its complete pin set, keeping every
+/// other query parameter.
+///
+/// `search` is the current raw query string, with or without its leading `?`.
+/// Its `v=` entries are dropped — `pins` replaces them wholesale — and the rest
+/// is passed through verbatim: a reader who arrived with `?highlight=auth` must
+/// not lose it by switching release.
+pub fn url_with_pins(pathname: &str, search: &str, pins: &ReleasePins) -> String {
+    let mut params: Vec<String> = search
+        .trim_start_matches('?')
+        .split('&')
+        .filter(|entry| !entry.is_empty())
+        .filter(|entry| {
+            let key = entry.split_once('=').map_or(*entry, |(key, _)| key);
+            key != PIN_PARAM
+        })
+        .map(str::to_string)
+        .collect();
+
+    params.extend(
+        pins.to_param_values()
+            .iter()
+            .map(|value| format!("{PIN_PARAM}={}", encode_pin_param(value))),
+    );
+
+    if params.is_empty() {
+        return pathname.to_string();
+    }
+    format!("{pathname}?{}", params.join("&"))
+}
+
 /// Append normalized release pins to an internal URL while preserving its
 /// existing query string and fragment.
 pub fn with_release_pins(url: &str, raw_pins: &[String]) -> String {
@@ -285,6 +316,35 @@ mod tests {
         );
 
         assert_eq!(url, "/docs/guide?v=a:1.0.0&v=b:2.0.0#install".to_string());
+    }
+
+    #[test]
+    fn url_with_pins_replaces_pins_and_keeps_everything_else() {
+        let mut pins = ReleasePins::default();
+        pins.set("svc", "1.0.0");
+
+        assert_eq!(
+            url_with_pins("/docs/a", "?highlight=auth&v=svc:0.9.0", &pins),
+            "/docs/a?highlight=auth&v=svc:1.0.0",
+            "switching release must not cost the reader their other parameters"
+        );
+    }
+
+    #[test]
+    fn url_with_pins_drops_the_query_when_nothing_is_left() {
+        assert_eq!(
+            url_with_pins("/docs/a", "?v=svc:1.0.0", &ReleasePins::default()),
+            "/docs/a",
+            "removing the last pin must leave a clean URL so the strip disappears"
+        );
+    }
+
+    #[test]
+    fn url_with_pins_tolerates_a_missing_query() {
+        let mut pins = ReleasePins::default();
+        pins.set("svc", "1.0.0");
+
+        assert_eq!(url_with_pins("/docs/a", "", &pins), "/docs/a?v=svc:1.0.0");
     }
 
     #[test]

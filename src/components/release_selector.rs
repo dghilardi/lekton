@@ -6,16 +6,20 @@
 
 use leptos::prelude::*;
 
-use crate::versioning::{encode_pin_param, ReleasePins, PIN_PARAM};
+use crate::versioning::{url_with_pins, ReleasePins, PIN_PARAM};
 
-/// Build the URL for reading `slug` at `release`, preserving any pin on other
-/// sources.
+/// Build the URL for reading the current page at `release`, preserving any pin on
+/// other sources and every unrelated query parameter.
 ///
 /// Selecting the release that currently carries `latest` produces the *unpinned*
 /// URL, so the canonical address stays clean and the reader follows the alias as
 /// it moves rather than freezing on today's latest.
+///
+/// `existing` is the decoded pin set from the router; `search` is the raw query
+/// string, which is where the non-pin parameters come from.
 fn href_for(
     pathname: &str,
+    search: &str,
     existing: &[String],
     source_id: &str,
     release: &str,
@@ -29,17 +33,7 @@ fn href_for(
         pins.set(source_id, release);
     }
 
-    let values = pins.to_param_values();
-    if values.is_empty() {
-        return pathname.to_string();
-    }
-
-    let query = values
-        .iter()
-        .map(|v| format!("{PIN_PARAM}={}", encode_pin_param(v)))
-        .collect::<Vec<_>>()
-        .join("&");
-    format!("{pathname}?{query}")
+    url_with_pins(pathname, search, &pins)
 }
 
 #[component]
@@ -116,6 +110,7 @@ pub fn ReleaseSelector(
                                 .unwrap_or_default();
                             href_for(
                                 &location.pathname.get(),
+                                &location.search.get(),
                                 &existing,
                                 &source_id,
                                 &release,
@@ -156,7 +151,7 @@ mod tests {
 
     #[test]
     fn selecting_latest_produces_the_unpinned_url() {
-        let href = href_for("/docs/a", &[], "svc", "1.2.0", Some("1.2.0"));
+        let href = href_for("/docs/a", "", &[], "svc", "1.2.0", Some("1.2.0"));
         assert_eq!(
             href, "/docs/a",
             "the canonical address for latest carries no pin, so readers follow the alias"
@@ -165,14 +160,21 @@ mod tests {
 
     #[test]
     fn selecting_an_older_release_pins_it() {
-        let href = href_for("/docs/a", &[], "svc", "1.0.0", Some("1.2.0"));
+        let href = href_for("/docs/a", "", &[], "svc", "1.0.0", Some("1.2.0"));
         assert_eq!(href, "/docs/a?v=svc:1.0.0");
     }
 
     #[test]
     fn other_sources_keep_their_pins() {
         let existing = vec!["other:9.9.9".to_string()];
-        let href = href_for("/docs/a", &existing, "svc", "1.0.0", Some("1.2.0"));
+        let href = href_for(
+            "/docs/a",
+            "?v=other:9.9.9",
+            &existing,
+            "svc",
+            "1.0.0",
+            Some("1.2.0"),
+        );
 
         assert!(
             href.contains("other:9.9.9"),
@@ -184,7 +186,14 @@ mod tests {
     #[test]
     fn switching_back_to_latest_drops_only_this_sources_pin() {
         let existing = vec!["svc:1.0.0".to_string(), "other:9.9.9".to_string()];
-        let href = href_for("/docs/a", &existing, "svc", "1.2.0", Some("1.2.0"));
+        let href = href_for(
+            "/docs/a",
+            "?v=svc:1.0.0&v=other:9.9.9",
+            &existing,
+            "svc",
+            "1.2.0",
+            Some("1.2.0"),
+        );
 
         assert!(!href.contains("svc:"), "got: {href}");
         assert!(
@@ -196,12 +205,36 @@ mod tests {
     #[test]
     fn re_selecting_a_pinned_release_is_idempotent() {
         let existing = vec!["svc:1.0.0".to_string()];
-        let href = href_for("/docs/a", &existing, "svc", "1.0.0", Some("1.2.0"));
+        let href = href_for(
+            "/docs/a",
+            "?v=svc:1.0.0",
+            &existing,
+            "svc",
+            "1.0.0",
+            Some("1.2.0"),
+        );
         assert_eq!(href, "/docs/a?v=svc:1.0.0");
+    }
+
+    /// Switching release is navigation within the same page, so anything else the
+    /// reader carries in the URL has to survive it.
+    #[test]
+    fn unrelated_query_parameters_survive_the_switch() {
+        let href = href_for(
+            "/docs/a",
+            "?highlight=auth",
+            &[],
+            "svc",
+            "1.0.0",
+            Some("1.2.0"),
+        );
+        assert_eq!(href, "/docs/a?highlight=auth&v=svc:1.0.0");
     }
 
     #[test]
     fn only_query_breaking_characters_are_encoded() {
+        use crate::versioning::encode_pin_param;
+
         assert_eq!(
             encode_pin_param("svc:1.0.0"),
             "svc:1.0.0",

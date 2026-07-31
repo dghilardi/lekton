@@ -10,39 +10,29 @@
 
 use leptos::prelude::*;
 
-use crate::versioning::{encode_pin_param, ReleasePins, PIN_PARAM};
+use crate::versioning::{url_with_pins, ReleasePins, PIN_PARAM};
 
-/// Rebuild the current URL with `pins` as its pin set.
-fn url_with_pins(pathname: &str, pins: &ReleasePins) -> String {
-    let values = pins.to_param_values();
-    if values.is_empty() {
-        return pathname.to_string();
-    }
-    let query = values
-        .iter()
-        .map(|v| format!("{PIN_PARAM}={}", encode_pin_param(v)))
-        .collect::<Vec<_>>()
-        .join("&");
-    format!("{pathname}?{query}")
-}
-
-/// The URL that results from dropping `source_id`'s pin.
-fn url_without(pathname: &str, existing: &[String], source_id: &str) -> String {
+/// The URL that results from dropping `source_id`'s pin, keeping the rest of the
+/// query string.
+fn url_without(pathname: &str, search: &str, existing: &[String], source_id: &str) -> String {
     let mut pins = ReleasePins::from_param_values(existing);
     pins.remove(source_id);
-    url_with_pins(pathname, &pins)
+    url_with_pins(pathname, search, &pins)
 }
 
 #[component]
 pub fn ReleasePinStrip() -> impl IntoView {
     let location = leptos_router::hooks::use_location();
     let query = leptos_router::hooks::use_query_map();
+    // The server ignores pins while versioning is off, so declaring them here
+    // would claim a view the reader is not getting.
+    let versioning_on = crate::app::use_feature(|f| f.doc_versioning);
 
     let pins = Signal::derive(move || {
         ReleasePins::from_param_values(query.read().get_all(PIN_PARAM).unwrap_or_default())
     });
     let raw = Signal::derive(move || query.read().get_all(PIN_PARAM).unwrap_or_default());
-    let has_pins = Signal::derive(move || !pins.get().is_empty());
+    let has_pins = Signal::derive(move || versioning_on.get() && !pins.get().is_empty());
     let count = Signal::derive(move || pins.get().len());
 
     // No enter/exit animation on purpose: pins only change by navigating, so the
@@ -50,7 +40,13 @@ pub fn ReleasePinStrip() -> impl IntoView {
     view! {
         <Show when=move || has_pins.get()>
             {
-                let reset_href = Signal::derive(move || location.pathname.get());
+                let reset_href = Signal::derive(move || {
+                    url_with_pins(
+                        &location.pathname.get(),
+                        &location.search.get(),
+                        &ReleasePins::default(),
+                    )
+                });
                 view! {
                     <div
                         role="region"
@@ -84,6 +80,7 @@ pub fn ReleasePinStrip() -> impl IntoView {
                                         let source_id = source_id.clone();
                                         Signal::derive(move || url_without(
                                             &location.pathname.get(),
+                                            &location.search.get(),
                                             &raw.get(),
                                             &source_id,
                                         ))
@@ -146,7 +143,7 @@ mod tests {
     fn removing_the_only_pin_yields_the_bare_path() {
         let existing = vec!["svc:1.0.0".to_string()];
         assert_eq!(
-            url_without("/docs/a", &existing, "svc"),
+            url_without("/docs/a", "?v=svc:1.0.0", &existing, "svc"),
             "/docs/a",
             "dropping the last pin must leave a clean URL so the strip disappears"
         );
@@ -155,7 +152,7 @@ mod tests {
     #[test]
     fn removing_one_pin_leaves_the_others() {
         let existing = vec!["a:1.0.0".to_string(), "b:2.0.0".to_string()];
-        let url = url_without("/docs/x", &existing, "a");
+        let url = url_without("/docs/x", "?v=a:1.0.0&v=b:2.0.0", &existing, "a");
 
         assert!(!url.contains("a:1.0.0"), "got: {url}");
         assert!(url.contains("b:2.0.0"), "got: {url}");
@@ -165,8 +162,18 @@ mod tests {
     fn removing_an_unpinned_source_changes_nothing() {
         let existing = vec!["a:1.0.0".to_string()];
         assert_eq!(
-            url_without("/docs/x", &existing, "zzz"),
+            url_without("/docs/x", "?v=a:1.0.0", &existing, "zzz"),
             "/docs/x?v=a:1.0.0"
+        );
+    }
+
+    #[test]
+    fn unpinning_keeps_unrelated_query_parameters() {
+        let existing = vec!["a:1.0.0".to_string()];
+        assert_eq!(
+            url_without("/docs/x", "?tab=api&v=a:1.0.0", &existing, "a"),
+            "/docs/x?tab=api",
+            "removing a pin must not strip the rest of the reader's URL"
         );
     }
 }

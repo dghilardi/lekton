@@ -472,7 +472,11 @@ mod tests {
                 .push(key.to_string());
             Ok(())
         }
-        async fn set_references(&self, _: &str, _: &[String]) -> Result<Vec<String>, AppError> {
+        async fn set_release_references(
+            &self,
+            _: &crate::db::models::DocumentReference,
+            _: &[String],
+        ) -> Result<Vec<String>, AppError> {
             Ok(vec![])
         }
         async fn list_unfinished_extractions(&self) -> Result<Vec<Asset>, AppError> {

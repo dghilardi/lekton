@@ -1052,7 +1052,22 @@ mod tests {
 
     #[async_trait]
     impl crate::db::release_repository::ReleaseRepository for MockReleaseRepo {
-        async fn register(&self, _: &str, _: &str) -> Result<(), AppError> {
+        async fn stage(
+            &self,
+            _: &str,
+            _: &str,
+            _: &[crate::db::release_repository::ReleaseDocumentExpectation],
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn find(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<Option<crate::db::release_repository::SourceRelease>, AppError> {
+            Ok(None)
+        }
+        async fn finalize(&self, _: &str, _: &str) -> Result<(), AppError> {
             Ok(())
         }
         async fn list_by_source(
@@ -1067,7 +1082,18 @@ mod tests {
         async fn latest(&self, _: &str) -> Result<Option<String>, AppError> {
             Ok(None)
         }
-        async fn set_latest(&self, _: &str, _: &str) -> Result<(), AppError> {
+        async fn set_latest_with_pending(
+            &self,
+            _: &str,
+            _: &str,
+            _: &[String],
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn pending_reindex(&self, _: &str) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
+        async fn clear_reindex_pending(&self, _: &str, _: &str) -> Result<(), AppError> {
             Ok(())
         }
     }
@@ -1135,7 +1161,11 @@ mod tests {
         ) -> Result<(), AppError> {
             Ok(())
         }
-        async fn set_references(&self, _: &str, _: &[String]) -> Result<Vec<String>, AppError> {
+        async fn set_release_references(
+            &self,
+            _: &crate::db::models::DocumentReference,
+            _: &[String],
+        ) -> Result<Vec<String>, AppError> {
             Ok(vec![])
         }
         async fn list_unfinished_extractions(
@@ -1207,7 +1237,11 @@ mod tests {
         ) -> Result<(), AppError> {
             Ok(())
         }
-        async fn set_references(&self, _: &str, _: &[String]) -> Result<Vec<String>, AppError> {
+        async fn set_release_references(
+            &self,
+            _: &crate::db::models::DocumentReference,
+            _: &[String],
+        ) -> Result<Vec<String>, AppError> {
             Ok(vec![])
         }
         async fn list_unfinished_extractions(

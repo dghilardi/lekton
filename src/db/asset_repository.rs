@@ -44,13 +44,6 @@ pub trait AssetRepository: Send + Sync {
     /// key does not exist.
     async fn update_extraction(&self, key: &str, update: ExtractionUpdate) -> Result<(), AppError>;
 
-    /// Reconcile references for an unversioned document slug.
-    async fn set_references(
-        &self,
-        source_slug: &str,
-        keys: &[String],
-    ) -> Result<Vec<String>, AppError>;
-
     /// Reconcile `referenced_by` so that `source` references exactly `keys`:
     /// add the release-aware reference to those assets and remove it from every
     /// other asset that still lists it. Idempotent. Returns the keys whose
@@ -60,14 +53,18 @@ pub trait AssetRepository: Send + Sync {
         &self,
         source: &DocumentReference,
         keys: &[String],
+    ) -> Result<Vec<String>, AppError>;
+
+    /// Reconcile references for an unversioned document slug.
+    ///
+    /// The release-agnostic spelling of [`Self::set_release_references`], for the
+    /// callers that operate on documents no release owns.
+    async fn set_references(
+        &self,
+        source_slug: &str,
+        keys: &[String],
     ) -> Result<Vec<String>, AppError> {
-        if source.release.is_none() {
-            self.set_references(&source.slug, keys).await
-        } else {
-            Err(AppError::Internal(
-                "release-aware asset references are not implemented".into(),
-            ))
-        }
+        self.set_release_references(&source_slug.into(), keys).await
     }
 
     /// List assets whose extraction was left unfinished — `Pending` (never
@@ -223,14 +220,6 @@ impl AssetRepository for MongoAssetRepository {
         Ok(())
     }
 
-    async fn set_references(
-        &self,
-        source_slug: &str,
-        keys: &[String],
-    ) -> Result<Vec<String>, AppError> {
-        self.set_release_references(&source_slug.into(), keys).await
-    }
-
     async fn set_release_references(
         &self,
         source: &DocumentReference,
@@ -239,6 +228,12 @@ impl AssetRepository for MongoAssetRepository {
         use futures::TryStreamExt;
         use mongodb::bson::{doc, to_bson};
 
+        // Matched, pulled and added as a whole subdocument, which in Mongo means
+        // *exact* equality including field order. That holds because both the
+        // stored form (migration 016) and this serialization come from
+        // `DocumentReference` itself — but it also means a new field on that
+        // struct silently stops matching existing rows. Add one only together
+        // with a migration, or move these three queries to `$elemMatch`.
         let source = to_bson(source).map_err(|e| {
             AppError::Internal(format!("failed to serialize asset document reference: {e}"))
         })?;

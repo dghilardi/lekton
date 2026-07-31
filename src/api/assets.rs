@@ -971,26 +971,21 @@ mod tests {
             Ok(())
         }
 
-        async fn set_references(
+        async fn set_release_references(
             &self,
-            source_slug: &str,
+            source: &crate::db::models::DocumentReference,
             keys: &[String],
         ) -> Result<Vec<String>, AppError> {
             let mut assets = self.assets.lock().unwrap();
             let mut affected = Vec::new();
             for a in assets.iter_mut() {
                 let referenced = keys.contains(&a.key);
-                let has = a
-                    .referenced_by
-                    .iter()
-                    .any(|reference| reference.slug == source_slug && reference.release.is_none());
+                let has = a.referenced_by.iter().any(|reference| reference == source);
                 if referenced && !has {
-                    a.referenced_by.push(source_slug.to_string().into());
+                    a.referenced_by.push(source.clone());
                     affected.push(a.key.clone());
                 } else if !referenced && has {
-                    a.referenced_by.retain(|reference| {
-                        reference.slug != source_slug || reference.release.is_some()
-                    });
+                    a.referenced_by.retain(|reference| reference != source);
                     affected.push(a.key.clone());
                 }
             }

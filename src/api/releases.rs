@@ -636,7 +636,18 @@ mod tests {
 
     #[async_trait]
     impl ReleaseRepository for RecordingReleaseRepo {
-        async fn register(&self, _: &str, _: &str) -> Result<(), AppError> {
+        async fn stage(
+            &self,
+            _: &str,
+            _: &str,
+            _: &[ReleaseDocumentExpectation],
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn find(&self, _: &str, _: &str) -> Result<Option<SourceRelease>, AppError> {
+            Ok(None)
+        }
+        async fn finalize(&self, _: &str, _: &str) -> Result<(), AppError> {
             Ok(())
         }
         async fn list_by_source(&self, _: &str) -> Result<Vec<SourceRelease>, AppError> {
@@ -648,8 +659,16 @@ mod tests {
         async fn latest(&self, _: &str) -> Result<Option<String>, AppError> {
             Ok(None)
         }
-        async fn set_latest(&self, _: &str, _: &str) -> Result<(), AppError> {
+        async fn set_latest_with_pending(
+            &self,
+            _: &str,
+            _: &str,
+            _: &[String],
+        ) -> Result<(), AppError> {
             Ok(())
+        }
+        async fn pending_reindex(&self, _: &str) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
         }
         async fn clear_reindex_pending(&self, _: &str, slug: &str) -> Result<(), AppError> {
             self.cleared.lock().unwrap().push(slug.to_string());

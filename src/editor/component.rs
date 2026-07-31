@@ -807,7 +807,11 @@ mod tests {
         async fn update_extraction(&self, _: &str, _: ExtractionUpdate) -> Result<(), AppError> {
             Ok(())
         }
-        async fn set_references(&self, _: &str, _: &[String]) -> Result<Vec<String>, AppError> {
+        async fn set_release_references(
+            &self,
+            _: &crate::db::models::DocumentReference,
+            _: &[String],
+        ) -> Result<Vec<String>, AppError> {
             if self.fail_set_references {
                 Err(AppError::Database(
                     "simulated set_references failure".to_string(),

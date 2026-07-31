@@ -48,50 +48,57 @@ pub struct SourceRelease {
 /// Persistence for the release catalogue and the `latest` alias.
 #[async_trait]
 pub trait ReleaseRepository: Send + Sync {
-    /// Record a sync of `release` for `source_id`, creating the catalogue entry
-    /// on first sight and refreshing `last_synced_at` afterwards.
-    async fn register(&self, source_id: &str, release: &str) -> Result<(), AppError>;
-
     /// Stage a release and its complete expected document snapshot.
     ///
-    /// Restaging the same tag replaces the expectation and clears finalization
-    /// until the new snapshot has been verified.
+    /// Restaging a tag replaces its expectation. It does *not* un-finalize one
+    /// that was already published: the release stays selectable, serving the
+    /// content it currently holds, while the new sync is in flight. Dropping it
+    /// from the catalogue for the duration would take the release out of the
+    /// selector and invalidate the pins of everyone reading it, which is a worse
+    /// failure than briefly serving the previous content.
     async fn stage(
         &self,
         source_id: &str,
         release: &str,
-        _expected_documents: &[ReleaseDocumentExpectation],
-    ) -> Result<(), AppError> {
-        self.register(source_id, release).await
-    }
+        expected_documents: &[ReleaseDocumentExpectation],
+    ) -> Result<(), AppError>;
 
-    /// Return one staged or finalized release.
-    async fn find(
-        &self,
-        source_id: &str,
-        release: &str,
-    ) -> Result<Option<SourceRelease>, AppError> {
-        Ok(self
-            .list_by_source(source_id)
-            .await?
-            .into_iter()
-            .find(|candidate| candidate.release == release))
-    }
+    /// Return one release, whether staged or finalized.
+    ///
+    /// Distinct from [`Self::list_by_source`], which shows only finalized ones:
+    /// finalization itself has to read back the release it is about to publish.
+    async fn find(&self, source_id: &str, release: &str)
+        -> Result<Option<SourceRelease>, AppError>;
 
     /// Mark a staged release complete after its expected snapshot is verified.
-    async fn finalize(&self, source_id: &str, release: &str) -> Result<(), AppError> {
-        self.register(source_id, release).await
+    async fn finalize(&self, source_id: &str, release: &str) -> Result<(), AppError>;
+
+    /// Stage and immediately finalize a release with no expected documents.
+    ///
+    /// A convenience for callers that have nothing to verify — tests, and any
+    /// path that records a release already known to be complete.
+    async fn register(&self, source_id: &str, release: &str) -> Result<(), AppError> {
+        self.stage(source_id, release, &[]).await?;
+        self.finalize(source_id, release).await
     }
 
     /// Releases of a source, most recently first *published* first.
+    ///
+    /// Only finalized ones: a release whose documents never fully landed is not
+    /// something a reader may select or an operator may promote.
     ///
     /// Ordered by `first_synced_at` rather than by parsing the tag: release
     /// strings are free-form (`1.2.0`, `2024-06`, `v3-rc1`), so publication
     /// order is the only ordering that is always meaningful.
     async fn list_by_source(&self, source_id: &str) -> Result<Vec<SourceRelease>, AppError>;
 
-    /// Whether the source has at least one release — i.e. whether a sync of it
-    /// must carry an explicit release.
+    /// Whether the source has published a release — i.e. whether a sync of it
+    /// must carry an explicit one.
+    ///
+    /// Judged on finalized releases only, matching [`Self::list_by_source`]. A
+    /// staged release that never completed must not lock the source out of the
+    /// unversioned path it is still publishing on, or a single failed first
+    /// publish would leave it demanding `--version` with no release to name.
     async fn is_release_managed(&self, source_id: &str) -> Result<bool, AppError>;
 
     /// The release currently aliased `latest`, if the alias has been set.
@@ -102,7 +109,9 @@ pub trait ReleaseRepository: Send + Sync {
     /// A single-document upsert, so the alias is never briefly absent or
     /// duplicated — which is why it lives here and not as a boolean spread over
     /// the catalogue rows.
-    async fn set_latest(&self, source_id: &str, release: &str) -> Result<(), AppError>;
+    async fn set_latest(&self, source_id: &str, release: &str) -> Result<(), AppError> {
+        self.set_latest_with_pending(source_id, release, &[]).await
+    }
 
     /// Point `latest` at `release` and durably enqueue the slugs whose search
     /// and RAG state must be reconciled.
@@ -110,20 +119,14 @@ pub trait ReleaseRepository: Send + Sync {
         &self,
         source_id: &str,
         release: &str,
-        _pending_slugs: &[String],
-    ) -> Result<(), AppError> {
-        self.set_latest(source_id, release).await
-    }
+        pending_slugs: &[String],
+    ) -> Result<(), AppError>;
 
     /// Slugs still awaiting search/RAG reconciliation for this source.
-    async fn pending_reindex(&self, _source_id: &str) -> Result<Vec<String>, AppError> {
-        Ok(vec![])
-    }
+    async fn pending_reindex(&self, source_id: &str) -> Result<Vec<String>, AppError>;
 
     /// Acknowledge one successfully reconciled slug.
-    async fn clear_reindex_pending(&self, _source_id: &str, _slug: &str) -> Result<(), AppError> {
-        Ok(())
-    }
+    async fn clear_reindex_pending(&self, source_id: &str, slug: &str) -> Result<(), AppError>;
 }
 
 /// Deserialization view over a `source_release_aliases` row.
@@ -157,11 +160,6 @@ impl MongoReleaseRepository {
 #[cfg(feature = "ssr")]
 #[async_trait]
 impl ReleaseRepository for MongoReleaseRepository {
-    async fn register(&self, source_id: &str, release: &str) -> Result<(), AppError> {
-        self.stage(source_id, release, &[]).await?;
-        self.finalize(source_id, release).await
-    }
-
     async fn stage(
         &self,
         source_id: &str,
@@ -178,12 +176,15 @@ impl ReleaseRepository for MongoReleaseRepository {
             "$set": {
                 "last_synced_at": now,
                 "expected_documents": expected_documents,
-                "finalized_at": mongodb::bson::Bson::Null,
             },
+            // `finalized_at` is seeded null on first sight and never reset:
+            // restaging a published release must not de-list it mid-sync. See
+            // the trait method's documentation.
             "$setOnInsert": {
                 "source_id": source_id,
                 "release": release,
                 "first_synced_at": now,
+                "finalized_at": mongodb::bson::Bson::Null,
             },
         };
 
@@ -250,7 +251,10 @@ impl ReleaseRepository for MongoReleaseRepository {
 
         let count = self
             .releases
-            .count_documents(doc! { "source_id": source_id })
+            .count_documents(doc! {
+                "source_id": source_id,
+                "finalized_at": { "$type": "date" },
+            })
             .await
             .map_err(|e| AppError::Database(format!("count source releases: {e}")))?;
         Ok(count > 0)
@@ -265,10 +269,6 @@ impl ReleaseRepository for MongoReleaseRepository {
             .await
             .map_err(|e| AppError::Database(format!("find latest alias: {e}")))?
             .map(|a| a.latest_release))
-    }
-
-    async fn set_latest(&self, source_id: &str, release: &str) -> Result<(), AppError> {
-        self.set_latest_with_pending(source_id, release, &[]).await
     }
 
     async fn set_latest_with_pending(

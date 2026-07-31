@@ -114,6 +114,96 @@ async fn a_source_becomes_release_managed_on_its_first_release() {
     );
 }
 
+/// A first publish that never completed must not lock the source out of the
+/// unversioned path it is still serving: it would then demand `--version` while
+/// having no release anyone can name.
+#[tokio::test]
+async fn a_staged_release_alone_does_not_make_a_source_release_managed() {
+    let env = common::TestEnv::start().await;
+
+    env.release_repo
+        .stage("assets-manager", "1.0.0", &[])
+        .await
+        .expect("stage");
+
+    assert!(
+        !env.release_repo
+            .is_release_managed("assets-manager")
+            .await
+            .expect("query"),
+        "a staged release is not a published one"
+    );
+    assert!(
+        env.release_repo
+            .list_by_source("assets-manager")
+            .await
+            .expect("query")
+            .is_empty(),
+        "and must not be selectable either"
+    );
+
+    env.release_repo
+        .finalize("assets-manager", "1.0.0")
+        .await
+        .expect("finalize");
+
+    assert!(
+        env.release_repo
+            .is_release_managed("assets-manager")
+            .await
+            .expect("query"),
+        "finalizing is what publishes it"
+    );
+}
+
+/// Re-syncing a release that readers are already on must not take it out of the
+/// catalogue: it would vanish from the selector and invalidate the pins of
+/// everyone reading it, for the whole duration of the sync — and for good if the
+/// sync then fails.
+#[tokio::test]
+async fn restaging_a_published_release_keeps_it_selectable() {
+    let env = common::TestEnv::start().await;
+
+    env.release_repo
+        .register("assets-manager", "1.0.0")
+        .await
+        .expect("publish");
+
+    env.release_repo
+        .stage(
+            "assets-manager",
+            "1.0.0",
+            &[lekton::db::release_repository::ReleaseDocumentExpectation {
+                slug: "api/auth".to_string(),
+                source_path: "api/auth.md".to_string(),
+                content_hash: "sha256:new".to_string(),
+                metadata_hash: None,
+            }],
+        )
+        .await
+        .expect("restage");
+
+    let listed = env
+        .release_repo
+        .list_by_source("assets-manager")
+        .await
+        .expect("query");
+    assert_eq!(
+        listed
+            .iter()
+            .map(|r| r.release.as_str())
+            .collect::<Vec<_>>(),
+        vec!["1.0.0"],
+        "the release must stay selectable while its re-sync is in flight"
+    );
+    assert!(listed[0].finalized_at.is_some());
+    assert_eq!(
+        listed[0].expected_documents.len(),
+        1,
+        "while still picking up the new manifest to verify"
+    );
+}
+
 #[tokio::test]
 async fn latest_alias_starts_unset_and_moves_in_place() {
     let env = common::TestEnv::start().await;

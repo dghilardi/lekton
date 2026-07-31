@@ -275,6 +275,7 @@ mod ssr {
                     vertex_project_id: None,
                     vertex_location: None,
                     system_prompt_template: "stub".into(),
+                    max_output_tokens: 2048,
                 },
                 analyzer: self.analyzer.clone(),
                 hyde: self.hyde.clone(),

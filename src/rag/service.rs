@@ -518,6 +518,7 @@ mod tests {
                 vertex_project_id: None,
                 vertex_location: None,
                 system_prompt_template: String::new(),
+                max_output_tokens: 2048,
             },
             analyzer: None,
             hyde: None,

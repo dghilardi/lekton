@@ -219,20 +219,40 @@ async fn plan_refuses_to_run_over_duplicate_slugs() {
 async fn migration_015_renames_the_history_collection_and_its_field() {
     let env = common::TestEnv::start().await;
 
-    // Legacy history, as written before the rename.
-    env.db
-        .collection::<mongodb::bson::Document>("document_versions")
-        .insert_one(doc! {
-            "id": "rev-1",
-            "slug": "guides/intro",
-            "version": 3i64,
-            "content_hash": "sha256:abc",
-            "s3_key": "docs/history/guides_intro/3.md",
-            "updated_by": "legacy",
-            "created_at": mongodb::bson::DateTime::now(),
-        })
+    // Legacy history, as written before the rename. Several revisions of the
+    // *same* slug on purpose: with one row the field rename can never hit the
+    // unique index it has to get out of the way of first.
+    let legacy = env
+        .db
+        .collection::<mongodb::bson::Document>("document_versions");
+    for revision in 1i64..=3 {
+        legacy
+            .insert_one(doc! {
+                "id": format!("rev-{revision}"),
+                "slug": "guides/intro",
+                "version": revision,
+                "content_hash": format!("sha256:{revision}"),
+                "s3_key": format!("docs/history/guides_intro/{revision}.md"),
+                "updated_by": "legacy",
+                "created_at": mongodb::bson::DateTime::now(),
+            })
+            .await
+            .expect("insert legacy revision");
+    }
+    // The index that made the naive rename order fail.
+    legacy
+        .create_index(
+            mongodb::IndexModel::builder()
+                .keys(doc! { "slug": 1, "version": 1 })
+                .options(
+                    mongodb::options::IndexOptions::builder()
+                        .unique(true)
+                        .build(),
+                )
+                .build(),
+        )
         .await
-        .expect("insert legacy revision");
+        .expect("recreate the pre-rename unique index");
 
     run_plan(&env.db).await;
 
@@ -246,19 +266,29 @@ async fn migration_015_renames_the_history_collection_and_its_field() {
         "the ambiguous name must be gone, found: {names:?}"
     );
 
-    let moved = env
+    let revisions = env
         .db
-        .collection::<mongodb::bson::Document>("document_revisions")
-        .find_one(doc! { "id": "rev-1" })
+        .collection::<mongodb::bson::Document>("document_revisions");
+    assert_eq!(
+        revisions.count_documents(doc! {}).await.expect("count"),
+        3,
+        "every revision must survive the rename"
+    );
+    assert_eq!(
+        revisions
+            .count_documents(doc! { "version": { "$exists": true } })
+            .await
+            .expect("count"),
+        0,
+        "no row may keep the old field: a half-renamed collection is the failure \
+         this ordering exists to prevent"
+    );
+    let moved = revisions
+        .find_one(doc! { "id": "rev-3" })
         .await
         .expect("query")
         .expect("history must survive the rename");
-
     assert_eq!(moved.get_i64("revision"), Ok(3), "got: {moved:?}");
-    assert!(
-        moved.get("version").is_none(),
-        "the old field must not linger alongside the new one"
-    );
 
     let indexes = env
         .db

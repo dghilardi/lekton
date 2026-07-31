@@ -868,20 +868,24 @@ mod inner {
 
         let col = db.collection::<bson::Document>("document_revisions");
 
-        col.update_many(
-            bson::doc! { "version": { "$exists": true } },
-            bson::doc! { "$rename": { "version": "revision" } },
-        )
-        .await?;
-
-        // The indexes from migration 011 were built on the old field name and
-        // travelled with the rename, so they are now indexing a field that no
-        // longer exists. Replace them.
+        // Drop the indexes migration 011 built on `version` *before* renaming the
+        // field. They travelled with the collection rename, and `$rename` is
+        // applied document by document: the moment two revisions of one slug have
+        // lost `version`, both index as `{slug, version: null}` and the unique
+        // index rejects the write, aborting the rename half-way.
         for stale in ["slug_1_version_1", "slug_1_version_-1"] {
             if col.list_index_names().await?.iter().any(|n| n == stale) {
                 col.drop_index(stale).await?;
             }
         }
+
+        // Only rows that still carry the old field, so a retry after a partial
+        // run finishes the job instead of failing on the ones already converted.
+        col.update_many(
+            bson::doc! { "version": { "$exists": true } },
+            bson::doc! { "$rename": { "version": "revision" } },
+        )
+        .await?;
 
         col.create_index(
             IndexModel::builder()

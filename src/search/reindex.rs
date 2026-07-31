@@ -51,7 +51,15 @@ pub async fn run_reindex(
         }
     };
 
-    let total = documents.len();
+    let mut documents_by_slug = std::collections::BTreeMap::<String, Vec<_>>::new();
+    for document in documents {
+        documents_by_slug
+            .entry(document.slug.clone())
+            .or_default()
+            .push(document);
+    }
+
+    let total = documents_by_slug.len();
     if total == 0 {
         tracing::info!("Search reindex: no documents to index");
         reindex.progress.store(100, Ordering::Relaxed);
@@ -60,7 +68,24 @@ pub async fn run_reindex(
 
     tracing::info!(total, "Search reindex: starting");
 
-    for (i, doc) in documents.iter().enumerate() {
+    for (i, (slug, candidates)) in documents_by_slug.into_iter().enumerate() {
+        let Some(doc) = crate::db::repository::resolve_by_release(
+            candidates,
+            &crate::versioning::ReleasePins::default(),
+        ) else {
+            if let Err(e) = search.delete_document(&slug).await {
+                tracing::warn!(
+                    slug,
+                    "Search reindex: failed to delete document without latest release: {e}"
+                );
+                reindex
+                    .outcome
+                    .record_failure(format!("delete {slug}: {e}"));
+            }
+            update_progress(&reindex, i, total);
+            continue;
+        };
+
         if doc.is_archived || doc.is_hidden {
             if let Err(e) = search.delete_document(&doc.slug).await {
                 tracing::warn!(slug = %doc.slug, "Search reindex: failed to delete stale document: {e}");
@@ -90,7 +115,7 @@ pub async fn run_reindex(
             }
         };
 
-        let search_doc = build_search_document(doc, &content);
+        let search_doc = build_search_document(&doc, &content);
         if let Err(e) = search.index_document(&search_doc).await {
             tracing::warn!(slug = %doc.slug, "Search reindex: failed to index document: {e}");
             reindex
@@ -304,7 +329,41 @@ mod tests {
         assert!(indexed[0].content_preview.contains("Active"));
 
         let deleted = search.deleted.lock().unwrap();
-        assert_eq!(&*deleted, &vec![hidden.slug.clone(), archived.slug.clone()]);
+        assert_eq!(&*deleted, &vec![archived.slug.clone(), hidden.slug.clone()]);
+    }
+
+    #[tokio::test]
+    async fn reindex_reconciles_one_latest_copy_per_slug() {
+        let mut latest = make_doc("docs/guide", false, false);
+        latest.release = Some("2.0.0".to_string());
+        latest.s3_key = "docs/2.0.0/guide.md".to_string();
+
+        let mut archived_old = make_doc("docs/guide", false, true);
+        archived_old.release = Some("1.0.0".to_string());
+        archived_old.is_latest = false;
+        archived_old.s3_key = "docs/1.0.0/guide.md".to_string();
+
+        let repo = Arc::new(MockDocumentRepo {
+            documents: vec![archived_old, latest.clone()],
+        });
+        let storage = Arc::new(MockStorage::default());
+        storage
+            .put_object(&latest.s3_key, b"# Latest release".to_vec())
+            .await
+            .unwrap();
+        let search = Arc::new(RecordingSearch::default());
+        let state = Arc::new(SearchReindexState {
+            is_running: AtomicBool::new(true),
+            ..Default::default()
+        });
+
+        run_reindex(state, repo, storage, search.clone()).await;
+
+        let indexed = search.indexed.lock().unwrap();
+        assert_eq!(indexed.len(), 1);
+        assert_eq!(indexed[0].slug, "docs/guide");
+        assert!(indexed[0].content_preview.contains("Latest release"));
+        assert!(search.deleted.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

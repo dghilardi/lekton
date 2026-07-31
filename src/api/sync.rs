@@ -106,8 +106,8 @@ pub async fn process_sync(
 ) -> Result<SyncResponse, AppError> {
     use std::collections::HashMap;
 
-    // (content_hash, metadata_hash, source_path)
-    type ServerDocInfo = (Option<String>, Option<String>, Option<String>);
+    // (content_hash, metadata_hash, source_path, is_latest)
+    type ServerDocInfo = (Option<String>, Option<String>, Option<String>, bool);
 
     // 1. Validate the service token and determine scopes
     let scopes =
@@ -165,7 +165,12 @@ pub async fn process_sync(
         }
         server_by_slug.insert(
             doc.slug.clone(),
-            (doc.content_hash, doc.metadata_hash, doc.source_path),
+            (
+                doc.content_hash,
+                doc.metadata_hash,
+                doc.source_path,
+                doc.is_latest,
+            ),
         );
     }
 
@@ -222,7 +227,7 @@ pub async fn process_sync(
         });
 
         match server_by_slug.get(&actual_slug) {
-            Some((server_content_hash, server_metadata_hash, server_source_path)) => {
+            Some((server_content_hash, server_metadata_hash, server_source_path, _is_latest)) => {
                 let content_ok =
                     server_content_hash.as_deref() == Some(entry.content_hash.as_str());
                 let metadata_ok = match (
@@ -270,15 +275,24 @@ pub async fn process_sync(
         for slug in &to_archive {
             repo.set_archived(slug, request.release.as_deref(), true)
                 .await?;
-            if let Some(svc) = search {
-                if let Err(e) = svc.delete_document(slug).await {
-                    tracing::warn!("Failed to deindex archived document '{slug}' from search: {e}");
+            let archived_was_latest = server_by_slug
+                .get(slug)
+                .is_some_and(|(_, _, _, is_latest)| *is_latest);
+            if archived_was_latest {
+                if let Some(svc) = search {
+                    if let Err(e) = svc.delete_document(slug).await {
+                        tracing::warn!(
+                            "Failed to deindex archived document '{slug}' from search: {e}"
+                        );
+                    }
+                }
+                if let Some(rag_svc) = rag {
+                    if let Err(e) = rag_svc.delete_document(slug).await {
+                        tracing::warn!("Failed to remove archived document '{slug}' from RAG: {e}");
+                    }
                 }
             }
             if let Some(rag_svc) = rag {
-                if let Err(e) = rag_svc.delete_document(slug).await {
-                    tracing::warn!("Failed to remove archived document '{slug}' from RAG: {e}");
-                }
                 // Drop the archived document from the assets it referenced and
                 // recompute their access levels, so an attachment no longer
                 // inherits an archived document's visibility.
@@ -656,11 +670,14 @@ mod tests {
         async fn set_archived(
             &self,
             slug: &str,
-            _: Option<&str>,
+            release: Option<&str>,
             archived: bool,
         ) -> Result<(), AppError> {
             let mut docs = self.documents.lock().unwrap();
-            if let Some(doc) = docs.iter_mut().find(|d| d.slug == slug) {
+            if let Some(doc) = docs
+                .iter_mut()
+                .find(|d| d.slug == slug && d.release.as_deref() == release)
+            {
                 doc.is_archived = archived;
             }
             Ok(())
@@ -1793,6 +1810,37 @@ mod tests {
             gone.is_archived,
             "re-syncing a release must drop its removals"
         );
+    }
+
+    #[tokio::test]
+    async fn archiving_a_non_latest_release_keeps_latest_indexes() {
+        let mut old = make_doc_in_release("docs/guide", "sha256:old", "1.0.0");
+        old.is_latest = false;
+        let latest = make_doc_in_release("docs/guide", "sha256:new", "2.0.0");
+        let repo = MockRepo::with_docs(vec![old, latest]);
+        let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::with_published(&[("test-source", "2.0.0")]);
+        let search = MockSearchService::new();
+        let rag = MockRagService::new();
+
+        let result = process_sync(
+            &repo,
+            &release_repo,
+            &token_repo,
+            Some(&search),
+            Some(&rag),
+            None,
+            None,
+            None,
+            Some("legacy"),
+            versioned_request(Some("1.0.0"), vec![]),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.to_archive, vec!["docs/guide"]);
+        assert!(search.deleted_slugs().is_empty());
+        assert!(rag.deleted_slugs().is_empty());
     }
 
     #[tokio::test]

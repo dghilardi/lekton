@@ -103,6 +103,27 @@ pub trait ReleaseRepository: Send + Sync {
     /// duplicated — which is why it lives here and not as a boolean spread over
     /// the catalogue rows.
     async fn set_latest(&self, source_id: &str, release: &str) -> Result<(), AppError>;
+
+    /// Point `latest` at `release` and durably enqueue the slugs whose search
+    /// and RAG state must be reconciled.
+    async fn set_latest_with_pending(
+        &self,
+        source_id: &str,
+        release: &str,
+        _pending_slugs: &[String],
+    ) -> Result<(), AppError> {
+        self.set_latest(source_id, release).await
+    }
+
+    /// Slugs still awaiting search/RAG reconciliation for this source.
+    async fn pending_reindex(&self, _source_id: &str) -> Result<Vec<String>, AppError> {
+        Ok(vec![])
+    }
+
+    /// Acknowledge one successfully reconciled slug.
+    async fn clear_reindex_pending(&self, _source_id: &str, _slug: &str) -> Result<(), AppError> {
+        Ok(())
+    }
 }
 
 /// Deserialization view over a `source_release_aliases` row.
@@ -113,6 +134,8 @@ pub trait ReleaseRepository: Send + Sync {
 #[derive(Deserialize)]
 struct ReleaseAlias {
     latest_release: String,
+    #[serde(default)]
+    reindex_pending: Vec<String>,
 }
 
 #[cfg(feature = "ssr")]
@@ -245,17 +268,68 @@ impl ReleaseRepository for MongoReleaseRepository {
     }
 
     async fn set_latest(&self, source_id: &str, release: &str) -> Result<(), AppError> {
+        self.set_latest_with_pending(source_id, release, &[]).await
+    }
+
+    async fn set_latest_with_pending(
+        &self,
+        source_id: &str,
+        release: &str,
+        pending_slugs: &[String],
+    ) -> Result<(), AppError> {
         use mongodb::bson::doc;
         use mongodb::options::UpdateOptions;
 
         self.aliases
             .update_one(
                 doc! { "source_id": source_id },
-                doc! { "$set": { "latest_release": release } },
+                doc! {
+                    "$set": { "latest_release": release },
+                    "$addToSet": { "reindex_pending": { "$each": pending_slugs } },
+                },
             )
             .with_options(UpdateOptions::builder().upsert(true).build())
             .await
             .map_err(|e| AppError::Database(format!("set latest alias: {e}")))?;
         Ok(())
+    }
+
+    async fn pending_reindex(&self, source_id: &str) -> Result<Vec<String>, AppError> {
+        use mongodb::bson::doc;
+
+        Ok(self
+            .aliases
+            .find_one(doc! { "source_id": source_id })
+            .await
+            .map_err(|e| AppError::Database(format!("find promotion reindex backlog: {e}")))?
+            .map(|alias| alias.reindex_pending)
+            .unwrap_or_default())
+    }
+
+    async fn clear_reindex_pending(&self, source_id: &str, slug: &str) -> Result<(), AppError> {
+        use mongodb::bson::doc;
+
+        self.aliases
+            .update_one(
+                doc! { "source_id": source_id },
+                doc! { "$pull": { "reindex_pending": slug } },
+            )
+            .await
+            .map_err(|e| AppError::Database(format!("clear promotion reindex backlog: {e}")))?;
+        Ok(())
+    }
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_alias_deserializes_with_an_empty_reindex_backlog() {
+        let alias: ReleaseAlias =
+            bson::from_document(bson::doc! { "latest_release": "1.0.0" }).unwrap();
+
+        assert_eq!(alias.latest_release, "1.0.0");
+        assert!(alias.reindex_pending.is_empty());
     }
 }

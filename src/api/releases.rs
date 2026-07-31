@@ -178,24 +178,37 @@ pub async fn process_promote_release(
         .await?;
     ensure_documents_in_scope(&target_documents, &scopes)?;
 
+    let source_documents = repo.find_all_by_source_id(&request.source_id).await?;
+    ensure_documents_in_scope(&source_documents, &scopes)?;
+    let pending_slugs: Vec<_> = source_documents
+        .iter()
+        .map(|document| document.slug.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+
     // Alias first (a single atomic write), then bring the denormalized
     // `is_latest` flags in line. If the second step failed, the flags would be
     // repaired by re-running the promotion — whereas flags without an alias
     // would leave the two disagreeing with nothing to reconcile them.
     release_repo
-        .set_latest(&request.source_id, &request.release)
+        .set_latest_with_pending(&request.source_id, &request.release, &pending_slugs)
         .await?;
     let affected = repo
         .promote_release(&request.source_id, &request.release)
         .await?;
+    let mut pending = release_repo.pending_reindex(&request.source_id).await?;
+    if pending.is_empty() {
+        pending = affected;
+    }
 
     Ok((
         PromoteReleaseResponse {
             source_id: request.source_id,
             release: request.release,
-            reindex_pending: affected.len(),
+            reindex_pending: pending.len(),
         },
-        affected,
+        pending,
     ))
 }
 
@@ -238,6 +251,8 @@ pub async fn finalize_release_handler(
 #[cfg(feature = "ssr")]
 pub async fn reindex_promoted(
     repo: &dyn crate::db::repository::DocumentRepository,
+    release_repo: &dyn crate::db::release_repository::ReleaseRepository,
+    source_id: &str,
     storage: &dyn crate::storage::client::StorageClient,
     search: Option<&dyn crate::search::client::SearchService>,
     rag: Option<&dyn crate::rag::service::RagService>,
@@ -260,16 +275,7 @@ pub async fn reindex_promoted(
 
         let Some(doc) = latest else {
             // Dropped by the promoted release: nothing is latest under this slug.
-            if let Some(search) = search {
-                if let Err(e) = search.delete_document(slug).await {
-                    tracing::warn!(slug = %slug, "promotion reindex: search delete failed: {e}");
-                }
-            }
-            if let Some(rag) = rag {
-                if let Err(e) = rag.delete_document(slug).await {
-                    tracing::warn!(slug = %slug, "promotion reindex: RAG delete failed: {e}");
-                }
-            }
+            delete_demoted_slug(release_repo, source_id, search, rag, slug).await;
             continue;
         };
 
@@ -326,7 +332,41 @@ pub async fn reindex_promoted(
                 .await
             {
                 tracing::warn!(slug = %slug, "promotion reindex: cannot clear needs_reindex: {e}");
+                ok = false;
             }
+        }
+        if ok {
+            if let Err(e) = release_repo.clear_reindex_pending(source_id, slug).await {
+                tracing::warn!(slug = %slug, "promotion reindex: cannot acknowledge success: {e}");
+            }
+        }
+    }
+}
+
+#[cfg(feature = "ssr")]
+async fn delete_demoted_slug(
+    release_repo: &dyn crate::db::release_repository::ReleaseRepository,
+    source_id: &str,
+    search: Option<&dyn crate::search::client::SearchService>,
+    rag: Option<&dyn crate::rag::service::RagService>,
+    slug: &str,
+) {
+    let mut ok = true;
+    if let Some(search) = search {
+        if let Err(e) = search.delete_document(slug).await {
+            tracing::warn!(slug, "promotion reindex: search delete failed: {e}");
+            ok = false;
+        }
+    }
+    if let Some(rag) = rag {
+        if let Err(e) = rag.delete_document(slug).await {
+            tracing::warn!(slug, "promotion reindex: RAG delete failed: {e}");
+            ok = false;
+        }
+    }
+    if ok {
+        if let Err(e) = release_repo.clear_reindex_pending(source_id, slug).await {
+            tracing::warn!(slug, "promotion reindex: cannot acknowledge delete: {e}");
         }
     }
 }
@@ -357,12 +397,16 @@ pub async fn promote_release_handler(
     // stays set until it succeeds, so nothing is lost if this task dies.
     if !affected.is_empty() {
         let repo = state.document_repo.clone();
+        let release_repo = state.release_repo.clone();
+        let source_id = response.source_id.clone();
         let storage = state.storage_client.clone();
         let search = state.search_service.clone();
         let rag = state.rag_service.clone();
         tokio::spawn(async move {
             reindex_promoted(
                 repo.as_ref(),
+                release_repo.as_ref(),
+                &source_id,
                 storage.as_ref(),
                 search.as_deref(),
                 rag.as_deref(),
@@ -377,11 +421,18 @@ pub async fn promote_release_handler(
 
 #[cfg(all(test, feature = "ssr"))]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
+
+    use async_trait::async_trait;
     use chrono::Utc;
 
     use super::*;
     use crate::db::models::Document;
-    use crate::db::release_repository::ReleaseDocumentExpectation;
+    use crate::db::release_repository::{
+        ReleaseDocumentExpectation, ReleaseRepository, SourceRelease,
+    };
+    use crate::search::client::{SearchDocument, SearchHit, SearchService};
 
     fn document(slug: &str, release: &str, content_hash: &str) -> Document {
         Document {
@@ -451,5 +502,83 @@ mod tests {
             Err(AppError::Forbidden(message)) if message.contains("other/private")
         ));
         assert!(ensure_documents_in_scope(&documents, &["*".to_string()]).is_ok());
+    }
+
+    #[derive(Default)]
+    struct RecordingReleaseRepo {
+        cleared: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl ReleaseRepository for RecordingReleaseRepo {
+        async fn register(&self, _: &str, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn list_by_source(&self, _: &str) -> Result<Vec<SourceRelease>, AppError> {
+            Ok(vec![])
+        }
+        async fn is_release_managed(&self, _: &str) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        async fn latest(&self, _: &str) -> Result<Option<String>, AppError> {
+            Ok(None)
+        }
+        async fn set_latest(&self, _: &str, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn clear_reindex_pending(&self, _: &str, slug: &str) -> Result<(), AppError> {
+            self.cleared.lock().unwrap().push(slug.to_string());
+            Ok(())
+        }
+    }
+
+    struct DeletingSearch {
+        fail: AtomicBool,
+    }
+
+    #[async_trait]
+    impl SearchService for DeletingSearch {
+        async fn index_document(&self, _: &SearchDocument) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn delete_document(&self, _: &str) -> Result<(), AppError> {
+            if self.fail.load(Ordering::Relaxed) {
+                Err(AppError::Internal("search unavailable".into()))
+            } else {
+                Ok(())
+            }
+        }
+        async fn search(
+            &self,
+            _: &str,
+            _: Option<&[String]>,
+            _: bool,
+        ) -> Result<Vec<SearchHit>, AppError> {
+            Ok(vec![])
+        }
+        async fn configure_index(&self) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn health_check(&self) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn demoted_slug_backlog_is_cleared_only_after_successful_delete() {
+        let release_repo = RecordingReleaseRepo::default();
+        let search = DeletingSearch {
+            fail: AtomicBool::new(true),
+        };
+
+        delete_demoted_slug(&release_repo, "source", Some(&search), None, "docs/removed").await;
+        assert!(release_repo.cleared.lock().unwrap().is_empty());
+
+        search.fail.store(false, Ordering::Relaxed);
+        delete_demoted_slug(&release_repo, "source", Some(&search), None, "docs/removed").await;
+        assert_eq!(
+            &*release_repo.cleared.lock().unwrap(),
+            &["docs/removed".to_string()]
+        );
     }
 }

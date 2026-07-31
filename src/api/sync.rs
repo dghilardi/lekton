@@ -173,6 +173,7 @@ pub async fn process_sync(
     let mut to_upload: Vec<SyncUploadEntry> = Vec::new();
     let mut unchanged = Vec::new();
     let mut to_archive = Vec::new();
+    let mut expected_documents = Vec::new();
 
     // Slugs in the server that have been "claimed" by a source_path match,
     // so they are excluded from the archive check.
@@ -213,6 +214,12 @@ pub async fn process_sync(
         };
 
         claimed_slugs.insert(actual_slug.clone());
+        expected_documents.push(crate::db::release_repository::ReleaseDocumentExpectation {
+            slug: actual_slug.clone(),
+            source_path: entry.source_path.clone(),
+            content_hash: entry.content_hash.clone(),
+            metadata_hash: entry.metadata_hash.clone(),
+        });
 
         match server_by_slug.get(&actual_slug) {
             Some((server_content_hash, server_metadata_hash, server_source_path)) => {
@@ -348,11 +355,12 @@ pub async fn process_sync(
         }
     }
 
-    // 7. Record the release in the catalogue. Done here rather than on ingest so
-    // a re-sync with no changes still marks the release as published, which is
-    // what the version selector lists.
+    // 7. Stage the complete expected snapshot. It does not become selectable or
+    // promotable until the CLI finalizes it after all requested uploads succeed.
     if let (Some(release), false) = (request.release.as_deref(), request.dry_run) {
-        release_repo.register(&request.source_id, release).await?;
+        release_repo
+            .stage(&request.source_id, release, &expected_documents)
+            .await?;
     }
 
     // Sort for deterministic output
@@ -695,6 +703,13 @@ mod tests {
         published: Vec<(String, String)>,
         /// Registrations performed during the call under test.
         registered: std::sync::Mutex<Vec<(String, String)>>,
+        staged: std::sync::Mutex<
+            Vec<(
+                String,
+                String,
+                Vec<crate::db::release_repository::ReleaseDocumentExpectation>,
+            )>,
+        >,
     }
 
     impl MockReleaseRepo {
@@ -711,6 +726,16 @@ mod tests {
         fn registrations(&self) -> Vec<(String, String)> {
             self.registered.lock().unwrap().clone()
         }
+
+        fn staged_manifests(
+            &self,
+        ) -> Vec<(
+            String,
+            String,
+            Vec<crate::db::release_repository::ReleaseDocumentExpectation>,
+        )> {
+            self.staged.lock().unwrap().clone()
+        }
     }
 
     #[async_trait]
@@ -720,6 +745,20 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((source_id.to_string(), release.to_string()));
+            Ok(())
+        }
+        async fn stage(
+            &self,
+            source_id: &str,
+            release: &str,
+            expected_documents: &[crate::db::release_repository::ReleaseDocumentExpectation],
+        ) -> Result<(), AppError> {
+            self.register(source_id, release).await?;
+            self.staged.lock().unwrap().push((
+                source_id.to_string(),
+                release.to_string(),
+                expected_documents.to_vec(),
+            ));
             Ok(())
         }
         async fn list_by_source(
@@ -1850,7 +1889,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn syncing_a_release_registers_it() {
+    async fn syncing_a_release_stages_its_expected_manifest() {
         let repo = MockRepo::new();
         let token_repo = MockServiceTokenRepo;
         let release_repo = MockReleaseRepo::default();
@@ -1873,12 +1912,17 @@ mod tests {
         assert_eq!(
             release_repo.registrations(),
             vec![("test-source".to_string(), "1.2.0".to_string())],
-            "the release must be catalogued so the version selector can list it"
+            "the release must be staged before uploads begin"
         );
+        let manifests = release_repo.staged_manifests();
+        assert_eq!(manifests.len(), 1);
+        assert_eq!(manifests[0].2.len(), 1);
+        assert_eq!(manifests[0].2[0].slug, "docs/a");
+        assert_eq!(manifests[0].2[0].content_hash, "sha256:abc");
     }
 
     /// `--dry-run` reports the plan and writes nothing: neither the archive nor
-    /// the release registration.
+    /// the release staging record.
     #[tokio::test]
     async fn dry_run_reports_the_plan_without_writing() {
         let repo = MockRepo::with_docs(vec![make_doc_in_release(

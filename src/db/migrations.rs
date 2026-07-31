@@ -90,6 +90,11 @@ mod inner {
                 "davide.ghilardi@comelit.it",
                 make_asset_references_release_aware,
             )
+            .register(
+                "017_add_release_finalization_state",
+                "davide.ghilardi@comelit.it",
+                add_release_finalization_state,
+            )
     }
 
     fn format_duplicate_group_id(id: &bson::Bson) -> String {
@@ -934,6 +939,30 @@ mod inner {
                                 }
                             }
                         }
+                    }
+                }],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Existing catalogue rows were created only after a sync call completed,
+    /// so preserve them as finalized while adding the staged-release manifest.
+    async fn add_release_finalization_state(db: Database) -> Result<(), mongodb::error::Error> {
+        db.collection::<bson::Document>("source_releases")
+            .update_many(
+                bson::doc! {
+                    "$or": [
+                        { "finalized_at": { "$exists": false } },
+                        { "expected_documents": { "$exists": false } },
+                    ]
+                },
+                vec![bson::doc! {
+                    "$set": {
+                        "finalized_at": { "$ifNull": ["$finalized_at", "$last_synced_at"] },
+                        "expected_documents": {
+                            "$ifNull": ["$expected_documents", []]
+                        },
                     }
                 }],
             )

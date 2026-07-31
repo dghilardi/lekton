@@ -29,6 +29,120 @@ pub struct PromoteReleaseResponse {
     pub reindex_pending: usize,
 }
 
+/// Request payload for `POST /api/v1/releases/finalize`.
+#[derive(Debug, Deserialize)]
+pub struct FinalizeReleaseRequest {
+    pub service_token: String,
+    pub source_id: String,
+    pub release: String,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct FinalizeReleaseResponse {
+    pub source_id: String,
+    pub release: String,
+}
+
+#[cfg(feature = "ssr")]
+fn incomplete_release_documents(
+    expected: &[crate::db::release_repository::ReleaseDocumentExpectation],
+    documents: &[crate::db::models::Document],
+) -> Vec<String> {
+    expected
+        .iter()
+        .filter(|expectation| {
+            !documents.iter().any(|document| {
+                document.slug == expectation.slug
+                    && document.source_path.as_deref() == Some(expectation.source_path.as_str())
+                    && document.content_hash.as_deref() == Some(expectation.content_hash.as_str())
+                    && expectation
+                        .metadata_hash
+                        .as_deref()
+                        .is_none_or(|hash| document.metadata_hash.as_deref() == Some(hash))
+            })
+        })
+        .map(|expectation| expectation.slug.clone())
+        .collect()
+}
+
+#[cfg(feature = "ssr")]
+fn ensure_documents_in_scope(
+    documents: &[crate::db::models::Document],
+    scopes: &[String],
+) -> Result<(), AppError> {
+    if let Some(document) = documents
+        .iter()
+        .find(|document| !crate::api::sync::scope_matches_any(&document.slug, scopes))
+    {
+        return Err(AppError::Forbidden(format!(
+            "Token does not have access to slug '{}'",
+            document.slug
+        )));
+    }
+    Ok(())
+}
+
+/// Verify a staged manifest and publish it to the release catalogue.
+#[cfg(feature = "ssr")]
+pub async fn process_finalize_release(
+    repo: &dyn crate::db::repository::DocumentRepository,
+    release_repo: &dyn crate::db::release_repository::ReleaseRepository,
+    service_token_repo: &dyn crate::db::service_token_repository::ServiceTokenRepository,
+    legacy_token: Option<&str>,
+    request: FinalizeReleaseRequest,
+) -> Result<FinalizeReleaseResponse, AppError> {
+    let scopes = crate::api::sync::validate_sync_token(
+        service_token_repo,
+        legacy_token,
+        &request.service_token,
+    )
+    .await?;
+
+    let staged = release_repo
+        .find(&request.source_id, &request.release)
+        .await?
+        .ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "release '{}' is not staged for source '{}'",
+                request.release, request.source_id
+            ))
+        })?;
+
+    if let Some(expectation) = staged
+        .expected_documents
+        .iter()
+        .find(|expectation| !crate::api::sync::scope_matches_any(&expectation.slug, &scopes))
+    {
+        return Err(AppError::Forbidden(format!(
+            "Token does not have access to slug '{}'",
+            expectation.slug
+        )));
+    }
+
+    let documents = repo
+        .find_all_by_source_id_and_release(&request.source_id, Some(&request.release))
+        .await?;
+    ensure_documents_in_scope(&documents, &scopes)?;
+
+    let incomplete = incomplete_release_documents(&staged.expected_documents, &documents);
+    if !incomplete.is_empty() {
+        return Err(AppError::BadRequest(format!(
+            "release '{}' is incomplete; missing or stale documents: {}",
+            request.release,
+            incomplete.join(", ")
+        )));
+    }
+
+    release_repo
+        .finalize(&request.source_id, &request.release)
+        .await?;
+
+    Ok(FinalizeReleaseResponse {
+        source_id: request.source_id,
+        release: request.release,
+    })
+}
+
 /// Core promotion logic — separated from the HTTP layer for testability.
 ///
 /// Returns the response plus the slugs whose `latest` membership changed, which
@@ -42,8 +156,12 @@ pub async fn process_promote_release(
     request: PromoteReleaseRequest,
 ) -> Result<(PromoteReleaseResponse, Vec<String>), AppError> {
     // Promotion is a write, so reuse the sync token rules (must have can_write).
-    crate::api::sync::validate_sync_token(service_token_repo, legacy_token, &request.service_token)
-        .await?;
+    let scopes = crate::api::sync::validate_sync_token(
+        service_token_repo,
+        legacy_token,
+        &request.service_token,
+    )
+    .await?;
 
     // Refuse to alias a release nobody published: otherwise a typo would point
     // `latest` at nothing and hide the whole source.
@@ -54,6 +172,11 @@ pub async fn process_promote_release(
             request.release, request.source_id
         )));
     }
+
+    let target_documents = repo
+        .find_all_by_source_id_and_release(&request.source_id, Some(&request.release))
+        .await?;
+    ensure_documents_in_scope(&target_documents, &scopes)?;
 
     // Alias first (a single atomic write), then bring the denormalized
     // `is_latest` flags in line. If the second step failed, the flags would be
@@ -74,6 +197,30 @@ pub async fn process_promote_release(
         },
         affected,
     ))
+}
+
+/// Axum handler for `POST /api/v1/releases/finalize`.
+#[cfg(feature = "ssr")]
+pub async fn finalize_release_handler(
+    axum::extract::State(state): axum::extract::State<crate::app::AppState>,
+    axum::Json(request): axum::Json<FinalizeReleaseRequest>,
+) -> Result<axum::Json<FinalizeReleaseResponse>, AppError> {
+    if !state.features.doc_versioning {
+        return Err(AppError::BadRequest(
+            "documentation versioning is disabled on this instance".into(),
+        ));
+    }
+
+    let response = process_finalize_release(
+        state.document_repo.as_ref(),
+        state.release_repo.as_ref(),
+        state.service_token_repo.as_ref(),
+        Some(&state.service_token),
+        request,
+    )
+    .await?;
+
+    Ok(axum::Json(response))
 }
 
 /// Bring search and RAG in line with a promotion, for the documents whose
@@ -226,4 +373,83 @@ pub async fn promote_release_handler(
     }
 
     Ok(axum::Json(response))
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod tests {
+    use chrono::Utc;
+
+    use super::*;
+    use crate::db::models::Document;
+    use crate::db::release_repository::ReleaseDocumentExpectation;
+
+    fn document(slug: &str, release: &str, content_hash: &str) -> Document {
+        Document {
+            slug: slug.to_string(),
+            title: slug.to_string(),
+            summary: None,
+            s3_key: format!("docs/{release}/{slug}.md"),
+            access_level: "public".to_string(),
+            is_draft: false,
+            service_owner: "platform".to_string(),
+            last_updated: Utc::now(),
+            tags: vec![],
+            links_out: vec![],
+            backlinks: vec![],
+            parent_slug: None,
+            order: 0,
+            is_hidden: false,
+            content_hash: Some(content_hash.to_string()),
+            metadata_hash: Some("metadata".to_string()),
+            is_archived: false,
+            source_path: Some(format!("{slug}.md")),
+            source_id: Some("source".to_string()),
+            release: Some(release.to_string()),
+            is_latest: false,
+            needs_reindex: false,
+            skip_rag: false,
+        }
+    }
+
+    fn expectation(slug: &str, content_hash: &str) -> ReleaseDocumentExpectation {
+        ReleaseDocumentExpectation {
+            slug: slug.to_string(),
+            source_path: format!("{slug}.md"),
+            content_hash: content_hash.to_string(),
+            metadata_hash: Some("metadata".to_string()),
+        }
+    }
+
+    #[test]
+    fn finalization_detects_missing_or_stale_documents() {
+        let expected = vec![expectation("guide", "new"), expectation("api", "current")];
+        let documents = vec![document("guide", "2.0.0", "old")];
+
+        assert_eq!(
+            incomplete_release_documents(&expected, &documents),
+            vec!["guide".to_string(), "api".to_string()]
+        );
+    }
+
+    #[test]
+    fn finalization_accepts_the_exact_staged_snapshot() {
+        let expected = vec![expectation("guide", "current")];
+        let documents = vec![document("guide", "2.0.0", "current")];
+
+        assert!(incomplete_release_documents(&expected, &documents).is_empty());
+    }
+
+    #[test]
+    fn promotion_scope_check_covers_every_document_in_the_release() {
+        let documents = vec![
+            document("team/guide", "2.0.0", "a"),
+            document("other/private", "2.0.0", "b"),
+        ];
+
+        assert!(matches!(
+            ensure_documents_in_scope(&documents, &["team/*".to_string()]),
+            Err(AppError::Forbidden(message)) if message.contains("other/private")
+        ));
+        assert!(ensure_documents_in_scope(&documents, &["*".to_string()]).is_ok());
+    }
 }

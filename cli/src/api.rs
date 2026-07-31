@@ -35,6 +35,13 @@ pub struct PromoteReleaseResponse {
 }
 
 #[derive(Serialize)]
+pub struct FinalizeReleaseRequest {
+    pub service_token: String,
+    pub source_id: String,
+    pub release: String,
+}
+
+#[derive(Serialize)]
 pub struct SyncDocEntry {
     pub source_path: String,
     pub slug: String,

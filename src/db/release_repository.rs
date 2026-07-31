@@ -11,7 +11,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 
-/// One published release of a source's documentation.
+/// One document expected to exist before a staged release can be finalized.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReleaseDocumentExpectation {
+    pub slug: String,
+    pub source_path: String,
+    pub content_hash: String,
+    pub metadata_hash: Option<String>,
+}
+
+/// One staged or finalized release of a source's documentation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SourceRelease {
     /// Matches `Document.source_id`.
@@ -24,6 +33,16 @@ pub struct SourceRelease {
     /// When this release was last re-synced.
     #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub last_synced_at: DateTime<Utc>,
+    /// Snapshot declared by the sync that staged this release.
+    #[serde(default)]
+    pub expected_documents: Vec<ReleaseDocumentExpectation>,
+    /// Set only after every expected document has been persisted with matching
+    /// hashes. Unfinalized releases are not selectable or promotable.
+    #[serde(
+        default,
+        with = "bson::serde_helpers::chrono_datetime_as_bson_datetime_optional"
+    )]
+    pub finalized_at: Option<DateTime<Utc>>,
 }
 
 /// Persistence for the release catalogue and the `latest` alias.
@@ -32,6 +51,37 @@ pub trait ReleaseRepository: Send + Sync {
     /// Record a sync of `release` for `source_id`, creating the catalogue entry
     /// on first sight and refreshing `last_synced_at` afterwards.
     async fn register(&self, source_id: &str, release: &str) -> Result<(), AppError>;
+
+    /// Stage a release and its complete expected document snapshot.
+    ///
+    /// Restaging the same tag replaces the expectation and clears finalization
+    /// until the new snapshot has been verified.
+    async fn stage(
+        &self,
+        source_id: &str,
+        release: &str,
+        _expected_documents: &[ReleaseDocumentExpectation],
+    ) -> Result<(), AppError> {
+        self.register(source_id, release).await
+    }
+
+    /// Return one staged or finalized release.
+    async fn find(
+        &self,
+        source_id: &str,
+        release: &str,
+    ) -> Result<Option<SourceRelease>, AppError> {
+        Ok(self
+            .list_by_source(source_id)
+            .await?
+            .into_iter()
+            .find(|candidate| candidate.release == release))
+    }
+
+    /// Mark a staged release complete after its expected snapshot is verified.
+    async fn finalize(&self, source_id: &str, release: &str) -> Result<(), AppError> {
+        self.register(source_id, release).await
+    }
 
     /// Releases of a source, most recently first *published* first.
     ///
@@ -85,12 +135,28 @@ impl MongoReleaseRepository {
 #[async_trait]
 impl ReleaseRepository for MongoReleaseRepository {
     async fn register(&self, source_id: &str, release: &str) -> Result<(), AppError> {
+        self.stage(source_id, release, &[]).await?;
+        self.finalize(source_id, release).await
+    }
+
+    async fn stage(
+        &self,
+        source_id: &str,
+        release: &str,
+        expected_documents: &[ReleaseDocumentExpectation],
+    ) -> Result<(), AppError> {
         use mongodb::bson::{doc, DateTime};
         use mongodb::options::UpdateOptions;
 
         let now = DateTime::from_millis(Utc::now().timestamp_millis());
+        let expected_documents = mongodb::bson::to_bson(expected_documents)
+            .map_err(|e| AppError::Database(format!("serialize release manifest: {e}")))?;
         let update = doc! {
-            "$set": { "last_synced_at": now },
+            "$set": {
+                "last_synced_at": now,
+                "expected_documents": expected_documents,
+                "finalized_at": mongodb::bson::Bson::Null,
+            },
             "$setOnInsert": {
                 "source_id": source_id,
                 "release": release,
@@ -102,7 +168,40 @@ impl ReleaseRepository for MongoReleaseRepository {
             .update_one(doc! { "source_id": source_id, "release": release }, update)
             .with_options(UpdateOptions::builder().upsert(true).build())
             .await
-            .map_err(|e| AppError::Database(format!("register source release: {e}")))?;
+            .map_err(|e| AppError::Database(format!("stage source release: {e}")))?;
+        Ok(())
+    }
+
+    async fn find(
+        &self,
+        source_id: &str,
+        release: &str,
+    ) -> Result<Option<SourceRelease>, AppError> {
+        use mongodb::bson::doc;
+
+        self.releases
+            .find_one(doc! { "source_id": source_id, "release": release })
+            .await
+            .map_err(|e| AppError::Database(format!("find source release: {e}")))
+    }
+
+    async fn finalize(&self, source_id: &str, release: &str) -> Result<(), AppError> {
+        use mongodb::bson::{doc, DateTime};
+
+        let now = DateTime::from_millis(Utc::now().timestamp_millis());
+        let result = self
+            .releases
+            .update_one(
+                doc! { "source_id": source_id, "release": release },
+                doc! { "$set": { "finalized_at": now, "last_synced_at": now } },
+            )
+            .await
+            .map_err(|e| AppError::Database(format!("finalize source release: {e}")))?;
+        if result.matched_count == 0 {
+            return Err(AppError::NotFound(format!(
+                "staged release '{release}' for source '{source_id}'"
+            )));
+        }
         Ok(())
     }
 
@@ -111,7 +210,10 @@ impl ReleaseRepository for MongoReleaseRepository {
         use mongodb::bson::doc;
 
         self.releases
-            .find(doc! { "source_id": source_id })
+            .find(doc! {
+                "source_id": source_id,
+                "finalized_at": { "$type": "date" },
+            })
             .sort(doc! { "first_synced_at": -1 })
             .await
             .map_err(|e| AppError::Database(format!("list source releases: {e}")))?

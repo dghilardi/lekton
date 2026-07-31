@@ -176,7 +176,8 @@ async fn main() -> Result<()> {
 
     // ── Call sync API ─────────────────────────────────────────────────────────
     let client = reqwest::Client::new();
-    let sync_result = if !docs.is_empty() || archive_missing {
+    let document_sync_requested = !docs.is_empty() || archive_missing;
+    let sync_result = if document_sync_requested {
         let sync_url = format!("{base_url}/api/v1/sync");
         if args.verbose {
             eprintln!("POST {sync_url}");
@@ -804,6 +805,28 @@ async fn main() -> Result<()> {
     let total_errors = errors + attachment_errors + prompt_errors + schema_errors;
     if total_errors > 0 {
         bail!("{total_errors} upload(s) failed");
+    }
+
+    // ── Finalize the release ─────────────────────────────────────────────────
+    // The initial sync only stages the expected document snapshot. Finalization
+    // verifies every requested upload landed before the tag becomes selectable
+    // or eligible for promotion.
+    if let (Some(release), true) = (release.as_ref(), document_sync_requested) {
+        let finalize_url = format!("{base_url}/api/v1/releases/finalize");
+        let body = api::FinalizeReleaseRequest {
+            service_token: token.clone(),
+            source_id: source_id.clone(),
+            release: release.clone(),
+        };
+        let resp = send_with_retry(|| client.post(&finalize_url).json(&body))
+            .await
+            .context("Failed to call the release finalization API")?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let detail = resp.text().await.unwrap_or_default();
+            bail!("Failed to finalize release '{release}' ({status}): {detail}");
+        }
+        println!("Release {release} finalized");
     }
 
     // ── Move the `latest` alias ───────────────────────────────────────────────

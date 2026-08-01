@@ -285,6 +285,33 @@ pub fn has_headroom(key: &UsageKey) -> bool {
         .is_none_or(|guard| guard.has_headroom(key, chrono::Utc::now().date_naive()))
 }
 
+/// Refuse the call when the process-wide ceiling is exhausted for this caller.
+///
+/// The ceiling only, with no concurrency slot: for a step that runs *inside* an
+/// already-admitted call — embedding a chat query, say — taking a second slot
+/// would have the caller compete with itself and be refused at a cap it is
+/// within.
+pub fn require_headroom(key: &UsageKey) -> Result<(), AppError> {
+    if has_headroom(key) {
+        return Ok(());
+    }
+    metrics::counter!(
+        "lekton_llm_daily_cap_rejections_total",
+        "actor_kind" => key.kind(),
+    )
+    .increment(1);
+    Err(AppError::TooManyRequests(match key {
+        UsageKey::System => {
+            "The daily AI spending reserve for background work is used up. Indexing resumes \
+             after UTC midnight."
+                .to_string()
+        }
+        _ => "The daily AI usage limit for this instance has been reached. \
+              Please try again tomorrow."
+            .to_string(),
+    }))
+}
+
 /// Credits background work has spent today against the process-wide guard.
 ///
 /// `0.0` with no guard installed, which is what the eval binaries and the tests

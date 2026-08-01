@@ -74,6 +74,8 @@ impl CachedEmbeddingService {
 
 #[async_trait]
 impl EmbeddingService for CachedEmbeddingService {
+    /// The spend ceiling is checked by the inner service, not here: a cache hit
+    /// costs nothing, so an exhausted ceiling must not refuse one.
     async fn embed(&self, key: &UsageKey, texts: &[String]) -> Result<Vec<Vec<f32>>, AppError> {
         if texts.is_empty() {
             return Ok(Vec::new());

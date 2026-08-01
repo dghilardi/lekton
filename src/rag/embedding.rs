@@ -66,6 +66,7 @@ impl EmbeddingService for OpenAICompatibleEmbedding {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
+        usage::guard::require_headroom(key)?;
 
         let mut result = Vec::with_capacity(texts.len());
 
@@ -164,6 +165,7 @@ impl EmbeddingService for VertexAIEmbedding {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
+        usage::guard::require_headroom(key)?;
 
         let token = self
             .auth_manager

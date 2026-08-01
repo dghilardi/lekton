@@ -127,10 +127,14 @@ impl LlmGuard {
 
         semaphore.try_acquire_owned().map(Some).map_err(|_| {
             metrics::counter!("lekton_llm_concurrency_rejections_total").increment(1);
-            AppError::TooManyRequests(format!(
-                "You already have {} AI requests running. Wait for one to finish and retry.",
-                self.max_concurrent_per_caller
-            ))
+            AppError::TooManyRequests(match self.max_concurrent_per_caller {
+                1 => "You already have an AI request running. Wait for it to finish and retry."
+                    .to_string(),
+                n => format!(
+                    "You already have {n} AI requests running. \
+                     Wait for one to finish and retry."
+                ),
+            })
         })
     }
 }

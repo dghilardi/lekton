@@ -164,6 +164,9 @@ pub struct AppState {
     pub documentation_feedback_repo:
         Arc<dyn crate::db::documentation_feedback_repository::DocumentationFeedbackRepository>,
     pub document_source_repo: Arc<dyn crate::db::source_repository::DocumentSourceRepository>,
+    /// LLM usage event log. Present only when `usage.event_log` is enabled;
+    /// the admin usage report is the only reader.
+    pub usage_event_repo: Option<Arc<dyn crate::db::usage_repository::UsageEventRepository>>,
     pub embedding_cache_repo:
         Option<Arc<dyn crate::db::embedding_cache_repository::EmbeddingCacheRepository>>,
     #[from_ref(skip)]

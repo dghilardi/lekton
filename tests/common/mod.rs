@@ -241,6 +241,7 @@ impl TestEnv {
             feedback_repo: None,
             documentation_feedback_repo: documentation_feedback_repo.clone(),
             document_source_repo: document_source_repo.clone(),
+            usage_event_repo: None,
             embedding_cache_repo: None,
             schema_endpoint_reindex_state: Arc::new(
                 lekton::schema::reindex::SchemaEndpointReindexState::default(),
@@ -572,6 +573,7 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
         feedback_repo: None,
         documentation_feedback_repo: env.documentation_feedback_repo.clone(),
         document_source_repo: env.document_source_repo.clone(),
+        usage_event_repo: None,
         embedding_cache_repo: None,
         schema_endpoint_reindex_state: Arc::new(
             lekton::schema::reindex::SchemaEndpointReindexState::default(),

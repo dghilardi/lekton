@@ -604,11 +604,15 @@ async fn main() {
     // Start the LLM usage event writer before any service can emit. Until this
     // runs (or when the flag is off) `usage::record` only touches the
     // Prometheus counters and queues nothing.
-    if config.usage.event_log {
-        lekton::usage::sink::install(Arc::new(
-            lekton::db::usage_repository::MongoUsageEventRepository::new(&mongo_db),
-        ));
-    }
+    let usage_event_repo: Option<Arc<dyn lekton::db::usage_repository::UsageEventRepository>> =
+        if config.usage.event_log {
+            let repo: Arc<dyn lekton::db::usage_repository::UsageEventRepository> =
+                Arc::new(lekton::db::usage_repository::MongoUsageEventRepository::new(&mongo_db));
+            lekton::usage::sink::install(repo.clone());
+            Some(repo)
+        } else {
+            None
+        };
     let document_repo: Arc<dyn lekton::db::repository::DocumentRepository> =
         Arc::new(MongoDocumentRepository::new(&mongo_db));
     let release_repo: Arc<dyn lekton::db::release_repository::ReleaseRepository> = Arc::new(
@@ -1075,6 +1079,7 @@ async fn main() {
         feedback_repo,
         documentation_feedback_repo,
         document_source_repo,
+        usage_event_repo,
         embedding_cache_repo,
         insecure_cookies: config.server.insecure_cookies,
         max_attachment_size_bytes: config.server.max_attachment_size_mb * 1024 * 1024,

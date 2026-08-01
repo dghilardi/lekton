@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- LLM token accounting: every call to the chat, summary, analyzer, HyDE, query-rewriter, learn, VLM and embedding models now records the provider's reported token usage as Prometheus counters (`lekton_llm_tokens_total`, `lekton_llm_requests_total`), labelled by feature and model. Calls whose provider reports no usage are estimated and labelled as such, so they stay visible in the totals instead of looking free.
+- Per-caller attribution of LLM spend, behind `usage.event_log` (off by default): one `llm_usage_events` document per call recording who spent what, distinguishing a user, a machine token, an anonymous caller and background work. Events are written off the request path and expire after 90 days.
+- Guardrails against runaway AI usage: a dedicated rate limit on the endpoints that call an LLM, keyed by authenticated user instead of IP so one caller cannot consume a whole office's quota; a cap on how many generations a single caller may have in flight (`usage.max_concurrent_per_caller`, default 2); and an optional instance-wide daily token ceiling (`usage.daily_token_cap`, off by default) as a last line of defence against a runaway job.
+
 ## [0.30.0] 2026-08-01
 
 ### Added

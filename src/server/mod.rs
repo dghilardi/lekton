@@ -103,6 +103,7 @@ mod helpers {
                 None => UserContext {
                     user: auth_user,
                     effective_access_levels: vec![],
+                    budget_plan: None,
                     can_write: false,
                     can_read_draft: false,
                     can_write_draft: false,
@@ -222,6 +223,7 @@ mod helpers {
                 return Ok(UserContext {
                     user: auth_user,
                     effective_access_levels: vec![],
+                    budget_plan: None,
                     can_write: true,
                     can_read_draft: true,
                     can_write_draft: true,
@@ -237,6 +239,7 @@ mod helpers {
                 None => UserContext {
                     user: auth_user,
                     effective_access_levels: vec![],
+                    budget_plan: None,
                     can_write: false,
                     can_read_draft: false,
                     can_write_draft: false,
@@ -250,6 +253,7 @@ mod helpers {
                     return Ok(UserContext {
                         user: demo_user,
                         effective_access_levels: vec![],
+                        budget_plan: None,
                         can_write: false,
                         can_read_draft: false,
                         can_write_draft: false,

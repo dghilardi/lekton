@@ -406,6 +406,7 @@ impl TestEnv {
             is_admin,
             assigned_access_levels: vec![],
             effective_access_levels: vec![],
+            budget_plan: None,
             can_write: false,
             can_read_draft: false,
             can_write_draft: false,

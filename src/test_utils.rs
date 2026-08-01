@@ -70,6 +70,14 @@ pub struct MockUserRepository {
 
 #[async_trait]
 impl UserRepository for MockUserRepository {
+    async fn set_user_budget_plan(
+        &self,
+        _user_id: &str,
+        _plan: Option<String>,
+    ) -> Result<(), AppError> {
+        Ok(())
+    }
+
     async fn create_user(&self, user: crate::db::auth_models::User) -> Result<(), AppError> {
         self.users.lock().unwrap().push(user);
         Ok(())

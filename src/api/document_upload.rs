@@ -76,7 +76,7 @@ pub async fn summary_stream_handler(
     }
 
     let token_stream = chat
-        .summarize_stream(&UsageKey::User(user.user_id.clone()), &[], &preview)
+        .summarize_stream(&UsageKey::User(user.user_id.clone()), None, &preview)
         .await?;
 
     let sse_stream = async_stream::stream! {

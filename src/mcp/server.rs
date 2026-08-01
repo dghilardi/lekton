@@ -2265,6 +2265,7 @@ mod tests {
                 is_admin: false,
             },
             effective_access_levels: vec!["internal".to_string()],
+            budget_plan: None,
             can_write: false,
             can_read_draft: false,
             can_write_draft: false,

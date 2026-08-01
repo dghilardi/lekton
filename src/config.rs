@@ -517,13 +517,19 @@ pub struct BudgetConfig {
     /// or the event log — not before.
     #[serde(default)]
     pub enabled: bool,
-    /// Budget applied to a caller with no more specific profile.
+    /// Budget for a user with no plan assigned.
     #[serde(default)]
     pub default: BudgetProfile,
-    /// Overrides by access level. A user holding several matching levels gets
-    /// the most generous of them, so adding a level never takes budget away.
+    /// Named plans an administrator can assign to a user.
+    ///
+    /// Deliberately *not* keyed by access level. Access levels say what a
+    /// person may read; a plan says how much they may spend. They are
+    /// independent: someone restricted to public documentation may consult it
+    /// constantly, while someone who can see everything may look once a month.
+    /// Deriving one from the other would force an administrator to hand out
+    /// visibility in order to hand out credits.
     #[serde(default)]
-    pub per_access_level: HashMap<String, BudgetProfile>,
+    pub plans: HashMap<String, BudgetProfile>,
     /// Budget for machine tokens, whose usage pattern is nothing like a person's.
     #[serde(default)]
     pub service_token: Option<BudgetProfile>,

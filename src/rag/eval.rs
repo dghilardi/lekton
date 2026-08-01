@@ -215,6 +215,7 @@ pub fn admin_context() -> UserContext {
             is_admin: true,
         },
         effective_access_levels: vec![],
+        budget_plan: None,
         can_write: true,
         can_read_draft: true,
         can_write_draft: true,

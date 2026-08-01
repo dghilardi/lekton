@@ -285,7 +285,7 @@ impl ChatService {
     pub async fn summarize(
         &self,
         key: &UsageKey,
-        access_levels: &[String],
+        plan: Option<&str>,
         text: &str,
     ) -> Result<String, AppError> {
         let trimmed = text.trim();
@@ -309,7 +309,7 @@ impl ChatService {
             }),
         ];
 
-        let _admission = usage::guard::admit(key, access_levels).await?;
+        let _admission = usage::guard::admit(key, plan).await?;
         let prompt_chars = usage::prompt_chars(&messages);
         let request = build_chat_request(
             &self.chat_model,
@@ -358,7 +358,7 @@ impl ChatService {
     pub async fn summarize_stream(
         &self,
         key: &UsageKey,
-        access_levels: &[String],
+        plan: Option<&str>,
         text: &str,
     ) -> Result<
         std::pin::Pin<Box<dyn futures::Stream<Item = Result<String, AppError>> + Send>>,
@@ -385,7 +385,7 @@ impl ChatService {
             }),
         ];
 
-        let admission = usage::guard::admit(key, access_levels).await?;
+        let admission = usage::guard::admit(key, plan).await?;
         let prompt_chars = usage::prompt_chars(&messages);
         let request = build_chat_request(
             &self.chat_model,
@@ -480,7 +480,7 @@ impl ChatService {
         // 0. Admission control, before any retrieval work is done on the
         //    caller's behalf — a refused turn should cost nothing.
         let admission =
-            usage::guard::admit(&user_ctx.usage_key(), &user_ctx.effective_access_levels).await?;
+            usage::guard::admit(&user_ctx.usage_key(), user_ctx.budget_plan.as_deref()).await?;
 
         // 1. Resolve or create session
         let session_id = match session_id {

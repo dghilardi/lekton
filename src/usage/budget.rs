@@ -46,12 +46,9 @@ pub fn install(budgets: Budgets) {
 }
 
 /// Reserve against the process-wide budget, if one is enforced.
-pub async fn reserve(
-    key: &UsageKey,
-    access_levels: &[String],
-) -> Result<Option<BudgetHold>, AppError> {
+pub async fn reserve(key: &UsageKey, plan: Option<&str>) -> Result<Option<BudgetHold>, AppError> {
     match BUDGETS.get() {
-        Some(budgets) => budgets.reserve(key, access_levels).await.map(Some),
+        Some(budgets) => budgets.reserve(key, plan).await.map(Some),
         None => Ok(None),
     }
 }
@@ -102,18 +99,30 @@ impl Budgets {
     }
 
     /// The bucket that applies to a caller.
-    pub fn profile(&self, key: &UsageKey, access_levels: &[String]) -> BudgetProfile {
+    ///
+    /// `plan` is the name of an entry in `[usage.budget.plans]`, assigned to
+    /// the user by an administrator. A name that no longer exists in the config
+    /// falls back to the default rather than failing: a plan removed from the
+    /// config should not lock its holders out.
+    pub fn profile(&self, key: &UsageKey, plan: Option<&str>) -> BudgetProfile {
         match key {
             UsageKey::ServiceToken(_) => self.config.service_token.unwrap_or(self.config.default),
             UsageKey::Anonymous => self.config.anonymous.unwrap_or(self.config.default),
             // Background work has no bucket; it is bounded by the daily ceiling.
             UsageKey::System => self.config.default,
-            UsageKey::User(_) => access_levels
-                .iter()
-                .filter_map(|level| self.config.per_access_level.get(level))
+            UsageKey::User(_) => plan
+                .and_then(|name| {
+                    let found = self.config.plans.get(name);
+                    if found.is_none() {
+                        tracing::warn!(
+                            plan = %name,
+                            "user has an AI plan that is not in [usage.budget.plans] — \
+                             falling back to the default budget"
+                        );
+                    }
+                    found
+                })
                 .copied()
-                // Most generous wins, so granting a level never costs budget.
-                .max_by(|a, b| a.capacity.total_cmp(&b.capacity))
                 .unwrap_or(self.config.default),
         }
     }
@@ -122,9 +131,9 @@ impl Budgets {
     pub async fn reserve(
         &self,
         key: &UsageKey,
-        access_levels: &[String],
+        plan: Option<&str>,
     ) -> Result<BudgetHold, AppError> {
-        let profile = self.profile(key, access_levels);
+        let profile = self.profile(key, plan);
         let bucket = bucket_id(key);
 
         let reservation = self
@@ -161,7 +170,10 @@ impl Budgets {
         if credits <= 0.0 {
             return;
         }
-        let profile = self.profile(key, &[]);
+        // The charge lands on whichever bucket the caller owns; the profile is
+        // only needed for the capacity clamp, and every plan clamps the same
+        // bucket, so the default's capacity is the right ceiling to pass.
+        let profile = self.profile(key, None);
         if let Err(e) = self
             .repo
             .release(&bucket_id(key), -credits, profile.capacity)
@@ -233,23 +245,23 @@ mod tests {
         }
     }
 
-    fn config_with_levels() -> BudgetConfig {
+    fn config_with_plans() -> BudgetConfig {
         BudgetConfig {
             enabled: true,
             default: BudgetProfile {
                 capacity: 100.0,
                 refill_per_hour: 50.0,
             },
-            per_access_level: HashMap::from([
+            plans: HashMap::from([
                 (
-                    "power-user".to_string(),
+                    "heavy".to_string(),
                     BudgetProfile {
                         capacity: 500.0,
                         refill_per_hour: 250.0,
                     },
                 ),
                 (
-                    "guest".to_string(),
+                    "light".to_string(),
                     BudgetProfile {
                         capacity: 20.0,
                         refill_per_hour: 10.0,
@@ -270,39 +282,58 @@ mod tests {
                 granted,
                 calls: Mutex::new(Vec::new()),
             }),
-            config_with_levels(),
+            config_with_plans(),
         )
     }
 
     #[test]
-    fn a_user_without_a_matching_level_gets_the_default() {
-        let profile = budgets(true).profile(&UsageKey::User("u".into()), &["other".into()]);
+    fn a_user_with_no_plan_gets_the_default() {
+        let profile = budgets(true).profile(&UsageKey::User("u".into()), None);
 
         assert_eq!(profile.capacity, 100.0);
     }
 
     #[test]
-    fn several_levels_resolve_to_the_most_generous() {
-        // Holding a restrictive level as well as a generous one must not
-        // penalise the user: permissions accumulate, they do not subtract.
-        let profile = budgets(true).profile(
-            &UsageKey::User("u".into()),
-            &["guest".into(), "power-user".into()],
-        );
+    fn a_named_plan_is_applied() {
+        let profile = budgets(true).profile(&UsageKey::User("u".into()), Some("heavy"));
 
         assert_eq!(profile.capacity, 500.0);
     }
 
     #[test]
+    fn a_plan_removed_from_the_config_falls_back_rather_than_locking_out() {
+        // Deleting a plan from the config must not strand the users holding it.
+        let profile = budgets(true).profile(&UsageKey::User("u".into()), Some("retired-plan"));
+
+        assert_eq!(profile.capacity, 100.0);
+    }
+
+    #[test]
+    fn a_plan_is_independent_of_what_the_user_may_read() {
+        // The point of the split: a light plan can belong to someone who sees
+        // everything, and a heavy plan to someone restricted to public docs.
+        let budgets = budgets(true);
+
+        assert!(
+            budgets
+                .profile(&UsageKey::User("exec".into()), Some("light"))
+                .capacity
+                < budgets
+                    .profile(&UsageKey::User("support".into()), Some("heavy"))
+                    .capacity
+        );
+    }
+
+    #[test]
     fn machine_tokens_get_their_own_profile() {
-        let profile = budgets(true).profile(&UsageKey::ServiceToken("t".into()), &[]);
+        let profile = budgets(true).profile(&UsageKey::ServiceToken("t".into()), None);
 
         assert_eq!(profile.capacity, 5_000.0);
     }
 
     #[test]
     fn anonymous_falls_back_to_the_default_when_unset() {
-        let profile = budgets(true).profile(&UsageKey::Anonymous, &[]);
+        let profile = budgets(true).profile(&UsageKey::Anonymous, None);
 
         assert_eq!(profile.capacity, 100.0);
     }
@@ -310,7 +341,7 @@ mod tests {
     #[tokio::test]
     async fn a_refused_reservation_explains_the_wait() {
         let Err(error) = budgets(false)
-            .reserve(&UsageKey::User("u".into()), &[])
+            .reserve(&UsageKey::User("u".into()), None)
             .await
         else {
             panic!("an exhausted budget must refuse");
@@ -331,11 +362,11 @@ mod tests {
             granted: true,
             calls: Mutex::new(Vec::new()),
         });
-        let budgets = Budgets::new(repo.clone(), config_with_levels());
+        let budgets = Budgets::new(repo.clone(), config_with_plans());
 
         {
             let _hold = budgets
-                .reserve(&UsageKey::User("u1".into()), &[])
+                .reserve(&UsageKey::User("u1".into()), None)
                 .await
                 .expect("granted");
         }

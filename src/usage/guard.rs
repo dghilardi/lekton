@@ -162,7 +162,7 @@ pub fn install(guard: LlmGuard) {
 /// and the eval binaries want.
 /// Admit an LLM call: the instance ceiling, then the caller's concurrency slot,
 /// then their budget — cheapest check first, so a refusal costs the least.
-pub async fn admit(key: &UsageKey, access_levels: &[String]) -> Result<Admission, AppError> {
+pub async fn admit(key: &UsageKey, plan: Option<&str>) -> Result<Admission, AppError> {
     let mut admission = match GUARD.get() {
         Some(guard) => guard.admit(key, chrono::Utc::now().date_naive())?,
         None => Admission {
@@ -170,7 +170,7 @@ pub async fn admit(key: &UsageKey, access_levels: &[String]) -> Result<Admission
             _budget: None,
         },
     };
-    admission._budget = super::budget::reserve(key, access_levels).await?;
+    admission._budget = super::budget::reserve(key, plan).await?;
     Ok(admission)
 }
 

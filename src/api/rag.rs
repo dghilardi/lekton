@@ -527,6 +527,7 @@ async fn build_user_context(
         return Ok(UserContext {
             user: user.clone(),
             effective_access_levels: vec![],
+            budget_plan: None,
             can_write: true,
             can_read_draft: true,
             can_write_draft: true,
@@ -538,6 +539,7 @@ async fn build_user_context(
         None => UserContext {
             user: user.clone(),
             effective_access_levels: vec![],
+            budget_plan: None,
             can_write: false,
             can_read_draft: false,
             can_write_draft: false,

@@ -7,7 +7,14 @@
 //! exporter does.
 //!
 //! Counters are deliberately **not** labelled by user: that would be unbounded
-//! cardinality. Per-user attribution belongs in the event log, not here.
+//! cardinality. Per-user attribution goes to the event log in [`sink`], which
+//! is off unless `usage.event_log` is set.
+
+pub mod sink;
+
+pub use crate::db::usage_models::UsageKey;
+
+use crate::db::usage_models::LlmUsageEvent;
 
 use async_openai::types::chat::{
     ChatCompletionRequestAssistantMessageContent, ChatCompletionRequestMessage,
@@ -125,8 +132,20 @@ pub fn prompt_chars(messages: &[ChatCompletionRequestMessage]) -> usize {
         .sum()
 }
 
-/// Emit the counters for one LLM call.
-pub fn record(feature: LlmFeature, model: &str, usage: TokenUsage) {
+/// Emit the counters for one LLM call and, when the event log is enabled,
+/// queue the per-caller record.
+pub fn record(key: &UsageKey, feature: LlmFeature, model: &str, usage: TokenUsage) {
+    sink::emit(LlmUsageEvent {
+        actor_kind: key.kind().to_string(),
+        actor_id: key.id().map(ToOwned::to_owned),
+        feature: feature.as_str().to_string(),
+        model: model.to_string(),
+        prompt_tokens: usage.prompt,
+        completion_tokens: usage.completion,
+        estimated: usage.estimated,
+        created_at: chrono::Utc::now(),
+    });
+
     let feature = feature.as_str();
     let model = model.to_string();
     let estimated = if usage.estimated { "true" } else { "false" };
@@ -159,6 +178,7 @@ pub fn record(feature: LlmFeature, model: &str, usage: TokenUsage) {
 ///
 /// `prompt_chars` and `completion_chars` are only read on the fallback path.
 pub fn record_chat(
+    key: &UsageKey,
     feature: LlmFeature,
     model: &str,
     reported: Option<&CompletionUsage>,
@@ -176,7 +196,7 @@ pub fn record_chat(
             estimate(prompt_chars, completion_chars)
         }
     };
-    record(feature, model, usage);
+    record(key, feature, model, usage);
 }
 
 #[cfg(test)]

@@ -14,6 +14,7 @@ use crate::error::AppError;
 use crate::rag::client::format_llm_error;
 use crate::rag::provider::LlmProvider;
 use crate::usage;
+use crate::usage::UsageKey;
 
 const DEFAULT_VLM_MAX_TOKENS: u32 = 1024;
 
@@ -101,6 +102,8 @@ impl VlmTranscriber {
             .unwrap_or_default();
 
         usage::record_chat(
+            // Attachment transcription runs during ingest: no caller to bill.
+            &UsageKey::System,
             usage::LlmFeature::Vlm,
             &self.model,
             reported.as_ref(),

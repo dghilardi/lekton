@@ -11,6 +11,7 @@ use crate::error::AppError;
 use crate::rag::client::format_llm_error;
 use crate::rag::provider::LlmProvider;
 use crate::usage;
+use crate::usage::UsageKey;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -85,7 +86,7 @@ impl QueryAnalyzer {
     ///
     /// Falls back to `QueryPlan::simple()` on any LLM or parse error so that
     /// the chat pipeline is never blocked by the analyzer.
-    pub async fn classify(&self, query: &str) -> Result<QueryPlan, AppError> {
+    pub async fn classify(&self, key: &UsageKey, query: &str) -> Result<QueryPlan, AppError> {
         let messages = vec![
             ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage {
                 content: ChatCompletionRequestSystemMessageContent::Text(
@@ -131,6 +132,7 @@ impl QueryAnalyzer {
             .unwrap_or_default();
 
         usage::record_chat(
+            key,
             usage::LlmFeature::Analyzer,
             &self.model,
             reported.as_ref(),

@@ -32,6 +32,8 @@ pub struct AppConfig {
     pub features: FeaturesConfig,
     #[serde(default)]
     pub learn: LearnConfig,
+    #[serde(default)]
+    pub usage: UsageConfig,
 }
 
 // ── Features ────────────────────────────────────────────────────────────────
@@ -451,6 +453,25 @@ pub struct ChatStepConfig {
 
 fn default_chat_max_output_tokens() -> u32 {
     2048
+}
+
+/// LLM usage accounting.
+///
+/// Prometheus counters are always emitted (they are no-ops without a recorder,
+/// see [`crate::metrics`]). This section only governs the per-caller event log,
+/// which stores who spent what and is therefore opt-in.
+#[derive(Debug, Deserialize)]
+pub struct UsageConfig {
+    /// Persist one `llm_usage_events` document per LLM call. Off by default:
+    /// it is individual-usage monitoring, so enable it deliberately.
+    #[serde(default)]
+    pub event_log: bool,
+}
+
+impl Default for UsageConfig {
+    fn default() -> Self {
+        Self { event_log: false }
+    }
 }
 
 #[derive(Debug, Deserialize)]

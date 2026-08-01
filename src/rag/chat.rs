@@ -29,6 +29,7 @@ use crate::rag::reranker::Reranker;
 use crate::rag::vectorstore::{SourceKind, VectorSearchResult, VectorStore};
 use crate::search::client::SearchService;
 use crate::usage;
+use crate::usage::UsageKey;
 
 /// Maximum number of context chunks returned to the LLM.
 const MAX_CONTEXT_CHUNKS: usize = 5;
@@ -281,7 +282,7 @@ impl ChatService {
     ///
     /// Non-streaming, single LLM call. The input is truncated to bound the
     /// prompt; the model is asked to reply in the document's own language.
-    pub async fn summarize(&self, text: &str) -> Result<String, AppError> {
+    pub async fn summarize(&self, key: &UsageKey, text: &str) -> Result<String, AppError> {
         let trimmed = text.trim();
         if trimmed.is_empty() {
             return Err(AppError::BadRequest(
@@ -330,6 +331,7 @@ impl ChatService {
             .to_string();
 
         usage::record_chat(
+            key,
             usage::LlmFeature::Summary,
             &self.chat_model,
             reported.as_ref(),
@@ -349,6 +351,7 @@ impl ChatService {
     /// streaming keeps the connection alive while the model generates.
     pub async fn summarize_stream(
         &self,
+        key: &UsageKey,
         text: &str,
     ) -> Result<
         std::pin::Pin<Box<dyn futures::Stream<Item = Result<String, AppError>> + Send>>,
@@ -400,6 +403,7 @@ impl ChatService {
             })?;
 
         let model = self.chat_model.clone();
+        let key = key.clone();
         let token_stream = async_stream::stream! {
             let mut reported = None;
             let mut completion_chars = 0usize;
@@ -425,6 +429,7 @@ impl ChatService {
                         // Account for what the provider already generated: an
                         // aborted summary still costs.
                         usage::record_chat(
+                            &key,
                             usage::LlmFeature::Summary,
                             &model,
                             reported.as_ref(),
@@ -438,6 +443,7 @@ impl ChatService {
             }
 
             usage::record_chat(
+                &key,
                 usage::LlmFeature::Summary,
                 &model,
                 reported.as_ref(),
@@ -619,6 +625,7 @@ impl ChatService {
         let chat_repo = self.chat_repo.clone();
         let sid = session_id.clone();
         let sources = source_references.clone();
+        let usage_key = user_ctx.usage_key();
 
         let event_stream = async_stream::stream! {
             // First event: session ID
@@ -657,6 +664,7 @@ impl ChatService {
                         // A stream that dies partway still burned whatever the
                         // provider generated before it broke.
                         usage::record_chat(
+                            &usage_key,
                             usage::LlmFeature::Chat,
                             &chat_model,
                             reported_usage.as_ref(),
@@ -696,6 +704,7 @@ impl ChatService {
             }
 
             usage::record_chat(
+                &usage_key,
                 usage::LlmFeature::Chat,
                 &chat_model,
                 reported_usage.as_ref(),
@@ -810,10 +819,11 @@ impl ChatService {
         history: &[ChatMessage],
         session_id: &str,
     ) -> Result<RetrievalOutput, AppError> {
+        let key = user_ctx.usage_key();
         // Rewrite the query into a standalone question when history is non-empty.
         // Falls back to the original message when rewriting is disabled or history is empty.
         let retrieval_query = match &self.query_rewriter {
-            Some(rewriter) => rewriter.rewrite(user_message, history).await?,
+            Some(rewriter) => rewriter.rewrite(&key, user_message, history).await?,
             None => user_message.to_string(),
         };
 
@@ -828,7 +838,7 @@ impl ChatService {
         // Analyze query complexity when the analyzer is configured. Falls back
         // to simple on any error so the pipeline is never blocked.
         let query_plan: QueryPlan = if let Some(ref analyzer) = self.analyzer {
-            match analyzer.classify(&retrieval_query).await {
+            match analyzer.classify(&key, &retrieval_query).await {
                 Ok(plan) => {
                     tracing::debug!(
                         session_id = %session_id,
@@ -868,7 +878,7 @@ impl ChatService {
                 queries = queries_to_embed.len(),
                 "RAG: generating HyDE hypothetical documents"
             );
-            hyde.expand_queries(queries_to_embed).await
+            hyde.expand_queries(&key, queries_to_embed).await
         } else {
             queries_to_embed
         };

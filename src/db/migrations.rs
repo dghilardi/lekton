@@ -95,6 +95,11 @@ mod inner {
                 "davide.ghilardi@comelit.it",
                 add_release_finalization_state,
             )
+            .register(
+                "018_add_llm_usage_events_indexes",
+                "davide.ghilardi@comelit.it",
+                add_llm_usage_events_indexes,
+            )
     }
 
     fn format_duplicate_group_id(id: &bson::Bson) -> String {
@@ -711,6 +716,47 @@ mod inner {
                     ]
                 },
                 vec![bson::doc! { "$set": { "family_id": "$id" } }],
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    /// Indexes for the LLM usage event log:
+    /// - a TTL index on `created_at` so events prune themselves after 90 days;
+    /// - a compound index on `(actor_kind, actor_id, created_at)` for the
+    ///   "who spent what recently" query the log exists to answer.
+    ///
+    /// The retention is fixed rather than configurable: MongoDB stores it in
+    /// the index itself, so a config knob would silently disagree with the
+    /// index already created on an existing deployment.
+    async fn add_llm_usage_events_indexes(db: Database) -> Result<(), mongodb::error::Error> {
+        use mongodb::options::IndexOptions;
+        use mongodb::IndexModel;
+        use std::time::Duration;
+
+        const RETENTION_DAYS: u64 = 90;
+
+        let events = db.collection::<bson::Document>("llm_usage_events");
+
+        events
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "created_at": 1 })
+                    .options(
+                        IndexOptions::builder()
+                            .expire_after(Duration::from_secs(RETENTION_DAYS * 24 * 60 * 60))
+                            .build(),
+                    )
+                    .build(),
+            )
+            .await?;
+
+        events
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "actor_kind": 1, "actor_id": 1, "created_at": -1 })
+                    .build(),
             )
             .await?;
 

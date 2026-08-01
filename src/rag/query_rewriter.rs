@@ -16,6 +16,7 @@ use crate::db::chat_models::ChatMessage;
 use crate::error::AppError;
 use crate::rag::client::format_llm_error;
 use crate::usage;
+use crate::usage::UsageKey;
 
 use super::provider::LlmProvider;
 
@@ -59,6 +60,7 @@ impl QueryRewriter {
     /// - the LLM returns an empty response (graceful degradation)
     pub async fn rewrite(
         &self,
+        key: &UsageKey,
         user_message: &str,
         history: &[ChatMessage],
     ) -> Result<String, AppError> {
@@ -126,6 +128,7 @@ impl QueryRewriter {
             .unwrap_or_else(|| user_message.to_string());
 
         usage::record_chat(
+            key,
             usage::LlmFeature::QueryRewriter,
             &self.model,
             reported.as_ref(),

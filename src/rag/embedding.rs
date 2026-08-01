@@ -13,6 +13,7 @@ use crate::config::RagConfig;
 use crate::error::AppError;
 use crate::rag::{build_oai_client, client::format_llm_error};
 use crate::usage;
+use crate::usage::UsageKey;
 
 const DEFAULT_VERTEX_LOCATION: &str = "us-central1";
 const GCP_SCOPE_CLOUD_PLATFORM: &str = "https://www.googleapis.com/auth/cloud-platform";
@@ -84,6 +85,12 @@ impl EmbeddingService for OpenAICompatibleEmbedding {
                 })?;
 
             usage::record(
+                // Embeddings are billed to the system: `EmbeddingService::embed`
+                // serves both ingest (no caller) and chat queries (a user),
+                // and threading a key through the trait would touch reindex,
+                // MCP and the eval binaries. Ingest dominates the volume, so
+                // system is the better approximation until the trait changes.
+                &UsageKey::System,
                 usage::LlmFeature::Embedding,
                 &self.model,
                 usage::TokenUsage {
@@ -197,6 +204,12 @@ impl EmbeddingService for VertexAIEmbedding {
                 AppError::Internal(format!("Vertex AI embedding response parse error: {e}"))
             })?;
             usage::record(
+                // Embeddings are billed to the system: `EmbeddingService::embed`
+                // serves both ingest (no caller) and chat queries (a user),
+                // and threading a key through the trait would touch reindex,
+                // MCP and the eval binaries. Ingest dominates the volume, so
+                // system is the better approximation until the trait changes.
+                &UsageKey::System,
                 usage::LlmFeature::Embedding,
                 &self.model,
                 match response.token_count() {

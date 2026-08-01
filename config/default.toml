@@ -49,6 +49,12 @@ max_context_chars = 12000
 # Max number of source documents pulled per lesson (semantic retrieval stage).
 max_source_documents = 3
 
+[usage]
+# Persist one llm_usage_events document per LLM call, recording who spent
+# what. Prometheus token counters are emitted regardless; this is the per-user
+# detail, so it is opt-in. Events expire after 90 days (TTL index, migration 018).
+event_log = false
+
 [server]
 rate_limit_burst = 50
 rate_limit_per_second = 5

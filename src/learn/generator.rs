@@ -32,6 +32,7 @@ use crate::rag::provider::LlmProvider;
 use crate::rendering::markdown::sanitize_html;
 use crate::storage::client::StorageClient;
 use crate::usage;
+use crate::usage::UsageKey;
 
 /// Max tokens for the lesson-generation completion.
 const LESSON_MAX_TOKENS: u32 = 1_500;
@@ -165,7 +166,9 @@ impl LessonGenerator {
 
         // ── Stage 3: generate (JSON mode, with a corrective retry) ────────
         let system_prompt = self.render_system_prompt(&target, covered, directive)?;
-        let parsed = self.generate_parsed(&system_prompt, &context).await?;
+        let parsed = self
+            .generate_parsed(&user_ctx.usage_key(), &system_prompt, &context)
+            .await?;
 
         // ── Stage 4: validate + sanitize ──────────────────────────────────
         let mut lesson = validate_and_build(parsed, &source_slugs);
@@ -257,11 +260,12 @@ impl LessonGenerator {
     /// models often ignore `response_format` or wrap the object in prose.
     async fn generate_parsed(
         &self,
+        key: &UsageKey,
         system_prompt: &str,
         context: &str,
     ) -> Result<RawLesson, AppError> {
         let user = format!("Documentation context:\n\n{context}");
-        match self.call_llm(system_prompt, &user, true).await {
+        match self.call_llm(key, system_prompt, &user, true).await {
             Ok(reply) => match extract_json(&reply) {
                 Ok(parsed) => return Ok(parsed),
                 Err(e) => tracing::warn!("learn: first lesson reply was not JSON ({e}) — retrying"),
@@ -273,12 +277,15 @@ impl LessonGenerator {
             "{user}\n\nIMPORTANT: your previous reply was rejected. Respond with ONLY the JSON \
              object described in the instructions — no prose, no markdown code fences, nothing else."
         );
-        let reply = self.call_llm(system_prompt, &corrective, false).await?;
+        let reply = self
+            .call_llm(key, system_prompt, &corrective, false)
+            .await?;
         extract_json(&reply)
     }
 
     async fn call_llm(
         &self,
+        key: &UsageKey,
         system_prompt: &str,
         user: &str,
         json_mode: bool,
@@ -326,6 +333,7 @@ impl LessonGenerator {
             .unwrap_or_default();
 
         usage::record_chat(
+            key,
             usage::LlmFeature::Learn,
             &self.model,
             reported.as_ref(),

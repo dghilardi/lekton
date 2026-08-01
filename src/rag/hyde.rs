@@ -10,6 +10,7 @@ use crate::error::AppError;
 use crate::rag::client::format_llm_error;
 use crate::rag::provider::LlmProvider;
 use crate::usage;
+use crate::usage::UsageKey;
 
 const HYDE_SYSTEM: &str = "\
 You are a technical documentation writer. Given a question, write a short passage \
@@ -43,10 +44,10 @@ impl HydeService {
     ///
     /// Runs all generations in parallel. If any individual generation fails,
     /// the original query is kept for that slot (graceful degradation).
-    pub async fn expand_queries(&self, queries: Vec<String>) -> Vec<String> {
+    pub async fn expand_queries(&self, key: &UsageKey, queries: Vec<String>) -> Vec<String> {
         let futures: Vec<_> = queries
             .iter()
-            .map(|q| self.generate_hypothetical(q))
+            .map(|q| self.generate_hypothetical(key, q))
             .collect();
 
         let results = futures::future::join_all(futures).await;
@@ -68,7 +69,7 @@ impl HydeService {
             .collect()
     }
 
-    async fn generate_hypothetical(&self, query: &str) -> Result<String, AppError> {
+    async fn generate_hypothetical(&self, key: &UsageKey, query: &str) -> Result<String, AppError> {
         let messages = vec![
             ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage {
                 content: ChatCompletionRequestSystemMessageContent::Text(HYDE_SYSTEM.to_string()),
@@ -109,6 +110,7 @@ impl HydeService {
             .unwrap_or_default();
 
         usage::record_chat(
+            key,
             usage::LlmFeature::Hyde,
             &self.model,
             reported.as_ref(),

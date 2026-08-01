@@ -549,6 +549,15 @@ async fn main() {
     let mongo_client =
         mongodb::Client::with_options(mongo_options).expect("Failed to connect to MongoDB");
     let mongo_db = mongo_client.database(&config.database.name);
+
+    // Start the LLM usage event writer before any service can emit. Until this
+    // runs (or when the flag is off) `usage::record` only touches the
+    // Prometheus counters and queues nothing.
+    if config.usage.event_log {
+        lekton::usage::sink::install(Arc::new(
+            lekton::db::usage_repository::MongoUsageEventRepository::new(&mongo_db),
+        ));
+    }
     let document_repo: Arc<dyn lekton::db::repository::DocumentRepository> =
         Arc::new(MongoDocumentRepository::new(&mongo_db));
     let release_repo: Arc<dyn lekton::db::release_repository::ReleaseRepository> = Arc::new(

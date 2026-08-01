@@ -17,6 +17,8 @@ fn next_client_msg_id() -> String {
     )
 }
 
+use crate::app::BudgetStatus;
+use crate::auth::refresh_client::with_auth_retry;
 use crate::components::MarkdownContent;
 use crate::db::chat_models::SourceReference;
 use crate::rendering::markdown::render_markdown;
@@ -149,6 +151,15 @@ fn ChatContent() -> impl IntoView {
 
     let (input, set_input) = signal(String::new());
     let textarea_ref = NodeRef::<leptos::html::Textarea>::new();
+
+    // Budget standing, re-read whenever a turn finishes. Resolves to None on an
+    // instance that does not enforce budgets, and the indicator stays hidden.
+    let budget = LocalResource::new(move || {
+        // Re-runs on every change to the loading flag, which covers both the
+        // start and the end of a turn.
+        let _ = is_loading.get();
+        with_auth_retry(crate::app::get_my_budget)
+    });
 
     Effect::new(move || {
         let content = streaming_content.get();
@@ -461,14 +472,62 @@ fn ChatContent() -> impl IntoView {
                                 </Show>
                             </button>
                         </div>
-                        <div class="mt-2 flex justify-between px-2">
+                        <div class="mt-2 flex justify-between items-center gap-3 px-2">
                             <span class="text-[10px] text-base-content/30 italic">"Shift + Enter for new line"</span>
-                            <span class="text-[10px] text-base-content/30">"AI responses may be inaccurate"</span>
+                            <div class="flex items-center gap-3">
+                                <BudgetIndicator budget=budget />
+                                <span class="text-[10px] text-base-content/30">"AI responses may be inaccurate"</span>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
+    }
+}
+
+/// Quiet indicator of what the signed-in user has left to spend.
+///
+/// Shown only once it starts to matter. A gauge sitting at 100% every day is
+/// noise that teaches people to ignore the spot it occupies — which is exactly
+/// where the warning has to land when it finally appears.
+#[component]
+fn BudgetIndicator(
+    budget: LocalResource<Result<Option<BudgetStatus>, ServerFnError>>,
+) -> impl IntoView {
+    /// Below this the indicator appears at all.
+    const SHOW_BELOW: f64 = 0.5;
+    /// Below this the answers themselves are already degraded.
+    const THRIFTY_BELOW: f64 = 0.2;
+
+    view! {
+        {move || {
+            let status = budget.get()?.ok().flatten()?;
+            if status.headroom >= SHOW_BELOW {
+                return None;
+            }
+            let percent = (status.headroom * 100.0).round() as i64;
+
+            Some(if status.thrifty || status.headroom < THRIFTY_BELOW {
+                view! {
+                    <span
+                        class="text-[10px] text-warning font-medium"
+                        title="Your AI budget is nearly used up. Answers are being generated with a lighter pipeline to stretch what is left."
+                    >
+                        {format!("AI budget {percent}% — saving credits")}
+                    </span>
+                }.into_any()
+            } else {
+                view! {
+                    <span
+                        class="text-[10px] text-base-content/40"
+                        title="Share of your AI budget still available. It refills over time."
+                    >
+                        {format!("AI budget {percent}%")}
+                    </span>
+                }.into_any()
+            })
+        }}
     }
 }
 

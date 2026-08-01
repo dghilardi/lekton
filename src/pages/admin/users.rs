@@ -5,13 +5,13 @@ use crate::app::{
     admin_list_pats, admin_toggle_pat, create_admin_access_level, create_service_token,
     deactivate_service_token, delete_admin_access_level, get_custom_css, get_navigation,
     get_navigation_order, get_rag_reindex_status, get_schema_endpoint_reindex_status,
-    get_search_reindex_status, list_admin_access_levels, list_admin_users,
+    get_search_reindex_status, list_admin_access_levels, list_admin_users, list_budget_plans,
     list_documentation_feedback, list_service_tokens, mark_documentation_feedback_duplicate,
     resolve_documentation_feedback, save_custom_css, save_navigation_order,
-    set_admin_user_access_levels, trigger_rag_reindex, trigger_schema_endpoint_reindex,
-    trigger_search_reindex, update_admin_access_level, AccessLevelInfo, CreateTokenResult,
-    DocumentationFeedbackAdminItem, DocumentationFeedbackAdminListResult, NavItem,
-    NavigationOrderEntry, ServiceTokenInfo,
+    set_admin_user_access_levels, set_admin_user_budget_plan, trigger_rag_reindex,
+    trigger_schema_endpoint_reindex, trigger_search_reindex, update_admin_access_level,
+    AccessLevelInfo, CreateTokenResult, DocumentationFeedbackAdminItem,
+    DocumentationFeedbackAdminListResult, NavItem, NavigationOrderEntry, ServiceTokenInfo,
 };
 #[allow(unused_imports)]
 use crate::auth::refresh_client::with_auth_retry;
@@ -28,12 +28,16 @@ pub fn UserManager() -> impl IntoView {
     });
 
     let levels_resource = LocalResource::new(move || with_auth_retry(list_admin_access_levels));
+    // Empty when budgets are disabled, which is how the control knows to stay
+    // hidden rather than offer a choice that would do nothing.
+    let plans_resource = LocalResource::new(move || with_auth_retry(list_budget_plans));
 
     let editing = RwSignal::new(Option::<String>::None);
     let edit_assigned = RwSignal::new(Vec::<String>::new());
     let edit_can_write = RwSignal::new(false);
     let edit_can_read_draft = RwSignal::new(false);
     let edit_can_write_draft = RwSignal::new(false);
+    let edit_budget_plan = RwSignal::new(String::new());
     let error_msg = RwSignal::new(Option::<String>::None);
 
     let save_action = Action::new_local(move |_: &()| async move {
@@ -50,6 +54,18 @@ pub fn UserManager() -> impl IntoView {
             )
         })
         .await;
+        if let Err(e) = result {
+            error_msg.set(Some(e.to_string()));
+            return;
+        }
+
+        // A separate call on purpose: what a user may read and how much they
+        // may spend are different decisions with different stores.
+        let plan = edit_budget_plan.get_untracked();
+        let plan = (!plan.is_empty()).then_some(plan);
+        let result =
+            with_auth_retry(|| set_admin_user_budget_plan(user_id.clone(), plan.clone())).await;
+
         match result {
             Ok(_) => {
                 editing.set(None);
@@ -79,6 +95,7 @@ pub fn UserManager() -> impl IntoView {
                         {move || {
                             let users = users_resource.get()?;
                             let levels = levels_resource.get()?.unwrap_or_default();
+                            let plans = plans_resource.get()?.unwrap_or_default();
                             let users = users.ok()?;
                             if users.is_empty() {
                                 return Some(view! {
@@ -105,6 +122,7 @@ pub fn UserManager() -> impl IntoView {
                                                 editing.get().as_deref() == Some(uid_for_memo.as_str())
                                             });
                                             let all_levels = levels.clone();
+                                            let all_plans = plans.clone();
 
                                             view! {
                                                 <div class="border border-base-200 rounded-xl overflow-hidden">
@@ -115,6 +133,14 @@ pub fn UserManager() -> impl IntoView {
                                                                 {if user.is_admin {
                                                                     view! { <span class="badge badge-primary badge-sm">"admin"</span> }.into_any()
                                                                 } else { view! { <span /> }.into_any() }}
+                                                                {match user.budget_plan.clone() {
+                                                                    Some(plan) => view! {
+                                                                        <span class="badge badge-accent badge-sm" title="AI spending plan">
+                                                                            {plan}
+                                                                        </span>
+                                                                    }.into_any(),
+                                                                    None => view! { <span /> }.into_any(),
+                                                                }}
                                                             </div>
                                                             <div class="flex gap-1 mt-1 flex-wrap">
                                                                 {if user.assigned_access_levels.is_empty() {
@@ -149,6 +175,7 @@ pub fn UserManager() -> impl IntoView {
                                                                         edit_can_write.set(user.can_write);
                                                                         edit_can_read_draft.set(user.can_read_draft);
                                                                         edit_can_write_draft.set(user.can_write_draft);
+                                                                        edit_budget_plan.set(user.budget_plan.clone().unwrap_or_default());
                                                                     }
                                                                 }
                                                             >
@@ -211,6 +238,28 @@ pub fn UserManager() -> impl IntoView {
                                                                     <span class="text-xs">"Write drafts"</span>
                                                                 </label>
                                                             </div>
+                                                            {if all_plans.is_empty() {
+                                                                view! { <span /> }.into_any()
+                                                            } else {
+                                                                view! {
+                                                                    <div class="pt-1 border-t border-base-200">
+                                                                        <span class="label-text text-xs font-medium">"AI spending plan"</span>
+                                                                        <p class="text-xs text-base-content/65 mt-0.5 mb-2">
+                                                                            "How much this user may spend on AI features. Independent of the access levels above, which control what they can read."
+                                                                        </p>
+                                                                        <select
+                                                                            class="select select-bordered select-sm w-full max-w-xs"
+                                                                            prop:value=move || edit_budget_plan.get()
+                                                                            on:change=move |e| edit_budget_plan.set(event_target_value(&e))
+                                                                        >
+                                                                            <option value="">"Default budget"</option>
+                                                                            {all_plans.iter().map(|p| view! {
+                                                                                <option value=p.clone()>{p.clone()}</option>
+                                                                            }).collect::<Vec<_>>()}
+                                                                        </select>
+                                                                    </div>
+                                                                }.into_any()
+                                                            }}
                                                             <button
                                                                 class="btn btn-primary btn-sm"
                                                                 on:click=move |_| { save_action.dispatch(()); }

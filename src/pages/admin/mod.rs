@@ -5,6 +5,7 @@ use leptos_router::params::Params;
 use crate::app::CreateTokenResult;
 
 mod access_levels;
+mod ai_usage;
 mod custom_css;
 mod document_upload;
 mod documentation_feedback;
@@ -16,6 +17,7 @@ mod sources;
 mod users;
 
 use access_levels::AccessLevelManager;
+use ai_usage::AiUsageReport;
 use custom_css::CustomCssEditor;
 use document_upload::DocumentUploadManager;
 use documentation_feedback::DocumentationFeedbackAdminPanel;
@@ -49,6 +51,8 @@ fn section_icon_path(section: &str) -> &'static str {
         "rag" => "M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4",
         // shield-check
         "access-levels" => "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z",
+        // chart bars
+        "ai-usage" => "M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z",
         // users
         "users" => "M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m9-4a4 4 0 11-8 0 4 4 0 018 0z",
         // upload
@@ -132,6 +136,7 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
                            "rag" => "Index Management",
                            "access-levels" => "Access Levels",
                            "users" => "User Management",
+                           "ai-usage" => "AI Usage",
                            "upload" => "Upload Document",
                            "sources" => "Documentation Sources",
                            _ => "Administration",
@@ -144,6 +149,7 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
                            "css" => "Inject custom CSS to tune the portal's theme and branding at runtime.",
                            "access-levels" => "Manage content access levels and their inheritance hierarchy.",
                            "users" => "Assign access levels and permissions to registered users.",
+                           "ai-usage" => "Who is spending on AI features, and how much.",
                            "rag" => "Rebuild derived search and retrieval indexes from the canonical document store.",
                            "upload" => "Upload a PDF and publish it as a page with a description and download link.",
                            "sources" => "Attach repository metadata and maintainers to the import sources your documents come from.",
@@ -186,6 +192,17 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
                     }
                     "access-levels" => view! { <AccessLevelManager /> }.into_any(),
                     "users" => view! { <UserManager /> }.into_any(),
+                    "ai-usage" => {
+                        let rag_enabled = crate::app::use_feature(|f| f.rag);
+                        view! {
+                            <Show
+                                when=move || rag_enabled.get()
+                                fallback=|| view! { <div class="alert alert-warning">"AI features are disabled."</div> }
+                            >
+                                <AiUsageReport />
+                            </Show>
+                        }.into_any()
+                    }
                     "sources" => {
                         let sources_enabled = crate::app::use_feature(|f| f.sources);
                         view! {

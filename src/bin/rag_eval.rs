@@ -135,7 +135,14 @@ mod ssr {
 
             let retrieval = ctx
                 .chat_service
-                .retrieve_only(&user_ctx, &q.query, &[], &session_id)
+                .retrieve_only(
+                    &user_ctx,
+                    &q.query,
+                    &[],
+                    &session_id,
+                    // Evaluation measures the full pipeline, never a degraded one.
+                    lekton::rag::chat::RetrievalMode::Full,
+                )
                 .await
                 .map_err(|e| format!("retrieve_only failed for {qid}: {e}"))?;
 

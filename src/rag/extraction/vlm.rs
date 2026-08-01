@@ -84,6 +84,12 @@ impl VlmTranscriber {
             ..Default::default()
         };
 
+        // Transcription is the expensive per-page background call, and the only
+        // one that is unambiguously ingest — the embedding path also serves
+        // chat queries. Admitting it here is what gives the daily ceiling
+        // something to actually stop when indexing runs away.
+        let _admission = usage::guard::admit(&UsageKey::System, None).await?;
+
         let client = self.provider.get_client_with_headers(&self.headers).await?;
         let response = client.chat().create(request).await.map_err(|e| {
             AppError::Internal(format!(

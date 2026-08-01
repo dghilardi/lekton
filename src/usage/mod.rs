@@ -10,7 +10,9 @@
 //! cardinality. Per-user attribution goes to the event log in [`sink`], which
 //! is off unless `usage.event_log` is set.
 
+pub mod budget;
 pub mod guard;
+pub mod pricing;
 pub mod sink;
 
 pub use crate::db::usage_models::UsageKey;
@@ -147,7 +149,14 @@ pub fn record(key: &UsageKey, feature: LlmFeature, model: &str, usage: TokenUsag
         created_at: chrono::Utc::now(),
     });
 
-    guard::count_tokens(usage.prompt.saturating_add(usage.completion));
+    let credits = pricing::credits(model, usage.prompt, usage.completion);
+    guard::spend(key, credits);
+    // `record` is sync and called from inside the LLM services, so the debit is
+    // spawned rather than awaited: accounting must not add latency to a reply.
+    let charged_to = key.clone();
+    tokio::spawn(async move { budget::charge(&charged_to, credits).await });
+    metrics::counter!("lekton_llm_credits_millis_total", "model" => model.to_string())
+        .increment((credits * 1_000.0) as u64);
 
     let feature = feature.as_str();
     let model = model.to_string();

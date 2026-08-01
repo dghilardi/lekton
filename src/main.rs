@@ -568,26 +568,51 @@ async fn main() {
 
     // Admission control for LLM calls. Install before any service exists: a
     // missing guard admits everything.
+    let price_list = lekton::usage::pricing::PriceList::new(config.usage.pricing.clone());
+    price_list.warn_about_unpriced(&[
+        config.rag.resolve_chat().model.as_str(),
+        config.rag.embedding_model.as_str(),
+    ]);
+    lekton::usage::pricing::install(price_list);
+
+    if config.usage.budget.enabled {
+        lekton::usage::budget::install(lekton::usage::budget::Budgets::new(
+            Arc::new(lekton::db::budget_repository::MongoBudgetRepository::new(
+                &mongo_db,
+            )),
+            config.usage.budget.clone(),
+        ));
+        tracing::info!(
+            capacity = config.usage.budget.default.capacity,
+            refill_per_hour = config.usage.budget.default.refill_per_hour,
+            "per-caller AI budgets enabled"
+        );
+    }
+
     lekton::usage::guard::install(lekton::usage::guard::LlmGuard::new(
         config.usage.max_concurrent_per_caller,
-        config.usage.daily_token_cap,
+        config.usage.daily_credit_cap,
         chrono::Utc::now().date_naive(),
     ));
-    if config.usage.daily_token_cap > 0 {
+    if config.usage.daily_credit_cap > 0.0 {
         tracing::info!(
-            cap = config.usage.daily_token_cap,
-            "daily LLM token ceiling enabled"
+            cap = config.usage.daily_credit_cap,
+            "daily LLM spend ceiling enabled"
         );
     }
 
     // Start the LLM usage event writer before any service can emit. Until this
     // runs (or when the flag is off) `usage::record` only touches the
     // Prometheus counters and queues nothing.
-    if config.usage.event_log {
-        lekton::usage::sink::install(Arc::new(
-            lekton::db::usage_repository::MongoUsageEventRepository::new(&mongo_db),
-        ));
-    }
+    let usage_event_repo: Option<Arc<dyn lekton::db::usage_repository::UsageEventRepository>> =
+        if config.usage.event_log {
+            let repo: Arc<dyn lekton::db::usage_repository::UsageEventRepository> =
+                Arc::new(lekton::db::usage_repository::MongoUsageEventRepository::new(&mongo_db));
+            lekton::usage::sink::install(repo.clone());
+            Some(repo)
+        } else {
+            None
+        };
     let document_repo: Arc<dyn lekton::db::repository::DocumentRepository> =
         Arc::new(MongoDocumentRepository::new(&mongo_db));
     let release_repo: Arc<dyn lekton::db::release_repository::ReleaseRepository> = Arc::new(
@@ -1054,6 +1079,7 @@ async fn main() {
         feedback_repo,
         documentation_feedback_repo,
         document_source_repo,
+        usage_event_repo,
         embedding_cache_repo,
         insecure_cookies: config.server.insecure_cookies,
         max_attachment_size_bytes: config.server.max_attachment_size_mb * 1024 * 1024,

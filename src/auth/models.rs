@@ -42,6 +42,8 @@ pub struct UserContext {
     /// Pre-computed transitive closure of the user's assigned access levels.
     /// Does not include the implicitly injected `"public"` and `"loggeduser"` levels.
     pub effective_access_levels: Vec<String>,
+    /// AI spending plan, independent of the access levels above.
+    pub budget_plan: Option<String>,
     /// May create or update published documents at any accessible level.
     pub can_write: bool,
     /// May read draft documents at any accessible level.
@@ -60,6 +62,7 @@ impl UserContext {
         Self {
             user: auth_user,
             effective_access_levels: user.effective_access_levels.clone(),
+            budget_plan: user.budget_plan.clone(),
             can_write: user.can_write,
             can_read_draft: user.can_read_draft,
             can_write_draft: user.can_write_draft,
@@ -210,6 +213,7 @@ mod tests {
                     is_admin,
                 },
                 effective_access_levels: effective_levels,
+                budget_plan: None,
                 can_write,
                 can_read_draft,
                 can_write_draft: false,

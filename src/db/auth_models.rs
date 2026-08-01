@@ -84,6 +84,14 @@ pub struct User {
     /// Access levels explicitly assigned by an administrator.
     #[serde(default)]
     pub assigned_access_levels: Vec<String>,
+    /// Name of the AI spending plan assigned to this user, from
+    /// `[usage.budget.plans]`. `None` uses the default budget.
+    ///
+    /// Kept separate from the access levels above on purpose: those govern what
+    /// the user may read, this governs how much they may spend, and the two do
+    /// not correlate.
+    #[serde(default)]
+    pub budget_plan: Option<String>,
     /// Pre-computed transitive closure of `assigned_access_levels` through
     /// the inheritance DAG.  Kept in sync by the background recompute job.
     /// `"public"` and `"loggeduser"` are injected at query time and not stored here.
@@ -183,6 +191,7 @@ mod tests {
             is_admin: false,
             assigned_access_levels: vec!["internal".to_string()],
             effective_access_levels: vec!["internal".to_string(), "loggeduser".to_string()],
+            budget_plan: None,
             can_write: false,
             can_read_draft: false,
             can_write_draft: false,
@@ -213,6 +222,7 @@ mod tests {
             is_admin: false,
             assigned_access_levels: vec![],  // default
             effective_access_levels: vec![], // default
+            budget_plan: None,               // default
             can_write: false,                // default
             can_read_draft: false,           // default
             can_write_draft: false,          // default

@@ -49,6 +49,17 @@ pub trait UserRepository: Send + Sync {
         can_write_draft: bool,
     ) -> Result<(), AppError>;
 
+    /// Assign (or clear, with `None`) a user's AI spending plan.
+    ///
+    /// Separate from [`Self::set_user_access_levels`] because the two answer
+    /// different questions — what a user may read, and how much they may spend
+    /// — and are administered independently.
+    async fn set_user_budget_plan(
+        &self,
+        user_id: &str,
+        plan: Option<String>,
+    ) -> Result<(), AppError>;
+
     /// Update only the pre-computed `effective_access_levels` for a user.
     /// Used by the background cascade-recompute job.
     async fn update_user_effective_levels(
@@ -194,6 +205,32 @@ impl UserRepository for MongoUserRepository {
         Ok(())
     }
 
+    async fn set_user_budget_plan(
+        &self,
+        user_id: &str,
+        plan: Option<String>,
+    ) -> Result<(), AppError> {
+        use mongodb::bson::doc;
+
+        let value = match plan {
+            Some(name) => bson::Bson::String(name),
+            None => bson::Bson::Null,
+        };
+        let result = self
+            .users
+            .update_one(
+                doc! { "id": user_id },
+                doc! { "$set": { "budget_plan": value } },
+            )
+            .await
+            .map_err(|e| AppError::Database(format!("mongo set budget_plan: {e}")))?;
+
+        if result.matched_count == 0 {
+            return Err(AppError::NotFound(format!("user '{user_id}' not found")));
+        }
+        Ok(())
+    }
+
     async fn update_user_effective_levels(
         &self,
         user_id: &str,
@@ -310,6 +347,7 @@ mod tests {
             is_admin: false,
             assigned_access_levels: vec![],
             effective_access_levels: vec![],
+            budget_plan: None,
             can_write: false,
             can_read_draft: false,
             can_write_draft: false,

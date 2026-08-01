@@ -492,14 +492,91 @@ pub struct UsageConfig {
     /// wait for its own previous call to finish.
     #[serde(default = "default_max_concurrent_llm_per_caller")]
     pub max_concurrent_per_caller: usize,
-    /// Instance-wide ceiling on LLM tokens per UTC day. `0` disables it.
+    /// Instance-wide ceiling on LLM spend per UTC day, in credits. `0` disables it.
     ///
     /// The last line of defence, for what no per-caller limit catches — a
-    /// runaway reindex, or a bug fanning out across callers. It counts tokens,
-    /// not cost, so it is a runaway guard rather than a spend cap: tokens from
-    /// different models are not comparable in price.
+    /// runaway reindex, or a bug fanning out across callers.
     #[serde(default)]
-    pub daily_token_cap: u64,
+    pub daily_credit_cap: f64,
+    /// Price of each model's tokens, in credits per 1k tokens.
+    ///
+    /// Without an entry a model is charged at a flat fallback rate, which keeps
+    /// it visible but not accurate — see [`crate::usage::pricing`].
+    #[serde(default)]
+    pub pricing: HashMap<String, ModelPrice>,
+    /// Per-caller spending budget.
+    #[serde(default)]
+    pub budget: BudgetConfig,
+}
+
+/// Per-caller credit budget, as a refilling bucket.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct BudgetConfig {
+    /// Off by default. The numbers below only mean something once you know your
+    /// own consumption, so enable this after reading `lekton_llm_credits_millis_total`
+    /// or the event log — not before.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Budget for a user with no plan assigned.
+    #[serde(default)]
+    pub default: BudgetProfile,
+    /// Named plans an administrator can assign to a user.
+    ///
+    /// Deliberately *not* keyed by access level. Access levels say what a
+    /// person may read; a plan says how much they may spend. They are
+    /// independent: someone restricted to public documentation may consult it
+    /// constantly, while someone who can see everything may look once a month.
+    /// Deriving one from the other would force an administrator to hand out
+    /// visibility in order to hand out credits.
+    #[serde(default)]
+    pub plans: HashMap<String, BudgetProfile>,
+    /// Budget for machine tokens, whose usage pattern is nothing like a person's.
+    #[serde(default)]
+    pub service_token: Option<BudgetProfile>,
+    /// Budget shared by all unauthenticated callers.
+    #[serde(default)]
+    pub anonymous: Option<BudgetProfile>,
+}
+
+/// One bucket's size and refill rate, in credits.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct BudgetProfile {
+    /// Bucket size: the most a caller may spend in one burst.
+    #[serde(default = "default_budget_capacity")]
+    pub capacity: f64,
+    /// Sustained allowance. Also sets the wait after exhaustion, which is what
+    /// the caller is told in `Retry-After`.
+    #[serde(default = "default_budget_refill_per_hour")]
+    pub refill_per_hour: f64,
+}
+
+fn default_budget_capacity() -> f64 {
+    1_000.0
+}
+
+fn default_budget_refill_per_hour() -> f64 {
+    250.0
+}
+
+impl Default for BudgetProfile {
+    fn default() -> Self {
+        Self {
+            capacity: default_budget_capacity(),
+            refill_per_hour: default_budget_refill_per_hour(),
+        }
+    }
+}
+
+/// What one model's tokens cost, in credits per 1k tokens.
+///
+/// Prompt and completion are priced separately because every provider charges
+/// them differently, usually by a factor of three to five.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct ModelPrice {
+    #[serde(default)]
+    pub prompt_per_1k: f64,
+    #[serde(default)]
+    pub completion_per_1k: f64,
 }
 
 fn default_max_concurrent_llm_per_caller() -> usize {
@@ -511,7 +588,9 @@ impl Default for UsageConfig {
         Self {
             event_log: false,
             max_concurrent_per_caller: default_max_concurrent_llm_per_caller(),
-            daily_token_cap: 0,
+            daily_credit_cap: 0.0,
+            pricing: HashMap::new(),
+            budget: BudgetConfig::default(),
         }
     }
 }

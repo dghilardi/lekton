@@ -48,6 +48,7 @@ async fn prompt_visibility_for_user(
         None => crate::auth::models::UserContext {
             user: user.clone(),
             effective_access_levels: vec![],
+            budget_plan: None,
             can_write: false,
             can_read_draft: false,
             can_write_draft: false,

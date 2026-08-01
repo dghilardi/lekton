@@ -8,17 +8,18 @@
 //!   second and keep every one of them running; a concurrency cap is what
 //!   actually stops a loop, because the loop has to wait for its own previous
 //!   call to finish.
-//! - **A daily instance-wide token ceiling.** The last line of defence, aimed
+//! - **A daily instance-wide spend ceiling.** The last line of defence, aimed
 //!   at the case no per-caller limit catches: a runaway reindex, or a bug that
-//!   fans out across many callers.
+//!   fans out across many callers. Background work is cut off at a fraction of
+//!   the ceiling so that it starves before people do — see
+//!   [`SYSTEM_SHARE_OF_CEILING`].
 //!
 //! Enforcement lives here rather than in an HTTP layer because the same
 //! services are reached from REST handlers, Leptos server functions and MCP —
 //! a middleware would cover them unevenly.
 //!
-//! The ceiling counts **tokens, not cost**. Tokens from different models are
-//! not comparable in price, so this is a runaway guard, not a spend cap; a
-//! cost-accurate ceiling needs the per-model pricing table.
+//! The ceiling is denominated in credits, not tokens, so that it means the
+//! same thing across models — see [`super::pricing`].
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -32,11 +33,33 @@ use crate::error::AppError;
 /// Sweep the per-caller slot map once it grows past this many entries.
 const SLOT_MAP_SWEEP_THRESHOLD: usize = 1_024;
 
+/// Share of the daily ceiling that background work may consume before it is
+/// refused, leaving the rest for people.
+///
+/// A single shared ceiling gets the priority backwards: an overrunning reindex
+/// spends it all and the resulting refusals land on users, while the reindex —
+/// which is never itself admitted — carries on. Cutting background work off
+/// early keeps a reserve for the interactive path, which is the one someone is
+/// waiting on.
+const SYSTEM_SHARE_OF_CEILING: f64 = 0.8;
+
 static GUARD: OnceLock<LlmGuard> = OnceLock::new();
 
-/// Held for the duration of an LLM call; releases the caller's slot on drop.
+/// Held for the duration of an LLM call; releases the caller's slot — and any
+/// budget reservation — on drop.
 pub struct Admission {
     _permit: Option<OwnedSemaphorePermit>,
+    budget: Option<super::budget::BudgetHold>,
+}
+
+impl Admission {
+    /// Whether this call should economise: the caller is near the bottom of
+    /// their budget, so a cheaper answer now beats a refusal shortly.
+    ///
+    /// False when no budget is enforced — nothing to economise against.
+    pub fn thrifty(&self) -> bool {
+        self.budget.as_ref().is_some_and(|hold| hold.thrifty())
+    }
 }
 
 /// Caps concurrent LLM calls per caller and total tokens per day.
@@ -44,68 +67,106 @@ pub struct LlmGuard {
     /// `0` disables the concurrency cap.
     max_concurrent_per_caller: usize,
     slots: Mutex<HashMap<String, Arc<Semaphore>>>,
-    /// `0` disables the daily ceiling.
-    daily_token_cap: u64,
-    /// `(UTC day, tokens counted that day)`.
-    day: Mutex<(NaiveDate, u64)>,
+    /// `0.0` disables the daily ceiling.
+    daily_credit_cap: f64,
+    /// `(UTC day, credits spent that day)`. Counts every caller: the ceiling
+    /// bounds what the instance spends, not what any one caller spends.
+    day: Mutex<(NaiveDate, f64)>,
 }
 
 impl LlmGuard {
-    pub fn new(max_concurrent_per_caller: usize, daily_token_cap: u64, today: NaiveDate) -> Self {
+    pub fn new(max_concurrent_per_caller: usize, daily_credit_cap: f64, today: NaiveDate) -> Self {
         Self {
             max_concurrent_per_caller,
             slots: Mutex::new(HashMap::new()),
-            daily_token_cap,
-            day: Mutex::new((today, 0)),
+            daily_credit_cap,
+            day: Mutex::new((today, 0.0)),
         }
     }
 
     /// Admit an LLM call, or explain why not.
     pub fn admit(&self, key: &UsageKey, today: NaiveDate) -> Result<Admission, AppError> {
-        if self.daily_cap_reached(today) {
-            metrics::counter!("lekton_llm_daily_cap_rejections_total").increment(1);
-            return Err(AppError::TooManyRequests(
-                "The daily AI usage limit for this instance has been reached. \
-                 Please try again tomorrow."
-                    .into(),
-            ));
+        if self.ceiling_reached_for(key, today) {
+            metrics::counter!(
+                "lekton_llm_daily_cap_rejections_total",
+                "actor_kind" => key.kind(),
+            )
+            .increment(1);
+            return Err(AppError::TooManyRequests(match key {
+                UsageKey::System => "The daily AI spending reserve for background work is used \
+                                     up. Indexing resumes after UTC midnight."
+                    .to_string(),
+                _ => "The daily AI usage limit for this instance has been reached. \
+                      Please try again tomorrow."
+                    .to_string(),
+            }));
         }
 
         Ok(Admission {
-            _permit: self.acquire_slot(key)?,
+            // Background work is bounded by its own queue, and has no peer to
+            // be fair to, so it takes no per-caller slot.
+            _permit: match key {
+                UsageKey::System => None,
+                _ => self.acquire_slot(key)?,
+            },
+            budget: None,
         })
     }
 
-    /// Count tokens against today's ceiling, rolling over at UTC midnight.
-    pub fn count_tokens(&self, tokens: u64, today: NaiveDate) {
-        if self.daily_token_cap == 0 {
+    /// Charge credits against today's ceiling, rolling over at UTC midnight.
+    ///
+    /// Every caller's spend counts toward the same total; `key` only decides
+    /// which threshold the crossing message refers to.
+    pub fn spend(&self, key: &UsageKey, credits: f64, today: NaiveDate) {
+        if self.daily_credit_cap <= 0.0 {
             return;
         }
-        let mut day = self.day.lock().expect("daily token counter poisoned");
+        let mut day = self.day.lock().expect("daily spend counter poisoned");
         if day.0 != today {
-            *day = (today, 0);
+            *day = (today, 0.0);
         }
         let before = day.1;
-        day.1 = day.1.saturating_add(tokens);
+        day.1 += credits;
 
         // Log exactly once, on the call that crosses the line, so the operator
-        // sees when it happened rather than a flood of identical errors.
-        if before < self.daily_token_cap && day.1 >= self.daily_token_cap {
+        // sees when it happened rather than a flood of identical errors. Both
+        // thresholds are worth a line: the first says indexing has stopped, the
+        // second that everything has.
+        let system_ceiling = self.daily_credit_cap * SYSTEM_SHARE_OF_CEILING;
+        if before < system_ceiling && day.1 >= system_ceiling {
+            tracing::warn!(
+                ceiling = system_ceiling,
+                spent = day.1,
+                actor_kind = key.kind(),
+                "daily AI spend reserve for background work is used up — indexing pauses until \
+                 UTC midnight, interactive use continues"
+            );
+        }
+        if before < self.daily_credit_cap && day.1 >= self.daily_credit_cap {
             tracing::error!(
-                cap = self.daily_token_cap,
-                counted = day.1,
-                "daily LLM token ceiling reached — AI features are refusing new calls until \
+                cap = self.daily_credit_cap,
+                spent = day.1,
+                "daily LLM spend ceiling reached — AI features are refusing new calls until \
                  UTC midnight"
             );
         }
     }
 
-    fn daily_cap_reached(&self, today: NaiveDate) -> bool {
-        if self.daily_token_cap == 0 {
+    /// The ceiling this caller is held to: background work stops early, so the
+    /// remainder is still there for whoever is waiting on an answer.
+    fn ceiling_for(&self, key: &UsageKey) -> f64 {
+        match key {
+            UsageKey::System => self.daily_credit_cap * SYSTEM_SHARE_OF_CEILING,
+            _ => self.daily_credit_cap,
+        }
+    }
+
+    fn ceiling_reached_for(&self, key: &UsageKey, today: NaiveDate) -> bool {
+        if self.daily_credit_cap <= 0.0 {
             return false;
         }
-        let day = self.day.lock().expect("daily token counter poisoned");
-        day.0 == today && day.1 >= self.daily_token_cap
+        let day = self.day.lock().expect("daily spend counter poisoned");
+        day.0 == today && day.1 >= self.ceiling_for(key)
     }
 
     fn acquire_slot(&self, key: &UsageKey) -> Result<Option<OwnedSemaphorePermit>, AppError> {
@@ -156,21 +217,26 @@ pub fn install(guard: LlmGuard) {
     }
 }
 
-/// Admit an LLM call against the process-wide guard.
-///
 /// Without an installed guard every call is admitted, which is what the tests
 /// and the eval binaries want.
-pub fn admit(key: &UsageKey) -> Result<Admission, AppError> {
-    match GUARD.get() {
-        Some(guard) => guard.admit(key, chrono::Utc::now().date_naive()),
-        None => Ok(Admission { _permit: None }),
-    }
+/// Admit an LLM call: the instance ceiling, then the caller's concurrency slot,
+/// then their budget — cheapest check first, so a refusal costs the least.
+pub async fn admit(key: &UsageKey, plan: Option<&str>) -> Result<Admission, AppError> {
+    let mut admission = match GUARD.get() {
+        Some(guard) => guard.admit(key, chrono::Utc::now().date_naive())?,
+        None => Admission {
+            _permit: None,
+            budget: None,
+        },
+    };
+    admission.budget = super::budget::reserve(key, plan).await?;
+    Ok(admission)
 }
 
-/// Count tokens against the process-wide daily ceiling.
-pub fn count_tokens(tokens: u64) {
+/// Charge credits against the process-wide daily ceiling.
+pub fn spend(key: &UsageKey, credits: f64) {
     if let Some(guard) = GUARD.get() {
-        guard.count_tokens(tokens, chrono::Utc::now().date_naive());
+        guard.spend(key, credits, chrono::Utc::now().date_naive());
     }
 }
 
@@ -188,7 +254,7 @@ mod tests {
 
     #[test]
     fn admits_up_to_the_concurrency_cap_then_refuses() {
-        let guard = LlmGuard::new(2, 0, today());
+        let guard = LlmGuard::new(2, 0.0, today());
 
         let _first = guard.admit(&user("u1"), today()).expect("first admitted");
         let _second = guard.admit(&user("u1"), today()).expect("second admitted");
@@ -199,7 +265,7 @@ mod tests {
 
     #[test]
     fn releases_the_slot_when_the_admission_is_dropped() {
-        let guard = LlmGuard::new(1, 0, today());
+        let guard = LlmGuard::new(1, 0.0, today());
 
         let first = guard.admit(&user("u1"), today()).expect("admitted");
         assert!(guard.admit(&user("u1"), today()).is_err());
@@ -210,7 +276,7 @@ mod tests {
 
     #[test]
     fn callers_do_not_consume_each_others_slots() {
-        let guard = LlmGuard::new(1, 0, today());
+        let guard = LlmGuard::new(1, 0.0, today());
 
         let _mine = guard.admit(&user("u1"), today()).expect("admitted");
 
@@ -219,7 +285,7 @@ mod tests {
 
     #[test]
     fn zero_disables_the_concurrency_cap() {
-        let guard = LlmGuard::new(0, 0, today());
+        let guard = LlmGuard::new(0, 0.0, today());
 
         let _a = guard.admit(&user("u1"), today()).expect("admitted");
         let _b = guard.admit(&user("u1"), today()).expect("admitted");
@@ -227,13 +293,54 @@ mod tests {
     }
 
     #[test]
-    fn refuses_once_the_daily_ceiling_is_reached() {
-        let guard = LlmGuard::new(0, 100, today());
+    fn background_work_is_starved_before_people_are() {
+        // The defect this encodes: with one shared ceiling, an overrunning
+        // reindex spent it all and the refusals landed on users, while the
+        // reindex itself — never admitted — carried on.
+        let guard = LlmGuard::new(0, 100.0, today());
 
-        guard.count_tokens(99, today());
+        // 85 spent: past the background reserve (80), short of the ceiling.
+        guard.spend(&UsageKey::System, 85.0, today());
+
+        assert!(
+            guard.admit(&UsageKey::System, today()).is_err(),
+            "indexing must stop once it has eaten its share"
+        );
+        assert!(
+            guard.admit(&user("u1"), today()).is_ok(),
+            "a person must still be served from the reserve indexing left behind"
+        );
+    }
+
+    #[test]
+    fn the_full_ceiling_still_stops_everyone() {
+        let guard = LlmGuard::new(0, 100.0, today());
+
+        guard.spend(&user("u1"), 100.0, today());
+
+        assert!(guard.admit(&user("u2"), today()).is_err());
+        assert!(guard.admit(&UsageKey::System, today()).is_err());
+    }
+
+    #[test]
+    fn background_work_takes_no_per_caller_slot() {
+        // It is bounded by its own queue and has no peer to be fair to; taking
+        // a slot would only let one extraction block the next.
+        let guard = LlmGuard::new(1, 0.0, today());
+
+        let _first = guard.admit(&UsageKey::System, today()).expect("admitted");
+
+        assert!(guard.admit(&UsageKey::System, today()).is_ok());
+    }
+
+    #[test]
+    fn refuses_once_the_daily_ceiling_is_reached() {
+        let guard = LlmGuard::new(0, 100.0, today());
+
+        guard.spend(&user("u1"), 99.0, today());
         assert!(guard.admit(&user("u1"), today()).is_ok());
 
-        guard.count_tokens(1, today());
+        guard.spend(&user("u1"), 1.0, today());
         assert!(matches!(
             guard.admit(&user("u1"), today()),
             Err(AppError::TooManyRequests(_))
@@ -242,8 +349,8 @@ mod tests {
 
     #[test]
     fn the_daily_ceiling_rolls_over_at_utc_midnight() {
-        let guard = LlmGuard::new(0, 100, today());
-        guard.count_tokens(500, today());
+        let guard = LlmGuard::new(0, 100.0, today());
+        guard.spend(&user("u1"), 500.0, today());
         assert!(guard.admit(&user("u1"), today()).is_err());
 
         let tomorrow = NaiveDate::from_ymd_opt(2026, 8, 2).unwrap();
@@ -255,9 +362,9 @@ mod tests {
 
     #[test]
     fn zero_disables_the_daily_ceiling() {
-        let guard = LlmGuard::new(0, 0, today());
+        let guard = LlmGuard::new(0, 0.0, today());
 
-        guard.count_tokens(u64::MAX, today());
+        guard.spend(&user("u1"), f64::MAX, today());
 
         assert!(guard.admit(&user("u1"), today()).is_ok());
     }
@@ -266,7 +373,7 @@ mod tests {
     fn anonymous_callers_share_one_slot() {
         // Otherwise every unidentified request would get its own cap, which is
         // no cap at all.
-        let guard = LlmGuard::new(1, 0, today());
+        let guard = LlmGuard::new(1, 0.0, today());
 
         let _first = guard
             .admit(&UsageKey::Anonymous, today())

@@ -145,6 +145,7 @@ mod tests {
                 is_admin: false,
                 assigned_access_levels: assigned.clone(),
                 effective_access_levels: assigned,
+                budget_plan: None,
                 can_write: false,
                 can_read_draft: false,
                 can_write_draft: false,
@@ -159,6 +160,14 @@ mod tests {
 
     #[async_trait]
     impl UserRepository for MockUserRepo {
+        async fn set_user_budget_plan(
+            &self,
+            _user_id: &str,
+            _plan: Option<String>,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+
         async fn create_user(&self, user: User) -> Result<(), AppError> {
             self.users.lock().unwrap().push(user);
             Ok(())

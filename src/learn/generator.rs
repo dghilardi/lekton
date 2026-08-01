@@ -26,7 +26,7 @@ use crate::auth::models::UserContext;
 use crate::db::learn_models::{LearningScope, LessonCitation, LessonSource, QuizQuestion};
 use crate::db::repository::DocumentRepository;
 use crate::error::AppError;
-use crate::rag::chat::ChatService;
+use crate::rag::chat::{ChatService, RetrievalMode};
 use crate::rag::client::format_llm_error;
 use crate::rag::provider::LlmProvider;
 use crate::rendering::markdown::sanitize_html;
@@ -122,7 +122,8 @@ impl LessonGenerator {
     ) -> Result<GeneratedLesson, AppError> {
         // Both Learn entry points funnel through here, so one admission covers
         // them; retrieval below deliberately does not take a second slot.
-        let _admission = usage::guard::admit(&user_ctx.usage_key())?;
+        let _admission =
+            usage::guard::admit(&user_ctx.usage_key(), user_ctx.budget_plan.as_deref()).await?;
 
         // ── Stage 1: which documents ──────────────────────────────────────
         let (target, candidate_slugs) = match scope {
@@ -191,7 +192,7 @@ impl LessonGenerator {
         let session_id = uuid::Uuid::new_v4().to_string();
         let retrieval = self
             .chat_service
-            .retrieve_only(user_ctx, query, &[], &session_id)
+            .retrieve_only(user_ctx, query, &[], &session_id, RetrievalMode::Full)
             .await?;
 
         let mut seen = HashSet::new();

@@ -85,6 +85,14 @@ mod tests {
             self.seen.lock().unwrap().extend(events);
             Ok(())
         }
+
+        async fn usage_by_model(
+            &self,
+            _since: chrono::DateTime<chrono::Utc>,
+        ) -> Result<Vec<crate::db::usage_repository::UsageByModel>, crate::error::AppError>
+        {
+            Ok(Vec::new())
+        }
     }
 
     fn event(feature: &str) -> LlmUsageEvent {

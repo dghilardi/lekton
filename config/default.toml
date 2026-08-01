@@ -56,10 +56,53 @@ max_source_documents = 3
 event_log = false
 # Max LLM generations one caller may have in flight. 0 disables the cap.
 max_concurrent_per_caller = 2
-# Instance-wide ceiling on LLM tokens per UTC day; AI features refuse new calls
-# once it is reached. 0 (the default) disables it — set it deliberately, from
-# the lekton_llm_tokens_total metric, once you know your normal daily volume.
-daily_token_cap = 0
+# Instance-wide ceiling on LLM spend per UTC day, in credits; AI features refuse
+# new calls once it is reached. 0 (the default) disables it — set it
+# deliberately, from the lekton_llm_credits_millis_total metric, once you know
+# your normal daily spend.
+#
+# Background work (attachment transcription) stops at 80% of this, so an
+# overrunning index cannot spend the whole allowance and leave people refused.
+daily_credit_cap = 0
+
+# Price of each model's tokens, in credits per 1k tokens. A credit is whatever
+# unit you choose; thousandths of a euro makes this read as a price list and the
+# ceilings read as budgets. A model with no entry here is charged at a flat
+# fallback rate and counted in lekton_llm_unpriced_calls_total, so a gap in the
+# list is visible rather than free.
+#
+# [usage.pricing."gpt-4o-mini"]
+# prompt_per_1k = 0.15
+# completion_per_1k = 0.60
+#
+# [usage.pricing."nomic-embed-text"]
+# prompt_per_1k = 0.01
+# completion_per_1k = 0.0
+
+[usage.budget]
+# Per-caller spending budget, as a bucket that refills over time. Off by
+# default: the numbers below only mean something once you know your own
+# consumption, so enable this after reading lekton_llm_credits_millis_total or
+# the event log — not before.
+enabled = false
+# capacity is the most a caller may spend in one burst; refill_per_hour is the
+# sustained allowance, and also what sets the wait after exhaustion.
+[usage.budget.default]
+capacity = 1000.0
+refill_per_hour = 250.0
+# Named plans an administrator assigns to a user. These are NOT access levels:
+# access levels say what someone may read, a plan says how much they may spend,
+# and the two do not correlate — someone restricted to public documentation may
+# consult it constantly, while someone who can see everything may look once a
+# month. A user with no plan gets [usage.budget.default].
+#
+# [usage.budget.plans.heavy]
+# capacity = 5000.0
+# refill_per_hour = 1250.0
+#
+# [usage.budget.service_token]
+# capacity = 20000.0
+# refill_per_hour = 5000.0
 
 [server]
 rate_limit_burst = 50

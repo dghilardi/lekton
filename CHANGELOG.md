@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.30.0] 2026-08-01
+
 ### Added
 - RAG chat answers and AI document summaries are now capped at `rag.chat.max_output_tokens` (default 2048, `0` disables it). Previously the chat step was the only LLM call with no upper bound on generated tokens, so a single request had no upper bound on provider cost. An answer that hits the cap says so explicitly instead of trailing off mid-sentence.
 

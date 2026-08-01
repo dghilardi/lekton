@@ -69,6 +69,25 @@ pub trait BudgetRepository: Send + Sync {
     async fn balance(&self, key: &str) -> Result<Option<f64>, AppError>;
 }
 
+/// Read a stored credit amount, whatever numeric width it happens to have.
+///
+/// The app always writes doubles, but MongoDB does not enforce that and an
+/// integral value arrives as an Int32 — which is what a shell edit produces.
+/// A strict `get_f64` then fails, and the caller cannot tell "no budget
+/// recorded" from "budget in an unexpected width": both look like a full
+/// bucket. For a spending control that is the wrong way to fail.
+#[cfg(feature = "ssr")]
+fn credits_field(doc: &mongodb::bson::Document, key: &str) -> Option<f64> {
+    use mongodb::bson::Bson;
+
+    match doc.get(key)? {
+        Bson::Double(n) => Some(*n),
+        Bson::Int32(n) => Some(f64::from(*n)),
+        Bson::Int64(n) => Some(*n as f64),
+        _ => None,
+    }
+}
+
 // ── MongoDB implementation ───────────────────────────────────────────────────
 
 #[cfg(feature = "ssr")]
@@ -145,8 +164,8 @@ impl BudgetRepository for MongoBudgetRepository {
                 AppError::Internal("usage_budget reserve returned no document".to_string())
             })?;
 
-        let balance = updated.get_f64("balance").map_err(|e| {
-            AppError::Internal(format!("usage_budget reserve returned no balance: {e}"))
+        let balance = credits_field(&updated, "balance").ok_or_else(|| {
+            AppError::Internal("usage_budget reserve returned no usable balance".to_string())
         })?;
         let granted = updated.get_bool("granted").unwrap_or(false);
 
@@ -183,6 +202,6 @@ impl BudgetRepository for MongoBudgetRepository {
             .await
             .map_err(|e| AppError::Internal(format!("mongo read usage_budget: {e}")))?;
 
-        Ok(found.and_then(|doc| doc.get_f64("balance").ok()))
+        Ok(found.as_ref().and_then(|doc| credits_field(doc, "balance")))
     }
 }

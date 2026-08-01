@@ -202,4 +202,52 @@ async fn usage_events_store_a_date_that_mongo_can_expire_and_range_query() {
         .expect("aggregate");
     assert_eq!(found.len(), 1, "the report window must match a fresh event");
     assert_eq!(found[0].prompt_tokens, 10);
+    assert_eq!(found[0].completion_tokens, 5);
+    // MongoDB counts with $sum: 1 as an Int32 while the token sums come back as
+    // Int64. Reading only one width reports the other as zero, which is what
+    // the report first showed for every caller.
+    assert_eq!(
+        found[0].calls, 1,
+        "the call count must survive its BSON width"
+    );
+}
+
+/// A balance stored with an unexpected numeric width must still be read.
+///
+/// MongoDB does not enforce that a field keeps its type, and an integral value
+/// — which is what a shell edit produces — arrives as an Int32. A strict
+/// double read then fails and the caller cannot distinguish it from "no budget
+/// recorded", so the bucket silently reads as full: a spending control failing
+/// open, which is the wrong direction.
+#[tokio::test]
+async fn an_integer_balance_is_not_mistaken_for_an_untouched_bucket() {
+    let env = common::TestEnv::start().await;
+    let repo = MongoBudgetRepository::new(&env.db);
+
+    env.db
+        .collection::<mongodb::bson::Document>("usage_budgets")
+        .insert_one(mongodb::bson::doc! {
+            "_id": "user:integral",
+            // i32, as a hand edit or a naive script would write it.
+            "balance": 3_i32,
+            "refilled_at": mongodb::bson::DateTime::now(),
+        })
+        .await
+        .expect("insert");
+
+    assert_eq!(
+        repo.balance("user:integral").await.expect("balance"),
+        Some(3.0),
+        "an integer balance must be read, not treated as absent"
+    );
+
+    // And the bucket must still refuse what it cannot afford.
+    let reservation = repo
+        .reserve("user:integral", 50.0, CAPACITY, 0.0)
+        .await
+        .expect("reserve");
+    assert!(
+        !reservation.granted,
+        "a 3-credit balance must not fund a 50-credit reservation"
+    );
 }

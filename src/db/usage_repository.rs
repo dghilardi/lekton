@@ -34,6 +34,24 @@ pub trait UsageEventRepository: Send + Sync {
     async fn usage_by_model(&self, since: DateTime<Utc>) -> Result<Vec<UsageByModel>, AppError>;
 }
 
+/// Read an aggregated count, whatever width MongoDB chose for it.
+///
+/// `$sum: 1` yields an Int32 while `$sum: "$field"` over i64 values yields an
+/// Int64, so a reader that only accepts one silently reports zero for the other
+/// — which is how the report first displayed every caller as having made no
+/// calls at all.
+#[cfg(feature = "ssr")]
+fn count(row: &mongodb::bson::Document, key: &str) -> u64 {
+    use mongodb::bson::Bson;
+
+    match row.get(key) {
+        Some(Bson::Int32(n)) => (*n).max(0) as u64,
+        Some(Bson::Int64(n)) => (*n).max(0) as u64,
+        Some(Bson::Double(n)) => n.max(0.0) as u64,
+        _ => 0,
+    }
+}
+
 // ── MongoDB implementation ───────────────────────────────────────────────────
 
 #[cfg(feature = "ssr")]
@@ -95,10 +113,9 @@ impl UsageEventRepository for MongoUsageEventRepository {
                     actor_kind: id.get_str("actor_kind").unwrap_or("unknown").to_string(),
                     actor_id: id.get_str("actor_id").ok().map(ToOwned::to_owned),
                     model: id.get_str("model").unwrap_or("unknown").to_string(),
-                    calls: row.get_i64("calls").unwrap_or_default().max(0) as u64,
-                    prompt_tokens: row.get_i64("prompt_tokens").unwrap_or_default().max(0) as u64,
-                    completion_tokens: row.get_i64("completion_tokens").unwrap_or_default().max(0)
-                        as u64,
+                    calls: count(&row, "calls"),
+                    prompt_tokens: count(&row, "prompt_tokens"),
+                    completion_tokens: count(&row, "completion_tokens"),
                 })
             })
             .collect())

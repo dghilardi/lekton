@@ -54,6 +54,12 @@ max_source_documents = 3
 # what. Prometheus token counters are emitted regardless; this is the per-user
 # detail, so it is opt-in. Events expire after 90 days (TTL index, migration 018).
 event_log = false
+# Max LLM generations one caller may have in flight. 0 disables the cap.
+max_concurrent_per_caller = 2
+# Instance-wide ceiling on LLM tokens per UTC day; AI features refuse new calls
+# once it is reached. 0 (the default) disables it — set it deliberately, from
+# the lekton_llm_tokens_total metric, once you know your normal daily volume.
+daily_token_cap = 0
 
 [server]
 rate_limit_burst = 50

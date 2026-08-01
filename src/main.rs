@@ -566,6 +566,20 @@ async fn main() {
         mongodb::Client::with_options(mongo_options).expect("Failed to connect to MongoDB");
     let mongo_db = mongo_client.database(&config.database.name);
 
+    // Admission control for LLM calls. Install before any service exists: a
+    // missing guard admits everything.
+    lekton::usage::guard::install(lekton::usage::guard::LlmGuard::new(
+        config.usage.max_concurrent_per_caller,
+        config.usage.daily_token_cap,
+        chrono::Utc::now().date_naive(),
+    ));
+    if config.usage.daily_token_cap > 0 {
+        tracing::info!(
+            cap = config.usage.daily_token_cap,
+            "daily LLM token ceiling enabled"
+        );
+    }
+
     // Start the LLM usage event writer before any service can emit. Until this
     // runs (or when the flag is off) `usage::record` only touches the
     // Prometheus counters and queues nothing.

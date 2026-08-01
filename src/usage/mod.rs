@@ -10,6 +10,7 @@
 //! cardinality. Per-user attribution goes to the event log in [`sink`], which
 //! is off unless `usage.event_log` is set.
 
+pub mod guard;
 pub mod sink;
 
 pub use crate::db::usage_models::UsageKey;
@@ -145,6 +146,8 @@ pub fn record(key: &UsageKey, feature: LlmFeature, model: &str, usage: TokenUsag
         estimated: usage.estimated,
         created_at: chrono::Utc::now(),
     });
+
+    guard::count_tokens(usage.prompt.saturating_add(usage.completion));
 
     let feature = feature.as_str();
     let model = model.to_string();

@@ -486,11 +486,33 @@ pub struct UsageConfig {
     /// it is individual-usage monitoring, so enable it deliberately.
     #[serde(default)]
     pub event_log: bool,
+    /// Maximum LLM generations one caller may have in flight. `0` disables it.
+    ///
+    /// This, more than any rate limit, is what stops a script: the loop has to
+    /// wait for its own previous call to finish.
+    #[serde(default = "default_max_concurrent_llm_per_caller")]
+    pub max_concurrent_per_caller: usize,
+    /// Instance-wide ceiling on LLM tokens per UTC day. `0` disables it.
+    ///
+    /// The last line of defence, for what no per-caller limit catches — a
+    /// runaway reindex, or a bug fanning out across callers. It counts tokens,
+    /// not cost, so it is a runaway guard rather than a spend cap: tokens from
+    /// different models are not comparable in price.
+    #[serde(default)]
+    pub daily_token_cap: u64,
+}
+
+fn default_max_concurrent_llm_per_caller() -> usize {
+    2
 }
 
 impl Default for UsageConfig {
     fn default() -> Self {
-        Self { event_log: false }
+        Self {
+            event_log: false,
+            max_concurrent_per_caller: default_max_concurrent_llm_per_caller(),
+            daily_token_cap: 0,
+        }
     }
 }
 

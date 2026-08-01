@@ -304,6 +304,7 @@ impl ChatService {
             }),
         ];
 
+        let _admission = usage::guard::admit(key)?;
         let prompt_chars = usage::prompt_chars(&messages);
         let request = build_chat_request(
             &self.chat_model,
@@ -378,6 +379,7 @@ impl ChatService {
             }),
         ];
 
+        let admission = usage::guard::admit(key)?;
         let prompt_chars = usage::prompt_chars(&messages);
         let request = build_chat_request(
             &self.chat_model,
@@ -405,6 +407,10 @@ impl ChatService {
         let model = self.chat_model.clone();
         let key = key.clone();
         let token_stream = async_stream::stream! {
+            // Held here, not in the enclosing function: the call is still
+            // running for as long as the stream is, so the caller's slot must
+            // stay taken until the last chunk.
+            let _admission = admission;
             let mut reported = None;
             let mut completion_chars = 0usize;
 
@@ -465,6 +471,10 @@ impl ChatService {
         session_id: Option<String>,
         user_message: String,
     ) -> Result<std::pin::Pin<Box<dyn futures::Stream<Item = ChatEvent> + Send>>, AppError> {
+        // 0. Admission control, before any retrieval work is done on the
+        //    caller's behalf — a refused turn should cost nothing.
+        let admission = usage::guard::admit(&user_ctx.usage_key())?;
+
         // 1. Resolve or create session
         let session_id = match session_id {
             Some(id) => {
@@ -628,6 +638,9 @@ impl ChatService {
         let usage_key = user_ctx.usage_key();
 
         let event_stream = async_stream::stream! {
+            // Held for the life of the stream, not just of this function: the
+            // generation is in flight until the last token.
+            let _admission = admission;
             // First event: session ID
             yield ChatEvent::Session { session_id: sid.clone() };
             yield ChatEvent::Sources {

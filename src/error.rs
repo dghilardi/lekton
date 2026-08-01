@@ -21,6 +21,12 @@ pub enum AppError {
     #[error("Bad request: {0}")]
     BadRequest(String),
 
+    /// The caller is asking for too much at once, or the instance has hit a
+    /// protective ceiling. Distinct from `BadRequest` because the request is
+    /// well-formed and retrying later is the right response.
+    #[error("Too many requests: {0}")]
+    TooManyRequests(String),
+
     #[error("Internal error: {0}")]
     Internal(String),
 }

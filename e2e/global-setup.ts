@@ -143,7 +143,7 @@ export default async function globalSetup() {
   await ingestDocument(
     'mermaid-test',
     'Mermaid Test',
-    '# Mermaid Test\n\nThis document contains a Mermaid diagram.\n\n```mermaid\ngraph TD\n    A[Start] --> B{Decision}\n    B -->|Yes| C[Action]\n    B -->|No| D[End]\n```\n\nAnd some text after.',
+    '# Mermaid Test\n\nThis document contains a Mermaid diagram.\n\n```mermaid\ngraph TD\n    A[Start] --> B{Decision}\n    B -->|Yes| C[Action]\n    B -->|No| D[End]\n```\n\nAnd some text after.\n\n```javascript\nconst ready = true;\n```',
     'public',
     { order: 4 },
   );

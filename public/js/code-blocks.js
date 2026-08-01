@@ -11,7 +11,7 @@
     '</svg>';
 
   function addCodeBlockFeatures() {
-    document.querySelectorAll('.prose pre:not([data-cb-init])').forEach(function (pre) {
+    document.querySelectorAll('.prose pre:not(.mermaid):not([data-cb-init])').forEach(function (pre) {
       pre.setAttribute('data-cb-init', '');
 
       var code = pre.querySelector('code');

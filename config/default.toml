@@ -60,6 +60,9 @@ max_concurrent_per_caller = 2
 # new calls once it is reached. 0 (the default) disables it — set it
 # deliberately, from the lekton_llm_credits_millis_total metric, once you know
 # your normal daily spend.
+#
+# Background work (attachment transcription) stops at 80% of this, so an
+# overrunning index cannot spend the whole allowance and leave people refused.
 daily_credit_cap = 0
 
 # Price of each model's tokens, in credits per 1k tokens. A credit is whatever

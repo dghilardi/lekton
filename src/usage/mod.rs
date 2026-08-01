@@ -150,7 +150,7 @@ pub fn record(key: &UsageKey, feature: LlmFeature, model: &str, usage: TokenUsag
     });
 
     let credits = pricing::credits(model, usage.prompt, usage.completion);
-    guard::spend(credits);
+    guard::spend(key, credits);
     // `record` is sync and called from inside the LLM services, so the debit is
     // spawned rather than awaited: accounting must not add latency to a reply.
     let charged_to = key.clone();

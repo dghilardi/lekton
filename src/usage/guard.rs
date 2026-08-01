@@ -194,6 +194,14 @@ impl LlmGuard {
         day.date == today && day.total >= self.ceiling_for(key)
     }
 
+    /// Whether a call from this caller would be admitted by the ceiling.
+    ///
+    /// Lets a queue hold back rather than dequeue work it cannot pay for —
+    /// asking first is the difference between pausing and losing the item.
+    pub fn has_headroom(&self, key: &UsageKey, today: NaiveDate) -> bool {
+        !self.ceiling_reached_for(key, today)
+    }
+
     /// Credits background work has spent today, ignoring everyone else.
     pub fn system_spend(&self, today: NaiveDate) -> f64 {
         let day = self.day.lock().expect("daily spend counter poisoned");
@@ -266,6 +274,15 @@ pub async fn admit(key: &UsageKey, plan: Option<&str>) -> Result<Admission, AppE
     };
     admission.budget = super::budget::reserve(key, plan).await?;
     Ok(admission)
+}
+
+/// Whether the process-wide ceiling would currently admit this caller.
+///
+/// `true` with no guard installed: nothing is enforced, so nothing is held back.
+pub fn has_headroom(key: &UsageKey) -> bool {
+    GUARD
+        .get()
+        .is_none_or(|guard| guard.has_headroom(key, chrono::Utc::now().date_naive()))
 }
 
 /// Credits background work has spent today against the process-wide guard.
@@ -356,6 +373,19 @@ mod tests {
             guard.admit(&user("u1"), today()).is_ok(),
             "a person must still be served from the reserve indexing left behind"
         );
+    }
+
+    #[test]
+    fn headroom_answers_before_the_work_is_taken_off_the_queue() {
+        let guard = LlmGuard::new(0, 100.0, today());
+        assert!(guard.has_headroom(&UsageKey::System, today()));
+
+        // Past the background reserve: indexing must hold back, while a person
+        // is still served.
+        guard.spend(&user("u1"), 85.0, today());
+
+        assert!(!guard.has_headroom(&UsageKey::System, today()));
+        assert!(guard.has_headroom(&user("u1"), today()));
     }
 
     #[test]

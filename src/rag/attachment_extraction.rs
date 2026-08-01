@@ -119,6 +119,33 @@ pub async fn resume_unfinished_extractions(
     }
 }
 
+/// How often to re-check the spend ceiling while the queue is held back.
+///
+/// The ceiling only clears at UTC midnight, so this is a slow poll: the point
+/// is to resume without a restart, not to react quickly.
+const HEADROOM_POLL: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Block until the daily ceiling would admit background work again.
+///
+/// Returns immediately when no ceiling is configured, which is the default.
+async fn wait_for_spend_headroom() {
+    use crate::db::usage_models::UsageKey;
+
+    if crate::usage::guard::has_headroom(&UsageKey::System) {
+        return;
+    }
+
+    tracing::warn!(
+        retry_in_secs = HEADROOM_POLL.as_secs(),
+        "attachment extraction paused: the daily AI spend reserve for background work is used \
+         up. Queued attachments wait rather than fail, and resume once it clears."
+    );
+    while !crate::usage::guard::has_headroom(&UsageKey::System) {
+        tokio::time::sleep(HEADROOM_POLL).await;
+    }
+    tracing::info!("attachment extraction resuming: spend headroom is available again");
+}
+
 /// Owns the dependencies needed to extract and index a single attachment.
 pub struct AttachmentExtractionService {
     storage: Arc<dyn StorageClient>,
@@ -157,7 +184,17 @@ impl AttachmentExtractionService {
         let (tx, mut rx) = mpsc::channel::<String>(capacity.max(1));
         let asset_repo = self.asset_repo.clone();
         tokio::spawn(async move {
-            while let Some(key) = rx.recv().await {
+            loop {
+                // Ask before taking. Transcription is admission-checked, so a
+                // worker that dequeued first would turn a spend ceiling into
+                // lost work: the failure marks the asset `Failed`, and the
+                // startup sweep only resumes `Pending`/`InProgress`, so nothing
+                // would ever pick it up again. Waiting costs a delay instead.
+                wait_for_spend_headroom().await;
+
+                let Some(key) = rx.recv().await else {
+                    break;
+                };
                 if let Err(e) = self.process_one(&key, false).await {
                     tracing::error!(key, "attachment extraction worker error: {e}");
                 }

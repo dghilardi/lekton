@@ -568,15 +568,22 @@ async fn main() {
 
     // Admission control for LLM calls. Install before any service exists: a
     // missing guard admits everything.
+    let price_list = lekton::usage::pricing::PriceList::new(config.usage.pricing.clone());
+    price_list.warn_about_unpriced(&[
+        config.rag.resolve_chat().model.as_str(),
+        config.rag.embedding_model.as_str(),
+    ]);
+    lekton::usage::pricing::install(price_list);
+
     lekton::usage::guard::install(lekton::usage::guard::LlmGuard::new(
         config.usage.max_concurrent_per_caller,
-        config.usage.daily_token_cap,
+        config.usage.daily_credit_cap,
         chrono::Utc::now().date_naive(),
     ));
-    if config.usage.daily_token_cap > 0 {
+    if config.usage.daily_credit_cap > 0.0 {
         tracing::info!(
-            cap = config.usage.daily_token_cap,
-            "daily LLM token ceiling enabled"
+            cap = config.usage.daily_credit_cap,
+            "daily LLM spend ceiling enabled"
         );
     }
 

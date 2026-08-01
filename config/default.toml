@@ -56,10 +56,25 @@ max_source_documents = 3
 event_log = false
 # Max LLM generations one caller may have in flight. 0 disables the cap.
 max_concurrent_per_caller = 2
-# Instance-wide ceiling on LLM tokens per UTC day; AI features refuse new calls
-# once it is reached. 0 (the default) disables it — set it deliberately, from
-# the lekton_llm_tokens_total metric, once you know your normal daily volume.
-daily_token_cap = 0
+# Instance-wide ceiling on LLM spend per UTC day, in credits; AI features refuse
+# new calls once it is reached. 0 (the default) disables it — set it
+# deliberately, from the lekton_llm_credits_millis_total metric, once you know
+# your normal daily spend.
+daily_credit_cap = 0
+
+# Price of each model's tokens, in credits per 1k tokens. A credit is whatever
+# unit you choose; thousandths of a euro makes this read as a price list and the
+# ceilings read as budgets. A model with no entry here is charged at a flat
+# fallback rate and counted in lekton_llm_unpriced_calls_total, so a gap in the
+# list is visible rather than free.
+#
+# [usage.pricing."gpt-4o-mini"]
+# prompt_per_1k = 0.15
+# completion_per_1k = 0.60
+#
+# [usage.pricing."nomic-embed-text"]
+# prompt_per_1k = 0.01
+# completion_per_1k = 0.0
 
 [server]
 rate_limit_burst = 50

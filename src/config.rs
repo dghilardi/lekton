@@ -205,6 +205,16 @@ pub struct ServerConfig {
     pub rate_limit_per_second: u64,
     /// Comma-separated trusted reverse proxy IPs/CIDRs allowed to supply forwarded client IPs.
     pub rate_limit_trusted_proxies: String,
+    /// Burst size for the LLM-endpoint limiter, keyed by user rather than IP.
+    ///
+    /// A separate, much tighter budget than the general limiter: those requests
+    /// each cost real money at an external provider, so the same allowance that
+    /// suits page loads is far too generous here.
+    #[serde(default = "default_llm_rate_limit_burst")]
+    pub llm_rate_limit_burst: u32,
+    /// Tokens replenished per second for the LLM-endpoint limiter.
+    #[serde(default = "default_llm_rate_limit_per_second")]
+    pub llm_rate_limit_per_second: u64,
     /// Comma-separated allowed CORS origins. Empty/unset means same-origin only.
     pub cors_allowed_origins: Option<String>,
     /// Allow non-HTTPS cookies (local dev over HTTP).
@@ -453,6 +463,16 @@ pub struct ChatStepConfig {
 
 fn default_chat_max_output_tokens() -> u32 {
     2048
+}
+
+/// Ten queued questions is already an unusual burst for one person.
+fn default_llm_rate_limit_burst() -> u32 {
+    10
+}
+
+/// One sustained question every four seconds per user.
+fn default_llm_rate_limit_per_second() -> u64 {
+    4
 }
 
 /// LLM usage accounting.

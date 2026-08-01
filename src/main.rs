@@ -56,7 +56,23 @@ async fn static_cache_headers(
 /// 2 MB limit. Keeping the full route surface in one auditable function makes it
 /// easy to review which endpoints exist and how they are authenticated.
 #[cfg(feature = "ssr")]
-fn api_routes(features: &lekton::app::FeatureFlags) -> axum::Router<lekton::app::AppState> {
+/// `llm_limit` is the per-user rate limiter, applied only to the handlers that
+/// call an LLM. It is a generic parameter because `GovernorLayer`'s middleware
+/// type comes from a transitive crate that cannot be named here.
+fn api_routes<L>(
+    features: &lekton::app::FeatureFlags,
+    llm_limit: L,
+) -> axum::Router<lekton::app::AppState>
+where
+    L: tower::Layer<axum::routing::Route> + Clone + Send + Sync + 'static,
+    L::Service: tower::Service<axum::extract::Request, Error = std::convert::Infallible>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+    <L::Service as tower::Service<axum::extract::Request>>::Response: axum::response::IntoResponse,
+    <L::Service as tower::Service<axum::extract::Request>>::Future: Send + 'static,
+{
     use axum::Router;
     use lekton::api;
 
@@ -225,7 +241,7 @@ fn api_routes(features: &lekton::app::FeatureFlags) -> axum::Router<lekton::app:
             )
             .route(
                 "/api/v1/rag/chat",
-                axum::routing::post(api::rag::chat_handler),
+                axum::routing::post(api::rag::chat_handler).layer(llm_limit.clone()),
             )
             .route(
                 "/api/v1/rag/sessions",
@@ -294,7 +310,7 @@ fn api_routes(features: &lekton::app::FeatureFlags) -> axum::Router<lekton::app:
     if features.document_upload && features.rag {
         router = router.route(
             "/api/v1/document-upload/summary",
-            axum::routing::get(api::document_upload::summary_stream_handler),
+            axum::routing::get(api::document_upload::summary_stream_handler).layer(llm_limit),
         );
     }
 
@@ -1033,9 +1049,38 @@ async fn main() {
     // Generate the Leptos route list for SSR
     let routes = generate_route_list(App);
 
+    // Dedicated per-user limiter for the endpoints that call an LLM. Separate
+    // from the global IP limiter below, which stays in place: this one exists
+    // because those requests cost money per call, so the quota has to follow
+    // the person rather than the address.
+    let llm_governor_conf = Arc::new(
+        tower_governor::governor::GovernorConfigBuilder::default()
+            .per_second(config.server.llm_rate_limit_per_second)
+            .burst_size(config.server.llm_rate_limit_burst)
+            .key_extractor(lekton::rate_limit::UserOrIpKeyExtractor::new(
+                app_state.token_service.clone(),
+                lekton::rate_limit::TrustedProxyIpKeyExtractor::from_config(
+                    &config.server.rate_limit_trusted_proxies,
+                )
+                .expect("Invalid server.rate_limit_trusted_proxies"),
+            ))
+            .finish()
+            .expect("Failed to build the LLM rate limiter configuration"),
+    );
+    let llm_limiter = llm_governor_conf.limiter().clone();
+    tokio::task::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            llm_limiter.retain_recent();
+        }
+    });
+
     // Build the Axum router. The full route surface lives in api_routes() so it
     // can be audited in one place; auth routes are mounted below.
-    let mut app = api_routes(&features);
+    let mut app = api_routes(
+        &features,
+        tower_governor::GovernorLayer::new(llm_governor_conf),
+    );
 
     // Metrics endpoint — mounted whenever the metrics feature is enabled. Guarded
     // by an optional bearer token; otherwise relies on proxy-layer protection.

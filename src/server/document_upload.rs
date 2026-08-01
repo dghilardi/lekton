@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "ssr")]
 use crate::app::AppState;
 #[cfg(feature = "ssr")]
 use crate::db::usage_models::UsageKey;

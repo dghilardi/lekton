@@ -59,6 +59,12 @@ event_log = false
 rate_limit_burst = 50
 rate_limit_per_second = 5
 rate_limit_trusted_proxies = "127.0.0.1/32,::1/128"
+# Dedicated limiter for the endpoints that call an LLM (RAG chat, AI summary),
+# keyed by authenticated user instead of IP so one caller's loop cannot consume
+# the whole office's quota. As above, per_second is the replenish interval in
+# seconds, so 4 means one request every 4 seconds with a burst of 10.
+llm_rate_limit_burst = 10
+llm_rate_limit_per_second = 4
 insecure_cookies = false
 log_filter = "lekton=info,tower_http=info"
 max_attachment_size_mb = 25

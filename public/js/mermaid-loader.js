@@ -12,6 +12,17 @@
   function runPending(mermaid) {
     var nodes = pending.splice(0);
     if (nodes.length === 0) return;
+
+    // Other progressive enhancements may touch <pre> elements while the
+    // Mermaid module is loading. Render only the source captured when the
+    // diagram was queued, never the node's potentially mutated live content.
+    nodes.forEach(function (node) {
+      var source = node.getAttribute('data-mermaid-source');
+      if (source !== null) {
+        node.textContent = source;
+      }
+    });
+
     mermaid.run({ nodes: nodes }).then(removeSpinners).catch(function (err) {
       console.error('[mermaid] render failed:', err);
       nodes.forEach(function (n) { n.removeAttribute('data-mermaid-queued'); });

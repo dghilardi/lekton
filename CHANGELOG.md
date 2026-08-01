@@ -9,6 +9,9 @@ All notable changes to this project will be documented in this file.
 - Per-caller attribution of LLM spend, behind `usage.event_log` (off by default): one `llm_usage_events` document per call recording who spent what, distinguishing a user, a machine token, an anonymous caller and background work. Events are written off the request path and expire after 90 days.
 - Guardrails against runaway AI usage: a dedicated rate limit on the endpoints that call an LLM, keyed by authenticated user instead of IP so one caller cannot consume a whole office's quota; a cap on how many generations a single caller may have in flight (`usage.max_concurrent_per_caller`, default 2); and an optional instance-wide daily token ceiling (`usage.daily_token_cap`, off by default) as a last line of defence against a runaway job.
 
+### Fixed
+- Mermaid diagrams render correctly on their first load even when code-block enhancements initialize while the Mermaid module is still loading.
+
 ## [0.30.0] 2026-08-01
 
 ### Added

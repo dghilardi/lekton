@@ -122,7 +122,8 @@ impl LessonGenerator {
     ) -> Result<GeneratedLesson, AppError> {
         // Both Learn entry points funnel through here, so one admission covers
         // them; retrieval below deliberately does not take a second slot.
-        let _admission = usage::guard::admit(&user_ctx.usage_key())?;
+        let _admission =
+            usage::guard::admit(&user_ctx.usage_key(), &user_ctx.effective_access_levels).await?;
 
         // ── Stage 1: which documents ──────────────────────────────────────
         let (target, candidate_slugs) = match scope {

@@ -282,7 +282,12 @@ impl ChatService {
     ///
     /// Non-streaming, single LLM call. The input is truncated to bound the
     /// prompt; the model is asked to reply in the document's own language.
-    pub async fn summarize(&self, key: &UsageKey, text: &str) -> Result<String, AppError> {
+    pub async fn summarize(
+        &self,
+        key: &UsageKey,
+        access_levels: &[String],
+        text: &str,
+    ) -> Result<String, AppError> {
         let trimmed = text.trim();
         if trimmed.is_empty() {
             return Err(AppError::BadRequest(
@@ -304,7 +309,7 @@ impl ChatService {
             }),
         ];
 
-        let _admission = usage::guard::admit(key)?;
+        let _admission = usage::guard::admit(key, access_levels).await?;
         let prompt_chars = usage::prompt_chars(&messages);
         let request = build_chat_request(
             &self.chat_model,
@@ -353,6 +358,7 @@ impl ChatService {
     pub async fn summarize_stream(
         &self,
         key: &UsageKey,
+        access_levels: &[String],
         text: &str,
     ) -> Result<
         std::pin::Pin<Box<dyn futures::Stream<Item = Result<String, AppError>> + Send>>,
@@ -379,7 +385,7 @@ impl ChatService {
             }),
         ];
 
-        let admission = usage::guard::admit(key)?;
+        let admission = usage::guard::admit(key, access_levels).await?;
         let prompt_chars = usage::prompt_chars(&messages);
         let request = build_chat_request(
             &self.chat_model,
@@ -473,7 +479,8 @@ impl ChatService {
     ) -> Result<std::pin::Pin<Box<dyn futures::Stream<Item = ChatEvent> + Send>>, AppError> {
         // 0. Admission control, before any retrieval work is done on the
         //    caller's behalf — a refused turn should cost nothing.
-        let admission = usage::guard::admit(&user_ctx.usage_key())?;
+        let admission =
+            usage::guard::admit(&user_ctx.usage_key(), &user_ctx.effective_access_levels).await?;
 
         // 1. Resolve or create session
         let session_id = match session_id {

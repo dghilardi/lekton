@@ -504,6 +504,61 @@ pub struct UsageConfig {
     /// it visible but not accurate — see [`crate::usage::pricing`].
     #[serde(default)]
     pub pricing: HashMap<String, ModelPrice>,
+    /// Per-caller spending budget.
+    #[serde(default)]
+    pub budget: BudgetConfig,
+}
+
+/// Per-caller credit budget, as a refilling bucket.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct BudgetConfig {
+    /// Off by default. The numbers below only mean something once you know your
+    /// own consumption, so enable this after reading `lekton_llm_credits_millis_total`
+    /// or the event log — not before.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Budget applied to a caller with no more specific profile.
+    #[serde(default)]
+    pub default: BudgetProfile,
+    /// Overrides by access level. A user holding several matching levels gets
+    /// the most generous of them, so adding a level never takes budget away.
+    #[serde(default)]
+    pub per_access_level: HashMap<String, BudgetProfile>,
+    /// Budget for machine tokens, whose usage pattern is nothing like a person's.
+    #[serde(default)]
+    pub service_token: Option<BudgetProfile>,
+    /// Budget shared by all unauthenticated callers.
+    #[serde(default)]
+    pub anonymous: Option<BudgetProfile>,
+}
+
+/// One bucket's size and refill rate, in credits.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct BudgetProfile {
+    /// Bucket size: the most a caller may spend in one burst.
+    #[serde(default = "default_budget_capacity")]
+    pub capacity: f64,
+    /// Sustained allowance. Also sets the wait after exhaustion, which is what
+    /// the caller is told in `Retry-After`.
+    #[serde(default = "default_budget_refill_per_hour")]
+    pub refill_per_hour: f64,
+}
+
+fn default_budget_capacity() -> f64 {
+    1_000.0
+}
+
+fn default_budget_refill_per_hour() -> f64 {
+    250.0
+}
+
+impl Default for BudgetProfile {
+    fn default() -> Self {
+        Self {
+            capacity: default_budget_capacity(),
+            refill_per_hour: default_budget_refill_per_hour(),
+        }
+    }
 }
 
 /// What one model's tokens cost, in credits per 1k tokens.
@@ -529,6 +584,7 @@ impl Default for UsageConfig {
             max_concurrent_per_caller: default_max_concurrent_llm_per_caller(),
             daily_credit_cap: 0.0,
             pricing: HashMap::new(),
+            budget: BudgetConfig::default(),
         }
     }
 }

@@ -575,6 +575,20 @@ async fn main() {
     ]);
     lekton::usage::pricing::install(price_list);
 
+    if config.usage.budget.enabled {
+        lekton::usage::budget::install(lekton::usage::budget::Budgets::new(
+            Arc::new(lekton::db::budget_repository::MongoBudgetRepository::new(
+                &mongo_db,
+            )),
+            config.usage.budget.clone(),
+        ));
+        tracing::info!(
+            capacity = config.usage.budget.default.capacity,
+            refill_per_hour = config.usage.budget.default.refill_per_hour,
+            "per-caller AI budgets enabled"
+        );
+    }
+
     lekton::usage::guard::install(lekton::usage::guard::LlmGuard::new(
         config.usage.max_concurrent_per_caller,
         config.usage.daily_credit_cap,

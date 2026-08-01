@@ -76,6 +76,28 @@ daily_credit_cap = 0
 # prompt_per_1k = 0.01
 # completion_per_1k = 0.0
 
+[usage.budget]
+# Per-caller spending budget, as a bucket that refills over time. Off by
+# default: the numbers below only mean something once you know your own
+# consumption, so enable this after reading lekton_llm_credits_millis_total or
+# the event log — not before.
+enabled = false
+# capacity is the most a caller may spend in one burst; refill_per_hour is the
+# sustained allowance, and also what sets the wait after exhaustion.
+[usage.budget.default]
+capacity = 1000.0
+refill_per_hour = 250.0
+# A caller holding several matching levels gets the most generous, so granting
+# an access level never takes budget away.
+#
+# [usage.budget.per_access_level.internal]
+# capacity = 5000.0
+# refill_per_hour = 1250.0
+#
+# [usage.budget.service_token]
+# capacity = 20000.0
+# refill_per_hour = 5000.0
+
 [server]
 rate_limit_burst = 50
 rate_limit_per_second = 5

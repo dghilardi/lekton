@@ -61,7 +61,7 @@ pub async fn generate_document_summary(asset_key: String) -> Result<String, Serv
         ));
     }
 
-    chat.summarize(&UsageKey::User(admin.user_id.clone()), &preview)
+    chat.summarize(&UsageKey::User(admin.user_id.clone()), &[], &preview)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
 }

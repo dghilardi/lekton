@@ -33,9 +33,11 @@ const SLOT_MAP_SWEEP_THRESHOLD: usize = 1_024;
 
 static GUARD: OnceLock<LlmGuard> = OnceLock::new();
 
-/// Held for the duration of an LLM call; releases the caller's slot on drop.
+/// Held for the duration of an LLM call; releases the caller's slot — and any
+/// budget reservation — on drop.
 pub struct Admission {
     _permit: Option<OwnedSemaphorePermit>,
+    _budget: Option<super::budget::BudgetHold>,
 }
 
 /// Caps concurrent LLM calls per caller and total tokens per day.
@@ -72,6 +74,7 @@ impl LlmGuard {
 
         Ok(Admission {
             _permit: self.acquire_slot(key)?,
+            _budget: None,
         })
     }
 
@@ -155,15 +158,20 @@ pub fn install(guard: LlmGuard) {
     }
 }
 
-/// Admit an LLM call against the process-wide guard.
-///
 /// Without an installed guard every call is admitted, which is what the tests
 /// and the eval binaries want.
-pub fn admit(key: &UsageKey) -> Result<Admission, AppError> {
-    match GUARD.get() {
-        Some(guard) => guard.admit(key, chrono::Utc::now().date_naive()),
-        None => Ok(Admission { _permit: None }),
-    }
+/// Admit an LLM call: the instance ceiling, then the caller's concurrency slot,
+/// then their budget — cheapest check first, so a refusal costs the least.
+pub async fn admit(key: &UsageKey, access_levels: &[String]) -> Result<Admission, AppError> {
+    let mut admission = match GUARD.get() {
+        Some(guard) => guard.admit(key, chrono::Utc::now().date_naive())?,
+        None => Admission {
+            _permit: None,
+            _budget: None,
+        },
+    };
+    admission._budget = super::budget::reserve(key, access_levels).await?;
+    Ok(admission)
 }
 
 /// Charge credits against the process-wide daily ceiling.

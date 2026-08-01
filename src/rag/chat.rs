@@ -7,7 +7,7 @@ use async_openai::types::chat::{
     ChatCompletionRequestAssistantMessage, ChatCompletionRequestAssistantMessageContent,
     ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage,
     ChatCompletionRequestSystemMessageContent, ChatCompletionRequestUserMessage,
-    ChatCompletionRequestUserMessageContent, CreateChatCompletionRequest,
+    ChatCompletionRequestUserMessageContent, CreateChatCompletionRequest, FinishReason,
 };
 use chrono::Utc;
 use futures::StreamExt;
@@ -49,6 +49,28 @@ const SUMMARY_SYSTEM_PROMPT: &str = "You write concise descriptions of documents
 for an internal knowledge portal. Given the opening text of a document, write a \
 2-3 sentence summary of what the document is about. Reply in the same language as \
 the document. Output only the summary, with no preamble or formatting.";
+/// Appended to a chat answer that stopped at `rag.chat.max_output_tokens`, so
+/// the truncation is visible instead of looking like the model trailing off.
+const OUTPUT_CAP_NOTICE: &str = "\n\n*(response truncated: output limit reached)*";
+
+/// Build a chat-step completion request, applying the configured output cap.
+///
+/// Shared by every `ChatService` LLM call so the cap cannot be forgotten at one
+/// of the call sites.
+fn build_chat_request(
+    model: &str,
+    messages: Vec<ChatCompletionRequestMessage>,
+    stream: bool,
+    max_output_tokens: Option<u32>,
+) -> CreateChatCompletionRequest {
+    CreateChatCompletionRequest {
+        messages,
+        model: model.to_string(),
+        stream: Some(stream),
+        max_completion_tokens: max_output_tokens,
+        ..Default::default()
+    }
+}
 
 /// Orchestrates RAG chat: retrieval, prompt building, and LLM streaming.
 pub struct ChatService {
@@ -71,6 +93,9 @@ pub struct ChatService {
     llm_provider: Arc<LlmProvider>,
     chat_model: String,
     chat_headers: HashMap<String, String>,
+    /// Cap on generated tokens per chat completion. `None` when
+    /// `rag.chat.max_output_tokens` is `0`.
+    chat_max_output_tokens: Option<u32>,
     tera: tera::Tera,
     system_template_name: String,
     query_rewriter: Option<QueryRewriter>,
@@ -226,6 +251,15 @@ impl ChatService {
             llm_provider: chat_provider,
             chat_model,
             chat_headers,
+            chat_max_output_tokens: match config.chat.max_output_tokens {
+                0 => {
+                    tracing::warn!(
+                        "rag.chat.max_output_tokens = 0 — chat completions are uncapped"
+                    );
+                    None
+                }
+                n => Some(n),
+            },
             tera,
             system_template_name: template_name.to_string(),
             query_rewriter,
@@ -260,12 +294,12 @@ impl ChatService {
             }),
         ];
 
-        let request = CreateChatCompletionRequest {
+        let request = build_chat_request(
+            &self.chat_model,
             messages,
-            model: self.chat_model.clone(),
-            stream: Some(false),
-            ..Default::default()
-        };
+            false,
+            self.chat_max_output_tokens,
+        );
 
         let llm_client = self
             .llm_provider
@@ -322,12 +356,12 @@ impl ChatService {
             }),
         ];
 
-        let request = CreateChatCompletionRequest {
+        let request = build_chat_request(
+            &self.chat_model,
             messages,
-            model: self.chat_model.clone(),
-            stream: Some(true),
-            ..Default::default()
-        };
+            true,
+            self.chat_max_output_tokens,
+        );
 
         let llm_client = self
             .llm_provider
@@ -517,12 +551,7 @@ impl ChatService {
         );
 
         // 10. Create streaming LLM request
-        let request = CreateChatCompletionRequest {
-            messages,
-            model: chat_model.clone(),
-            stream: Some(true),
-            ..Default::default()
-        };
+        let request = build_chat_request(&chat_model, messages, true, self.chat_max_output_tokens);
 
         let llm_client = self
             .llm_provider
@@ -553,6 +582,7 @@ impl ChatService {
             };
 
             let mut full_response = String::new();
+            let mut hit_output_cap = false;
 
             while let Some(chunk_result) = stream.next().await {
                 match chunk_result {
@@ -565,6 +595,9 @@ impl ChatService {
                                         content: content.clone(),
                                     };
                                 }
+                            }
+                            if choice.finish_reason == Some(FinishReason::Length) {
+                                hit_output_cap = true;
                             }
                         }
                     }
@@ -601,6 +634,19 @@ impl ChatService {
                         return;
                     }
                 }
+            }
+
+            // The model stopped because it reached `rag.chat.max_output_tokens`.
+            // Say so instead of letting the answer end mid-sentence: the note is
+            // both streamed and persisted, so it survives a reload.
+            if hit_output_cap {
+                tracing::warn!(
+                    session_id = %sid,
+                    model = %chat_model,
+                    "RAG: chat response truncated at the configured output cap"
+                );
+                full_response.push_str(OUTPUT_CAP_NOTICE);
+                yield ChatEvent::Delta { content: OUTPUT_CAP_NOTICE.to_string() };
             }
 
             // Save the full assistant response
@@ -1403,6 +1449,32 @@ fn truncate_title(message: &str) -> String {
 mod tests {
     use super::*;
     use crate::rag::vectorstore::VectorSearchResult;
+
+    fn user_message(text: &str) -> Vec<ChatCompletionRequestMessage> {
+        vec![ChatCompletionRequestMessage::User(
+            ChatCompletionRequestUserMessage {
+                content: ChatCompletionRequestUserMessageContent::Text(text.to_string()),
+                name: None,
+            },
+        )]
+    }
+
+    #[test]
+    fn chat_request_carries_the_output_cap() {
+        let request = build_chat_request("m", user_message("hi"), true, Some(2048));
+
+        assert_eq!(request.max_completion_tokens, Some(2048));
+        assert_eq!(request.stream, Some(true));
+        assert_eq!(request.model, "m");
+    }
+
+    #[test]
+    fn chat_request_without_cap_is_unbounded() {
+        let request = build_chat_request("m", user_message("hi"), false, None);
+
+        assert_eq!(request.max_completion_tokens, None);
+        assert_eq!(request.stream, Some(false));
+    }
 
     #[test]
     fn truncate_title_short() {

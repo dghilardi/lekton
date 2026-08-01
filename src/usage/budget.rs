@@ -66,12 +66,34 @@ pub struct Budgets {
     config: BudgetConfig,
 }
 
+/// Fraction of a bucket below which a call is served in thrifty mode.
+///
+/// Degrading before refusing keeps someone working — a plainer answer beats a
+/// 429 — and buys back the headroom that would otherwise run out mid-task.
+pub const THRIFTY_BELOW: f64 = 0.2;
+
 /// A held reservation. Refunds itself when dropped.
 pub struct BudgetHold {
     repo: Arc<dyn BudgetRepository>,
     key: String,
     credits: f64,
     capacity: f64,
+    balance: f64,
+}
+
+impl BudgetHold {
+    /// Fraction of the bucket still available, `0.0..=1.0`.
+    pub fn headroom(&self) -> f64 {
+        if self.capacity <= 0.0 {
+            return 1.0;
+        }
+        (self.balance / self.capacity).clamp(0.0, 1.0)
+    }
+
+    /// Whether this call should economise rather than run the full pipeline.
+    pub fn thrifty(&self) -> bool {
+        self.headroom() < THRIFTY_BELOW
+    }
 }
 
 impl Drop for BudgetHold {
@@ -162,6 +184,7 @@ impl Budgets {
             key: bucket,
             credits: reservation.reserved,
             capacity: profile.capacity,
+            balance: reservation.balance,
         })
     }
 
@@ -381,6 +404,55 @@ mod tests {
             "expected a reserve and a release: {calls:?}"
         );
         assert_eq!(calls[1], ("user:u1".to_string(), RESERVATION_ESTIMATE));
+    }
+
+    #[tokio::test]
+    async fn a_full_bucket_is_not_thrifty() {
+        let hold = budgets(true)
+            .reserve(&UsageKey::User("u".into()), None)
+            .await
+            .expect("granted");
+
+        // The fake repo reports a balance of 10 against a capacity of 100.
+        assert!((hold.headroom() - 0.1).abs() < 1e-9, "{}", hold.headroom());
+    }
+
+    #[test]
+    fn thrifty_kicks_in_below_the_threshold_and_not_above() {
+        let hold = |balance: f64| BudgetHold {
+            repo: Arc::new(FakeRepo {
+                granted: true,
+                calls: Mutex::new(Vec::new()),
+            }),
+            key: "user:u".into(),
+            credits: 0.0,
+            capacity: 100.0,
+            balance,
+        };
+
+        assert!(!hold(100.0).thrifty(), "a full bucket runs everything");
+        assert!(
+            !hold(20.0).thrifty(),
+            "exactly at the threshold is not below it"
+        );
+        assert!(hold(19.0).thrifty(), "just under must degrade");
+        assert!(hold(0.0).thrifty());
+    }
+
+    #[test]
+    fn headroom_is_full_when_there_is_no_capacity_to_divide_by() {
+        let hold = BudgetHold {
+            repo: Arc::new(FakeRepo::default()),
+            key: "user:u".into(),
+            credits: 0.0,
+            capacity: 0.0,
+            balance: 0.0,
+        };
+
+        // A zero capacity means the budget is not really configured; degrading
+        // every call would be worse than degrading none.
+        assert_eq!(hold.headroom(), 1.0);
+        assert!(!hold.thrifty());
     }
 
     #[test]

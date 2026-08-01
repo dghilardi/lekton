@@ -37,7 +37,17 @@ static GUARD: OnceLock<LlmGuard> = OnceLock::new();
 /// budget reservation — on drop.
 pub struct Admission {
     _permit: Option<OwnedSemaphorePermit>,
-    _budget: Option<super::budget::BudgetHold>,
+    budget: Option<super::budget::BudgetHold>,
+}
+
+impl Admission {
+    /// Whether this call should economise: the caller is near the bottom of
+    /// their budget, so a cheaper answer now beats a refusal shortly.
+    ///
+    /// False when no budget is enforced — nothing to economise against.
+    pub fn thrifty(&self) -> bool {
+        self.budget.as_ref().is_some_and(|hold| hold.thrifty())
+    }
 }
 
 /// Caps concurrent LLM calls per caller and total tokens per day.
@@ -74,7 +84,7 @@ impl LlmGuard {
 
         Ok(Admission {
             _permit: self.acquire_slot(key)?,
-            _budget: None,
+            budget: None,
         })
     }
 
@@ -167,10 +177,10 @@ pub async fn admit(key: &UsageKey, plan: Option<&str>) -> Result<Admission, AppE
         Some(guard) => guard.admit(key, chrono::Utc::now().date_naive())?,
         None => Admission {
             _permit: None,
-            _budget: None,
+            budget: None,
         },
     };
-    admission._budget = super::budget::reserve(key, plan).await?;
+    admission.budget = super::budget::reserve(key, plan).await?;
     Ok(admission)
 }
 

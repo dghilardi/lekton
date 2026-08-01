@@ -140,6 +140,26 @@ pub struct RetrievalOutput {
     pub post_rerank: Vec<VectorSearchResult>,
 }
 
+/// How much of the retrieval pipeline to run.
+///
+/// The optional steps — query rewriting, complexity analysis, HyDE and
+/// reranking — each cost an extra model call per turn and buy accuracy at the
+/// margin. When a caller is nearly out of budget they are the first thing to
+/// give up: a plainer answer now is worth more than a refusal in two turns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetrievalMode {
+    /// Every configured step.
+    Full,
+    /// Vector search only: no rewriter, analyzer, HyDE or reranker.
+    Thrifty,
+}
+
+impl RetrievalMode {
+    fn is_thrifty(self) -> bool {
+        self == Self::Thrifty
+    }
+}
+
 /// A token event yielded by the streaming chat response.
 #[derive(Debug, serde::Serialize)]
 #[serde(tag = "type")]
@@ -482,6 +502,14 @@ impl ChatService {
         let admission =
             usage::guard::admit(&user_ctx.usage_key(), user_ctx.budget_plan.as_deref()).await?;
 
+        // A caller near the bottom of their budget gets a cheaper pipeline
+        // rather than a refusal — see `RetrievalMode`.
+        let mode = if admission.thrifty() {
+            RetrievalMode::Thrifty
+        } else {
+            RetrievalMode::Full
+        };
+
         // 1. Resolve or create session
         let session_id = match session_id {
             Some(id) => {
@@ -534,7 +562,7 @@ impl ChatService {
         // 4-7. Pure retrieval (analyzer + HyDE + decomposition + vector search +
         //      hybrid RRF + reranker). Side-effect-free w.r.t. chat persistence.
         let retrieval = self
-            .retrieve_only(user_ctx, &user_message, &history, &session_id)
+            .retrieve_only(user_ctx, &user_message, &history, &session_id, mode)
             .await?;
 
         let search_results = self
@@ -838,13 +866,24 @@ impl ChatService {
         user_message: &str,
         history: &[ChatMessage],
         session_id: &str,
+        mode: RetrievalMode,
     ) -> Result<RetrievalOutput, AppError> {
         let key = user_ctx.usage_key();
+        if mode.is_thrifty() {
+            tracing::info!(
+                session_id = %session_id,
+                "RAG: low budget — retrieving without the optional pipeline steps"
+            );
+            metrics::counter!("lekton_llm_thrifty_turns_total").increment(1);
+        }
         // Rewrite the query into a standalone question when history is non-empty.
         // Falls back to the original message when rewriting is disabled or history is empty.
         let retrieval_query = match &self.query_rewriter {
-            Some(rewriter) => rewriter.rewrite(&key, user_message, history).await?,
-            None => user_message.to_string(),
+            Some(rewriter) if !mode.is_thrifty() => {
+                rewriter.rewrite(&key, user_message, history).await?
+            }
+            // Disabled, or skipped to save the caller's budget.
+            Some(_) | None => user_message.to_string(),
         };
 
         tracing::debug!(
@@ -857,29 +896,30 @@ impl ChatService {
 
         // Analyze query complexity when the analyzer is configured. Falls back
         // to simple on any error so the pipeline is never blocked.
-        let query_plan: QueryPlan = if let Some(ref analyzer) = self.analyzer {
-            match analyzer.classify(&key, &retrieval_query).await {
-                Ok(plan) => {
-                    tracing::debug!(
-                        session_id = %session_id,
-                        complexity = ?plan.complexity,
-                        sub_queries = plan.sub_queries.len(),
-                        "RAG: query plan"
-                    );
-                    plan
+        let query_plan: QueryPlan =
+            if let Some(ref analyzer) = self.analyzer.as_ref().filter(|_| !mode.is_thrifty()) {
+                match analyzer.classify(&key, &retrieval_query).await {
+                    Ok(plan) => {
+                        tracing::debug!(
+                            session_id = %session_id,
+                            complexity = ?plan.complexity,
+                            sub_queries = plan.sub_queries.len(),
+                            "RAG: query plan"
+                        );
+                        plan
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            session_id = %session_id,
+                            error = %e,
+                            "query analyzer failed — using simple retrieval"
+                        );
+                        QueryPlan::simple()
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!(
-                        session_id = %session_id,
-                        error = %e,
-                        "query analyzer failed — using simple retrieval"
-                    );
-                    QueryPlan::simple()
-                }
-            }
-        } else {
-            QueryPlan::simple()
-        };
+            } else {
+                QueryPlan::simple()
+            };
 
         // The set of strings to embed: original query for simple plans,
         // sub-queries for multi-entity / multi-hop decomposition.
@@ -892,16 +932,17 @@ impl ChatService {
         // hypothetical answer document before embedding. The Meilisearch text
         // search (if enabled) still uses the original retrieval_query so that
         // keyword recall is not degraded by the generative expansion.
-        let queries_to_embed = if let Some(ref hyde) = self.hyde {
-            tracing::debug!(
-                session_id = %session_id,
-                queries = queries_to_embed.len(),
-                "RAG: generating HyDE hypothetical documents"
-            );
-            hyde.expand_queries(&key, queries_to_embed).await
-        } else {
-            queries_to_embed
-        };
+        let queries_to_embed =
+            if let Some(ref hyde) = self.hyde.as_ref().filter(|_| !mode.is_thrifty()) {
+                tracing::debug!(
+                    session_id = %session_id,
+                    queries = queries_to_embed.len(),
+                    "RAG: generating HyDE hypothetical documents"
+                );
+                hyde.expand_queries(&key, queries_to_embed).await
+            } else {
+                queries_to_embed
+            };
 
         // Embed all queries in a single batched call.
         let (allowed_levels, include_draft) = user_ctx.document_visibility();
@@ -1038,35 +1079,36 @@ impl ChatService {
 
         // Cross-encoder reranking (optional): re-score retrieved chunks jointly
         // against the query and keep only the top MAX_CONTEXT_CHUNKS.
-        let post_rerank = if let Some(ref reranker) = self.reranker {
-            tracing::debug!(
-                session_id = %session_id,
-                candidates = pre_rerank.len(),
-                "RAG: reranking chunks"
-            );
-            // Keep a truncated fallback in case the reranker call fails.
-            let fallback: Vec<_> = pre_rerank
-                .iter()
-                .take(MAX_CONTEXT_CHUNKS)
-                .cloned()
-                .collect();
-            match reranker
-                .rerank(&retrieval_query, pre_rerank.clone(), MAX_CONTEXT_CHUNKS)
-                .await
-            {
-                Ok(reranked) => reranked,
-                Err(e) => {
-                    tracing::warn!(
-                        session_id = %session_id,
-                        error = %e,
-                        "reranker failed, falling back to retrieval order"
-                    );
-                    fallback
+        let post_rerank =
+            if let Some(ref reranker) = self.reranker.as_ref().filter(|_| !mode.is_thrifty()) {
+                tracing::debug!(
+                    session_id = %session_id,
+                    candidates = pre_rerank.len(),
+                    "RAG: reranking chunks"
+                );
+                // Keep a truncated fallback in case the reranker call fails.
+                let fallback: Vec<_> = pre_rerank
+                    .iter()
+                    .take(MAX_CONTEXT_CHUNKS)
+                    .cloned()
+                    .collect();
+                match reranker
+                    .rerank(&retrieval_query, pre_rerank.clone(), MAX_CONTEXT_CHUNKS)
+                    .await
+                {
+                    Ok(reranked) => reranked,
+                    Err(e) => {
+                        tracing::warn!(
+                            session_id = %session_id,
+                            error = %e,
+                            "reranker failed, falling back to retrieval order"
+                        );
+                        fallback
+                    }
                 }
-            }
-        } else {
-            pre_rerank.clone()
-        };
+            } else {
+                pre_rerank.clone()
+            };
 
         let post_rerank_summary = summarize_search_results(&post_rerank);
         tracing::debug!(

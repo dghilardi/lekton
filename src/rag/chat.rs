@@ -897,7 +897,7 @@ impl ChatService {
         // Analyze query complexity when the analyzer is configured. Falls back
         // to simple on any error so the pipeline is never blocked.
         let query_plan: QueryPlan =
-            if let Some(ref analyzer) = self.analyzer.as_ref().filter(|_| !mode.is_thrifty()) {
+            if let Some(analyzer) = self.analyzer.as_ref().filter(|_| !mode.is_thrifty()) {
                 match analyzer.classify(&key, &retrieval_query).await {
                     Ok(plan) => {
                         tracing::debug!(
@@ -932,17 +932,17 @@ impl ChatService {
         // hypothetical answer document before embedding. The Meilisearch text
         // search (if enabled) still uses the original retrieval_query so that
         // keyword recall is not degraded by the generative expansion.
-        let queries_to_embed =
-            if let Some(ref hyde) = self.hyde.as_ref().filter(|_| !mode.is_thrifty()) {
-                tracing::debug!(
-                    session_id = %session_id,
-                    queries = queries_to_embed.len(),
-                    "RAG: generating HyDE hypothetical documents"
-                );
-                hyde.expand_queries(&key, queries_to_embed).await
-            } else {
-                queries_to_embed
-            };
+        let queries_to_embed = if let Some(hyde) = self.hyde.as_ref().filter(|_| !mode.is_thrifty())
+        {
+            tracing::debug!(
+                session_id = %session_id,
+                queries = queries_to_embed.len(),
+                "RAG: generating HyDE hypothetical documents"
+            );
+            hyde.expand_queries(&key, queries_to_embed).await
+        } else {
+            queries_to_embed
+        };
 
         // Embed all queries in a single batched call.
         let (allowed_levels, include_draft) = user_ctx.document_visibility();
@@ -1080,7 +1080,7 @@ impl ChatService {
         // Cross-encoder reranking (optional): re-score retrieved chunks jointly
         // against the query and keep only the top MAX_CONTEXT_CHUNKS.
         let post_rerank =
-            if let Some(ref reranker) = self.reranker.as_ref().filter(|_| !mode.is_thrifty()) {
+            if let Some(reranker) = self.reranker.as_ref().filter(|_| !mode.is_thrifty()) {
                 tracing::debug!(
                     session_id = %session_id,
                     candidates = pre_rerank.len(),

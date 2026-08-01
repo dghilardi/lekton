@@ -35,6 +35,20 @@ use crate::error::AppError;
 /// cannot slip past the check together, and it is handed straight back.
 const RESERVATION_ESTIMATE: f64 = 5.0;
 
+/// Ceiling on the reservation, as a fraction of the caller's bucket.
+///
+/// A flat estimate is a floor under the balance: a caller is refused while
+/// still holding it, because that much must be free to reserve. Against a
+/// production-sized bucket that is a rounding error, but a small plan would
+/// lose a third of its budget to it — observed live, where a 12-credit bucket
+/// started refusing at 4.5 remaining.
+const MAX_RESERVATION_FRACTION: f64 = 0.05;
+
+/// What to hold for one call against a bucket of `capacity`.
+fn reservation_for(capacity: f64) -> f64 {
+    RESERVATION_ESTIMATE.min(capacity * MAX_RESERVATION_FRACTION)
+}
+
 static BUDGETS: OnceLock<Budgets> = OnceLock::new();
 
 /// Register the process-wide budget. Call once at startup, only when
@@ -158,14 +172,10 @@ impl Budgets {
         let profile = self.profile(key, plan);
         let bucket = bucket_id(key);
 
+        let estimate = reservation_for(profile.capacity);
         let reservation = self
             .repo
-            .reserve(
-                &bucket,
-                RESERVATION_ESTIMATE,
-                profile.capacity,
-                profile.refill_per_hour,
-            )
+            .reserve(&bucket, estimate, profile.capacity, profile.refill_per_hour)
             .await?;
 
         if !reservation.granted {
@@ -403,7 +413,7 @@ mod tests {
             2,
             "expected a reserve and a release: {calls:?}"
         );
-        assert_eq!(calls[1], ("user:u1".to_string(), RESERVATION_ESTIMATE));
+        assert_eq!(calls[1], ("user:u1".to_string(), reservation_for(100.0)));
     }
 
     #[tokio::test]
@@ -453,6 +463,15 @@ mod tests {
         // every call would be worse than degrading none.
         assert_eq!(hold.headroom(), 1.0);
         assert!(!hold.thrifty());
+    }
+
+    #[test]
+    fn the_reservation_never_swallows_a_small_budget() {
+        // A flat estimate is a floor under the balance, so it has to scale with
+        // the bucket: otherwise a small plan is refused while still a third full.
+        assert!((reservation_for(12.0) - 0.6).abs() < 1e-9);
+        // Large buckets keep the flat estimate — 5 credits of 1000 is noise.
+        assert_eq!(reservation_for(1_000.0), RESERVATION_ESTIMATE);
     }
 
     #[test]

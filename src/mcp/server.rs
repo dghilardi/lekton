@@ -1047,7 +1047,7 @@ impl LektonMcpServer {
 
         // Embed the query
         let vectors = embedding_service
-            .embed(std::slice::from_ref(&params.query))
+            .embed(&user_ctx.usage_key(), std::slice::from_ref(&params.query))
             .await
             .map_err(app_err)?;
 

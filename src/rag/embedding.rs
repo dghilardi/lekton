@@ -25,7 +25,13 @@ const OPENAI_EMBEDDING_BATCH_SIZE: usize = 100;
 #[async_trait]
 pub trait EmbeddingService: Send + Sync {
     /// Embed one or more texts and return the corresponding vectors.
-    async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, AppError>;
+    ///
+    /// `key` says who the spend belongs to. It is a parameter rather than a
+    /// property of the service because the same instance serves both indexing,
+    /// which has no caller, and chat queries, which have one — and charging a
+    /// user's query to the background pool (or the reverse) makes the usage
+    /// report unable to answer the question it exists for.
+    async fn embed(&self, key: &UsageKey, texts: &[String]) -> Result<Vec<Vec<f32>>, AppError>;
 }
 
 // ── OpenAI-compatible implementation ─────────────────────────────────────────
@@ -56,7 +62,7 @@ impl OpenAICompatibleEmbedding {
 
 #[async_trait]
 impl EmbeddingService for OpenAICompatibleEmbedding {
-    async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, AppError> {
+    async fn embed(&self, key: &UsageKey, texts: &[String]) -> Result<Vec<Vec<f32>>, AppError> {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
@@ -85,12 +91,7 @@ impl EmbeddingService for OpenAICompatibleEmbedding {
                 })?;
 
             usage::record(
-                // Embeddings are billed to the system: `EmbeddingService::embed`
-                // serves both ingest (no caller) and chat queries (a user),
-                // and threading a key through the trait would touch reindex,
-                // MCP and the eval binaries. Ingest dominates the volume, so
-                // system is the better approximation until the trait changes.
-                &UsageKey::System,
+                key,
                 usage::LlmFeature::Embedding,
                 &self.model,
                 usage::TokenUsage {
@@ -159,7 +160,7 @@ impl VertexAIEmbedding {
 
 #[async_trait]
 impl EmbeddingService for VertexAIEmbedding {
-    async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, AppError> {
+    async fn embed(&self, key: &UsageKey, texts: &[String]) -> Result<Vec<Vec<f32>>, AppError> {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
@@ -204,12 +205,7 @@ impl EmbeddingService for VertexAIEmbedding {
                 AppError::Internal(format!("Vertex AI embedding response parse error: {e}"))
             })?;
             usage::record(
-                // Embeddings are billed to the system: `EmbeddingService::embed`
-                // serves both ingest (no caller) and chat queries (a user),
-                // and threading a key through the trait would touch reindex,
-                // MCP and the eval binaries. Ingest dominates the volume, so
-                // system is the better approximation until the trait changes.
-                &UsageKey::System,
+                key,
                 usage::LlmFeature::Embedding,
                 &self.model,
                 match response.token_count() {

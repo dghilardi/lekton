@@ -56,6 +56,12 @@ pub struct LlmUsageEvent {
     /// `true` when the counts were estimated because the provider reported none.
     pub estimated: bool,
     /// Indexed with a TTL, so events prune themselves.
+    ///
+    /// Must be a BSON date, not the string chrono serialises to by default:
+    /// MongoDB only expires date-typed fields, so without this the TTL index
+    /// silently keeps every event forever — and range queries over the window
+    /// match nothing.
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub created_at: DateTime<Utc>,
 }
 

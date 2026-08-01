@@ -100,6 +100,11 @@ mod inner {
                 "davide.ghilardi@comelit.it",
                 add_llm_usage_events_indexes,
             )
+            .register(
+                "019_fix_llm_usage_events_created_at_type",
+                "davide.ghilardi@comelit.it",
+                fix_llm_usage_events_created_at_type,
+            )
     }
 
     fn format_duplicate_group_id(id: &bson::Bson) -> String {
@@ -757,6 +762,25 @@ mod inner {
                 IndexModel::builder()
                     .keys(bson::doc! { "actor_kind": 1, "actor_id": 1, "created_at": -1 })
                     .build(),
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    /// Converts `llm_usage_events.created_at` from a string to a BSON date.
+    ///
+    /// The model originally serialised it with chrono's default, which produces
+    /// a string. MongoDB only expires date-typed fields, so the TTL index
+    /// created by migration 018 was silently retaining every event, and the
+    /// admin report's window query matched nothing.
+    async fn fix_llm_usage_events_created_at_type(
+        db: Database,
+    ) -> Result<(), mongodb::error::Error> {
+        db.collection::<bson::Document>("llm_usage_events")
+            .update_many(
+                bson::doc! { "created_at": { "$type": "string" } },
+                vec![bson::doc! { "$set": { "created_at": { "$toDate": "$created_at" } } }],
             )
             .await?;
 

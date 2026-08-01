@@ -196,10 +196,7 @@ impl Budgets {
             metrics::counter!("lekton_llm_budget_rejections_total").increment(1);
             return Err(AppError::TooManyRequests(format!(
                 "You have used your AI budget for now. It refills in about {}.",
-                humanise_wait(
-                    RESERVATION_ESTIMATE - reservation.balance,
-                    profile.refill_per_hour
-                )
+                humanise_wait(estimate - reservation.balance, profile.refill_per_hour)
             )));
         }
 
@@ -438,9 +435,16 @@ mod tests {
         let AppError::TooManyRequests(message) = error else {
             panic!("expected a throttling error, got {error:?}");
         };
-        assert!(
-            message.contains("refills in about"),
-            "the caller needs to know when to come back: {message}"
+        // Pin the number, not just the shape. An earlier version of this test
+        // only checked that the sentence was there, and missed the message
+        // quoting the flat estimate instead of the scaled one — telling a
+        // caller to wait five hours for a thirty-minute refill.
+        //
+        // Capacity 100 caps the reservation at 5; the fake reports 1 credit
+        // left, so 4 are owed at 50/hour — just under five minutes.
+        assert_eq!(
+            message,
+            "You have used your AI budget for now. It refills in about 5 minutes."
         );
     }
 

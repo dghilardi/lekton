@@ -150,3 +150,56 @@ async fn the_bucket_refills_over_elapsed_time() {
         reservation.balance
     );
 }
+
+/// The event log's timestamp must be a BSON date, not a string.
+///
+/// Shipped as a string at first, which silently broke two things at once: the
+/// TTL index kept every event forever, and the admin report's window query
+/// matched nothing. Both fail quietly, which is why this asserts the stored
+/// type rather than any behaviour built on top of it.
+#[tokio::test]
+async fn usage_events_store_a_date_that_mongo_can_expire_and_range_query() {
+    use lekton::db::usage_models::LlmUsageEvent;
+    use lekton::db::usage_repository::{MongoUsageEventRepository, UsageEventRepository};
+
+    let env = common::TestEnv::start().await;
+    let repo = MongoUsageEventRepository::new(&env.db);
+
+    repo.record_events(vec![LlmUsageEvent {
+        actor_kind: "user".into(),
+        actor_id: Some("u1".into()),
+        feature: "chat".into(),
+        model: "m".into(),
+        prompt_tokens: 10,
+        completion_tokens: 5,
+        estimated: false,
+        created_at: chrono::Utc::now(),
+    }])
+    .await
+    .expect("record");
+
+    let stored = env
+        .db
+        .collection::<mongodb::bson::Document>("llm_usage_events")
+        .find_one(mongodb::bson::doc! {})
+        .await
+        .expect("query")
+        .expect("one event");
+
+    assert!(
+        matches!(
+            stored.get("created_at"),
+            Some(mongodb::bson::Bson::DateTime(_))
+        ),
+        "created_at must be a BSON date for the TTL index to work, got {:?}",
+        stored.get("created_at")
+    );
+
+    // And the window query the admin report runs must actually find it.
+    let found = repo
+        .usage_by_model(chrono::Utc::now() - chrono::Duration::hours(1))
+        .await
+        .expect("aggregate");
+    assert_eq!(found.len(), 1, "the report window must match a fresh event");
+    assert_eq!(found[0].prompt_tokens, 10);
+}

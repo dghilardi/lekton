@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use crate::config::RagConfig;
 use crate::error::AppError;
 use crate::rag::{build_oai_client, client::format_llm_error};
+use crate::usage;
+use crate::usage::UsageKey;
 
 const DEFAULT_VERTEX_LOCATION: &str = "us-central1";
 const GCP_SCOPE_CLOUD_PLATFORM: &str = "https://www.googleapis.com/auth/cloud-platform";
@@ -81,6 +83,22 @@ impl EmbeddingService for OpenAICompatibleEmbedding {
                         format_llm_error(&e)
                     ))
                 })?;
+
+            usage::record(
+                // Embeddings are billed to the system: `EmbeddingService::embed`
+                // serves both ingest (no caller) and chat queries (a user),
+                // and threading a key through the trait would touch reindex,
+                // MCP and the eval binaries. Ingest dominates the volume, so
+                // system is the better approximation until the trait changes.
+                &UsageKey::System,
+                usage::LlmFeature::Embedding,
+                &self.model,
+                usage::TokenUsage {
+                    prompt: u64::from(response.usage.prompt_tokens),
+                    completion: 0,
+                    estimated: false,
+                },
+            );
 
             // Sort by index to guarantee ordering matches input
             let mut embeddings = response.data;
@@ -185,6 +203,25 @@ impl EmbeddingService for VertexAIEmbedding {
             let response: VertexEmbeddingResponse = response.json().await.map_err(|e| {
                 AppError::Internal(format!("Vertex AI embedding response parse error: {e}"))
             })?;
+            usage::record(
+                // Embeddings are billed to the system: `EmbeddingService::embed`
+                // serves both ingest (no caller) and chat queries (a user),
+                // and threading a key through the trait would touch reindex,
+                // MCP and the eval binaries. Ingest dominates the volume, so
+                // system is the better approximation until the trait changes.
+                &UsageKey::System,
+                usage::LlmFeature::Embedding,
+                &self.model,
+                match response.token_count() {
+                    Some(prompt) => usage::TokenUsage {
+                        prompt,
+                        completion: 0,
+                        estimated: false,
+                    },
+                    None => usage::estimate(batch.iter().map(String::len).sum(), 0),
+                },
+            );
+
             let mut batch_vectors = response.into_vectors()?;
             if batch_vectors.len() != batch.len() {
                 return Err(AppError::Internal(format!(
@@ -232,9 +269,33 @@ struct VertexEmbeddingPrediction {
 #[derive(Debug, Deserialize)]
 struct VertexEmbeddingValues {
     values: Vec<f32>,
+    #[serde(default)]
+    statistics: Option<VertexEmbeddingStatistics>,
+}
+
+/// Per-prediction counters returned by the Vertex predict API. Verified against
+/// `gemini-embedding-001` (2026-08-01): `embeddings.statistics.token_count`.
+#[derive(Debug, Deserialize)]
+struct VertexEmbeddingStatistics {
+    #[serde(default)]
+    token_count: Option<u64>,
 }
 
 impl VertexEmbeddingResponse {
+    /// Tokens billed for this batch, or `None` when the API reported none —
+    /// in which case the caller estimates rather than counting the batch free.
+    fn token_count(&self) -> Option<u64> {
+        let counts: Vec<u64> = self
+            .predictions
+            .iter()
+            .filter_map(|prediction| prediction.embeddings.as_ref())
+            .filter_map(|embedding| embedding.statistics.as_ref())
+            .filter_map(|statistics| statistics.token_count)
+            .collect();
+
+        (!counts.is_empty()).then(|| counts.into_iter().sum())
+    }
+
     fn into_vectors(self) -> Result<Vec<Vec<f32>>, AppError> {
         self.predictions
             .into_iter()
@@ -467,6 +528,33 @@ mod tests {
             response.into_vectors().expect("vectors should extract"),
             vec![vec![1.0, 2.0], vec![3.0, 4.0]]
         );
+    }
+
+    #[test]
+    fn vertex_embedding_response_sums_reported_token_counts() {
+        // Shape verified against gemini-embedding-001 on 2026-08-01.
+        let response: VertexEmbeddingResponse = serde_json::from_value(serde_json::json!({
+            "predictions": [
+                { "embeddings": { "statistics": { "truncated": false, "token_count": 5 },
+                                  "values": [1.0] } },
+                { "embeddings": { "statistics": { "truncated": false, "token_count": 7 },
+                                  "values": [2.0] } }
+            ]
+        }))
+        .expect("response should parse");
+
+        assert_eq!(response.token_count(), Some(12));
+    }
+
+    #[test]
+    fn vertex_embedding_response_reports_no_token_count_when_absent() {
+        // Without statistics the caller must estimate rather than bill zero.
+        let response: VertexEmbeddingResponse = serde_json::from_value(serde_json::json!({
+            "predictions": [{ "embeddings": { "values": [1.0] } }]
+        }))
+        .expect("response should parse");
+
+        assert_eq!(response.token_count(), None);
     }
 
     #[test]

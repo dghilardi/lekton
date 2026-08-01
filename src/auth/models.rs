@@ -66,6 +66,11 @@ impl UserContext {
         }
     }
 
+    /// Who LLM spend triggered by this context is billed to.
+    pub fn usage_key(&self) -> crate::db::usage_models::UsageKey {
+        crate::db::usage_models::UsageKey::User(self.user.user_id.clone())
+    }
+
     /// Returns the full set of levels the user can read: effective levels plus
     /// the implicitly granted `"public"` and `"loggeduser"` levels.
     fn accessible_levels(&self) -> std::collections::HashSet<&str> {

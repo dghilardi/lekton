@@ -49,10 +49,28 @@ max_context_chars = 12000
 # Max number of source documents pulled per lesson (semantic retrieval stage).
 max_source_documents = 3
 
+[usage]
+# Persist one llm_usage_events document per LLM call, recording who spent
+# what. Prometheus token counters are emitted regardless; this is the per-user
+# detail, so it is opt-in. Events expire after 90 days (TTL index, migration 018).
+event_log = false
+# Max LLM generations one caller may have in flight. 0 disables the cap.
+max_concurrent_per_caller = 2
+# Instance-wide ceiling on LLM tokens per UTC day; AI features refuse new calls
+# once it is reached. 0 (the default) disables it — set it deliberately, from
+# the lekton_llm_tokens_total metric, once you know your normal daily volume.
+daily_token_cap = 0
+
 [server]
 rate_limit_burst = 50
 rate_limit_per_second = 5
 rate_limit_trusted_proxies = "127.0.0.1/32,::1/128"
+# Dedicated limiter for the endpoints that call an LLM (RAG chat, AI summary),
+# keyed by authenticated user instead of IP so one caller's loop cannot consume
+# the whole office's quota. As above, per_second is the replenish interval in
+# seconds, so 4 means one request every 4 seconds with a burst of 10.
+llm_rate_limit_burst = 10
+llm_rate_limit_per_second = 4
 insecure_cookies = false
 log_filter = "lekton=info,tower_http=info"
 max_attachment_size_mb = 25

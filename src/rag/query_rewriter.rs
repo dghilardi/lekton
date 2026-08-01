@@ -15,6 +15,8 @@ use async_openai::types::chat::{
 use crate::db::chat_models::ChatMessage;
 use crate::error::AppError;
 use crate::rag::client::format_llm_error;
+use crate::usage;
+use crate::usage::UsageKey;
 
 use super::provider::LlmProvider;
 
@@ -58,6 +60,7 @@ impl QueryRewriter {
     /// - the LLM returns an empty response (graceful degradation)
     pub async fn rewrite(
         &self,
+        key: &UsageKey,
         user_message: &str,
         history: &[ChatMessage],
     ) -> Result<String, AppError> {
@@ -93,6 +96,7 @@ impl QueryRewriter {
             }),
         ];
 
+        let prompt_chars = usage::prompt_chars(&messages);
         let request = CreateChatCompletionRequest {
             messages,
             model: self.model.clone(),
@@ -113,6 +117,7 @@ impl QueryRewriter {
             ))
         })?;
 
+        let reported = response.usage;
         let rewritten = response
             .choices
             .into_iter()
@@ -121,6 +126,15 @@ impl QueryRewriter {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| user_message.to_string());
+
+        usage::record_chat(
+            key,
+            usage::LlmFeature::QueryRewriter,
+            &self.model,
+            reported.as_ref(),
+            prompt_chars,
+            rewritten.len(),
+        );
 
         tracing::debug!(
             original_query = %user_message,

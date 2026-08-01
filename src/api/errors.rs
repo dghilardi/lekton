@@ -14,6 +14,9 @@ impl IntoResponse for AppError {
             AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             AppError::Auth(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
+            // The message is deliberately passed through: unlike a server
+            // fault, the caller can act on knowing they were throttled.
+            AppError::TooManyRequests(msg) => (StatusCode::TOO_MANY_REQUESTS, msg.clone()),
             AppError::Database(msg) => {
                 tracing::error!("Database error: {msg}");
                 (

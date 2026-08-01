@@ -33,6 +33,8 @@ pub mod static_assets;
 pub mod storage;
 #[cfg(test)]
 pub mod test_utils;
+#[cfg(feature = "ssr")]
+pub mod usage;
 pub mod versioning;
 
 /// Client-side hydration entry point.

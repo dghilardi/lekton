@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "ssr")]
 use crate::app::AppState;
 #[cfg(feature = "ssr")]
+use crate::db::usage_models::UsageKey;
+#[cfg(feature = "ssr")]
 use crate::server::require_admin_user;
 
 /// Number of leading PDF pages read to generate a summary. Enough to convey the
@@ -20,7 +22,7 @@ const SUMMARY_PREVIEW_PAGES: usize = 3;
 #[server(GenerateDocumentSummary, "/api")]
 pub async fn generate_document_summary(asset_key: String) -> Result<String, ServerFnError> {
     let state = expect_context::<AppState>();
-    require_admin_user(&state).await?;
+    let admin = require_admin_user(&state).await?;
 
     if !state.features.document_upload {
         return Err(ServerFnError::new("Document upload is disabled"));
@@ -59,7 +61,7 @@ pub async fn generate_document_summary(asset_key: String) -> Result<String, Serv
         ));
     }
 
-    chat.summarize(&preview)
+    chat.summarize(&UsageKey::User(admin.user_id.clone()), &preview)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
 }

@@ -32,6 +32,8 @@ pub struct AppConfig {
     pub features: FeaturesConfig,
     #[serde(default)]
     pub learn: LearnConfig,
+    #[serde(default)]
+    pub usage: UsageConfig,
 }
 
 // ── Features ────────────────────────────────────────────────────────────────
@@ -203,6 +205,16 @@ pub struct ServerConfig {
     pub rate_limit_per_second: u64,
     /// Comma-separated trusted reverse proxy IPs/CIDRs allowed to supply forwarded client IPs.
     pub rate_limit_trusted_proxies: String,
+    /// Burst size for the LLM-endpoint limiter, keyed by user rather than IP.
+    ///
+    /// A separate, much tighter budget than the general limiter: those requests
+    /// each cost real money at an external provider, so the same allowance that
+    /// suits page loads is far too generous here.
+    #[serde(default = "default_llm_rate_limit_burst")]
+    pub llm_rate_limit_burst: u32,
+    /// Tokens replenished per second for the LLM-endpoint limiter.
+    #[serde(default = "default_llm_rate_limit_per_second")]
+    pub llm_rate_limit_per_second: u64,
     /// Comma-separated allowed CORS origins. Empty/unset means same-origin only.
     pub cors_allowed_origins: Option<String>,
     /// Allow non-HTTPS cookies (local dev over HTTP).
@@ -451,6 +463,57 @@ pub struct ChatStepConfig {
 
 fn default_chat_max_output_tokens() -> u32 {
     2048
+}
+
+/// Ten queued questions is already an unusual burst for one person.
+fn default_llm_rate_limit_burst() -> u32 {
+    10
+}
+
+/// One sustained question every four seconds per user.
+fn default_llm_rate_limit_per_second() -> u64 {
+    4
+}
+
+/// LLM usage accounting.
+///
+/// Prometheus counters are always emitted (they are no-ops without a recorder,
+/// see [`crate::metrics`]). This section only governs the per-caller event log,
+/// which stores who spent what and is therefore opt-in.
+#[derive(Debug, Deserialize)]
+pub struct UsageConfig {
+    /// Persist one `llm_usage_events` document per LLM call. Off by default:
+    /// it is individual-usage monitoring, so enable it deliberately.
+    #[serde(default)]
+    pub event_log: bool,
+    /// Maximum LLM generations one caller may have in flight. `0` disables it.
+    ///
+    /// This, more than any rate limit, is what stops a script: the loop has to
+    /// wait for its own previous call to finish.
+    #[serde(default = "default_max_concurrent_llm_per_caller")]
+    pub max_concurrent_per_caller: usize,
+    /// Instance-wide ceiling on LLM tokens per UTC day. `0` disables it.
+    ///
+    /// The last line of defence, for what no per-caller limit catches — a
+    /// runaway reindex, or a bug fanning out across callers. It counts tokens,
+    /// not cost, so it is a runaway guard rather than a spend cap: tokens from
+    /// different models are not comparable in price.
+    #[serde(default)]
+    pub daily_token_cap: u64,
+}
+
+fn default_max_concurrent_llm_per_caller() -> usize {
+    2
+}
+
+impl Default for UsageConfig {
+    fn default() -> Self {
+        Self {
+            event_log: false,
+            max_concurrent_per_caller: default_max_concurrent_llm_per_caller(),
+            daily_token_cap: 0,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

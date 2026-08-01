@@ -13,6 +13,7 @@ use serde::Deserialize;
 
 use crate::app::AppState;
 use crate::auth::extractor::RequiredAuthUser;
+use crate::db::usage_models::UsageKey;
 use crate::error::AppError;
 
 /// Number of leading PDF pages read to generate a summary.
@@ -74,7 +75,9 @@ pub async fn summary_stream_handler(
         ));
     }
 
-    let token_stream = chat.summarize_stream(&preview).await?;
+    let token_stream = chat
+        .summarize_stream(&UsageKey::User(user.user_id.clone()), &preview)
+        .await?;
 
     let sse_stream = async_stream::stream! {
         futures::pin_mut!(token_stream);

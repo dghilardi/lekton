@@ -7,7 +7,8 @@ use async_openai::types::chat::{
     ChatCompletionRequestAssistantMessage, ChatCompletionRequestAssistantMessageContent,
     ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage,
     ChatCompletionRequestSystemMessageContent, ChatCompletionRequestUserMessage,
-    ChatCompletionRequestUserMessageContent, CreateChatCompletionRequest, FinishReason,
+    ChatCompletionRequestUserMessageContent, ChatCompletionStreamOptions,
+    CreateChatCompletionRequest, FinishReason,
 };
 use chrono::Utc;
 use futures::StreamExt;
@@ -27,6 +28,8 @@ use crate::rag::query_rewriter::QueryRewriter;
 use crate::rag::reranker::Reranker;
 use crate::rag::vectorstore::{SourceKind, VectorSearchResult, VectorStore};
 use crate::search::client::SearchService;
+use crate::usage;
+use crate::usage::UsageKey;
 
 /// Maximum number of context chunks returned to the LLM.
 const MAX_CONTEXT_CHUNKS: usize = 5;
@@ -67,6 +70,13 @@ fn build_chat_request(
         messages,
         model: model.to_string(),
         stream: Some(stream),
+        // Ask for token usage on the stream. Vertex reports it either way, but
+        // OpenAI itself only does when asked, so token accounting does not
+        // depend on which provider is configured.
+        stream_options: stream.then_some(ChatCompletionStreamOptions {
+            include_usage: Some(true),
+            include_obfuscation: None,
+        }),
         max_completion_tokens: max_output_tokens,
         ..Default::default()
     }
@@ -272,7 +282,7 @@ impl ChatService {
     ///
     /// Non-streaming, single LLM call. The input is truncated to bound the
     /// prompt; the model is asked to reply in the document's own language.
-    pub async fn summarize(&self, text: &str) -> Result<String, AppError> {
+    pub async fn summarize(&self, key: &UsageKey, text: &str) -> Result<String, AppError> {
         let trimmed = text.trim();
         if trimmed.is_empty() {
             return Err(AppError::BadRequest(
@@ -294,6 +304,8 @@ impl ChatService {
             }),
         ];
 
+        let _admission = usage::guard::admit(key)?;
+        let prompt_chars = usage::prompt_chars(&messages);
         let request = build_chat_request(
             &self.chat_model,
             messages,
@@ -309,6 +321,7 @@ impl ChatService {
             AppError::Internal(format!("LLM summary failed: {}", format_llm_error(&e)))
         })?;
 
+        let reported = response.usage;
         let summary = response
             .choices
             .into_iter()
@@ -317,6 +330,15 @@ impl ChatService {
             .unwrap_or_default()
             .trim()
             .to_string();
+
+        usage::record_chat(
+            key,
+            usage::LlmFeature::Summary,
+            &self.chat_model,
+            reported.as_ref(),
+            prompt_chars,
+            summary.len(),
+        );
 
         if summary.is_empty() {
             return Err(AppError::Internal("LLM returned an empty summary".into()));
@@ -330,6 +352,7 @@ impl ChatService {
     /// streaming keeps the connection alive while the model generates.
     pub async fn summarize_stream(
         &self,
+        key: &UsageKey,
         text: &str,
     ) -> Result<
         std::pin::Pin<Box<dyn futures::Stream<Item = Result<String, AppError>> + Send>>,
@@ -356,6 +379,8 @@ impl ChatService {
             }),
         ];
 
+        let admission = usage::guard::admit(key)?;
+        let prompt_chars = usage::prompt_chars(&messages);
         let request = build_chat_request(
             &self.chat_model,
             messages,
@@ -379,13 +404,26 @@ impl ChatService {
                 ))
             })?;
 
+        let model = self.chat_model.clone();
+        let key = key.clone();
         let token_stream = async_stream::stream! {
+            // Held here, not in the enclosing function: the call is still
+            // running for as long as the stream is, so the caller's slot must
+            // stay taken until the last chunk.
+            let _admission = admission;
+            let mut reported = None;
+            let mut completion_chars = 0usize;
+
             while let Some(chunk_result) = stream.next().await {
                 match chunk_result {
                     Ok(chunk) => {
+                        if let Some(chunk_usage) = &chunk.usage {
+                            reported = Some(chunk_usage.clone());
+                        }
                         for choice in &chunk.choices {
                             if let Some(content) = &choice.delta.content {
                                 if !content.is_empty() {
+                                    completion_chars += content.len();
                                     yield Ok(content.clone());
                                 }
                             }
@@ -394,11 +432,30 @@ impl ChatService {
                     Err(e) => {
                         let msg = format_llm_error(&e);
                         tracing::error!("LLM summary stream error: {msg}");
+                        // Account for what the provider already generated: an
+                        // aborted summary still costs.
+                        usage::record_chat(
+                            &key,
+                            usage::LlmFeature::Summary,
+                            &model,
+                            reported.as_ref(),
+                            prompt_chars,
+                            completion_chars,
+                        );
                         yield Err(AppError::Internal(format!("LLM error: {msg}")));
                         return;
                     }
                 }
             }
+
+            usage::record_chat(
+                &key,
+                usage::LlmFeature::Summary,
+                &model,
+                reported.as_ref(),
+                prompt_chars,
+                completion_chars,
+            );
         };
 
         Ok(Box::pin(token_stream))
@@ -414,6 +471,10 @@ impl ChatService {
         session_id: Option<String>,
         user_message: String,
     ) -> Result<std::pin::Pin<Box<dyn futures::Stream<Item = ChatEvent> + Send>>, AppError> {
+        // 0. Admission control, before any retrieval work is done on the
+        //    caller's behalf — a refused turn should cost nothing.
+        let admission = usage::guard::admit(&user_ctx.usage_key())?;
+
         // 1. Resolve or create session
         let session_id = match session_id {
             Some(id) => {
@@ -551,6 +612,7 @@ impl ChatService {
         );
 
         // 10. Create streaming LLM request
+        let prompt_chars = usage::prompt_chars(&messages);
         let request = build_chat_request(&chat_model, messages, true, self.chat_max_output_tokens);
 
         let llm_client = self
@@ -573,8 +635,12 @@ impl ChatService {
         let chat_repo = self.chat_repo.clone();
         let sid = session_id.clone();
         let sources = source_references.clone();
+        let usage_key = user_ctx.usage_key();
 
         let event_stream = async_stream::stream! {
+            // Held for the life of the stream, not just of this function: the
+            // generation is in flight until the last token.
+            let _admission = admission;
             // First event: session ID
             yield ChatEvent::Session { session_id: sid.clone() };
             yield ChatEvent::Sources {
@@ -583,10 +649,14 @@ impl ChatService {
 
             let mut full_response = String::new();
             let mut hit_output_cap = false;
+            let mut reported_usage = None;
 
             while let Some(chunk_result) = stream.next().await {
                 match chunk_result {
                     Ok(chunk) => {
+                        if let Some(chunk_usage) = &chunk.usage {
+                            reported_usage = Some(chunk_usage.clone());
+                        }
                         for choice in &chunk.choices {
                             if let Some(content) = &choice.delta.content {
                                 if !content.is_empty() {
@@ -604,6 +674,16 @@ impl ChatService {
                     Err(e) => {
                         let error_message = format_llm_error(&e);
                         tracing::error!("LLM stream error: {error_message}");
+                        // A stream that dies partway still burned whatever the
+                        // provider generated before it broke.
+                        usage::record_chat(
+                            &usage_key,
+                            usage::LlmFeature::Chat,
+                            &chat_model,
+                            reported_usage.as_ref(),
+                            prompt_chars,
+                            full_response.len(),
+                        );
                         yield ChatEvent::Error {
                             message: format!("LLM error: {error_message}"),
                         };
@@ -635,6 +715,15 @@ impl ChatService {
                     }
                 }
             }
+
+            usage::record_chat(
+                &usage_key,
+                usage::LlmFeature::Chat,
+                &chat_model,
+                reported_usage.as_ref(),
+                prompt_chars,
+                full_response.len(),
+            );
 
             // The model stopped because it reached `rag.chat.max_output_tokens`.
             // Say so instead of letting the answer end mid-sentence: the note is
@@ -743,10 +832,11 @@ impl ChatService {
         history: &[ChatMessage],
         session_id: &str,
     ) -> Result<RetrievalOutput, AppError> {
+        let key = user_ctx.usage_key();
         // Rewrite the query into a standalone question when history is non-empty.
         // Falls back to the original message when rewriting is disabled or history is empty.
         let retrieval_query = match &self.query_rewriter {
-            Some(rewriter) => rewriter.rewrite(user_message, history).await?,
+            Some(rewriter) => rewriter.rewrite(&key, user_message, history).await?,
             None => user_message.to_string(),
         };
 
@@ -761,7 +851,7 @@ impl ChatService {
         // Analyze query complexity when the analyzer is configured. Falls back
         // to simple on any error so the pipeline is never blocked.
         let query_plan: QueryPlan = if let Some(ref analyzer) = self.analyzer {
-            match analyzer.classify(&retrieval_query).await {
+            match analyzer.classify(&key, &retrieval_query).await {
                 Ok(plan) => {
                     tracing::debug!(
                         session_id = %session_id,
@@ -801,7 +891,7 @@ impl ChatService {
                 queries = queries_to_embed.len(),
                 "RAG: generating HyDE hypothetical documents"
             );
-            hyde.expand_queries(queries_to_embed).await
+            hyde.expand_queries(&key, queries_to_embed).await
         } else {
             queries_to_embed
         };

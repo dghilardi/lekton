@@ -1,10 +1,15 @@
 use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 
 use axum::extract::ConnectInfo;
 use axum::http::{HeaderMap, Request};
+use axum_extra::extract::CookieJar;
 use ipnet::IpNet;
 use tower_governor::errors::GovernorError;
 use tower_governor::key_extractor::KeyExtractor;
+
+use crate::auth::extractor::ACCESS_TOKEN_COOKIE;
+use crate::auth::token_service::TokenService;
 
 const X_FORWARDED_FOR: &str = "x-forwarded-for";
 const X_REAL_IP: &str = "x-real-ip";
@@ -42,6 +47,52 @@ impl KeyExtractor for TrustedProxyIpKeyExtractor {
             Ok(forwarded_client_ip(req.headers()).unwrap_or(peer_ip))
         } else {
             Ok(peer_ip)
+        }
+    }
+}
+
+/// Rate-limit key that follows the authenticated user, falling back to the
+/// client IP when there is none.
+///
+/// The IP-keyed limiter is the wrong shape for the endpoints that call an LLM:
+/// behind a corporate proxy everyone shares one address, so a per-IP quota is
+/// either loose enough to be useless or tight enough to punish the whole
+/// office for one caller's loop. Keying on the user makes the quota personal.
+///
+/// Unauthenticated callers still fall back to the IP, and so do demo sessions —
+/// demo mode is a development affordance, not a cost surface worth the extra
+/// cookie handling.
+#[derive(Clone)]
+pub struct UserOrIpKeyExtractor {
+    token_service: Arc<TokenService>,
+    ip: TrustedProxyIpKeyExtractor,
+}
+
+impl UserOrIpKeyExtractor {
+    pub fn new(token_service: Arc<TokenService>, ip: TrustedProxyIpKeyExtractor) -> Self {
+        Self { token_service, ip }
+    }
+
+    fn user_id<T>(&self, req: &Request<T>) -> Option<String> {
+        CookieJar::from_headers(req.headers())
+            .get(ACCESS_TOKEN_COOKIE)
+            .and_then(|cookie| {
+                self.token_service
+                    .validate_access_token(cookie.value())
+                    .ok()
+            })
+            .map(|claims| claims.sub)
+    }
+}
+
+impl KeyExtractor for UserOrIpKeyExtractor {
+    /// Prefixed so a user id can never collide with an address.
+    type Key = String;
+
+    fn extract<T>(&self, req: &Request<T>) -> Result<Self::Key, GovernorError> {
+        match self.user_id(req) {
+            Some(user_id) => Ok(format!("user:{user_id}")),
+            None => Ok(format!("ip:{}", self.ip.extract(req)?)),
         }
     }
 }
@@ -143,6 +194,65 @@ mod tests {
             );
         }
         req
+    }
+
+    fn user_or_ip_extractor() -> UserOrIpKeyExtractor {
+        UserOrIpKeyExtractor::new(
+            Arc::new(TokenService::new(
+                "test-secret-at-least-32-bytes-long",
+                900,
+                7,
+            )),
+            TrustedProxyIpKeyExtractor::from_config("127.0.0.1").unwrap(),
+        )
+    }
+
+    fn authenticated_user(user_id: &str) -> crate::auth::models::AuthenticatedUser {
+        crate::auth::models::AuthenticatedUser {
+            user_id: user_id.to_string(),
+            email: "u@example.com".to_string(),
+            name: None,
+            is_admin: false,
+        }
+    }
+
+    #[test]
+    fn keys_on_the_user_when_a_valid_token_is_present() {
+        let extractor = user_or_ip_extractor();
+        let token = Arc::new(TokenService::new(
+            "test-secret-at-least-32-bytes-long",
+            900,
+            7,
+        ))
+        .generate_access_token(&authenticated_user("u-42"))
+        .expect("token");
+        let req = request(
+            "198.51.100.5:12345".parse().unwrap(),
+            &[("cookie", &format!("{ACCESS_TOKEN_COOKIE}={token}"))],
+        );
+
+        assert_eq!(extractor.extract(&req).unwrap(), "user:u-42");
+    }
+
+    #[test]
+    fn falls_back_to_the_ip_without_a_token() {
+        let extractor = user_or_ip_extractor();
+        let req = request("198.51.100.5:12345".parse().unwrap(), &[]);
+
+        assert_eq!(extractor.extract(&req).unwrap(), "ip:198.51.100.5");
+    }
+
+    #[test]
+    fn falls_back_to_the_ip_when_the_token_is_not_ours() {
+        // A forged or expired cookie must not become a key of its own: it would
+        // let a caller mint unlimited quotas by varying the cookie value.
+        let extractor = user_or_ip_extractor();
+        let req = request(
+            "198.51.100.5:12345".parse().unwrap(),
+            &[("cookie", &format!("{ACCESS_TOKEN_COOKIE}=not-a-jwt"))],
+        );
+
+        assert_eq!(extractor.extract(&req).unwrap(), "ip:198.51.100.5");
     }
 
     #[test]

@@ -25,5 +25,7 @@ pub mod service_token_repository;
 pub mod settings_repository;
 pub mod source_models;
 pub mod source_repository;
+pub mod usage_models;
+pub mod usage_repository;
 pub mod user_prompt_preference_repository;
 pub mod user_repository;

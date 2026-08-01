@@ -13,6 +13,7 @@ use base64::engine::{general_purpose::STANDARD, Engine as _};
 use crate::error::AppError;
 use crate::rag::client::format_llm_error;
 use crate::rag::provider::LlmProvider;
+use crate::usage;
 
 const DEFAULT_VLM_MAX_TOKENS: u32 = 1024;
 
@@ -66,13 +67,15 @@ impl VlmTranscriber {
             ),
         ]);
 
+        let messages = vec![ChatCompletionRequestMessage::User(
+            ChatCompletionRequestUserMessage {
+                content,
+                name: None,
+            },
+        )];
+        let prompt_chars = usage::prompt_chars(&messages);
         let request = CreateChatCompletionRequest {
-            messages: vec![ChatCompletionRequestMessage::User(
-                ChatCompletionRequestUserMessage {
-                    content,
-                    name: None,
-                },
-            )],
+            messages,
             model: self.model.clone(),
             max_completion_tokens: Some(self.max_tokens),
             temperature: Some(0.0),
@@ -88,6 +91,7 @@ impl VlmTranscriber {
             ))
         })?;
 
+        let reported = response.usage;
         let text = response
             .choices
             .into_iter()
@@ -95,6 +99,14 @@ impl VlmTranscriber {
             .and_then(|c| c.message.content)
             .map(|s| s.trim().to_string())
             .unwrap_or_default();
+
+        usage::record_chat(
+            usage::LlmFeature::Vlm,
+            &self.model,
+            reported.as_ref(),
+            prompt_chars,
+            text.len(),
+        );
 
         Ok(text)
     }

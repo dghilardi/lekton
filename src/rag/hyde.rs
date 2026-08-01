@@ -9,6 +9,7 @@ use async_openai::types::chat::{
 use crate::error::AppError;
 use crate::rag::client::format_llm_error;
 use crate::rag::provider::LlmProvider;
+use crate::usage;
 
 const HYDE_SYSTEM: &str = "\
 You are a technical documentation writer. Given a question, write a short passage \
@@ -79,6 +80,7 @@ impl HydeService {
             }),
         ];
 
+        let prompt_chars = usage::prompt_chars(&messages);
         let request = CreateChatCompletionRequest {
             messages,
             model: self.model.clone(),
@@ -97,6 +99,7 @@ impl HydeService {
             AppError::Internal(format!("HyDE LLM call failed: {}", format_llm_error(&e)))
         })?;
 
+        let reported = response.usage;
         let doc = response
             .choices
             .into_iter()
@@ -104,6 +107,14 @@ impl HydeService {
             .and_then(|c| c.message.content)
             .map(|s| s.trim().to_string())
             .unwrap_or_default();
+
+        usage::record_chat(
+            usage::LlmFeature::Hyde,
+            &self.model,
+            reported.as_ref(),
+            prompt_chars,
+            doc.len(),
+        );
 
         tracing::debug!(
             query = %query,

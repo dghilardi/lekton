@@ -10,6 +10,7 @@ use serde::Deserialize;
 use crate::error::AppError;
 use crate::rag::client::format_llm_error;
 use crate::rag::provider::LlmProvider;
+use crate::usage;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -98,6 +99,7 @@ impl QueryAnalyzer {
             }),
         ];
 
+        let prompt_chars = usage::prompt_chars(&messages);
         let request = CreateChatCompletionRequest {
             messages,
             model: self.model.clone(),
@@ -119,6 +121,7 @@ impl QueryAnalyzer {
             ))
         })?;
 
+        let reported = response.usage;
         let raw = response
             .choices
             .into_iter()
@@ -126,6 +129,14 @@ impl QueryAnalyzer {
             .and_then(|c| c.message.content)
             .map(|s| s.trim().to_string())
             .unwrap_or_default();
+
+        usage::record_chat(
+            usage::LlmFeature::Analyzer,
+            &self.model,
+            reported.as_ref(),
+            prompt_chars,
+            raw.len(),
+        );
 
         tracing::debug!(
             query = %query,

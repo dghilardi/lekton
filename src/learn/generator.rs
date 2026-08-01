@@ -31,6 +31,7 @@ use crate::rag::client::format_llm_error;
 use crate::rag::provider::LlmProvider;
 use crate::rendering::markdown::sanitize_html;
 use crate::storage::client::StorageClient;
+use crate::usage;
 
 /// Max tokens for the lesson-generation completion.
 const LESSON_MAX_TOKENS: u32 = 1_500;
@@ -293,6 +294,7 @@ impl LessonGenerator {
             }),
         ];
 
+        let prompt_chars = usage::prompt_chars(&messages);
         let request = CreateChatCompletionRequest {
             messages,
             model: self.model.clone(),
@@ -315,12 +317,23 @@ impl LessonGenerator {
             ))
         })?;
 
-        Ok(response
+        let reported = response.usage;
+        let content = response
             .choices
             .into_iter()
             .next()
             .and_then(|c| c.message.content)
-            .unwrap_or_default())
+            .unwrap_or_default();
+
+        usage::record_chat(
+            usage::LlmFeature::Learn,
+            &self.model,
+            reported.as_ref(),
+            prompt_chars,
+            content.len(),
+        );
+
+        Ok(content)
     }
 }
 

@@ -7,7 +7,8 @@ use async_openai::types::chat::{
     ChatCompletionRequestAssistantMessage, ChatCompletionRequestAssistantMessageContent,
     ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage,
     ChatCompletionRequestSystemMessageContent, ChatCompletionRequestUserMessage,
-    ChatCompletionRequestUserMessageContent, CreateChatCompletionRequest, FinishReason,
+    ChatCompletionRequestUserMessageContent, ChatCompletionStreamOptions,
+    CreateChatCompletionRequest, FinishReason,
 };
 use chrono::Utc;
 use futures::StreamExt;
@@ -27,6 +28,7 @@ use crate::rag::query_rewriter::QueryRewriter;
 use crate::rag::reranker::Reranker;
 use crate::rag::vectorstore::{SourceKind, VectorSearchResult, VectorStore};
 use crate::search::client::SearchService;
+use crate::usage;
 
 /// Maximum number of context chunks returned to the LLM.
 const MAX_CONTEXT_CHUNKS: usize = 5;
@@ -67,6 +69,13 @@ fn build_chat_request(
         messages,
         model: model.to_string(),
         stream: Some(stream),
+        // Ask for token usage on the stream. Vertex reports it either way, but
+        // OpenAI itself only does when asked, so token accounting does not
+        // depend on which provider is configured.
+        stream_options: stream.then_some(ChatCompletionStreamOptions {
+            include_usage: Some(true),
+            include_obfuscation: None,
+        }),
         max_completion_tokens: max_output_tokens,
         ..Default::default()
     }
@@ -294,6 +303,7 @@ impl ChatService {
             }),
         ];
 
+        let prompt_chars = usage::prompt_chars(&messages);
         let request = build_chat_request(
             &self.chat_model,
             messages,
@@ -309,6 +319,7 @@ impl ChatService {
             AppError::Internal(format!("LLM summary failed: {}", format_llm_error(&e)))
         })?;
 
+        let reported = response.usage;
         let summary = response
             .choices
             .into_iter()
@@ -317,6 +328,14 @@ impl ChatService {
             .unwrap_or_default()
             .trim()
             .to_string();
+
+        usage::record_chat(
+            usage::LlmFeature::Summary,
+            &self.chat_model,
+            reported.as_ref(),
+            prompt_chars,
+            summary.len(),
+        );
 
         if summary.is_empty() {
             return Err(AppError::Internal("LLM returned an empty summary".into()));
@@ -356,6 +375,7 @@ impl ChatService {
             }),
         ];
 
+        let prompt_chars = usage::prompt_chars(&messages);
         let request = build_chat_request(
             &self.chat_model,
             messages,
@@ -379,13 +399,21 @@ impl ChatService {
                 ))
             })?;
 
+        let model = self.chat_model.clone();
         let token_stream = async_stream::stream! {
+            let mut reported = None;
+            let mut completion_chars = 0usize;
+
             while let Some(chunk_result) = stream.next().await {
                 match chunk_result {
                     Ok(chunk) => {
+                        if let Some(chunk_usage) = &chunk.usage {
+                            reported = Some(chunk_usage.clone());
+                        }
                         for choice in &chunk.choices {
                             if let Some(content) = &choice.delta.content {
                                 if !content.is_empty() {
+                                    completion_chars += content.len();
                                     yield Ok(content.clone());
                                 }
                             }
@@ -394,11 +422,28 @@ impl ChatService {
                     Err(e) => {
                         let msg = format_llm_error(&e);
                         tracing::error!("LLM summary stream error: {msg}");
+                        // Account for what the provider already generated: an
+                        // aborted summary still costs.
+                        usage::record_chat(
+                            usage::LlmFeature::Summary,
+                            &model,
+                            reported.as_ref(),
+                            prompt_chars,
+                            completion_chars,
+                        );
                         yield Err(AppError::Internal(format!("LLM error: {msg}")));
                         return;
                     }
                 }
             }
+
+            usage::record_chat(
+                usage::LlmFeature::Summary,
+                &model,
+                reported.as_ref(),
+                prompt_chars,
+                completion_chars,
+            );
         };
 
         Ok(Box::pin(token_stream))
@@ -551,6 +596,7 @@ impl ChatService {
         );
 
         // 10. Create streaming LLM request
+        let prompt_chars = usage::prompt_chars(&messages);
         let request = build_chat_request(&chat_model, messages, true, self.chat_max_output_tokens);
 
         let llm_client = self
@@ -583,10 +629,14 @@ impl ChatService {
 
             let mut full_response = String::new();
             let mut hit_output_cap = false;
+            let mut reported_usage = None;
 
             while let Some(chunk_result) = stream.next().await {
                 match chunk_result {
                     Ok(chunk) => {
+                        if let Some(chunk_usage) = &chunk.usage {
+                            reported_usage = Some(chunk_usage.clone());
+                        }
                         for choice in &chunk.choices {
                             if let Some(content) = &choice.delta.content {
                                 if !content.is_empty() {
@@ -604,6 +654,15 @@ impl ChatService {
                     Err(e) => {
                         let error_message = format_llm_error(&e);
                         tracing::error!("LLM stream error: {error_message}");
+                        // A stream that dies partway still burned whatever the
+                        // provider generated before it broke.
+                        usage::record_chat(
+                            usage::LlmFeature::Chat,
+                            &chat_model,
+                            reported_usage.as_ref(),
+                            prompt_chars,
+                            full_response.len(),
+                        );
                         yield ChatEvent::Error {
                             message: format!("LLM error: {error_message}"),
                         };
@@ -635,6 +694,14 @@ impl ChatService {
                     }
                 }
             }
+
+            usage::record_chat(
+                usage::LlmFeature::Chat,
+                &chat_model,
+                reported_usage.as_ref(),
+                prompt_chars,
+                full_response.len(),
+            );
 
             // The model stopped because it reached `rag.chat.max_output_tokens`.
             // Say so instead of letting the answer end mid-sentence: the note is

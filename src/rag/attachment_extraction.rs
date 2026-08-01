@@ -131,17 +131,29 @@ const HEADROOM_POLL: std::time::Duration = std::time::Duration::from_secs(300);
 async fn wait_for_spend_headroom() {
     use crate::db::usage_models::UsageKey;
 
-    if crate::usage::guard::has_headroom(&UsageKey::System) {
+    wait_until(
+        || crate::usage::guard::has_headroom(&UsageKey::System),
+        HEADROOM_POLL,
+    )
+    .await;
+}
+
+/// Poll `ready` until it holds, announcing the pause and the resume.
+///
+/// The predicate is a parameter so the wait can be exercised without the
+/// process-wide guard, which a test cannot install more than once.
+async fn wait_until(ready: impl Fn() -> bool, poll: std::time::Duration) {
+    if ready() {
         return;
     }
 
     tracing::warn!(
-        retry_in_secs = HEADROOM_POLL.as_secs(),
+        retry_in_secs = poll.as_secs(),
         "attachment extraction paused: the daily AI spend reserve for background work is used \
          up. Queued attachments wait rather than fail, and resume once it clears."
     );
-    while !crate::usage::guard::has_headroom(&UsageKey::System) {
-        tokio::time::sleep(HEADROOM_POLL).await;
+    while !ready() {
+        tokio::time::sleep(poll).await;
     }
     tracing::info!("attachment extraction resuming: spend headroom is available again");
 }
@@ -579,6 +591,48 @@ fn filename_from_key(key: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+    #[tokio::test]
+    async fn the_queue_does_not_wait_when_there_is_headroom() {
+        // The default: no ceiling configured, so nothing is held back and the
+        // worker must not pay a poll interval per item.
+        let polls = AtomicUsize::new(0);
+
+        super::wait_until(
+            || {
+                polls.fetch_add(1, AtomicOrdering::Relaxed);
+                true
+            },
+            std::time::Duration::from_secs(3_600),
+        )
+        .await;
+
+        assert_eq!(
+            polls.load(AtomicOrdering::Relaxed),
+            1,
+            "asked once, went on"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_queue_resumes_once_the_reserve_clears() {
+        // Held back, then released: the attachment is still there to process,
+        // which is the whole point of waiting rather than failing.
+        let attempts = AtomicUsize::new(0);
+
+        super::wait_until(
+            || attempts.fetch_add(1, AtomicOrdering::Relaxed) >= 2,
+            std::time::Duration::from_millis(1),
+        )
+        .await;
+
+        assert!(
+            attempts.load(AtomicOrdering::Relaxed) >= 3,
+            "should have polled until the reserve cleared"
+        );
+    }
+
     use super::*;
     use crate::db::asset_repository::ExtractionUpdate;
     use crate::db::models::{Asset, Document};

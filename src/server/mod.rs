@@ -12,6 +12,7 @@ pub mod reindex;
 pub mod search;
 pub mod service_tokens;
 pub mod sources;
+pub mod usage;
 pub mod users;
 
 #[cfg(feature = "ssr")]

@@ -26,6 +26,7 @@ pub use crate::server::reindex::*;
 pub use crate::server::search::*;
 pub use crate::server::service_tokens::*;
 pub use crate::server::sources::*;
+pub use crate::server::usage::*;
 pub use crate::server::users::*;
 
 /// Newtype wrapper for the demo-mode signal, used as Leptos context.

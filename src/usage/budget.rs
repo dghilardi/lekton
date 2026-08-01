@@ -67,6 +67,20 @@ pub async fn reserve(key: &UsageKey, plan: Option<&str>) -> Result<Option<Budget
     }
 }
 
+/// Names of the configured plans, sorted, for the admin UI. Empty when no
+/// budget is enforced.
+pub fn plan_names() -> Vec<String> {
+    BUDGETS.get().map(Budgets::plan_names).unwrap_or_default()
+}
+
+/// A caller's current standing, or `None` when no budget is enforced.
+pub async fn snapshot(key: &UsageKey, plan: Option<&str>) -> Result<Option<Snapshot>, AppError> {
+    match BUDGETS.get() {
+        Some(budgets) => budgets.snapshot(key, plan).await.map(Some),
+        None => Ok(None),
+    }
+}
+
 /// Charge real spend against the process-wide budget, if one is enforced.
 pub async fn charge(key: &UsageKey, credits: f64) {
     if let Some(budgets) = BUDGETS.get() {
@@ -198,6 +212,36 @@ impl Budgets {
         })
     }
 
+    /// Plan names, sorted so the admin UI is stable between reloads.
+    pub fn plan_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.config.plans.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
+    /// A caller's current standing.
+    pub async fn snapshot(&self, key: &UsageKey, plan: Option<&str>) -> Result<Snapshot, AppError> {
+        let profile = self.profile(key, plan);
+        // A caller who has never spent has no document; they are full, which is
+        // what `reserve` assumes too.
+        let balance = self
+            .repo
+            .balance(&bucket_id(key))
+            .await?
+            .unwrap_or(profile.capacity);
+        let headroom = if profile.capacity <= 0.0 {
+            1.0
+        } else {
+            (balance / profile.capacity).clamp(0.0, 1.0)
+        };
+        Ok(Snapshot {
+            balance,
+            capacity: profile.capacity,
+            headroom,
+            thrifty: headroom < THRIFTY_BELOW,
+        })
+    }
+
     /// Charge a call's real cost.
     pub async fn charge(&self, key: &UsageKey, credits: f64) {
         if credits <= 0.0 {
@@ -215,6 +259,17 @@ impl Budgets {
             tracing::error!(error = %e, "failed to charge LLM spend to a budget");
         }
     }
+}
+
+/// What a caller has left to spend.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Snapshot {
+    pub balance: f64,
+    pub capacity: f64,
+    /// Fraction of the bucket still available, `0.0..=1.0`.
+    pub headroom: f64,
+    /// Whether the next call will be served in thrifty mode.
+    pub thrifty: bool,
 }
 
 /// Bucket identity, matching the concurrency slot's shape: anonymous callers

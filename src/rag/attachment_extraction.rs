@@ -196,17 +196,19 @@ impl AttachmentExtractionService {
         let (tx, mut rx) = mpsc::channel::<String>(capacity.max(1));
         let asset_repo = self.asset_repo.clone();
         tokio::spawn(async move {
-            loop {
-                // Ask before taking. Transcription is admission-checked, so a
-                // worker that dequeued first would turn a spend ceiling into
-                // lost work: the failure marks the asset `Failed`, and the
-                // startup sweep only resumes `Pending`/`InProgress`, so nothing
-                // would ever pick it up again. Waiting costs a delay instead.
+            while let Some(key) = rx.recv().await {
+                // Wait *after* taking the item, not before. The worker sits in
+                // `recv` for as long as the queue is empty, so a check made
+                // before it is stale by the time work arrives — which is how
+                // the first version still failed an upload against an
+                // exhausted ceiling.
+                //
+                // Holding the key across the wait is safe: it is only lost if
+                // the process dies, and the asset is still `Pending` then, so
+                // the startup sweep re-enqueues it. Failing it would not be
+                // recoverable — the sweep skips `Failed`.
                 wait_for_spend_headroom().await;
 
-                let Some(key) = rx.recv().await else {
-                    break;
-                };
                 if let Err(e) = self.process_one(&key, false).await {
                     tracing::error!(key, "attachment extraction worker error: {e}");
                 }

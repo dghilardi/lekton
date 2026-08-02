@@ -188,7 +188,7 @@ async fn reindex_items(
         // whichever branch the previous item took.
         if done >= last_projection_at + PROJECTION_EVERY {
             last_projection_at = done;
-            log_cost_projection(spend_at_start, done, total);
+            log_cost_projection(spend_at_start, done - skipped - failed, total);
         }
 
         // A skip_rag document (e.g. a PDF upload stub) is deliberately excluded
@@ -275,7 +275,11 @@ async fn reindex_items(
             // whichever branch the previous item took.
             if done >= last_projection_at + PROJECTION_EVERY {
                 last_projection_at = done;
-                log_cost_projection(spend_at_start, done, total);
+                log_cost_projection(
+                    spend_at_start,
+                    done - skipped - failed - attachments_failed - attachments_skipped,
+                    total,
+                );
             }
             if let Err(e) = service.process_one(&asset.key, true).await {
                 tracing::warn!(key = %asset.key, "RAG reindex: failed to re-index attachment: {e}");
@@ -330,9 +334,15 @@ async fn reindex_items(
 const PROJECTION_EVERY: usize = 25;
 
 /// Log what the run has spent and what that projects to for the whole set.
-fn log_cost_projection(spend_at_start: f64, completed: usize, total: usize) {
-    if completed == 0 || total == 0 {
-        return;
+///
+/// Extrapolates from the items that actually indexed, not from everything
+/// attempted. Skipped and failed items cost little or nothing, so counting them
+/// deflates the average — and once a spend ceiling starts refusing work the
+/// projection would fall towards zero while the run indexes nothing at all,
+/// reading as reassuring precisely when it should not.
+fn log_cost_projection(spend_at_start: f64, indexed: usize, total: usize) {
+    if indexed == 0 || total == 0 {
+        return; // nothing succeeded yet; there is nothing to extrapolate from
     }
     let spent = crate::usage::guard::system_spend_today() - spend_at_start;
     if spent <= 0.0 {
@@ -340,10 +350,11 @@ fn log_cost_projection(spend_at_start: f64, completed: usize, total: usize) {
     }
 
     tracing::info!(
-        completed,
+        indexed,
         total,
         credits_so_far = round_credits(spent),
-        projected_credits = round_credits(spent / completed as f64 * total as f64),
+        credits_per_item = round_credits(spent / indexed as f64),
+        projected_credits = round_credits(spent / indexed as f64 * total as f64),
         "RAG reindex: cost so far"
     );
 }

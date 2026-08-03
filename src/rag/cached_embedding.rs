@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 
 use crate::db::embedding_cache_repository::{EmbeddingCacheEntry, EmbeddingCacheRepository};
 use crate::error::AppError;
+use crate::usage::UsageKey;
 
 use super::embedding::EmbeddingService;
 
@@ -73,7 +74,9 @@ impl CachedEmbeddingService {
 
 #[async_trait]
 impl EmbeddingService for CachedEmbeddingService {
-    async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, AppError> {
+    /// The spend ceiling is checked by the inner service, not here: a cache hit
+    /// costs nothing, so an exhausted ceiling must not refuse one.
+    async fn embed(&self, key: &UsageKey, texts: &[String]) -> Result<Vec<Vec<f32>>, AppError> {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
@@ -108,7 +111,7 @@ impl EmbeddingService for CachedEmbeddingService {
                 .iter()
                 .map(|&i| normalised[i].clone())
                 .collect();
-            let new_vectors = self.inner.embed(&missing_texts).await?;
+            let new_vectors = self.inner.embed(key, &missing_texts).await?;
 
             // 5. Persist the newly generated embeddings (skip empty vectors —
             //    some backends return [] for degenerate inputs).
@@ -161,6 +164,7 @@ mod tests {
 
     struct CountingEmbedding {
         call_count: Mutex<usize>,
+        keys: Mutex<Vec<UsageKey>>,
         dims: usize,
     }
 
@@ -168,18 +172,23 @@ mod tests {
         fn new(dims: usize) -> Self {
             Self {
                 call_count: Mutex::new(0),
+                keys: Mutex::new(Vec::new()),
                 dims,
             }
         }
         fn calls(&self) -> usize {
             *self.call_count.lock().unwrap()
         }
+        fn keys(&self) -> Vec<UsageKey> {
+            self.keys.lock().unwrap().clone()
+        }
     }
 
     #[async_trait]
     impl EmbeddingService for CountingEmbedding {
-        async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, AppError> {
+        async fn embed(&self, key: &UsageKey, texts: &[String]) -> Result<Vec<Vec<f32>>, AppError> {
             *self.call_count.lock().unwrap() += 1;
+            self.keys.lock().unwrap().push(key.clone());
             Ok(texts.iter().map(|_| vec![0.1f32; self.dims]).collect())
         }
     }
@@ -241,7 +250,7 @@ mod tests {
     #[tokio::test]
     async fn empty_input_returns_empty() {
         let (_, _, svc) = make_service(4);
-        let result = svc.embed(&[]).await.unwrap();
+        let result = svc.embed(&UsageKey::System, &[]).await.unwrap();
         assert!(result.is_empty());
     }
 
@@ -249,18 +258,31 @@ mod tests {
     async fn first_call_goes_to_inner() {
         let (inner, _, svc) = make_service(4);
         let texts = vec!["hello world".to_string()];
-        let result = svc.embed(&texts).await.unwrap();
+        let result = svc.embed(&UsageKey::System, &texts).await.unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].len(), 4);
         assert_eq!(inner.calls(), 1);
     }
 
     #[tokio::test]
+    async fn the_caller_is_forwarded_to_the_inner_service_unchanged() {
+        // The cache sits between every embedding caller and the accounting, so
+        // a hardcoded key here would misattribute the entire embedding spend —
+        // silently, since the vectors would still be correct.
+        let (inner, _, svc) = make_service(4);
+        let caller = UsageKey::User("u-42".into());
+
+        svc.embed(&caller, &["a query".to_string()]).await.unwrap();
+
+        assert_eq!(inner.keys(), vec![caller]);
+    }
+
+    #[tokio::test]
     async fn second_call_hits_cache() {
         let (inner, _, svc) = make_service(4);
         let texts = vec!["hello world".to_string()];
-        svc.embed(&texts).await.unwrap();
-        svc.embed(&texts).await.unwrap();
+        svc.embed(&UsageKey::System, &texts).await.unwrap();
+        svc.embed(&UsageKey::System, &texts).await.unwrap();
         // Inner service should only have been called once
         assert_eq!(inner.calls(), 1);
     }
@@ -268,9 +290,13 @@ mod tests {
     #[tokio::test]
     async fn normalisation_produces_cache_hit() {
         let (inner, _, svc) = make_service(4);
-        svc.embed(&["hello   world".to_string()]).await.unwrap();
+        svc.embed(&UsageKey::System, &["hello   world".to_string()])
+            .await
+            .unwrap();
         // Trailing/multiple spaces get collapsed — same hash expected
-        svc.embed(&["hello world".to_string()]).await.unwrap();
+        svc.embed(&UsageKey::System, &["hello world".to_string()])
+            .await
+            .unwrap();
         assert_eq!(inner.calls(), 1);
     }
 
@@ -278,12 +304,17 @@ mod tests {
     async fn batch_partial_cache_hit() {
         let (inner, _, svc) = make_service(4);
         // Warm up cache with first text
-        svc.embed(&["text one".to_string()]).await.unwrap();
+        svc.embed(&UsageKey::System, &["text one".to_string()])
+            .await
+            .unwrap();
         assert_eq!(inner.calls(), 1);
 
         // Second call: "text one" (cached) + "text two" (missing)
         let result = svc
-            .embed(&["text one".to_string(), "text two".to_string()])
+            .embed(
+                &UsageKey::System,
+                &["text one".to_string(), "text two".to_string()],
+            )
             .await
             .unwrap();
         assert_eq!(result.len(), 2);
@@ -310,8 +341,8 @@ mod tests {
             false,
         );
         let texts = vec!["hello world".to_string()];
-        svc_a.embed(&texts).await.unwrap();
-        svc_b.embed(&texts).await.unwrap();
+        svc_a.embed(&UsageKey::System, &texts).await.unwrap();
+        svc_b.embed(&UsageKey::System, &texts).await.unwrap();
         // Distinct namespaces → both went to the inner service.
         assert_eq!(inner.calls(), 2);
     }
@@ -336,7 +367,9 @@ mod tests {
             "test-model".to_string(),
             true, // store_text = true
         );
-        svc.embed(&["store me".to_string()]).await.unwrap();
+        svc.embed(&UsageKey::System, &["store me".to_string()])
+            .await
+            .unwrap();
 
         let _entries = cache
             .get_many(&[("*".to_string(), "*".to_string())])

@@ -171,11 +171,26 @@ async fn reindex_items(
         "RAG reindex: starting"
     );
 
+    // What a full reindex costs is not knowable up front — it depends on how
+    // the corpus chunks, which is only settled while indexing it. So the run
+    // measures itself instead of guessing: once enough items are through, the
+    // average projects to the whole set, and the operator learns the size of
+    // the bill early enough to act on it.
+    let spend_at_start = crate::usage::guard::system_spend_today();
+    let mut last_projection_at = 0usize;
+
     let mut done = 0usize;
     let mut skipped = 0usize;
     let mut failed = 0usize;
 
     for doc in &documents {
+        // Checked at the top of the iteration so it sees a settled count,
+        // whichever branch the previous item took.
+        if done >= last_projection_at + PROJECTION_EVERY {
+            last_projection_at = done;
+            log_cost_projection(spend_at_start, done - skipped - failed, total);
+        }
+
         // A skip_rag document (e.g. a PDF upload stub) is deliberately excluded
         // from RAG; a full reindex must respect that rather than silently
         // re-adding it, and clean up any chunks left by an earlier ingest.
@@ -256,6 +271,16 @@ async fn reindex_items(
 
     if let Some(service) = attachment_service {
         for asset in &assets {
+            // Checked at the top of the iteration so it sees a settled count,
+            // whichever branch the previous item took.
+            if done >= last_projection_at + PROJECTION_EVERY {
+                last_projection_at = done;
+                log_cost_projection(
+                    spend_at_start,
+                    done - skipped - failed - attachments_failed - attachments_skipped,
+                    total,
+                );
+            }
             if let Err(e) = service.process_one(&asset.key, true).await {
                 tracing::warn!(key = %asset.key, "RAG reindex: failed to re-index attachment: {e}");
                 attachments_failed += 1;
@@ -297,9 +322,47 @@ async fn reindex_items(
         attachments = assets.len(),
         attachments_failed,
         attachments_skipped,
+        credits = round_credits(crate::usage::guard::system_spend_today() - spend_at_start),
         "RAG reindex: complete"
     );
     reindex.progress.store(100, Ordering::Relaxed);
+}
+
+/// How often, in completed items, to project the run's total cost.
+///
+/// Early enough to be actionable, sparse enough not to bury the log.
+const PROJECTION_EVERY: usize = 25;
+
+/// Log what the run has spent and what that projects to for the whole set.
+///
+/// Extrapolates from the items that actually indexed, not from everything
+/// attempted. Skipped and failed items cost little or nothing, so counting them
+/// deflates the average — and once a spend ceiling starts refusing work the
+/// projection would fall towards zero while the run indexes nothing at all,
+/// reading as reassuring precisely when it should not.
+fn log_cost_projection(spend_at_start: f64, indexed: usize, total: usize) {
+    if indexed == 0 || total == 0 {
+        return; // nothing succeeded yet; there is nothing to extrapolate from
+    }
+    let spent = crate::usage::guard::system_spend_today() - spend_at_start;
+    if spent <= 0.0 {
+        return; // no ceiling configured, or nothing priced yet
+    }
+
+    tracing::info!(
+        indexed,
+        total,
+        credits_so_far = round_credits(spent),
+        credits_per_item = round_credits(spent / indexed as f64),
+        projected_credits = round_credits(spent / indexed as f64 * total as f64),
+        "RAG reindex: cost so far"
+    );
+}
+
+/// Credits are only ever read by a person; three decimals is plenty and keeps
+/// the log from carrying float noise.
+fn round_credits(credits: f64) -> f64 {
+    (credits * 1_000.0).round() / 1_000.0
 }
 
 #[cfg(test)]

@@ -16,6 +16,7 @@ mod rag_integration {
     use lekton::rag::embedding::EmbeddingService;
     use lekton::rag::service::{DefaultRagService, RagService};
     use lekton::rag::vectorstore::{QdrantVectorStore, VectorStore};
+    use lekton::usage::UsageKey;
 
     const DIMENSIONS: u32 = 32;
     const COLLECTION: &str = "test-rag";
@@ -27,7 +28,11 @@ mod rag_integration {
 
     #[async_trait]
     impl EmbeddingService for DeterministicEmbedding {
-        async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, AppError> {
+        async fn embed(
+            &self,
+            _key: &UsageKey,
+            texts: &[String],
+        ) -> Result<Vec<Vec<f32>>, AppError> {
             Ok(texts
                 .iter()
                 .map(|text| {
@@ -93,7 +98,7 @@ mod rag_integration {
         // Embed the query with the same mock service and search
         let query = content.to_string();
         let query_vec = DeterministicEmbedding
-            .embed(&[query])
+            .embed(&UsageKey::System, &[query])
             .await
             .expect("embed failed")
             .into_iter()

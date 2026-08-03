@@ -946,7 +946,7 @@ impl ChatService {
 
         // Embed all queries in a single batched call.
         let (allowed_levels, include_draft) = user_ctx.document_visibility();
-        let all_vectors = self.embedding.embed(&queries_to_embed).await?;
+        let all_vectors = self.embedding.embed(&key, &queries_to_embed).await?;
         if all_vectors.is_empty() {
             return Err(AppError::Internal("embedding returned no vectors".into()));
         }

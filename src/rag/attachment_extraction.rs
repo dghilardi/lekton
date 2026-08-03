@@ -119,6 +119,45 @@ pub async fn resume_unfinished_extractions(
     }
 }
 
+/// How often to re-check the spend ceiling while the queue is held back.
+///
+/// The ceiling only clears at UTC midnight, so this is a slow poll: the point
+/// is to resume without a restart, not to react quickly.
+const HEADROOM_POLL: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Block until the daily ceiling would admit background work again.
+///
+/// Returns immediately when no ceiling is configured, which is the default.
+async fn wait_for_spend_headroom() {
+    use crate::db::usage_models::UsageKey;
+
+    wait_until(
+        || crate::usage::guard::has_headroom(&UsageKey::System),
+        HEADROOM_POLL,
+    )
+    .await;
+}
+
+/// Poll `ready` until it holds, announcing the pause and the resume.
+///
+/// The predicate is a parameter so the wait can be exercised without the
+/// process-wide guard, which a test cannot install more than once.
+async fn wait_until(ready: impl Fn() -> bool, poll: std::time::Duration) {
+    if ready() {
+        return;
+    }
+
+    tracing::warn!(
+        retry_in_secs = poll.as_secs(),
+        "attachment extraction paused: the daily AI spend reserve for background work is used \
+         up. Queued attachments wait rather than fail, and resume once it clears."
+    );
+    while !ready() {
+        tokio::time::sleep(poll).await;
+    }
+    tracing::info!("attachment extraction resuming: spend headroom is available again");
+}
+
 /// Owns the dependencies needed to extract and index a single attachment.
 pub struct AttachmentExtractionService {
     storage: Arc<dyn StorageClient>,
@@ -158,6 +197,18 @@ impl AttachmentExtractionService {
         let asset_repo = self.asset_repo.clone();
         tokio::spawn(async move {
             while let Some(key) = rx.recv().await {
+                // Wait *after* taking the item, not before. The worker sits in
+                // `recv` for as long as the queue is empty, so a check made
+                // before it is stale by the time work arrives — which is how
+                // the first version still failed an upload against an
+                // exhausted ceiling.
+                //
+                // Holding the key across the wait is safe: it is only lost if
+                // the process dies, and the asset is still `Pending` then, so
+                // the startup sweep re-enqueues it. Failing it would not be
+                // recoverable — the sweep skips `Failed`.
+                wait_for_spend_headroom().await;
+
                 if let Err(e) = self.process_one(&key, false).await {
                     tracing::error!(key, "attachment extraction worker error: {e}");
                 }
@@ -542,6 +593,48 @@ fn filename_from_key(key: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+    #[tokio::test]
+    async fn the_queue_does_not_wait_when_there_is_headroom() {
+        // The default: no ceiling configured, so nothing is held back and the
+        // worker must not pay a poll interval per item.
+        let polls = AtomicUsize::new(0);
+
+        super::wait_until(
+            || {
+                polls.fetch_add(1, AtomicOrdering::Relaxed);
+                true
+            },
+            std::time::Duration::from_secs(3_600),
+        )
+        .await;
+
+        assert_eq!(
+            polls.load(AtomicOrdering::Relaxed),
+            1,
+            "asked once, went on"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_queue_resumes_once_the_reserve_clears() {
+        // Held back, then released: the attachment is still there to process,
+        // which is the whole point of waiting rather than failing.
+        let attempts = AtomicUsize::new(0);
+
+        super::wait_until(
+            || attempts.fetch_add(1, AtomicOrdering::Relaxed) >= 2,
+            std::time::Duration::from_millis(1),
+        )
+        .await;
+
+        assert!(
+            attempts.load(AtomicOrdering::Relaxed) >= 3,
+            "should have polled until the reserve cleared"
+        );
+    }
+
     use super::*;
     use crate::db::asset_repository::ExtractionUpdate;
     use crate::db::models::{Asset, Document};

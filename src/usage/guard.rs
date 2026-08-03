@@ -69,9 +69,31 @@ pub struct LlmGuard {
     slots: Mutex<HashMap<String, Arc<Semaphore>>>,
     /// `0.0` disables the daily ceiling.
     daily_credit_cap: f64,
-    /// `(UTC day, credits spent that day)`. Counts every caller: the ceiling
-    /// bounds what the instance spends, not what any one caller spends.
-    day: Mutex<(NaiveDate, f64)>,
+    /// `(UTC day, credits spent that day, of which by background work)`.
+    ///
+    /// The ceiling is checked against the total — it bounds what the instance
+    /// spends, not what any one caller spends. The background figure is kept
+    /// alongside so a long-running job can measure its own cost without
+    /// counting everyone else's chat.
+    day: Mutex<DailySpend>,
+}
+
+/// Credits spent on one UTC day.
+#[derive(Debug, Clone, Copy)]
+struct DailySpend {
+    date: NaiveDate,
+    total: f64,
+    system: f64,
+}
+
+impl DailySpend {
+    fn new(date: NaiveDate) -> Self {
+        Self {
+            date,
+            total: 0.0,
+            system: 0.0,
+        }
+    }
 }
 
 impl LlmGuard {
@@ -80,7 +102,7 @@ impl LlmGuard {
             max_concurrent_per_caller,
             slots: Mutex::new(HashMap::new()),
             daily_credit_cap,
-            day: Mutex::new((today, 0.0)),
+            day: Mutex::new(DailySpend::new(today)),
         }
     }
 
@@ -122,30 +144,33 @@ impl LlmGuard {
             return;
         }
         let mut day = self.day.lock().expect("daily spend counter poisoned");
-        if day.0 != today {
-            *day = (today, 0.0);
+        if day.date != today {
+            *day = DailySpend::new(today);
         }
-        let before = day.1;
-        day.1 += credits;
+        let before = day.total;
+        day.total += credits;
+        if matches!(key, UsageKey::System) {
+            day.system += credits;
+        }
 
         // Log exactly once, on the call that crosses the line, so the operator
         // sees when it happened rather than a flood of identical errors. Both
         // thresholds are worth a line: the first says indexing has stopped, the
         // second that everything has.
         let system_ceiling = self.daily_credit_cap * SYSTEM_SHARE_OF_CEILING;
-        if before < system_ceiling && day.1 >= system_ceiling {
+        if before < system_ceiling && day.total >= system_ceiling {
             tracing::warn!(
                 ceiling = system_ceiling,
-                spent = day.1,
+                spent = day.total,
                 actor_kind = key.kind(),
                 "daily AI spend reserve for background work is used up — indexing pauses until \
                  UTC midnight, interactive use continues"
             );
         }
-        if before < self.daily_credit_cap && day.1 >= self.daily_credit_cap {
+        if before < self.daily_credit_cap && day.total >= self.daily_credit_cap {
             tracing::error!(
                 cap = self.daily_credit_cap,
-                spent = day.1,
+                spent = day.total,
                 "daily LLM spend ceiling reached — AI features are refusing new calls until \
                  UTC midnight"
             );
@@ -166,7 +191,25 @@ impl LlmGuard {
             return false;
         }
         let day = self.day.lock().expect("daily spend counter poisoned");
-        day.0 == today && day.1 >= self.ceiling_for(key)
+        day.date == today && day.total >= self.ceiling_for(key)
+    }
+
+    /// Whether a call from this caller would be admitted by the ceiling.
+    ///
+    /// Lets a queue hold back rather than dequeue work it cannot pay for —
+    /// asking first is the difference between pausing and losing the item.
+    pub fn has_headroom(&self, key: &UsageKey, today: NaiveDate) -> bool {
+        !self.ceiling_reached_for(key, today)
+    }
+
+    /// Credits background work has spent today, ignoring everyone else.
+    pub fn system_spend(&self, today: NaiveDate) -> f64 {
+        let day = self.day.lock().expect("daily spend counter poisoned");
+        if day.date == today {
+            day.system
+        } else {
+            0.0
+        }
     }
 
     fn acquire_slot(&self, key: &UsageKey) -> Result<Option<OwnedSemaphorePermit>, AppError> {
@@ -231,6 +274,53 @@ pub async fn admit(key: &UsageKey, plan: Option<&str>) -> Result<Admission, AppE
     };
     admission.budget = super::budget::reserve(key, plan).await?;
     Ok(admission)
+}
+
+/// Whether the process-wide ceiling would currently admit this caller.
+///
+/// `true` with no guard installed: nothing is enforced, so nothing is held back.
+pub fn has_headroom(key: &UsageKey) -> bool {
+    GUARD
+        .get()
+        .is_none_or(|guard| guard.has_headroom(key, chrono::Utc::now().date_naive()))
+}
+
+/// Refuse the call when the process-wide ceiling is exhausted for this caller.
+///
+/// The ceiling only, with no concurrency slot: for a step that runs *inside* an
+/// already-admitted call — embedding a chat query, say — taking a second slot
+/// would have the caller compete with itself and be refused at a cap it is
+/// within.
+pub fn require_headroom(key: &UsageKey) -> Result<(), AppError> {
+    if has_headroom(key) {
+        return Ok(());
+    }
+    metrics::counter!(
+        "lekton_llm_daily_cap_rejections_total",
+        "actor_kind" => key.kind(),
+    )
+    .increment(1);
+    Err(AppError::TooManyRequests(match key {
+        UsageKey::System => {
+            "The daily AI spending reserve for background work is used up. Indexing resumes \
+             after UTC midnight."
+                .to_string()
+        }
+        _ => "The daily AI usage limit for this instance has been reached. \
+              Please try again tomorrow."
+            .to_string(),
+    }))
+}
+
+/// Credits background work has spent today against the process-wide guard.
+///
+/// `0.0` with no guard installed, which is what the eval binaries and the tests
+/// see.
+pub fn system_spend_today() -> f64 {
+    GUARD
+        .get()
+        .map(|guard| guard.system_spend(chrono::Utc::now().date_naive()))
+        .unwrap_or_default()
 }
 
 /// Charge credits against the process-wide daily ceiling.
@@ -310,6 +400,42 @@ mod tests {
             guard.admit(&user("u1"), today()).is_ok(),
             "a person must still be served from the reserve indexing left behind"
         );
+    }
+
+    #[test]
+    fn headroom_answers_before_the_work_is_taken_off_the_queue() {
+        let guard = LlmGuard::new(0, 100.0, today());
+        assert!(guard.has_headroom(&UsageKey::System, today()));
+
+        // Past the background reserve: indexing must hold back, while a person
+        // is still served.
+        guard.spend(&user("u1"), 85.0, today());
+
+        assert!(!guard.has_headroom(&UsageKey::System, today()));
+        assert!(guard.has_headroom(&user("u1"), today()));
+    }
+
+    #[test]
+    fn background_spend_is_measured_apart_from_everyone_elses() {
+        // A long-running index needs to know what *it* cost, not what the
+        // instance cost while it happened to be running.
+        let guard = LlmGuard::new(0, 100.0, today());
+
+        guard.spend(&user("u1"), 30.0, today());
+        guard.spend(&UsageKey::System, 7.0, today());
+        guard.spend(&UsageKey::ServiceToken("t".into()), 5.0, today());
+
+        assert_eq!(guard.system_spend(today()), 7.0);
+    }
+
+    #[test]
+    fn background_spend_resets_with_the_day() {
+        let guard = LlmGuard::new(0, 100.0, today());
+        guard.spend(&UsageKey::System, 7.0, today());
+
+        let tomorrow = NaiveDate::from_ymd_opt(2026, 8, 2).unwrap();
+
+        assert_eq!(guard.system_spend(tomorrow), 0.0);
     }
 
     #[test]

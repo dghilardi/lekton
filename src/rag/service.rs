@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::config::RagConfig;
 use crate::error::AppError;
+use crate::usage::UsageKey;
 
 use super::embedding::{build_embedding_service, EmbeddingService};
 use super::splitter::split_document;
@@ -152,7 +153,10 @@ impl RagService for DefaultRagService {
                 format!("{}\n\n{}", prefix, c.text)
             })
             .collect();
-        let vectors = self.embedding.embed(&embedding_texts).await?;
+        let vectors = self
+            .embedding
+            .embed(&UsageKey::System, &embedding_texts)
+            .await?;
 
         // 3. Build Qdrant points, skipping any chunk whose embedding is empty.
         // Some embedding backends (e.g. Ollama) return [] for whitespace-only
@@ -265,7 +269,10 @@ impl RagService for DefaultRagService {
         }
 
         // 2. Embed (cache-backed), skipping any chunk whose embedding is empty.
-        let vectors = self.embedding.embed(&embedding_texts).await?;
+        let vectors = self
+            .embedding
+            .embed(&UsageKey::System, &embedding_texts)
+            .await?;
         let points: Vec<VectorPoint> = metas
             .into_iter()
             .zip(vectors)
@@ -382,7 +389,11 @@ mod tests {
 
     #[async_trait]
     impl EmbeddingService for FakeEmbedding {
-        async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, AppError> {
+        async fn embed(
+            &self,
+            _key: &UsageKey,
+            texts: &[String],
+        ) -> Result<Vec<Vec<f32>>, AppError> {
             Ok(texts.iter().map(|_| vec![0.1, 0.2, 0.3]).collect())
         }
     }

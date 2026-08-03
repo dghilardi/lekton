@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.30.1] 2026-08-03
+
 ### Added
 - LLM token accounting: every call to the chat, summary, analyzer, HyDE, query-rewriter, learn, VLM and embedding models now records the provider's reported token usage as Prometheus counters (`lekton_llm_tokens_total`, `lekton_llm_requests_total`), labelled by feature and model. Calls whose provider reports no usage are estimated and labelled as such, so they stay visible in the totals instead of looking free.
 - Per-caller attribution of LLM spend, behind `usage.event_log` (off by default): one `llm_usage_events` document per call recording who spent what, distinguishing a user, a machine token, an anonymous caller and background work. Events are written off the request path and expire after 90 days.

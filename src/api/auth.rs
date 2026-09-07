@@ -236,7 +236,8 @@ pub async fn refresh_handler(
 
     match refresh_handler_inner(&app_state, jar).await {
         Ok(resp) => resp.into_response(),
-        Err((jar, err)) => {
+        Err(error) => {
+            let (jar, err) = *error;
             let body = serde_json::json!({ "error": err.to_string() });
             (StatusCode::UNAUTHORIZED, jar, axum::Json(body)).into_response()
         }
@@ -247,15 +248,15 @@ pub async fn refresh_handler(
 async fn refresh_handler_inner(
     app_state: &AppState,
     jar: CookieJar,
-) -> Result<(CookieJar, axum::Json<RefreshResponse>), (CookieJar, AppError)> {
+) -> Result<(CookieJar, axum::Json<RefreshResponse>), Box<(CookieJar, AppError)>> {
     let raw_token = jar
         .get(REFRESH_TOKEN_COOKIE)
         .map(|c| c.value().to_string())
         .ok_or_else(|| {
-            (
+            Box::new((
                 jar.clone(),
                 AppError::Auth("No refresh token cookie".into()),
-            )
+            ))
         })?;
 
     let clear_all = |jar: CookieJar| {
@@ -283,15 +284,15 @@ async fn refresh_handler_inner(
                 .add(logged_in_cookie(ttl_days, secure));
             Ok((jar, axum::Json(RefreshResponse { user: auth_user })))
         }
-        Err(RefreshError::Internal(e)) => Err((jar.clone(), e)),
-        Err(RefreshError::NotFound) => Err((
+        Err(RefreshError::Internal(e)) => Err(Box::new((jar.clone(), e))),
+        Err(RefreshError::NotFound) => Err(Box::new((
             clear_all(jar),
             AppError::Auth("Refresh token not found".into()),
-        )),
-        Err(RefreshError::InvalidOrReused) => Err((
+        ))),
+        Err(RefreshError::InvalidOrReused) => Err(Box::new((
             clear_all(jar),
             AppError::Auth("Refresh token is expired or revoked".into()),
-        )),
+        ))),
     }
 }
 

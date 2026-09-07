@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Updated the transitive `h2` dependency to resolve a denial-of-service vulnerability in HTTP/2 DATA-frame handling, with a documented temporary exception for the unpatchable AWS SDK compatibility path.
+
 ## [0.30.1] 2026-08-03
 
 ### Added

@@ -162,8 +162,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain
+        run: rustup toolchain install
 
       - name: Publish lekton-sync to crates.io
         run: cargo publish -p lekton-sync

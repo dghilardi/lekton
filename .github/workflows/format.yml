@@ -17,9 +17,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustup component add rustfmt
 
       - uses: Swatinem/rust-cache@v2
 
@@ -32,9 +31,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustup component add clippy
 
       - uses: Swatinem/rust-cache@v2
 

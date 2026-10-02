@@ -38,7 +38,7 @@ jobs:
           --health-retries 5
 
       meilisearch:
-        image: getmeili/meilisearch:v1.13.3
+        image: getmeili/meilisearch:v1.54.3
         ports:
           - 7700:7700
         env:

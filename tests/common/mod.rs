@@ -86,7 +86,8 @@ impl TestEnv {
             .with_name("pgsty/minio")
             .with_tag("RELEASE.2026-08-04T00-00-00Z")
             .start();
-        let meili_fut = Meilisearch::default().start();
+        // Same Meilisearch version as docker-compose.yml and the e2e workflow.
+        let meili_fut = Meilisearch::default().with_tag("v1.54.3").start();
         let (mongo_container, minio_container, meili_container) =
             tokio::join!(mongo_fut, minio_fut, meili_fut);
         let mongo_container = mongo_container.expect("Failed to start MongoDB container");

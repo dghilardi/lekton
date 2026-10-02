@@ -155,6 +155,30 @@ curl -X POST http://localhost/api/v1/admin/rag/reindex \
   -H "Authorization: Bearer $SERVICE_TOKEN"
 ```
 
+### Upgrading
+
+Qdrant only guarantees compatibility between consecutive minor versions, for both the storage and the client. Lekton uses `qdrant-client` 1.19 and is tested against Qdrant 1.19. To upgrade a server running 1.17:
+
+1. Take a snapshot (see above).
+2. Upgrade Qdrant to the latest 1.18.x and wait until every collection reports `green` (`GET /collections/lekton`). Do not skip 1.18: Qdrant does not support upgrading across more than one minor version.
+3. Deploy the new Lekton version.
+4. Upgrade Qdrant to 1.19.x.
+
+Re-indexing instead of upgrading recomputes every embedding, which costs embedding-provider credits.
+
+---
+
+## Meilisearch
+
+The search index is derived from MongoDB and can always be rebuilt with a full re-index (`/admin/settings` → *Search* → *Re-index*, or `POST /api/v1/admin/search/reindex` as an administrator).
+
+### Upgrading
+
+Lekton is tested against Meilisearch 1.54. A Meilisearch database only opens with the version that created it, so a new image needs one of:
+
+- **In-place upgrade**: take a snapshot (`POST /snapshots`), then start the new version with `MEILI_UPGRADE_DB=true` (`docker-compose.yml` sets it). Works for databases created by Meilisearch 1.12 or later; the upgrade is not atomic, so keep the snapshot until it succeeds.
+- **Fresh index**: start the new version on an empty data directory and run a full re-index. Use this for databases older than 1.12 or if the in-place upgrade fails.
+
 ---
 
 ## Service token rotation

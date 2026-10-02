@@ -38,15 +38,17 @@ services:
   # Meilisearch — Full-text search engine
   # ===========================================================================
   meilisearch:
-    image: getmeili/meilisearch:v1.49.0
+    image: getmeili/meilisearch:v1.54.3
     ports:
       - "7700:7700"
     environment:
       - MEILI_MASTER_KEY=dev-master-key-change-in-prod
       - MEILI_ENV=development
       - MEILI_NO_ANALYTICS=true
+      # Upgrade the on-disk database in place when the image version changes.
+      - MEILI_UPGRADE_DB=true
     volumes:
-      - meilisearch_data:/meili_data_1_49
+      - meilisearch_data:/meili_data
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:7700/health"]
       interval: 5s
@@ -109,7 +111,7 @@ services:
   # Qdrant — Vector database for RAG
   # ===========================================================================
   qdrant:
-    image: qdrant/qdrant:v1.17
+    image: qdrant/qdrant:v1.19
     ports:
       - "6333:6333" # HTTP API
       - "6334:6334" # gRPC API

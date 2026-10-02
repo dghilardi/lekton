@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- Meilisearch is now 1.54.3 in `docker-compose.yml`, CI and the integration tests, which previously used three different versions; the compose service persists its data again and upgrades it in place.
+- Updated Qdrant to 1.19 (`qdrant-client` and the server image). Existing servers on 1.17 must upgrade through 1.18 first; see `docs/operations.md`.
 - Updated `cargo-leptos` to 0.3.10 and `wasm-bindgen` to 0.2.129; Docker now installs the matching `wasm-bindgen-cli` like CI instead of downloading it at build time.
 - Updated the Rust and npm dependencies within their declared version ranges, including Leptos 0.8.21, the AsyncAPI viewer 3.2, Tailwind CSS 4.3.3, DaisyUI 5.7 and Playwright 1.63.
 

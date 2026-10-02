@@ -15,7 +15,6 @@ ignore = [
     { id = "RUSTSEC-2025-0012", reason = "backoff: transitive via async-openai, unmaintained, no alternative" },
     { id = "RUSTSEC-2024-0384", reason = "instant: transitive via async-openai's backoff, unmaintained, no alternative" },
     { id = "RUSTSEC-2023-0071", reason = "rsa: transitive via openidconnect, only used for public-key signature verification; Marvin Attack targets private-key operations and no patched rsa release exists" },
-    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile: transitive via qdrant-client's tonic 0.12, unmaintained, no upgrade within qdrant-client 1.17" },
     { id = "RUSTSEC-2025-0141", reason = "bincode: transitive via syntect (used for syntax set serialization); governance issue, not a security vulnerability, no alternative in syntect" },
     { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2: transitive via leptos/leptos_router/reactive_stores macros; no stable upstream release removes it yet, and even leptos 0.9.0-alpha still depends on it" },
 ]

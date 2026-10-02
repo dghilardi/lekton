@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Updated `rustls` to resolve a TLS 1.3 handshake validation advisory, and switched test infrastructure to a still-published MinIO image.
 - Restored compatibility with the current Clippy lint set for refresh-token error handling.
 - Updated the transitive `h2` dependency to resolve a denial-of-service vulnerability in HTTP/2 DATA-frame handling, with a documented temporary exception for the unpatchable AWS SDK compatibility path.
 

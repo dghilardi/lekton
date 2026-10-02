@@ -4,7 +4,9 @@
 #   lekton-<version>-<target>.(tar.gz|zip)       server binary + site assets
 #   lekton-sync-<version>-<target>.(tar.gz|zip)  sync CLI
 #
-# Windows targets are zipped, every other target is a gzipped tarball.
+# Each archive is produced only when its binary is present in BIN_DIR (Linux
+# builds the server for glibc and the CLI for musl). Windows targets are
+# zipped, every other target is a gzipped tarball.
 #
 # Usage: scripts/package-release.sh VERSION TARGET BIN_DIR SITE_DIR OUT_DIR
 #   BIN_DIR   directory containing lekton[.exe] and lekton-sync[.exe]
@@ -37,19 +39,23 @@ archive() {
   fi
 }
 
-SERVER="lekton-${VERSION}-${TARGET}"
-mkdir -p "${WORK}/${SERVER}"
-install -m 0755 "${BIN_DIR}/lekton${EXE}" "${WORK}/${SERVER}/lekton${EXE}"
-cp -r "${SITE_DIR}" "${WORK}/${SERVER}/site"
-cp LICENSE README.md "${WORK}/${SERVER}/"
-cp .env.example "${WORK}/${SERVER}/lekton.env.example"
-archive "${SERVER}"
+if [ -f "${BIN_DIR}/lekton${EXE}" ]; then
+  SERVER="lekton-${VERSION}-${TARGET}"
+  mkdir -p "${WORK}/${SERVER}"
+  install -m 0755 "${BIN_DIR}/lekton${EXE}" "${WORK}/${SERVER}/lekton${EXE}"
+  cp -r "${SITE_DIR}" "${WORK}/${SERVER}/site"
+  cp LICENSE README.md "${WORK}/${SERVER}/"
+  cp .env.example "${WORK}/${SERVER}/lekton.env.example"
+  archive "${SERVER}"
+  echo "Packaged ${SERVER} into ${OUT_DIR}"
+fi
 
-SYNC="lekton-sync-${VERSION}-${TARGET}"
-mkdir -p "${WORK}/${SYNC}"
-install -m 0755 "${BIN_DIR}/lekton-sync${EXE}" "${WORK}/${SYNC}/lekton-sync${EXE}"
-cp LICENSE "${WORK}/${SYNC}/"
-cp cli/README.md "${WORK}/${SYNC}/README.md"
-archive "${SYNC}"
-
-echo "Packaged ${SERVER} and ${SYNC} into ${OUT_DIR}"
+if [ -f "${BIN_DIR}/lekton-sync${EXE}" ]; then
+  SYNC="lekton-sync-${VERSION}-${TARGET}"
+  mkdir -p "${WORK}/${SYNC}"
+  install -m 0755 "${BIN_DIR}/lekton-sync${EXE}" "${WORK}/${SYNC}/lekton-sync${EXE}"
+  cp LICENSE "${WORK}/${SYNC}/"
+  cp cli/README.md "${WORK}/${SYNC}/README.md"
+  archive "${SYNC}"
+  echo "Packaged ${SYNC} into ${OUT_DIR}"
+fi

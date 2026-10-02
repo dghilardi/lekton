@@ -69,19 +69,35 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux builds use the oldest supported Ubuntu to keep the glibc
-          # requirement low (2.35: Ubuntu 22.04+, Debian 12+).
+          # The Linux server is built on the oldest supported Ubuntu to keep
+          # the glibc requirement low (2.35: Ubuntu 22.04+, Debian 12+). It
+          # stays dynamic because it loads libpdfium at runtime.
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-22.04
+            server: true
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-22.04-arm
+            server: true
+          # The Linux CLI is fully static so it runs on any distribution.
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-22.04
+            sync: true
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-22.04-arm
+            sync: true
           - target: x86_64-pc-windows-msvc
             os: windows-latest
+            server: true
+            sync: true
           - target: aarch64-apple-darwin
             os: macos-latest
+            server: true
+            sync: true
           # Cross-compiled on Apple Silicon: the binaries cannot run on the runner.
           - target: x86_64-apple-darwin
             os: macos-latest
+            server: true
+            sync: true
             cross: true
 
     defaults:
@@ -98,21 +114,29 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
+      - name: Install musl tools
+        if: ${{ contains(matrix.target, 'musl') }}
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
       # build.rs bundles the browser viewers from node_modules.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        if: ${{ matrix.server }}
         with:
           node-version: 22
           cache: 'npm'
 
-      - run: npm ci
+      - if: ${{ matrix.server }}
+        run: npm ci
 
       - name: Build lekton
+        if: ${{ matrix.server }}
         # cargo-leptos normally provides this; the server reads it at compile time.
         env:
           LEPTOS_OUTPUT_NAME: lekton
         run: cargo build --release --locked --target ${{ matrix.target }} -p lekton --bin lekton --features ssr
 
       - name: Build lekton-sync
+        if: ${{ matrix.sync }}
         run: cargo build --release --locked --target ${{ matrix.target }} -p lekton-sync
 
       - name: Collect binaries
@@ -120,11 +144,14 @@ jobs:
           EXE=""
           [[ "${{ matrix.target }}" == *windows* ]] && EXE=".exe"
           mkdir -p dist
-          cp "target/${{ matrix.target }}/release/lekton${EXE}" dist/
-          cp "target/${{ matrix.target }}/release/lekton-sync${EXE}" dist/
+          for bin in lekton lekton-sync; do
+            if [ -f "target/${{ matrix.target }}/release/${bin}${EXE}" ]; then
+              cp "target/${{ matrix.target }}/release/${bin}${EXE}" dist/
+            fi
+          done
 
       - name: Smoke test lekton-sync
-        if: ${{ !matrix.cross }}
+        if: ${{ matrix.sync && !matrix.cross }}
         run: ./dist/lekton-sync* --help > /dev/null
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -158,8 +185,10 @@ jobs:
             target="${dir#artifacts/bin-}"
             bash scripts/package-release.sh "$VERSION" "$target" "$dir" artifacts/site release
           done
-          bash scripts/package-deb.sh "$VERSION" amd64 artifacts/bin-x86_64-unknown-linux-gnu artifacts/site release
-          bash scripts/package-deb.sh "$VERSION" arm64 artifacts/bin-aarch64-unknown-linux-gnu artifacts/site release
+          bash scripts/package-deb.sh "$VERSION" amd64 artifacts/bin-x86_64-unknown-linux-gnu \
+            artifacts/bin-x86_64-unknown-linux-musl artifacts/site release
+          bash scripts/package-deb.sh "$VERSION" arm64 artifacts/bin-aarch64-unknown-linux-gnu \
+            artifacts/bin-aarch64-unknown-linux-musl artifacts/site release
           (cd release && sha256sum * > SHA256SUMS)
           ls -l release
           cat release/SHA256SUMS
@@ -185,6 +214,16 @@ jobs:
           curl -sf -o /dev/null http://127.0.0.1:3000/pkg/lekton.css
           curl -sf -o /dev/null http://127.0.0.1:3000/js/mermaid.esm.min.mjs
           echo "Packaged server is serving pages and assets"
+
+      - name: Smoke test lekton-sync on Ubuntu 18.04
+        # The static CLI must install and run on distributions older than the
+        # server's glibc baseline.
+        run: |
+          docker run --rm -v "$PWD/release:/release:ro" ubuntu:18.04 sh -c \
+            'dpkg -i /release/lekton-sync_*_amd64.deb && lekton-sync --help > /dev/null'
+          tar -xzf release/lekton-sync-*-x86_64-unknown-linux-musl.tar.gz -C "$RUNNER_TEMP"
+          docker run --rm -v "$RUNNER_TEMP:/sync:ro" ubuntu:18.04 sh -c \
+            '/sync/lekton-sync-*-x86_64-unknown-linux-musl/lekton-sync --help > /dev/null'
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

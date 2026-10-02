@@ -71,7 +71,9 @@ The application will be available at `http://localhost:3000`.
 Each [GitHub release](https://github.com/dghilardi/lekton/releases) ships `lekton` and `lekton-sync` for Linux (x86_64, arm64), macOS (Apple Silicon, Intel) and Windows (x86_64), plus `.deb` packages and a `SHA256SUMS` file.
 
 - **Archives**: the `lekton` archive contains the server binary and its `site/` assets. Run it from the extracted directory with `LEPTOS_SITE_ROOT=site ./lekton`, configured through `LKN__*` variables (see `lekton.env.example`).
-- **Debian/Ubuntu** (22.04+ / Debian 12+): `sudo apt install ./lekton_<version>_amd64.deb`, edit `/etc/lekton/lekton.env`, then `sudo systemctl enable --now lekton`. The service is not started until it is configured.
+- **Debian/Ubuntu** (22.04+ / Debian 12+): `sudo apt install ./lekton_<version>_amd64.deb`, edit `/etc/lekton/lekton.env`, then `sudo systemctl enable --now lekton`. The service is not started until it is configured. On older distributions run the server with Docker.
+- **`lekton-sync` on Linux** is statically linked (musl) and runs on any distribution, including Ubuntu 18.04.
+- **Verifying downloads**: `sha256sum -c SHA256SUMS --ignore-missing`, or `gh attestation verify <file> --repo dghilardi/lekton` to check the file was built by this repository's release workflow.
 
 ### Development Mode (Cargo + Docker)
 

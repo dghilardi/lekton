@@ -8,3 +8,33 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
+
+  # One Cargo workspace (server and lekton-sync share the root Cargo.lock).
+  # Minor and patch updates are grouped; major updates get their own PRs.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      cargo:
+        update-types: [minor, patch]
+    ignore:
+      # Must match the wasm-bindgen-cli pinned in CI and the Dockerfile:
+      # bump them together by hand.
+      - dependency-name: wasm-bindgen
+      - dependency-name: wasm-bindgen-futures
+      - dependency-name: js-sys
+      - dependency-name: web-sys
+      # Must stay within one minor version of the Qdrant server: bump it
+      # together with the server image (see docs/operations.md).
+      - dependency-name: qdrant-client
+        update-types: ["version-update:semver-minor"]
+
+  # Build-time JS (Tailwind, DaisyUI, the bundled viewers) and Playwright.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm:
+        update-types: [minor, patch]

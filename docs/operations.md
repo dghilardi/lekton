@@ -235,6 +235,8 @@ cargo deny check licenses
 
 When a new advisory appears, either upgrade the affected crate or add a justified `ignore` entry in `deny.toml`.
 
+Dependabot (`.github/dependabot.yml`) opens weekly update PRs for GitHub Actions, Cargo and npm, grouping minor and patch updates. It skips the `wasm-bindgen` crates, which must match the `wasm-bindgen-cli` pinned in CI and the Dockerfile, and minor `qdrant-client` updates, which must follow the Qdrant server (see [Qdrant upgrading](#upgrading)).
+
 The npm packages are only used at build time: Mermaid and the schema viewers are copied as prebuilt bundles, so `npm audit` reports on build tooling and on the versions of those bundles.
 
 ### Accepted advisories

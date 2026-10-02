@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Dependabot now proposes weekly Cargo and npm updates, in addition to GitHub Actions.
+
 ### Changed
 - Meilisearch is now 1.54.3 in `docker-compose.yml`, CI and the integration tests, which previously used three different versions; the compose service persists its data again and upgrades it in place.
 - Updated Qdrant to 1.19 (`qdrant-client` and the server image). Existing servers on 1.17 must upgrade through 1.18 first; see `docs/operations.md`.

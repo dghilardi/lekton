@@ -12,6 +12,41 @@ jobs:
   e2e-tests:
     uses: ./.github/workflows/e2e-tests.yml
 
+  binaries:
+    uses: ./.github/workflows/build-binaries.yml
+
+  github-release:
+    needs: [integration-tests, e2e-tests, binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: release
+
+      - name: Check tag matches the crate version
+        run: |
+          VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
+          if [ "$VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match Cargo.toml version $VERSION"
+            exit 1
+          fi
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash scripts/changelog-section.sh "$GITHUB_REF_NAME" > notes.md
+          gh release create "$GITHUB_REF_NAME" release/* \
+            --verify-tag \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file notes.md
+
   docker:
     needs: [integration-tests, e2e-tests]
     runs-on: ubuntu-latest

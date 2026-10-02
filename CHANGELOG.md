@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.31.1] 2026-10-02
+
 ### Added
 - Statically linked `lekton-sync` for Linux (archive and `.deb`) that runs on any distribution, including Ubuntu 18.04.
 - Release assets carry a signed build provenance attestation.

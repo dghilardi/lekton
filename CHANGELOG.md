@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+- Resolved the RustSec advisories in `hickory-proto`, `h2`, `rustls-webpki`, `quinn-proto`, `lru`, `event-listener` and `astral-tokio-tar` by updating `mongodb`, the AWS SDK and the test dependencies, and by dropping the AWS SDK's legacy TLS client.
+- Updated Mermaid and the Scalar API reference viewer and refreshed the npm build dependencies to resolve the `npm audit` advisories; the remaining accepted advisories are documented in `docs/operations.md`.
+- `cargo deny` now audits the server and browser dependencies, not only the default build.
+
 ## [0.31.1] 2026-10-02
 
 ### Added

@@ -200,6 +200,7 @@ The JWT secret (`LKN__AUTH__JWT_SECRET`) signs all access and refresh tokens. Ro
 - Weekly on Monday at 06:00 UTC (`.github/workflows/deny.yml`).
 
 The `[advisories]` section in `deny.toml` already covers both advisories and licenses — no separate `cargo audit` step is needed.
+The dependency graph is resolved with all features enabled (`[graph] all-features = true`), so the server (`ssr`) and browser (`hydrate`) dependencies are both audited.
 
 To run locally:
 
@@ -209,3 +210,14 @@ cargo deny check licenses
 ```
 
 When a new advisory appears, either upgrade the affected crate or add a justified `ignore` entry in `deny.toml`.
+
+The npm packages are only used at build time: Mermaid and the schema viewers are copied as prebuilt bundles, so `npm audit` reports on build tooling and on the versions of those bundles.
+
+### Accepted advisories
+
+Advisories without a patched release are accepted only after weighing their impact:
+
+| Advisory | Introduced by | Impact | Options |
+|----------|---------------|--------|---------|
+| RUSTSEC-2023-0071 (`rsa` timing side channel) | `openidconnect` 4 | Lekton only verifies RS256 ID-token signatures with public keys; the attack needs private-key operations. | Move to `rsa` 0.10 once it is stable and `openidconnect` adopts it. |
+| GHSA-866g-f22w-33x8 (low, `@ai-sdk/provider-utils` resource consumption) | `@scalar/api-reference` → `@scalar/agent-chat`, which pins `ai` 6.0.33 | The Scalar agent chat is not configured by Lekton; the shipped viewer is Scalar's prebuilt bundle, so an npm override would not change it. | Wait for a Scalar release that bumps the pin, or pass `agent: { disabled: true }` to the viewer. |

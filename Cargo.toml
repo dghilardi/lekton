@@ -54,7 +54,8 @@ mongodb = { version = "3", optional = true }
 bson = { version = "2", features = ["chrono-0_4"] }
 
 # Storage (S3)
-aws-sdk-s3 = { version = "1", optional = true }
+# Default features minus the legacy `rustls` client (hyper 0.14 / rustls 0.21)
+aws-sdk-s3 = { version = "1", default-features = false, features = ["sigv4a", "http-1x", "default-https-client", "rt-tokio"], optional = true }
 aws-config = { version = "1", optional = true }
 
 # Markdown rendering

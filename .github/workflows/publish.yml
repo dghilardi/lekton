@@ -5,7 +5,26 @@ on:
     tags:
       - '[0-9]+.[0-9]+.[0-9]+'
 
+# Nothing is published until every build has succeeded:
+# verify + tests + binaries -> Docker images -> GitHub release -> crates.io.
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Check tag, crate versions and CHANGELOG entry
+        run: |
+          for manifest in Cargo.toml cli/Cargo.toml; do
+            VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$manifest" | head -1)"
+            if [ "$VERSION" != "$GITHUB_REF_NAME" ]; then
+              echo "Tag $GITHUB_REF_NAME does not match $manifest version $VERSION"
+              exit 1
+            fi
+          done
+          bash scripts/changelog-section.sh "$GITHUB_REF_NAME" > /dev/null
+
   integration-tests:
     uses: ./.github/workflows/integration-tests.yml
 
@@ -16,10 +35,12 @@ jobs:
     uses: ./.github/workflows/build-binaries.yml
 
   github-release:
-    needs: [integration-tests, e2e-tests, binaries]
+    needs: [docker, docker-cli, docker-cli-ci]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -29,13 +50,10 @@ jobs:
           name: release-assets
           path: release
 
-      - name: Check tag matches the crate version
-        run: |
-          VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
-          if [ "$VERSION" != "$GITHUB_REF_NAME" ]; then
-            echo "Tag $GITHUB_REF_NAME does not match Cargo.toml version $VERSION"
-            exit 1
-          fi
+      # Verifiable with `gh attestation verify <file> --repo dghilardi/lekton`.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: release/*
 
       - name: Create GitHub release
         env:
@@ -48,7 +66,7 @@ jobs:
             --notes-file notes.md
 
   docker:
-    needs: [integration-tests, e2e-tests]
+    needs: [verify, integration-tests, e2e-tests, binaries]
     runs-on: ubuntu-latest
 
     steps:
@@ -83,7 +101,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   docker-cli:
-    needs: [integration-tests, e2e-tests]
+    needs: [verify, integration-tests, e2e-tests, binaries]
     runs-on: ubuntu-latest
 
     steps:
@@ -119,7 +137,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   docker-cli-ci:
-    needs: [integration-tests, e2e-tests]
+    needs: [verify, integration-tests, e2e-tests, binaries]
     runs-on: ubuntu-latest
 
     steps:
@@ -156,7 +174,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   publish-cli:
-    needs: [docker, docker-cli, docker-cli-ci]
+    needs: [github-release]
     runs-on: ubuntu-latest
 
     steps:

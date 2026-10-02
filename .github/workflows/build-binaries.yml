@@ -174,8 +174,16 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
+      # Only our artifacts: on tags the run also holds Docker build records,
+      # which download-artifact cannot extract.
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
+          name: site
+          path: artifacts/site
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: bin-*
           path: artifacts
 
       - name: Package archives and Debian packages

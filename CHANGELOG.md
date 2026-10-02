@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Updated the Rust and npm dependencies within their declared version ranges, including Leptos 0.8.21, the AsyncAPI viewer 3.2, Tailwind CSS 4.3.3, DaisyUI 5.7 and Playwright 1.63.
+
 ### Security
 - Resolved the RustSec advisories in `hickory-proto`, `h2`, `rustls-webpki`, `quinn-proto`, `lru`, `event-listener` and `astral-tokio-tar` by updating `mongodb`, the AWS SDK and the test dependencies, and by dropping the AWS SDK's legacy TLS client.
 - Updated Mermaid and the Scalar API reference viewer and refreshed the npm build dependencies to resolve the `npm audit` advisories; the remaining accepted advisories are documented in `docs/operations.md`.

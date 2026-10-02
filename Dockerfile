@@ -3,7 +3,7 @@
 # =============================================================================
 FROM rust:1.99-bookworm AS chef
 
-RUN cargo install cargo-chef --locked && \
+RUN cargo install cargo-chef --version 0.1.78 --locked && \
     cargo install cargo-leptos --version 0.3.4 --locked && \
     rustup target add wasm32-unknown-unknown
 

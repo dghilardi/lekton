@@ -4,7 +4,7 @@
 FROM rust:1.99-bookworm AS chef
 
 RUN cargo install cargo-chef --locked && \
-    cargo install cargo-leptos --locked && \
+    cargo install cargo-leptos --version 0.3.4 --locked && \
     rustup target add wasm32-unknown-unknown
 
 WORKDIR /app

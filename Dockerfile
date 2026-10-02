@@ -55,10 +55,13 @@ RUN apt-get update && \
 
 # libpdfium for PDF attachment extraction (pdfium-render binds to it at runtime).
 # Only needed when features.attachment_indexing is enabled with PDF uploads;
-# absence degrades gracefully (PDF extraction fails, marking the asset). Pin a
-# specific release instead of `latest` for reproducible builds when needed.
-RUN curl -fsSL https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-linux-x64.tgz \
+# absence degrades gracefully (PDF extraction fails, marking the asset).
+# Pinned and checksummed for reproducible builds; bump both values together.
+ARG PDFIUM_RELEASE=8076
+ARG PDFIUM_SHA256=d9d67bc40af03aef4fe28a60b19b1086f28ace019c8c9caf19cb7fe3d14ceca3
+RUN curl -fsSL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F${PDFIUM_RELEASE}/pdfium-linux-x64.tgz" \
         -o /tmp/pdfium.tgz && \
+    echo "${PDFIUM_SHA256}  /tmp/pdfium.tgz" | sha256sum -c - && \
     tar -xzf /tmp/pdfium.tgz -C /tmp lib/libpdfium.so && \
     mv /tmp/lib/libpdfium.so /usr/lib/libpdfium.so && \
     rm -rf /tmp/pdfium.tgz /tmp/lib && \

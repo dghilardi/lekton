@@ -1,0 +1,22 @@
+[Unit]
+Description=Lekton internal developer portal
+Documentation=https://github.com/dghilardi/lekton
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Environment=LEPTOS_SITE_ROOT=/usr/share/lekton/site
+EnvironmentFile=/etc/lekton/lekton.env
+ExecStart=/usr/bin/lekton
+DynamicUser=yes
+StateDirectory=lekton
+WorkingDirectory=/var/lib/lekton
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,196 @@
+name: Build Binaries
+
+# Builds the release binaries for every supported platform and packages them
+# (archives, .deb, SHA256SUMS) into the `release-assets` artifact.
+# Called by publish.yml on tags; runs on pull requests touching the packaging.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/build-binaries.yml
+      - packaging/**
+      - scripts/package-*.sh
+  workflow_dispatch:
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The WASM/JS/CSS site is platform independent: build it once and ship it
+  # next to every server binary.
+  site:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-leptos@0.3.4,wasm-bindgen-cli@0.2.118
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Expose local Tailwind CLI
+        run: |
+          echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
+          echo "TAILWINDCSS_BINARY=$PWD/node_modules/.bin/tailwindcss" >> "$GITHUB_ENV"
+
+      - name: Build site
+        run: |
+          cargo leptos build --release --frontend-only
+          bash scripts/stage-site-assets.sh
+          test -f target/site/pkg/lekton.wasm
+          test -f target/site/pkg/lekton.js
+          test -f target/site/pkg/lekton.css
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: target/site/
+          if-no-files-found: error
+          retention-days: 7
+
+  binaries:
+    name: binaries (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux builds use the oldest supported Ubuntu to keep the glibc
+          # requirement low (2.35: Ubuntu 22.04+, Debian 12+).
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          # Cross-compiled on Apple Silicon: the binaries cannot run on the runner.
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            cross: true
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # build.rs bundles the browser viewers from node_modules.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Build lekton
+        # cargo-leptos normally provides this; the server reads it at compile time.
+        env:
+          LEPTOS_OUTPUT_NAME: lekton
+        run: cargo build --release --locked --target ${{ matrix.target }} -p lekton --bin lekton --features ssr
+
+      - name: Build lekton-sync
+        run: cargo build --release --locked --target ${{ matrix.target }} -p lekton-sync
+
+      - name: Collect binaries
+        run: |
+          EXE=""
+          [[ "${{ matrix.target }}" == *windows* ]] && EXE=".exe"
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/lekton${EXE}" dist/
+          cp "target/${{ matrix.target }}/release/lekton-sync${EXE}" dist/
+
+      - name: Smoke test lekton-sync
+        if: ${{ !matrix.cross }}
+        run: ./dist/lekton-sync* --help > /dev/null
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  package:
+    needs: [site, binaries]
+    runs-on: ubuntu-22.04
+
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package archives and Debian packages
+        run: |
+          VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
+          for dir in artifacts/bin-*; do
+            target="${dir#artifacts/bin-}"
+            bash scripts/package-release.sh "$VERSION" "$target" "$dir" artifacts/site release
+          done
+          bash scripts/package-deb.sh "$VERSION" amd64 artifacts/bin-x86_64-unknown-linux-gnu artifacts/site release
+          bash scripts/package-deb.sh "$VERSION" arm64 artifacts/bin-aarch64-unknown-linux-gnu artifacts/site release
+          (cd release && sha256sum * > SHA256SUMS)
+          ls -l release
+          cat release/SHA256SUMS
+
+      - name: Smoke test Debian packages
+        run: |
+          sudo apt-get install -y ./release/lekton_*_amd64.deb ./release/lekton-sync_*_amd64.deb
+          lekton-sync --help > /dev/null
+          systemctl cat lekton.service
+          # Start the packaged server against the MongoDB service and check it
+          # serves both SSR pages and the packaged site assets.
+          sudo env LEPTOS_SITE_ROOT=/usr/share/lekton/site LEPTOS_SITE_ADDR=127.0.0.1:3000 \
+            LKN__DATABASE__URI=mongodb://localhost:27017 LKN__DATABASE__NAME=lekton_smoke \
+            LKN__AUTH__DEMO_MODE=true LKN__STORAGE__BUCKET=lekton-smoke \
+            AWS_REGION=us-east-1 AWS_ACCESS_KEY_ID=smoke AWS_SECRET_ACCESS_KEY=smoke \
+            /usr/bin/lekton > lekton.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null http://127.0.0.1:3000/ && break
+            sleep 1
+          done
+          curl -sf -o /dev/null http://127.0.0.1:3000/ || { cat lekton.log; exit 1; }
+          curl -sf -o /dev/null http://127.0.0.1:3000/pkg/lekton.wasm
+          curl -sf -o /dev/null http://127.0.0.1:3000/pkg/lekton.css
+          curl -sf -o /dev/null http://127.0.0.1:3000/js/mermaid.esm.min.mjs
+          echo "Packaged server is serving pages and assets"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: release/
+          if-no-files-found: error
+          retention-days: 7

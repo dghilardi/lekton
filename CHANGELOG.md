@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- GitHub releases with the matching CHANGELOG notes and prebuilt `lekton` and `lekton-sync` binaries for Linux, macOS and Windows, `.deb` packages for Ubuntu/Debian and SHA256 checksums.
+
 ### Fixed
 - Updated `rustls` to resolve a TLS 1.3 handshake validation advisory, and switched test infrastructure to a still-published MinIO image.
 - Restored compatibility with the current Clippy lint set for refresh-token error handling.

@@ -66,6 +66,13 @@ The application will be available at `http://localhost:3000`.
 - Lekton application with demo auth mode
 - Automatic initialization of Garage (bucket creation, API keys)
 
+### Prebuilt Binaries
+
+Each [GitHub release](https://github.com/dghilardi/lekton/releases) ships `lekton` and `lekton-sync` for Linux (x86_64, arm64), macOS (Apple Silicon, Intel) and Windows (x86_64), plus `.deb` packages and a `SHA256SUMS` file.
+
+- **Archives**: the `lekton` archive contains the server binary and its `site/` assets. Run it from the extracted directory with `LEPTOS_SITE_ROOT=site ./lekton`, configured through `LKN__*` variables (see `lekton.env.example`).
+- **Debian/Ubuntu** (22.04+ / Debian 12+): `sudo apt install ./lekton_<version>_amd64.deb`, edit `/etc/lekton/lekton.env`, then `sudo systemctl enable --now lekton`. The service is not started until it is configured.
+
 ### Development Mode (Cargo + Docker)
 
 For faster development without rebuilding Docker containers, you can run the Rust application with `cargo` while keeping MongoDB and S3 storage in Docker.

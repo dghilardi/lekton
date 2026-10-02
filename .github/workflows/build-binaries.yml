@@ -175,7 +175,8 @@ jobs:
           # serves both SSR pages and the packaged site assets.
           sudo env LEPTOS_SITE_ROOT=/usr/share/lekton/site LEPTOS_SITE_ADDR=127.0.0.1:3000 \
             LKN__DATABASE__URI=mongodb://localhost:27017 LKN__DATABASE__NAME=lekton_smoke \
-            LKN__AUTH__DEMO_MODE=true \
+            LKN__AUTH__DEMO_MODE=true LKN__STORAGE__BUCKET=lekton-smoke \
+            AWS_REGION=us-east-1 AWS_ACCESS_KEY_ID=smoke AWS_SECRET_ACCESS_KEY=smoke \
             /usr/bin/lekton > lekton.log 2>&1 &
           for i in $(seq 1 30); do
             curl -sf -o /dev/null http://127.0.0.1:3000/ && break

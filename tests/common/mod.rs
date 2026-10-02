@@ -5,7 +5,7 @@ use std::sync::Arc;
 use axum::routing::{get, post};
 use axum::Router;
 use testcontainers::runners::AsyncRunner;
-use testcontainers::ContainerAsync;
+use testcontainers::{ContainerAsync, ImageExt};
 use testcontainers_modules::meilisearch::Meilisearch;
 use testcontainers_modules::minio::MinIO;
 use testcontainers_modules::mongo::Mongo;
@@ -81,7 +81,11 @@ impl TestEnv {
     pub async fn start() -> Self {
         // Start containers concurrently
         let mongo_fut = Mongo::default().start();
-        let minio_fut = MinIO::default().start();
+        // MinIO no longer publishes container images; use the community build.
+        let minio_fut = MinIO::default()
+            .with_name("pgsty/minio")
+            .with_tag("RELEASE.2026-08-04T00-00-00Z")
+            .start();
         let meili_fut = Meilisearch::default().start();
         let (mongo_container, minio_container, meili_container) =
             tokio::join!(mongo_fut, minio_fut, meili_fut);

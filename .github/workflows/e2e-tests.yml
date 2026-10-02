@@ -86,7 +86,7 @@ jobs:
             -p 9000:9000 \
             -e MINIO_ROOT_USER=minioadmin \
             -e MINIO_ROOT_PASSWORD=minioadmin \
-            quay.io/minio/minio:latest server /data --address :9000
+            pgsty/minio:RELEASE.2026-08-04T00-00-00Z server /data --address :9000
           # Wait for MinIO to be ready
           for i in $(seq 1 30); do
             if curl -sf http://localhost:9000/minio/health/live; then

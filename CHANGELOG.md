@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.31.0] 2026-10-02
+
 ### Added
 - GitHub releases with the matching CHANGELOG notes and prebuilt `lekton` and `lekton-sync` binaries for Linux, macOS and Windows, `.deb` packages for Ubuntu/Debian and SHA256 checksums.
 

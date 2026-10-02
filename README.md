@@ -38,7 +38,7 @@ Lekton decouples content from code, allowing microservices to push their documen
 ### Prerequisites
 
 -   [Rust](https://rustup.rs/) (stable toolchain)
--   [cargo-leptos](https://github.com/leptos-rs/cargo-leptos): `cargo install cargo-leptos --locked`
+-   [cargo-leptos](https://github.com/leptos-rs/cargo-leptos): `cargo install cargo-leptos --version 0.3.10 --locked` (the version used by CI and Docker). It downloads the `wasm-bindgen-cli` matching `Cargo.lock`; a globally installed `wasm-bindgen-cli` must match that version exactly.
 -   [Node.js](https://nodejs.org/) — required for Mermaid diagram assets (`npm ci` before building). **If you only need to check the Rust backend** (no UI assets), you can skip Node.js by disabling the default `mermaid` feature: `cargo check --no-default-features --features ssr`.
 -   [Docker](https://www.docker.com/) & [Docker Compose](https://docs.docker.com/compose/)
 

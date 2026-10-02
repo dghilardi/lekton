@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- Updated `cargo-leptos` to 0.3.10 and `wasm-bindgen` to 0.2.129; Docker now installs the matching `wasm-bindgen-cli` like CI instead of downloading it at build time.
 - Updated the Rust and npm dependencies within their declared version ranges, including Leptos 0.8.21, the AsyncAPI viewer 3.2, Tailwind CSS 4.3.3, DaisyUI 5.7 and Playwright 1.63.
 
 ### Security

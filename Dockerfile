@@ -3,8 +3,11 @@
 # =============================================================================
 FROM rust:1.99-bookworm AS chef
 
+# wasm-bindgen-cli must match the wasm-bindgen version in Cargo.lock (and the
+# CI pins); installing it stops cargo-leptos from downloading one at build time.
 RUN cargo install cargo-chef --version 0.1.78 --locked && \
-    cargo install cargo-leptos --version 0.3.4 --locked && \
+    cargo install cargo-leptos --version 0.3.10 --locked && \
+    cargo install wasm-bindgen-cli --version 0.2.129 --locked && \
     rustup target add wasm32-unknown-unknown
 
 WORKDIR /app

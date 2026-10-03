@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- `docker compose up` never started Lekton: the Qdrant healthcheck called `curl`, which the Qdrant image does not ship, so the service stayed unhealthy.
+
 ## [0.32.0] 2026-10-03
 
 ### Added

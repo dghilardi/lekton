@@ -9,6 +9,11 @@ echo "=== Garage Init: Starting bootstrap ==="
 ADMIN_URL="http://garage:3902"
 BEARER_TOKEN="demo-admin-token"
 
+# The S3 key Lekton is configured with (docker-compose.yml). Garage only
+# accepts its own key format: "GK" + 24 hex chars, and a 64-hex-char secret.
+ACCESS_KEY_ID="${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID is required}"
+SECRET_ACCESS_KEY="${S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY is required}"
+
 # 1. Get node status and extract node ID
 echo "Getting node status..."
 NODE_STATUS=$(curl -s -H "Authorization: Bearer $BEARER_TOKEN" "$ADMIN_URL/v1/status")
@@ -94,35 +99,18 @@ fi
 
 echo "Bucket ID: $BUCKET_ID"
 
-# 5. Create API key
-echo "Creating API key 'lekton-key'..."
-KEY_PAYLOAD='{"name":"lekton-key"}'
+# 5. Import the API key Lekton uses (a fresh key would have a random ID).
+echo "Importing API key $ACCESS_KEY_ID..."
+KEY_PAYLOAD="{\"name\":\"lekton-demo\",\"accessKeyId\":\"$ACCESS_KEY_ID\",\"secretAccessKey\":\"$SECRET_ACCESS_KEY\"}"
 
 KEY_RESPONSE=$(curl -s -X POST \
     -H "Authorization: Bearer $BEARER_TOKEN" \
     -H "Content-Type: application/json" \
     -d "$KEY_PAYLOAD" \
-    "$ADMIN_URL/v1/key")
+    "$ADMIN_URL/v1/key/import")
 
-echo "Key creation response: $KEY_RESPONSE"
-
-# Extract key credentials (accessKeyId starts with GK, secret is 64 hex chars)
-ACCESS_KEY_ID=$(echo "$KEY_RESPONSE" | grep -o '"accessKeyId"[[:space:]]*:[[:space:]]*"GK[^"]*"' | head -1 | grep -o 'GK[a-f0-9]*')
-SECRET_ACCESS_KEY=$(echo "$KEY_RESPONSE" | grep -o '"secretAccessKey"[[:space:]]*:[[:space:]]*"[a-f0-9]*"' | head -1 | grep -o '[a-f0-9]\{64\}')
-
-# If key already exists, list keys and get the lekton-key ID
-if [ -z "$ACCESS_KEY_ID" ]; then
-    echo "Key may already exist, listing keys..."
-    KEYS_LIST=$(curl -s -H "Authorization: Bearer $BEARER_TOKEN" "$ADMIN_URL/v1/key")
-    ACCESS_KEY_ID=$(echo "$KEYS_LIST" | grep -B5 '"name"[[:space:]]*:[[:space:]]*"lekton-key"' | grep -o '"accessKeyId"[[:space:]]*:[[:space:]]*"GK[^"]*"' | head -1 | grep -o 'GK[a-f0-9]*')
-    if [ -n "$ACCESS_KEY_ID" ]; then
-        echo "Found existing key: $ACCESS_KEY_ID (secret not retrievable for existing keys)"
-        SECRET_ACCESS_KEY="<existing-key-secret-not-accessible>"
-    fi
-fi
-
-echo "Access Key ID: $ACCESS_KEY_ID"
-echo "Secret Access Key: $SECRET_ACCESS_KEY"
+# On a re-run the key already exists and the import is rejected; that is fine.
+echo "Key import response: $KEY_RESPONSE"
 
 # 6. Grant bucket permissions to key
 if [ -n "$BUCKET_ID" ] && [ -n "$ACCESS_KEY_ID" ]; then
@@ -148,11 +136,6 @@ echo ""
 echo "  Bucket: lekton-docs"
 echo "  Bucket ID: $BUCKET_ID"
 echo "  Access Key ID: $ACCESS_KEY_ID"
-echo "  Secret Access Key: $SECRET_ACCESS_KEY"
 echo "  S3 Endpoint: http://garage:3900"
 echo "  S3 Region: garage"
-echo ""
-echo "IMPORTANT: Update your docker-compose.yml environment variables:"
-echo "  AWS_ACCESS_KEY_ID=$ACCESS_KEY_ID"
-echo "  AWS_SECRET_ACCESS_KEY=$SECRET_ACCESS_KEY"
 echo ""

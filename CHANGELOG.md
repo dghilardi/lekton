@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - Updated `config` to 0.15, `tower-http` to 0.7, `axum-extra` to 0.12 and the GitHub Actions used by CI and releases.
 
 ### Fixed
+- The `docker compose` demo works again: Garage is set up with the S3 key Lekton is configured with (it used to create a random one, so every upload failed), and the demo loader reaches Lekton, finds its files and sends the fields the ingest API now requires.
 - `[usage.pricing]` and `[usage.budget.plans]` names with uppercase letters (e.g. `Qwen/Qwen3-8B`) are no longer lowercased when the configuration loads, so those prices now apply instead of the fallback rate. A plan name that contains uppercase letters and was assigned to users from the lowercased list must be reassigned.
 - `docker compose up` never started Lekton: the Qdrant healthcheck called `curl`, which the Qdrant image does not ship, so the service stayed unhealthy.
 

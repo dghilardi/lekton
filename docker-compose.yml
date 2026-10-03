@@ -63,6 +63,10 @@ services:
     depends_on:
       garage:
         condition: service_healthy
+    environment:
+      # Must match AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY of the lekton service.
+      - S3_ACCESS_KEY_ID=GK39bcfbd23e8c8e22b17f3266
+      - S3_SECRET_ACCESS_KEY=077a96d818314a42a5e2e2aac9fddea549e3bb3ba36083fa0862a6f5b9a514e4
     volumes:
       - ./demo/garage-init.sh:/garage-init.sh:ro
     entrypoint: ["/bin/sh", "/garage-init.sh"]
@@ -89,8 +93,9 @@ services:
       - LKN__DATABASE__NAME=lekton
       - LKN__STORAGE__BUCKET=lekton-docs
       - LKN__STORAGE__ENDPOINT=http://garage:3900
-      - AWS_ACCESS_KEY_ID=lekton-demo-key
-      - AWS_SECRET_ACCESS_KEY=lekton-demo-secret
+      # Demo-only S3 key, imported into Garage by garage-init (same values there).
+      - AWS_ACCESS_KEY_ID=GK39bcfbd23e8c8e22b17f3266
+      - AWS_SECRET_ACCESS_KEY=077a96d818314a42a5e2e2aac9fddea549e3bb3ba36083fa0862a6f5b9a514e4
       - AWS_REGION=garage
       - LKN__AUTH__SERVICE_TOKEN=demo-ingest-token
       - LKN__SEARCH__URL=http://meilisearch:7700
@@ -163,6 +168,8 @@ services:
     depends_on:
       lekton:
         condition: service_healthy
+    environment:
+      - LEKTON_URL=http://lekton:3000
     volumes:
       - ./demo:/demo:ro
     entrypoint: ["/bin/sh", "/demo/load_demo.sh"]

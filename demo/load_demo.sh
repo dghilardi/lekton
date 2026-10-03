@@ -7,10 +7,13 @@
 
 LEKTON_URL="${LEKTON_URL:-http://localhost:3000}"
 SERVICE_TOKEN="${SERVICE_TOKEN:-demo-ingest-token}"
-DEMO_DIR="demo/documents"
-SCHEMA_DIR="demo/schemas"
-ASSET_DIR="demo/assets"
-PROMPT_DIR="demo/prompts"
+# Resolve paths from the script location: the demo-loader container mounts
+# this directory at /demo, while a local run starts from the repository root.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DEMO_DIR="$SCRIPT_DIR/documents"
+SCHEMA_DIR="$SCRIPT_DIR/schemas"
+ASSET_DIR="$SCRIPT_DIR/assets"
+PROMPT_DIR="$SCRIPT_DIR/prompts"
 
 ingest_doc() {
     local slug="$1"
@@ -37,6 +40,8 @@ ingest_doc() {
         -d "{
             \"service_token\": \"${SERVICE_TOKEN}\",
             \"slug\": \"${slug}\",
+            \"source_path\": \"demo/documents/${slug}.md\",
+            \"source_id\": \"lekton-demo\",
             \"title\": \"${title}\",
             \"content\": \"${content}\",
             \"access_level\": \"${access_level}\",

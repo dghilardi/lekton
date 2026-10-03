@@ -1,0 +1,10 @@
+/build/
+/review/
+/reference/
+/config.local.json
+/mocks/*
+!/mocks/minimal-light.png
+!/mocks/minimal-light.json
+!/mocks/minimal-dark.png
+!/mocks/minimal-dark.json
+!/mocks/revision-notes.md

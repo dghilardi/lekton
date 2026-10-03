@@ -5,6 +5,9 @@
 
 **Lekton** is a high-performance, dynamic Internal Developer Portal (IDP) designed to replace static documentation generators. Built with Rust, it prioritizes speed, granular security (RBAC), and a seamless developer experience.
 
+The bilingual public website is maintained in this repository. See the
+[website guide](docs/website.md) for preview, build and publishing instructions.
+
 ## 🚀 Vision
 
 Lekton decouples content from code, allowing microservices to push their documentation and API schemas (OpenAPI/AsyncAPI) to a centralized, searchable, and secure hub. No more full site rebuilds for a typo fix.

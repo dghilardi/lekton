@@ -37,6 +37,16 @@ The system follows a **Headless CMS** architecture where the Rust backend acts a
 *   **Blob Store:** **S3**. Stores raw Markdown/MDX files and schema artifacts (JSON/YAML).
 *   **Search Engine:** **Meilisearch**. Stores indexed content with protected tenant tokens.
 
+### Public Project Website
+
+The repository also contains a static English/Italian website for developers and
+platform teams evaluating Lekton. It describes repository synchronization,
+capabilities, local setup and required or optional services. The website shares
+the application's default theme tokens and typography, supports system/light/dark
+themes, and remains readable without JavaScript. Its build is independent of the
+Rust application and produces static artifacts suitable for GitHub Pages;
+publishing it does not deploy the portal backend. See [website.md](website.md).
+
 ---
 
 ## 4. Functional Requirements

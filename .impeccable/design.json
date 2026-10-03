@@ -1,0 +1,473 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-03T13:27:36.031959+00:00",
+  "title": "Design System: Lekton",
+  "extensions": {
+    "colorMeta": {
+      "light-primary": {
+        "role": "primary",
+        "displayName": "Light Primary",
+        "tonalRamp": [
+          "oklch(15% 0.19 64)",
+          "oklch(25% 0.19 64)",
+          "oklch(35% 0.19 64)",
+          "oklch(45% 0.19 64)",
+          "oklch(55% 0.19 64)",
+          "oklch(70% 0.19 64)",
+          "oklch(85% 0.19 64)",
+          "oklch(95% 0.19 64)"
+        ]
+      },
+      "light-primary-content": {
+        "role": "primary",
+        "displayName": "Light Primary Content",
+        "tonalRamp": [
+          "oklch(15% 0.006 85)",
+          "oklch(25% 0.006 85)",
+          "oklch(35% 0.006 85)",
+          "oklch(45% 0.006 85)",
+          "oklch(55% 0.006 85)",
+          "oklch(70% 0.006 85)",
+          "oklch(85% 0.006 85)",
+          "oklch(95% 0.006 85)"
+        ]
+      },
+      "light-secondary": {
+        "role": "secondary",
+        "displayName": "Light Secondary",
+        "tonalRamp": [
+          "oklch(15% 0.14 248)",
+          "oklch(25% 0.14 248)",
+          "oklch(35% 0.14 248)",
+          "oklch(45% 0.14 248)",
+          "oklch(55% 0.14 248)",
+          "oklch(70% 0.14 248)",
+          "oklch(85% 0.14 248)",
+          "oklch(95% 0.14 248)"
+        ]
+      },
+      "light-secondary-content": {
+        "role": "secondary",
+        "displayName": "Light Secondary Content",
+        "tonalRamp": [
+          "oklch(15% 0.006 248)",
+          "oklch(25% 0.006 248)",
+          "oklch(35% 0.006 248)",
+          "oklch(45% 0.006 248)",
+          "oklch(55% 0.006 248)",
+          "oklch(70% 0.006 248)",
+          "oklch(85% 0.006 248)",
+          "oklch(95% 0.006 248)"
+        ]
+      },
+      "light-accent": {
+        "role": "tertiary",
+        "displayName": "Light Accent",
+        "tonalRamp": [
+          "oklch(15% 0.19 30)",
+          "oklch(25% 0.19 30)",
+          "oklch(35% 0.19 30)",
+          "oklch(45% 0.19 30)",
+          "oklch(55% 0.19 30)",
+          "oklch(70% 0.19 30)",
+          "oklch(85% 0.19 30)",
+          "oklch(95% 0.19 30)"
+        ]
+      },
+      "light-accent-content": {
+        "role": "tertiary",
+        "displayName": "Light Accent Content",
+        "tonalRamp": [
+          "oklch(15% 0.004 30)",
+          "oklch(25% 0.004 30)",
+          "oklch(35% 0.004 30)",
+          "oklch(45% 0.004 30)",
+          "oklch(55% 0.004 30)",
+          "oklch(70% 0.004 30)",
+          "oklch(85% 0.004 30)",
+          "oklch(95% 0.004 30)"
+        ]
+      },
+      "light-base-100": {
+        "role": "neutral",
+        "displayName": "Light Base 100",
+        "tonalRamp": [
+          "oklch(15% 0.003 85)",
+          "oklch(25% 0.003 85)",
+          "oklch(35% 0.003 85)",
+          "oklch(45% 0.003 85)",
+          "oklch(55% 0.003 85)",
+          "oklch(70% 0.003 85)",
+          "oklch(85% 0.003 85)",
+          "oklch(95% 0.003 85)"
+        ]
+      },
+      "light-base-200": {
+        "role": "neutral",
+        "displayName": "Light Base 200",
+        "tonalRamp": [
+          "oklch(15% 0.005 80)",
+          "oklch(25% 0.005 80)",
+          "oklch(35% 0.005 80)",
+          "oklch(45% 0.005 80)",
+          "oklch(55% 0.005 80)",
+          "oklch(70% 0.005 80)",
+          "oklch(85% 0.005 80)",
+          "oklch(95% 0.005 80)"
+        ]
+      },
+      "light-base-300": {
+        "role": "neutral",
+        "displayName": "Light Base 300",
+        "tonalRamp": [
+          "oklch(15% 0.009 72)",
+          "oklch(25% 0.009 72)",
+          "oklch(35% 0.009 72)",
+          "oklch(45% 0.009 72)",
+          "oklch(55% 0.009 72)",
+          "oklch(70% 0.009 72)",
+          "oklch(85% 0.009 72)",
+          "oklch(95% 0.009 72)"
+        ]
+      },
+      "light-base-content": {
+        "role": "neutral",
+        "displayName": "Light Base Content",
+        "tonalRamp": [
+          "oklch(15% 0.008 258)",
+          "oklch(25% 0.008 258)",
+          "oklch(35% 0.008 258)",
+          "oklch(45% 0.008 258)",
+          "oklch(55% 0.008 258)",
+          "oklch(70% 0.008 258)",
+          "oklch(85% 0.008 258)",
+          "oklch(95% 0.008 258)"
+        ]
+      },
+      "dark-primary": {
+        "role": "primary",
+        "displayName": "Dark Primary",
+        "tonalRamp": [
+          "oklch(15% 0.155 72)",
+          "oklch(25% 0.155 72)",
+          "oklch(35% 0.155 72)",
+          "oklch(45% 0.155 72)",
+          "oklch(55% 0.155 72)",
+          "oklch(70% 0.155 72)",
+          "oklch(85% 0.155 72)",
+          "oklch(95% 0.155 72)"
+        ]
+      },
+      "dark-primary-content": {
+        "role": "primary",
+        "displayName": "Dark Primary Content",
+        "tonalRamp": [
+          "oklch(15% 0.015 72)",
+          "oklch(25% 0.015 72)",
+          "oklch(35% 0.015 72)",
+          "oklch(45% 0.015 72)",
+          "oklch(55% 0.015 72)",
+          "oklch(70% 0.015 72)",
+          "oklch(85% 0.015 72)",
+          "oklch(95% 0.015 72)"
+        ]
+      },
+      "dark-secondary": {
+        "role": "secondary",
+        "displayName": "Dark Secondary",
+        "tonalRamp": [
+          "oklch(15% 0.13 200)",
+          "oklch(25% 0.13 200)",
+          "oklch(35% 0.13 200)",
+          "oklch(45% 0.13 200)",
+          "oklch(55% 0.13 200)",
+          "oklch(70% 0.13 200)",
+          "oklch(85% 0.13 200)",
+          "oklch(95% 0.13 200)"
+        ]
+      },
+      "dark-secondary-content": {
+        "role": "secondary",
+        "displayName": "Dark Secondary Content",
+        "tonalRamp": [
+          "oklch(15% 0.01 200)",
+          "oklch(25% 0.01 200)",
+          "oklch(35% 0.01 200)",
+          "oklch(45% 0.01 200)",
+          "oklch(55% 0.01 200)",
+          "oklch(70% 0.01 200)",
+          "oklch(85% 0.01 200)",
+          "oklch(95% 0.01 200)"
+        ]
+      },
+      "dark-accent": {
+        "role": "tertiary",
+        "displayName": "Dark Accent",
+        "tonalRamp": [
+          "oklch(15% 0.17 35)",
+          "oklch(25% 0.17 35)",
+          "oklch(35% 0.17 35)",
+          "oklch(45% 0.17 35)",
+          "oklch(55% 0.17 35)",
+          "oklch(70% 0.17 35)",
+          "oklch(85% 0.17 35)",
+          "oklch(95% 0.17 35)"
+        ]
+      },
+      "dark-accent-content": {
+        "role": "tertiary",
+        "displayName": "Dark Accent Content",
+        "tonalRamp": [
+          "oklch(15% 0.01 35)",
+          "oklch(25% 0.01 35)",
+          "oklch(35% 0.01 35)",
+          "oklch(45% 0.01 35)",
+          "oklch(55% 0.01 35)",
+          "oklch(70% 0.01 35)",
+          "oklch(85% 0.01 35)",
+          "oklch(95% 0.01 35)"
+        ]
+      },
+      "dark-base-100": {
+        "role": "neutral",
+        "displayName": "Dark Base 100",
+        "tonalRamp": [
+          "oklch(15% 0.011 241)",
+          "oklch(25% 0.011 241)",
+          "oklch(35% 0.011 241)",
+          "oklch(45% 0.011 241)",
+          "oklch(55% 0.011 241)",
+          "oklch(70% 0.011 241)",
+          "oklch(85% 0.011 241)",
+          "oklch(95% 0.011 241)"
+        ]
+      },
+      "dark-base-200": {
+        "role": "neutral",
+        "displayName": "Dark Base 200",
+        "tonalRamp": [
+          "oklch(15% 0.013 241)",
+          "oklch(25% 0.013 241)",
+          "oklch(35% 0.013 241)",
+          "oklch(45% 0.013 241)",
+          "oklch(55% 0.013 241)",
+          "oklch(70% 0.013 241)",
+          "oklch(85% 0.013 241)",
+          "oklch(95% 0.013 241)"
+        ]
+      },
+      "dark-base-300": {
+        "role": "neutral",
+        "displayName": "Dark Base 300",
+        "tonalRamp": [
+          "oklch(15% 0.016 241)",
+          "oklch(25% 0.016 241)",
+          "oklch(35% 0.016 241)",
+          "oklch(45% 0.016 241)",
+          "oklch(55% 0.016 241)",
+          "oklch(70% 0.016 241)",
+          "oklch(85% 0.016 241)",
+          "oklch(95% 0.016 241)"
+        ]
+      },
+      "dark-base-content": {
+        "role": "neutral",
+        "displayName": "Dark Base Content",
+        "tonalRamp": [
+          "oklch(15% 0.006 248)",
+          "oklch(25% 0.006 248)",
+          "oklch(35% 0.006 248)",
+          "oklch(45% 0.006 248)",
+          "oklch(55% 0.006 248)",
+          "oklch(70% 0.006 248)",
+          "oklch(85% 0.006 248)",
+          "oklch(95% 0.006 248)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "body": {
+        "displayName": "Interface body",
+        "purpose": "Shared font family; sizes follow the existing component."
+      },
+      "document-body": {
+        "displayName": "Document body",
+        "purpose": "Application Markdown reading text."
+      },
+      "website-display": {
+        "displayName": "Website opening heading",
+        "purpose": "Public website hero; not an application-wide type scale."
+      },
+      "website-headline": {
+        "displayName": "Website section heading",
+        "purpose": "Public website section titles."
+      },
+      "menu-label": {
+        "displayName": "Menu section label",
+        "purpose": "Small uppercase application sidebar grouping."
+      },
+      "code": {
+        "displayName": "Code",
+        "purpose": "Commands, code blocks, and technical labels."
+      }
+    },
+    "shadows": [
+      {
+        "name": "app-card-hover-light",
+        "value": "0 8px 28px -4px rgb(0 0 0 / 0.13), 0 4px 10px -2px rgb(0 0 0 / 0.06)",
+        "purpose": "Incumbent application card hover; website remains flat."
+      },
+      {
+        "name": "app-card-hover-dark",
+        "value": "0 8px 28px -4px rgb(0 0 0 / 0.45), 0 4px 10px -2px rgb(0 0 0 / 0.22)",
+        "purpose": "Incumbent dark application card hover."
+      },
+      {
+        "name": "app-dropdown-light",
+        "value": "0 10px 30px -4px rgb(0 0 0 / 0.14), 0 4px 10px -2px rgb(0 0 0 / 0.07)",
+        "purpose": "Application dropdown surface."
+      },
+      {
+        "name": "app-dropdown-dark",
+        "value": "0 10px 30px -4px rgb(0 0 0 / 0.5), 0 4px 10px -2px rgb(0 0 0 / 0.25)",
+        "purpose": "Dark application dropdown surface."
+      },
+      {
+        "name": "app-code-block",
+        "value": "0 1px 3px 0 rgb(0 0 0 / 0.07), 0 1px 2px -1px rgb(0 0 0 / 0.07)",
+        "purpose": "Application Markdown code blocks."
+      }
+    ],
+    "motion": [
+      {
+        "name": "app-menu",
+        "value": "background-color 0.12s ease, color 0.12s ease",
+        "purpose": "Application navigation state changes."
+      },
+      {
+        "name": "website-button",
+        "value": "background-color 160ms ease, color 160ms ease",
+        "purpose": "Public website button state changes; disabled for reduced motion."
+      },
+      {
+        "name": "website-disclosure",
+        "value": "transform 160ms ease",
+        "purpose": "Capability chevron expansion; disabled for reduced motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "website-narrow-desktop",
+        "value": "1100px"
+      },
+      {
+        "name": "website-stack",
+        "value": "800px"
+      },
+      {
+        "name": "website-compact",
+        "value": "520px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Website primary action",
+      "kind": "button",
+      "description": "Amber principal action; theme variables control its fill and text.",
+      "html": "<a class=\"ds-primary\" href=\"#setup\">Run locally</a>",
+      "css": ".ds-primary{display:inline-flex;align-items:center;justify-content:center;min-height:3.2rem;padding:.65rem 1.75rem;border:1px solid var(--color-base-300, oklch(90%    0.009 72));border-radius:var(--radius-field, 0.35rem);font-family:var(--lekton-font-family, \"Plus Jakarta Sans\", \"Geist\", ui-sans-serif, system-ui, sans-serif);font-weight:600;font-size:.925rem;text-decoration:none;cursor:pointer;transition:background-color 160ms ease,color 160ms ease;background:var(--color-primary, oklch(50%    0.19  64));border-color:var(--color-primary, oklch(50%    0.19  64));color:var(--color-primary-content, oklch(98%    0.006 85));}.ds-primary:hover{background:color-mix(in oklch,var(--color-primary, oklch(50%    0.19  64)) 88%,var(--color-base-content, oklch(21%    0.008 258)));}.ds-primary:focus-visible{outline:2px solid var(--color-primary, oklch(50%    0.19  64));outline-offset:5px;}@media(prefers-reduced-motion:reduce){.ds-primary{transition:none;}}",
+      "refersTo": "website-button-primary"
+    },
+    {
+      "name": "Website secondary action",
+      "kind": "button",
+      "description": "Outlined source link beside the main action.",
+      "html": "<a class=\"ds-secondary\" href=\"#source\">Read the source</a>",
+      "css": ".ds-secondary{display:inline-flex;align-items:center;justify-content:center;min-height:3.2rem;padding:.65rem 1.75rem;border:1px solid var(--color-base-300, oklch(90%    0.009 72));border-radius:var(--radius-field, 0.35rem);font-family:var(--lekton-font-family, \"Plus Jakarta Sans\", \"Geist\", ui-sans-serif, system-ui, sans-serif);font-weight:600;font-size:.925rem;text-decoration:none;cursor:pointer;transition:background-color 160ms ease,color 160ms ease;background:transparent;color:var(--color-base-content, oklch(21%    0.008 258));}.ds-secondary:hover{background:var(--color-base-200, oklch(95%    0.005 80));}.ds-secondary:focus-visible{outline:2px solid var(--color-primary, oklch(50%    0.19  64));outline-offset:5px;}@media(prefers-reduced-motion:reduce){.ds-secondary{transition:none;}}",
+      "refersTo": "website-button-secondary"
+    },
+    {
+      "name": "Theme icon control",
+      "kind": "button",
+      "description": "System-mode appearance of the theme-cycle control; behavior belongs to the host page.",
+      "html": "<button class=\"ds-theme\" type=\"button\" aria-label=\"System theme (switch to light)\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect x=\"2\" y=\"3\" width=\"20\" height=\"14\" rx=\"2\"/><path d=\"M8 21h8 m-4-4v4\"/></svg></button>",
+      "css": ".ds-theme{display:inline-flex;align-items:center;justify-content:center;width:2.75rem;height:2.75rem;padding:.5rem;color:var(--color-base-content, oklch(21%    0.008 258));background:transparent;border:0;border-radius:var(--radius-field, 0.35rem);cursor:pointer;}.ds-theme:hover{background:var(--color-base-200, oklch(95%    0.005 80));}.ds-theme:focus-visible{outline:2px solid var(--color-primary, oklch(50%    0.19  64));outline-offset:5px;}",
+      "refersTo": "website-icon-button"
+    },
+    {
+      "name": "Website navigation",
+      "kind": "nav",
+      "description": "Plain text links with amber hover and keyboard focus.",
+      "html": "<nav class=\"ds-site-nav\" aria-label=\"Main navigation\"><a href=\"#product\">Product</a><a href=\"#setup\">Setup</a><a href=\"#source\">Source</a></nav>",
+      "css": ".ds-site-nav{display:flex;flex-wrap:wrap;gap:2rem;font-family:var(--lekton-font-family, \"Plus Jakarta Sans\", \"Geist\", ui-sans-serif, system-ui, sans-serif);font-size:.875rem;color:var(--color-base-content, oklch(21%    0.008 258));}.ds-site-nav a{padding:.6rem 0;color:inherit;text-decoration:none;}.ds-site-nav a:hover{color:var(--color-primary, oklch(50%    0.19  64));}.ds-site-nav a:focus-visible{outline:2px solid var(--color-primary, oklch(50%    0.19  64));outline-offset:5px;}"
+    },
+    {
+      "name": "Application menu selection",
+      "kind": "nav",
+      "description": "Incumbent sidebar selection uses an amber tint, not a filled primary button.",
+      "html": "<nav class=\"ds-menu\" aria-label=\"Documentation\"><a href=\"#deployment\" aria-current=\"page\">Deployment guide</a><a href=\"#architecture\">Architecture</a></nav>",
+      "css": ".ds-menu{display:flex;flex-direction:column;gap:.25rem;font-family:var(--lekton-font-family, \"Plus Jakarta Sans\", \"Geist\", ui-sans-serif, system-ui, sans-serif);color:var(--color-base-content, oklch(21%    0.008 258));}.ds-menu a{font-size:.875rem;font-weight:500;padding:.45rem .625rem;border-radius:var(--radius-selector, .4rem);color:inherit;text-decoration:none;transition:background-color .12s ease,color .12s ease;}.ds-menu a[aria-current=\"page\"]{background:color-mix(in oklch,var(--color-primary, oklch(50%    0.19  64)) 10%,transparent);color:var(--color-primary, oklch(50%    0.19  64));font-weight:600;}.ds-menu a:hover{background:var(--color-base-200, oklch(95%    0.005 80));}.ds-menu a:focus-visible{outline:2px solid var(--color-primary, oklch(50%    0.19  64));outline-offset:2px;}@media(prefers-reduced-motion:reduce){.ds-menu a{transition:none;}}",
+      "refersTo": "app-menu-item"
+    },
+    {
+      "name": "CLI workflow chip",
+      "kind": "chip",
+      "description": "The mono command label used in the repository-to-portal sequence.",
+      "html": "<code class=\"ds-cli-chip\">lekton-sync</code>",
+      "css": ".ds-cli-chip{display:inline-block;padding:.45rem .65rem;background:var(--color-base-200, oklch(95%    0.005 80));color:var(--color-base-content, oklch(21%    0.008 258));border:1px solid var(--color-base-300, oklch(90%    0.009 72));border-radius:var(--radius-field, 0.35rem);font-size:.8rem;white-space:nowrap;font-family:var(--lekton-mono-font, \"Fira Code\", \"JetBrains Mono\", ui-monospace, monospace);}",
+      "refersTo": "website-cli-chip"
+    },
+    {
+      "name": "Production note",
+      "kind": "card",
+      "description": "Flat tonal container for operational guidance.",
+      "html": "<aside class=\"ds-production\"><h3>Before production</h3><p>Configure authentication, service credentials and persistent storage.</p></aside>",
+      "css": ".ds-production{background:var(--color-base-200, oklch(95%    0.005 80));color:var(--color-base-content, oklch(21%    0.008 258));padding:1.5rem 1.75rem;border-radius:var(--radius-box, 0.5rem);font-family:var(--lekton-font-family, \"Plus Jakarta Sans\", \"Geist\", ui-sans-serif, system-ui, sans-serif);}.ds-production h3{margin:0;font-size:1rem;line-height:1.22;letter-spacing:-.01em;}.ds-production p{margin:.6rem 0 .75rem;font-size:.875rem;line-height:1.6;max-width:75ch;}",
+      "refersTo": "website-production-note"
+    },
+    {
+      "name": "Website technical block",
+      "kind": "custom",
+      "description": "Tonal outlined code block with language label and compact copy affordance.",
+      "html": "<div class=\"ds-code\"><div class=\"ds-code-heading\"><span>bash</span><button class=\"ds-copy\" type=\"button\" aria-label=\"Copy commands\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect x=\"8\" y=\"8\" width=\"13\" height=\"13\" rx=\"2\"/><path d=\"M16 8V3H3v13h5\"/></svg></button></div><pre><code>lekton-sync ./docs --dry-run\nlekton-sync ./docs</code></pre></div>",
+      "css": ".ds-code{background:color-mix(in oklch,var(--color-base-200, oklch(95%    0.005 80)) 55%,var(--color-base-100, oklch(98.5%  0.003 85)));color:var(--color-base-content, oklch(21%    0.008 258));border:1px solid var(--color-base-300, oklch(90%    0.009 72));border-radius:var(--radius-field, 0.35rem);overflow:hidden;}.ds-code-heading{display:flex;align-items:center;justify-content:space-between;min-height:2rem;padding-left:.8rem;background:color-mix(in oklch,var(--color-base-200, oklch(95%    0.005 80)) 75%,var(--color-base-100, oklch(98.5%  0.003 85)));font-size:.7rem;font-family:var(--lekton-mono-font, \"Fira Code\", \"JetBrains Mono\", ui-monospace, monospace);}.ds-code pre{margin:0;overflow-x:auto;padding:.75rem 1rem;font-size:.8rem;line-height:1.85;font-family:var(--lekton-mono-font, \"Fira Code\", \"JetBrains Mono\", ui-monospace, monospace);}.ds-code code{font-family:var(--lekton-mono-font, \"Fira Code\", \"JetBrains Mono\", ui-monospace, monospace);}.ds-copy{display:inline-flex;align-items:center;justify-content:center;width:2.75rem;height:2rem;padding:.5rem;color:inherit;background:transparent;border:0;border-radius:var(--radius-field, 0.35rem);cursor:pointer;}.ds-copy svg{width:.95rem;height:.95rem;}.ds-copy:hover{background:var(--color-base-200, oklch(95%    0.005 80));}.ds-copy:focus-visible{outline:2px solid var(--color-primary, oklch(50%    0.19  64));outline-offset:5px;}",
+      "refersTo": "website-code-block"
+    },
+    {
+      "name": "Capability disclosure",
+      "kind": "custom",
+      "description": "Native expandable row with a small rotating chevron.",
+      "html": "<details class=\"ds-disclosure\"><summary>Documentation and editing <svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m9 6 6 6-6 6\"/></svg></summary><p>Sync Markdown from repositories or edit content through the portal.</p></details>",
+      "css": ".ds-disclosure{color:var(--color-base-content, oklch(21%    0.008 258));border-bottom:1px solid var(--color-base-300, oklch(90%    0.009 72));font-family:var(--lekton-font-family, \"Plus Jakarta Sans\", \"Geist\", ui-sans-serif, system-ui, sans-serif);}.ds-disclosure summary{display:flex;align-items:center;gap:1rem;min-height:3.35rem;font-size:1rem;list-style:none;cursor:pointer;}.ds-disclosure summary::-webkit-details-marker{display:none;}.ds-disclosure svg{margin-left:auto;width:1rem;height:1rem;transition:transform 160ms ease;}.ds-disclosure[open] svg{transform:rotate(90deg);}.ds-disclosure summary:hover{color:var(--color-primary, oklch(50%    0.19  64));}.ds-disclosure summary:focus-visible{outline:2px solid var(--color-primary, oklch(50%    0.19  64));outline-offset:5px;}.ds-disclosure p{padding:.25rem 0 1.25rem 2.25rem;font-size:.875rem;line-height:1.6;color:color-mix(in oklch,var(--color-base-content, oklch(21%    0.008 258)) 80%,var(--color-base-100, oklch(98.5%  0.003 85)));}@media(prefers-reduced-motion:reduce){.ds-disclosure svg{transition:none;}}"
+    },
+    {
+      "name": "Illustrative preview search",
+      "kind": "custom",
+      "description": "Static search label in the portal preview, intentionally not an input.",
+      "html": "<span class=\"ds-preview-search\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"10\" cy=\"10\" r=\"7\"/><path d=\"m15 15 6 6\"/></svg>Search documentation…</span>",
+      "css": ".ds-preview-search{display:flex;gap:.5rem;align-items:center;padding:.25rem .6rem;border:1px solid var(--color-base-300, oklch(90%    0.009 72));border-radius:var(--radius-field, 0.35rem);font-size:.68rem;color:color-mix(in oklch,var(--color-base-content, oklch(21%    0.008 258)) 65%,var(--color-base-100, oklch(98.5%  0.003 85)));font-family:var(--lekton-font-family, \"Plus Jakarta Sans\", \"Geist\", ui-sans-serif, system-ui, sans-serif);}.ds-preview-search svg{width:.9rem;height:.9rem;}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Existing Lekton default identity",
+    "overview": "Lekton uses the existing portal identity: warm light surfaces, cool blue-slate dark surfaces, amber actions, and readable developer-oriented typography. The public website extends this identity with the minimal presentation approved on 2026-10-03. Its factual content and illustrative interface keep the product understandable without inflated marketing claims.\n\n`style/tailwind.css` is the implementation authority for default colors, font stacks, spacing, and radii. `website/theme.mjs` extracts the shared font, surface, primary, and radius tokens at build time; this document records their current values rather than creating an independent palette. Application installations can override their styles through `public/custom.css`.",
+    "keyCharacteristics": [
+      "Shared application and website identity.",
+      "Warm light / cool dark surfaces with amber emphasis.",
+      "Compact controls, readable code, and small corners."
+    ],
+    "rules": [],
+    "dos": [
+      "Do inherit default theme tokens from `style/tailwind.css` and regenerate the website theme at build time.",
+      "Do use the same Plus Jakarta Sans and Fira Code font stacks across application and public website.",
+      "Do retain visible keyboard focus, responsive reading order, and reduced-motion support on the website.",
+      "Do distinguish the website’s illustrative portal preview from the running application."
+    ],
+    "donts": [
+      "Don’t introduce an independently maintained website palette.",
+      "Don’t restore the rejected loud blue marketing direction on the public website.",
+      "Don’t apply the website’s split hero or flat depth treatment as a new rule for application screens."
+    ]
+  }
+}

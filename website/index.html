@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="{{lang}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="{{description}}">
+  <meta name="color-scheme" content="light dark">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="{{title}}">
+  <meta property="og:description" content="{{description}}">
+  <meta property="og:locale" content="{{ogLocale}}">
+  <title>{{title}}</title>
+  <link rel="icon" href="{{assetPrefix}}assets/favicon.svg" type="image/svg+xml">
+  <link rel="alternate" hreflang="en" href="{{englishHref}}">
+  <link rel="alternate" hreflang="it" href="{{italianHref}}">
+  <script src="{{assetPrefix}}assets/theme-init.js"></script>
+  <link rel="stylesheet" href="{{assetPrefix}}assets/theme.css">
+  <link rel="stylesheet" href="{{assetPrefix}}assets/site.css">
+  <script src="{{assetPrefix}}assets/site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">{{skip}}</a>
+  <svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="icon-logo" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5Z M2 17l10 5 10-5 M2 12l10 5 10-5"/></symbol>
+    <symbol id="icon-doc" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z M14 2v6h6 M8 13h8 M8 17h6"/></symbol>
+    <symbol id="icon-code" viewBox="0 0 24 24"><path d="m8 5-7 7 7 7 M16 5l7 7-7 7"/></symbol>
+    <symbol id="icon-prompt" viewBox="0 0 24 24"><path d="M21 11a8 8 0 0 1-8 8H6l-5 3V11a10 10 0 0 1 20 0Z M7 10h10 M7 14h6"/></symbol>
+    <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="10" cy="10" r="7"/><path d="m15 15 6 6"/></symbol>
+    <symbol id="icon-arrow" viewBox="0 0 24 24"><path d="M3 12h18 m-6-6 6 6-6 6"/></symbol>
+    <symbol id="icon-repo" viewBox="0 0 24 24"><circle cx="6" cy="4" r="2"/><circle cx="6" cy="20" r="2"/><circle cx="18" cy="8" r="2"/><path d="M6 6v12 m0-6h6a6 6 0 0 0 6-2"/></symbol>
+    <symbol id="icon-lock" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="12" rx="2"/><path d="M8 10V6a4 4 0 0 1 8 0v4"/></symbol>
+    <symbol id="icon-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V3H3v13h5"/></symbol>
+    <symbol id="icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 1v2 m0 18v2 M1 12h2 m18 0h2 M4 4l2 2 m12 12 2 2 M4 20l2-2 M18 6l2-2"/></symbol>
+    <symbol id="icon-moon" viewBox="0 0 24 24"><path d="M21 14a9 9 0 0 1-11-11 9 9 0 1 0 11 11Z"/></symbol>
+    <symbol id="icon-system" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8 m-4-4v4"/></symbol>
+    <symbol id="icon-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+  </svg>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="./" aria-label="Lekton"><svg class="icon brand-mark" aria-hidden="true"><use href="#icon-logo"/></svg><span>Lekton</span></a>
+      <nav aria-label="{{navigation}}"><a href="#product">{{product}}</a><a href="#setup">{{setup}}</a><a href="https://github.com/dghilardi/lekton">{{source}}</a></nav>
+      <div class="header-tools">
+        <div class="language-switch" aria-label="{{language}}"><span aria-current="true">{{currentLanguage}}</span><span class="language-separator" aria-hidden="true">/</span><a href="{{languageHref}}" lang="{{alternateLang}}" hreflang="{{alternateLang}}" title="{{languageTitle}}">{{languageText}}</a></div>
+        <button class="icon-button theme-toggle" type="button" data-theme-toggle hidden aria-label="{{theme}}" data-system-label="{{themeSystem}}" data-light-label="{{themeLight}}" data-dark-label="{{themeDark}}">
+          <svg class="icon theme-system" aria-hidden="true"><use href="#icon-system"/></svg><svg class="icon theme-light" aria-hidden="true"><use href="#icon-sun"/></svg><svg class="icon theme-dark" aria-hidden="true"><use href="#icon-moon"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+  <main id="main" class="container">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <h1 id="hero-title"><span>{{headingFirst}}</span><span>{{headingSecond}}</span></h1>
+        <p class="hero-description">{{description}}</p>
+        <div class="hero-actions"><a class="button button-primary" href="#setup">{{run}}</a><a class="button" href="https://github.com/dghilardi/lekton">{{readSource}}</a></div>
+        <p class="tech-stack">Rust <span>·</span> Leptos <span>·</span> Axum <span>·</span> AGPL-3.0</p>
+      </div>
+      <figure class="portal-preview" aria-label="{{previewLabel}}">
+        <div class="portal-frame">
+          <div class="portal-header"><span class="brand"><svg class="icon brand-mark" aria-hidden="true"><use href="#icon-logo"/></svg>Lekton</span><span class="preview-search"><svg class="icon" aria-hidden="true"><use href="#icon-search"/></svg>{{previewSearch}}</span></div>
+          <div class="portal-body">
+            <div class="portal-sidebar">
+              <p>{{platform}}</p><span><svg class="icon" aria-hidden="true"><use href="#icon-doc"/></svg>{{gettingStarted}}</span><span class="selected"><svg class="icon" aria-hidden="true"><use href="#icon-doc"/></svg>{{deployment}}</span><span><svg class="icon" aria-hidden="true"><use href="#icon-doc"/></svg>{{architecture}}</span>
+              <p>{{schemas}}</p><span><svg class="icon" aria-hidden="true"><use href="#icon-code"/></svg>{{billing}}</span>
+              <p>{{prompts}}</p><span><svg class="icon" aria-hidden="true"><use href="#icon-prompt"/></svg>{{review}}</span>
+            </div>
+            <div class="portal-document">
+              <p class="breadcrumb"><span>{{platform}}</span> / {{deployment}}</p>
+              <h2>{{deployment}}</h2><p class="document-intro">{{deploymentCopy}}</p>
+              <div class="code-block preview-code"><div class="code-heading">yaml</div><pre><code><span class="syntax-key">service:</span> billing
+<span class="syntax-key">image:</span> billing:latest
+<span class="syntax-key">environment:</span> staging
+<span class="syntax-key">replicas:</span> 2</code></pre></div>
+              <h3>{{related}}</h3><p class="related-item"><svg class="icon" aria-hidden="true"><use href="#icon-doc"/></svg>{{billing}} · OpenAPI</p><p class="related-item"><svg class="icon" aria-hidden="true"><use href="#icon-prompt"/></svg>{{reviewPrompt}}</p>
+            </div>
+          </div>
+        </div>
+        <figcaption>{{previewCaption}}</figcaption>
+      </figure>
+    </section>
+    <details class="workflow">
+      <summary>
+        <span class="workflow-path"><span class="workflow-node"><svg class="icon" aria-hidden="true"><use href="#icon-repo"/></svg><span><strong>{{repositories}}</strong><small>{{repositoryFiles}}</small></span></span><svg class="icon flow-arrow" aria-hidden="true"><use href="#icon-arrow"/></svg><code>lekton-sync</code><svg class="icon flow-arrow" aria-hidden="true"><use href="#icon-arrow"/></svg><span class="brand workflow-brand"><svg class="icon brand-mark" aria-hidden="true"><use href="#icon-logo"/></svg>Lekton</span></span>
+        <span class="workflow-text">{{workflowCopy}}<small>{{workflowHint}} <svg class="icon" aria-hidden="true"><use href="#icon-chevron"/></svg></small></span>
+      </summary>
+      <div class="workflow-expanded"><p>{{workflowDescription}}</p><div class="code-block"><pre><code>export LEKTON_URL=https://lekton.example.com
+export LEKTON_TOKEN=your-service-token
+lekton-sync ./docs --dry-run
+lekton-sync ./docs</code></pre></div><a class="text-link" href="https://github.com/dghilardi/lekton/blob/main/cli/README.md">{{workflowDocs}} <svg class="icon" aria-hidden="true"><use href="#icon-arrow"/></svg></a></div>
+    </details>
+    <div class="overview">
+      <section id="product" aria-labelledby="included-title">
+        <h2 id="included-title">{{included}}</h2>
+        <div class="capabilities">
+          <details><summary><svg class="icon" aria-hidden="true"><use href="#icon-doc"/></svg>{{docsTitle}}<svg class="icon chevron" aria-hidden="true"><use href="#icon-chevron"/></svg></summary><p>{{docsBody}}</p></details>
+          <details><summary><svg class="icon" aria-hidden="true"><use href="#icon-code"/></svg>{{schemasTitle}}<svg class="icon chevron" aria-hidden="true"><use href="#icon-chevron"/></svg></summary><p>{{schemasBody}}</p></details>
+          <details><summary><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg>{{accessTitle}}<svg class="icon chevron" aria-hidden="true"><use href="#icon-chevron"/></svg></summary><p>{{accessBody}}</p></details>
+        </div>
+      </section>
+      <section id="setup" aria-labelledby="setup-title">
+        <h2 id="setup-title">{{setupHeading}}</h2>
+        <div class="code-block"><div class="code-heading"><span>bash</span><button class="icon-button" type="button" data-copy="setup-commands" hidden aria-label="{{copy}}" title="{{copy}}"><svg class="icon" aria-hidden="true"><use href="#icon-copy"/></svg></button></div><pre><code id="setup-commands">git clone https://github.com/dghilardi/lekton.git
+cd lekton
+docker compose up --build lekton demo-loader</code></pre></div>
+        <p class="setup-note">{{startNote}}</p><p class="optional-note">{{optionalNote}}</p>
+        <p class="local-access"><a href="http://localhost:3000" class="text-link">{{localLink}}</a><span>{{demoLogin}}</span></p>
+        <p class="copy-status" role="status" data-copy-status data-success="{{copied}}" data-error="{{copyError}}"></p>
+      </section>
+    </div>
+    <section class="requirements" aria-labelledby="requirements-title">
+      <div class="section-intro"><h2 id="requirements-title">{{requirementsTitle}}</h2><p>{{requirementsIntro}}</p></div>
+      <dl class="requirements-list">
+        <div><dt>{{coreTitle}}</dt><dd><p>{{coreBody}}</p><a class="text-link" href="https://github.com/dghilardi/lekton/blob/main/README.md#getting-started">{{documentation}} <svg class="icon" aria-hidden="true"><use href="#icon-arrow"/></svg></a></dd></div>
+        <div><dt>{{searchTitle}}</dt><dd><p>{{searchBody}}</p><code>LKN__FEATURES__SEARCH=true</code><a class="text-link" href="https://github.com/dghilardi/lekton/blob/main/config/default.toml">{{configLink}} <svg class="icon" aria-hidden="true"><use href="#icon-arrow"/></svg></a></dd></div>
+        <div><dt>{{ragTitle}}</dt><dd><p>{{ragBody}}</p><code>LKN__FEATURES__RAG=true</code><a class="text-link" href="https://github.com/dghilardi/lekton/blob/main/README.md#optional-rag-enhancements">{{ragLink}} <svg class="icon" aria-hidden="true"><use href="#icon-arrow"/></svg></a></dd></div>
+      </dl>
+      <p class="feature-flag-note">{{featureFlagIntro}}</p>
+      <div class="production-note"><h3>{{productionTitle}}</h3><p>{{productionBody}}</p><a class="text-link" href="https://github.com/dghilardi/lekton/blob/main/docs/operations.md">{{productionLink}} <svg class="icon" aria-hidden="true"><use href="#icon-arrow"/></svg></a></div>
+    </section>
+    <section class="closing" aria-labelledby="closing-title"><div><h2 id="closing-title">{{closeTitle}}</h2><p>{{closeBody}}</p></div><div class="closing-actions"><a class="button button-primary" href="#setup">{{run}}</a><a class="text-link" href="https://github.com/dghilardi/lekton/releases">{{releases}} <svg class="icon" aria-hidden="true"><use href="#icon-arrow"/></svg></a></div></section>
+  </main>
+  <footer class="container site-footer"><p>{{footerCopy}}</p><div><a href="https://github.com/dghilardi/lekton">GitHub</a><a href="https://github.com/dghilardi/lekton/blob/main/README.md">{{documentation}}</a><a href="https://github.com/dghilardi/lekton/blob/main/LICENSE">{{license}}</a></div></footer>
+</body>
+</html>

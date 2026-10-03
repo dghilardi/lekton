@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Bilingual project website with the portal's light/dark themes, CI sync examples, local setup instructions and explicit service requirements.
+
 ### Fixed
 - The rate-limit documentation described `rate_limit_per_second` as a rate and advised raising it for users behind a shared NAT address, which makes the limit stricter. It is the interval in seconds between replenished requests; the docs now say so and advise lowering it.
 

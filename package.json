@@ -15,7 +15,11 @@
   },
   "scripts": {
     "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e:ui": "playwright test --ui",
+    "build:website": "node website/build.mjs",
+    "dev:website": "node website/serve.mjs",
+    "test:website": "node --test website/*.test.mjs",
+    "test:website:e2e": "playwright test --config website/playwright.config.mjs"
   },
   "overrides": {
     "@parcel/watcher": "^2.6.0"

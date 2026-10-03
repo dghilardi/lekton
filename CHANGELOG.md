@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- CI reuses the Rust build cache again: only `main` saves caches (pull requests restore them), the `rustfmt` job no longer caches, newer pushes to a pull request cancel its older runs, and the integration tests skip the slow disk cleanup step.
 - Updated `config` to 0.15, `tower-http` to 0.7, `axum-extra` to 0.12 and the GitHub Actions used by CI and releases.
 
 ### Fixed

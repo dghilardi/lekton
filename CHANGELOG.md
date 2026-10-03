@@ -4,7 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Updated `config` to 0.15, `tower-http` to 0.7, `axum-extra` to 0.12 and the GitHub Actions used by CI and releases.
+
 ### Fixed
+- `[usage.pricing]` and `[usage.budget.plans]` names with uppercase letters (e.g. `Qwen/Qwen3-8B`) are no longer lowercased when the configuration loads, so those prices now apply instead of the fallback rate. A plan name that contains uppercase letters and was assigned to users from the lowercased list must be reassigned.
 - `docker compose up` never started Lekton: the Qdrant healthcheck called `curl`, which the Qdrant image does not ship, so the service stayed unhealthy.
 
 ## [0.32.0] 2026-10-03

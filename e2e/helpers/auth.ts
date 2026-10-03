@@ -42,5 +42,7 @@ export async function logout(page: Page) {
   // Click logout button
   await page.click('text=Log Out');
   // Wait for logout to complete
-  await page.waitForSelector('a[href="/login"]', { timeout: 10_000 });
+  await page
+    .getByRole('link', { name: 'Log in', exact: true })
+    .waitFor({ timeout: 10_000 });
 }

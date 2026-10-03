@@ -26,8 +26,9 @@ test.describe('Authentication', () => {
     // Wait for WASM to render the user name before proceeding
     await expect(page.locator('text=Demo User')).toBeVisible({ timeout: 30_000 });
     await logout(page);
-    // "Log In" link should reappear
-    await expect(page.locator('a[href="/login"]')).toBeVisible();
+    // "Log In" link should reappear. Match it by name: while the home page
+    // loads its navigation, "Get Started" briefly points at /login too.
+    await expect(page.getByRole('link', { name: 'Log in', exact: true })).toBeVisible();
   });
 
   test('invalid credentials shows error', async ({ page }) => {

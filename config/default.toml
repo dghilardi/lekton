@@ -105,6 +105,11 @@ refill_per_hour = 250.0
 # refill_per_hour = 5000.0
 
 [server]
+# Per-IP limiter for the dynamic routes (static assets are not limited).
+# Despite its name, rate_limit_per_second is the replenish interval in seconds:
+# after the burst, one more request is allowed every 5 seconds (12 per minute).
+# To allow more traffic per IP (e.g. many users behind one NAT address),
+# lower rate_limit_per_second and/or raise rate_limit_burst.
 rate_limit_burst = 50
 rate_limit_per_second = 5
 rate_limit_trusted_proxies = "127.0.0.1/32,::1/128"

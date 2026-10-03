@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- The rate-limit documentation described `rate_limit_per_second` as a rate and advised raising it for users behind a shared NAT address, which makes the limit stricter. It is the interval in seconds between replenished requests; the docs now say so and advise lowering it.
+
 ## [0.33.0] 2026-10-03
 
 ### Changed

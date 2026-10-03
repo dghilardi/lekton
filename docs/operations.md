@@ -25,7 +25,9 @@ proxy_set_header X-Forwarded-Proto $scheme;
 proxy_set_header Host $host;
 ```
 
-If multiple real users share the same public NAT IP, they still share the same IP quota; increase `rate_limit_per_second` and `rate_limit_burst` for that deployment profile.
+`rate_limit_per_second` is the replenish interval in seconds, not a rate: with the values above an IP may send a burst of 50 requests, then one more every 5 seconds. `llm_rate_limit_per_second` works the same way for the LLM endpoints, per user.
+
+If multiple real users share the same public NAT IP, they still share the same IP quota; for that deployment profile raise `rate_limit_burst` and **lower** `rate_limit_per_second` (e.g. `1` for one request per second).
 
 ---
 

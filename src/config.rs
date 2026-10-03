@@ -201,7 +201,8 @@ impl Default for LearnConfig {
 pub struct ServerConfig {
     /// Maximum burst size for the rate limiter.
     pub rate_limit_burst: u32,
-    /// Number of tokens replenished by the rate limiter per second.
+    /// Seconds between two replenished tokens (an interval, not a rate):
+    /// `5` allows one request every 5 seconds once the burst is spent.
     pub rate_limit_per_second: u64,
     /// Comma-separated trusted reverse proxy IPs/CIDRs allowed to supply forwarded client IPs.
     pub rate_limit_trusted_proxies: String,
@@ -212,7 +213,8 @@ pub struct ServerConfig {
     /// suits page loads is far too generous here.
     #[serde(default = "default_llm_rate_limit_burst")]
     pub llm_rate_limit_burst: u32,
-    /// Tokens replenished per second for the LLM-endpoint limiter.
+    /// Seconds between two replenished tokens for the LLM-endpoint limiter
+    /// (an interval, not a rate).
     #[serde(default = "default_llm_rate_limit_per_second")]
     pub llm_rate_limit_per_second: u64,
     /// Comma-separated allowed CORS origins. Empty/unset means same-origin only.

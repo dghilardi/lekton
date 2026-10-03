@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.33.0] 2026-10-03
+
 ### Changed
 - Mermaid diagrams use Mermaid 12 and its new default appearance (neo look, ELK layout), so existing diagrams are laid out and coloured differently. Mermaid 12 needs a recent browser (ES2024, Safari 17.4 or later).
 - Updated `pdfium-render` to 0.9. PDF extraction now shares one libpdfium binding per process, which 0.9 requires, and the integration tests run it against the libpdfium version pinned in the Dockerfile.
@@ -11,9 +13,8 @@ All notable changes to this project will be documented in this file.
 - Updated `config` to 0.15, `tower-http` to 0.7, `axum-extra` to 0.12 and the GitHub Actions used by CI and releases.
 
 ### Fixed
-- The `docker compose` demo works again: Garage is set up with the S3 key Lekton is configured with (it used to create a random one, so every upload failed), and the demo loader reaches Lekton, finds its files and sends the fields the ingest API now requires.
+- The `docker compose` demo works again. Lekton never started because the Qdrant healthcheck called `curl`, which the Qdrant image does not ship; Garage created a random S3 key instead of the one Lekton is configured with, so every upload failed; and the demo loader could not reach Lekton, find its files or send the fields the ingest API now requires.
 - `[usage.pricing]` and `[usage.budget.plans]` names with uppercase letters (e.g. `Qwen/Qwen3-8B`) are no longer lowercased when the configuration loads, so those prices now apply instead of the fallback rate. A plan name that contains uppercase letters and was assigned to users from the lowercased list must be reassigned.
-- `docker compose up` never started Lekton: the Qdrant healthcheck called `curl`, which the Qdrant image does not ship, so the service stayed unhealthy.
 
 ## [0.32.0] 2026-10-03
 

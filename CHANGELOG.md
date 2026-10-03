@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.32.0] 2026-10-03
+
 ### Added
 - Dependabot now proposes weekly Cargo and npm updates, in addition to GitHub Actions.
 

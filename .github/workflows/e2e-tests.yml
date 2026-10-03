@@ -7,6 +7,13 @@ on:
     branches: [main, next]
   workflow_call:
 
+# Supersede older runs of the same PR; runs on main and tags always complete.
+# The group is a literal, not github.workflow, so it stays unique when called
+# from publish.yml.
+concurrency:
+  group: e2e-tests-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
   LKN__AUTH__DEMO_MODE: "true"
@@ -56,6 +63,10 @@ jobs:
         run: rustup toolchain install
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Only main saves caches: PR-scoped caches are unreachable from other
+          # refs and evict main's under the 10 GB repository limit.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:

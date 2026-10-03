@@ -7,6 +7,13 @@ on:
     branches: [main, next]
   workflow_call:
 
+# Supersede older runs of the same PR; runs on main and tags always complete.
+# The group is a literal, not github.workflow, so it stays unique when called
+# from publish.yml.
+concurrency:
+  group: integration-tests-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_PROFILE_TEST_DEBUG: 0
@@ -22,13 +29,10 @@ jobs:
         run: rustup toolchain install
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-
-      - name: Free disk space
-        run: |
-          df -h
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
-          docker system prune -af || true
-          df -h
+        with:
+          # Only main saves caches: PR-scoped caches are unreachable from other
+          # refs and evict main's under the 10 GB repository limit.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:

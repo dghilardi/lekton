@@ -63,3 +63,26 @@ Browser tests start the static preview themselves and check both languages and
 themes, WCAG AA with axe, mobile overflow, links under `/lekton/`, native content
 without JavaScript, theme persistence and clipboard/storage failures. They also
 write desktop and mobile review captures to `.impeccable/review/`.
+
+## Publishing with GitHub Pages
+
+The [Project Website workflow](../.github/workflows/website.yml) runs the static
+build tests and browser checks for website-related pull requests. On `main`, it
+also uploads `website/dist/` and deploys that checked artifact through the
+`github-pages` environment. Manual runs on feature branches validate without
+publishing. Changes to the default application stylesheet rebuild the website
+as well. All Actions are pinned to commit hashes.
+
+For the initial publication, enable GitHub Pages for `dghilardi/lekton` and choose
+**GitHub Actions** as its publishing source under **Settings → Pages**. Protect the
+`github-pages` environment so only `main` can deploy. Then merge and push the
+website branch to `main`, or run **Project Website** manually on `main` after the
+source is configured. See GitHub's [custom workflow guide](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages)
+for the publishing-source and deployment settings.
+
+With the default project URL, English is published at
+`https://dghilardi.github.io/lekton/` and Italian at
+`https://dghilardi.github.io/lekton/it/`. These are deployment destinations, not a
+claim that Pages has already been enabled. No `gh-pages` branch, Rust build or
+application service credentials are needed. The workflow receives deployment
+permissions only in its deployment job; pull request checks have read access.

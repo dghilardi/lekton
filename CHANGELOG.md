@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.34.0] 2026-10-03
+
 ### Added
 - Code blocks in documents are highlighted in many more languages, including TOML, TypeScript, Dockerfile, INI, `.env`, Terraform, GraphQL, Kotlin, Swift, Protobuf, nginx and SCSS. Common tags like `shell`, `console`, `jsonc`, `docker` and `rust,ignore` are recognised too. PowerShell is not supported.
 - Code block colors are `--lekton-code-*` tokens that `public/custom.css` can override.

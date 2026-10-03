@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- Mermaid diagrams use Mermaid 12 and its new default appearance (neo look, ELK layout), so existing diagrams are laid out and coloured differently. Mermaid 12 needs a recent browser (ES2024, Safari 17.4 or later).
 - Updated `pdfium-render` to 0.9. PDF extraction now shares one libpdfium binding per process, which 0.9 requires, and the integration tests run it against the libpdfium version pinned in the Dockerfile.
 - CI reuses the Rust build cache again: only `main` saves caches (pull requests restore them), the `rustfmt` job no longer caches, newer pushes to a pull request cancel its older runs, and the integration tests skip the slow disk cleanup step.
 - Updated `config` to 0.15, `tower-http` to 0.7, `axum-extra` to 0.12 and the GitHub Actions used by CI and releases.

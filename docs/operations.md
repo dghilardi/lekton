@@ -155,6 +155,30 @@ curl -X POST http://localhost/api/v1/admin/rag/reindex \
   -H "Authorization: Bearer $SERVICE_TOKEN"
 ```
 
+### Upgrading
+
+Qdrant only guarantees compatibility between consecutive minor versions, for both the storage and the client. Lekton uses `qdrant-client` 1.19 and is tested against Qdrant 1.19. To upgrade a server running 1.17:
+
+1. Take a snapshot (see above).
+2. Upgrade Qdrant to the latest 1.18.x and wait until every collection reports `green` (`GET /collections/lekton`). Do not skip 1.18: Qdrant does not support upgrading across more than one minor version.
+3. Deploy the new Lekton version.
+4. Upgrade Qdrant to 1.19.x.
+
+Re-indexing instead of upgrading recomputes every embedding, which costs embedding-provider credits.
+
+---
+
+## Meilisearch
+
+The search index is derived from MongoDB and can always be rebuilt with a full re-index (`/admin/settings` → *Search* → *Re-index*, or `POST /api/v1/admin/search/reindex` as an administrator).
+
+### Upgrading
+
+Lekton is tested against Meilisearch 1.54. A Meilisearch database only opens with the version that created it, so a new image needs one of:
+
+- **In-place upgrade**: take a snapshot (`POST /snapshots`), then start the new version with `MEILI_UPGRADE_DB=true` (`docker-compose.yml` sets it). Works for databases created by Meilisearch 1.12 or later; the upgrade is not atomic, so keep the snapshot until it succeeds.
+- **Fresh index**: start the new version on an empty data directory and run a full re-index. Use this for databases older than 1.12 or if the in-place upgrade fails.
+
 ---
 
 ## Service token rotation
@@ -200,6 +224,7 @@ The JWT secret (`LKN__AUTH__JWT_SECRET`) signs all access and refresh tokens. Ro
 - Weekly on Monday at 06:00 UTC (`.github/workflows/deny.yml`).
 
 The `[advisories]` section in `deny.toml` already covers both advisories and licenses — no separate `cargo audit` step is needed.
+The dependency graph is resolved with all features enabled (`[graph] all-features = true`), so the server (`ssr`) and browser (`hydrate`) dependencies are both audited.
 
 To run locally:
 
@@ -209,3 +234,16 @@ cargo deny check licenses
 ```
 
 When a new advisory appears, either upgrade the affected crate or add a justified `ignore` entry in `deny.toml`.
+
+Dependabot (`.github/dependabot.yml`) opens weekly update PRs for GitHub Actions, Cargo and npm, grouping minor and patch updates. It skips the `wasm-bindgen` crates, which must match the `wasm-bindgen-cli` pinned in CI and the Dockerfile, and minor `qdrant-client` updates, which must follow the Qdrant server (see [Qdrant upgrading](#upgrading)).
+
+The npm packages are only used at build time: Mermaid and the schema viewers are copied as prebuilt bundles, so `npm audit` reports on build tooling and on the versions of those bundles.
+
+### Accepted advisories
+
+Advisories without a patched release are accepted only after weighing their impact:
+
+| Advisory | Introduced by | Impact | Options |
+|----------|---------------|--------|---------|
+| RUSTSEC-2023-0071 (`rsa` timing side channel) | `openidconnect` 4 | Lekton only verifies RS256 ID-token signatures with public keys; the attack needs private-key operations. | Move to `rsa` 0.10 once it is stable and `openidconnect` adopts it. |
+| GHSA-866g-f22w-33x8 (low, `@ai-sdk/provider-utils` resource consumption) | `@scalar/api-reference` → `@scalar/agent-chat`, which pins `ai` 6.0.33 | The Scalar agent chat is not configured by Lekton; the shipped viewer is Scalar's prebuilt bundle, so an npm override would not change it. | Wait for a Scalar release that bumps the pin, or pass `agent: { disabled: true }` to the viewer. |

@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Dependabot now proposes weekly Cargo and npm updates, in addition to GitHub Actions.
+
+### Changed
+- Meilisearch is now 1.54.3 in `docker-compose.yml`, CI and the integration tests, which previously used three different versions; the compose service persists its data again and upgrades it in place.
+- Updated Qdrant to 1.19 (`qdrant-client` and the server image). Existing servers on 1.17 must upgrade through 1.18 first; see `docs/operations.md`.
+- Updated `cargo-leptos` to 0.3.10 and `wasm-bindgen` to 0.2.129; Docker now installs the matching `wasm-bindgen-cli` like CI instead of downloading it at build time.
+- Updated the Rust and npm dependencies within their declared version ranges, including Leptos 0.8.21, the AsyncAPI viewer 3.2, Tailwind CSS 4.3.3, DaisyUI 5.7 and Playwright 1.63.
+
+### Security
+- Resolved the RustSec advisories in `hickory-proto`, `h2`, `rustls-webpki`, `quinn-proto`, `lru`, `event-listener` and `astral-tokio-tar` by updating `mongodb`, the AWS SDK and the test dependencies, and by dropping the AWS SDK's legacy TLS client.
+- Updated Mermaid and the Scalar API reference viewer and refreshed the npm build dependencies to resolve the `npm audit` advisories; the remaining accepted advisories are documented in `docs/operations.md`.
+- `cargo deny` now audits the server and browser dependencies, not only the default build.
+
 ## [0.31.1] 2026-10-02
 
 ### Added

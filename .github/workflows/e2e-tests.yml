@@ -38,7 +38,7 @@ jobs:
           --health-retries 5
 
       meilisearch:
-        image: getmeili/meilisearch:v1.13.3
+        image: getmeili/meilisearch:v1.54.3
         ports:
           - 7700:7700
         env:
@@ -59,7 +59,7 @@ jobs:
 
       - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
-          tool: cargo-leptos@0.3.4,wasm-bindgen-cli@0.2.118
+          tool: cargo-leptos@0.3.10,wasm-bindgen-cli@0.2.129
 
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0

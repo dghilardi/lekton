@@ -1,6 +1,6 @@
 //! PDF attachment extractor backed by the native `libpdfium` library.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 
@@ -14,6 +14,28 @@ use super::AttachmentExtractor;
 const RENDER_TARGET_WIDTH: i32 = 1024;
 /// Cap on rendered page height (px) to bound memory for tall pages.
 const RENDER_MAX_HEIGHT: i32 = 1536;
+
+/// The process-wide libpdfium binding.
+///
+/// pdfium-render keeps its bindings in a global that can be initialised only
+/// once per process, so every extraction must share a single [`Pdfium`]. A
+/// failed binding (no libpdfium installed) is cached too: it cannot appear
+/// later in the same process.
+///
+/// [`Pdfium`]: pdfium_render::prelude::Pdfium
+fn pdfium() -> Result<&'static pdfium_render::prelude::Pdfium, AppError> {
+    use pdfium_render::prelude::Pdfium;
+
+    static PDFIUM: OnceLock<Result<Pdfium, String>> = OnceLock::new();
+    PDFIUM
+        .get_or_init(|| {
+            Pdfium::bind_to_system_library()
+                .map(Pdfium::new)
+                .map_err(|e| e.to_string())
+        })
+        .as_ref()
+        .map_err(|e| AppError::Internal(format!("failed to bind libpdfium: {e}")))
+}
 
 /// Extracts text from PDFs via libpdfium.
 ///
@@ -112,13 +134,7 @@ pub async fn extract_preview(bytes: &[u8], max_pages: usize) -> Result<String, A
 
 /// Concatenate native text from the first `max_pages` pages. Blocking.
 fn load_preview_text(bytes: &[u8], max_pages: usize) -> Result<String, AppError> {
-    use pdfium_render::prelude::*;
-
-    let bindings = Pdfium::bind_to_system_library()
-        .map_err(|e| AppError::Internal(format!("failed to bind libpdfium: {e}")))?;
-    let pdfium = Pdfium::new(bindings);
-
-    let document = pdfium
+    let document = pdfium()?
         .load_pdf_from_byte_slice(bytes, None)
         .map_err(|e| AppError::Internal(format!("failed to load PDF: {e}")))?;
 
@@ -147,13 +163,7 @@ fn load_pdf(
     page_text_threshold: usize,
     render_images: bool,
 ) -> Result<Vec<RawPage>, AppError> {
-    use pdfium_render::prelude::*;
-
-    let bindings = Pdfium::bind_to_system_library()
-        .map_err(|e| AppError::Internal(format!("failed to bind libpdfium: {e}")))?;
-    let pdfium = Pdfium::new(bindings);
-
-    let document = pdfium
+    let document = pdfium()?
         .load_pdf_from_byte_slice(bytes, None)
         .map_err(|e| AppError::Internal(format!("failed to load PDF: {e}")))?;
 

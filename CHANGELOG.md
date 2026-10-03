@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Code blocks in documents are highlighted in many more languages, including TOML, TypeScript, Dockerfile, INI, `.env`, Terraform, GraphQL, Kotlin, Swift, Protobuf, nginx and SCSS. Common tags like `shell`, `console`, `jsonc`, `docker` and `rust,ignore` are recognised too. PowerShell is not supported.
+- Code block colors are `--lekton-code-*` tokens that `public/custom.css` can override.
+
+### Fixed
+- Code blocks are easier to read: JSON, YAML and TOML keys have a different color from their values, TOML/INI sections and diff lines are colored, and quotes, comment markers, brackets and `+`/`-` diff markers are no longer shown in the keyword red.
+
 ## [0.33.1] 2026-10-03
 
 ### Added

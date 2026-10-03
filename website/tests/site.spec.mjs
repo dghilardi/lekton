@@ -13,6 +13,12 @@ for (const locale of ['en', 'it']) {
       await expect(page.locator('html')).toHaveAttribute('lang', locale);
       await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
       await expect(page.locator('h1')).toContainText(locale === 'en' ? 'Documentation,' : 'La documentazione,');
+      await expect(page.locator('h1')).toHaveCount(1);
+      const canonical = `https://dghilardi.github.io/lekton/${locale === 'it' ? 'it/' : ''}`;
+      await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href', canonical);
+      await expect(page.locator('meta[property="og:url"]')).toHaveAttribute('content', canonical);
+      await expect(page.locator('link[hreflang="en"]')).toHaveAttribute('href', 'https://dghilardi.github.io/lekton/');
+      await expect(page.locator('link[hreflang="it"]')).toHaveAttribute('href', 'https://dghilardi.github.io/lekton/it/');
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       const audit = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
       expect(audit.violations).toEqual([]);
@@ -21,16 +27,26 @@ for (const locale of ['en', 'it']) {
   }
 }
 
-test('locale links work under /lekton and content remains usable without JavaScript', async ({ browser }) => {
-  const context = await browser.newContext({ javaScriptEnabled: false });
+test('locale links work under /lekton and content remains usable without JavaScript', async ({ browser, baseURL }) => {
+  const context = await browser.newContext({ javaScriptEnabled: false, baseURL });
   const page = await context.newPage();
-  await page.goto('http://127.0.0.1:4173/lekton/');
+  await page.goto('/lekton/');
   await page.getByRole('link', { name: 'IT', exact: true }).click();
   await expect(page).toHaveURL(/\/lekton\/it\/$/);
   await expect(page.locator('h1')).toContainText('La documentazione,');
   await page.locator('.workflow summary').click();
   await expect(page.locator('.workflow-expanded')).toBeVisible();
   await context.close();
+});
+
+test('crawler and social assets are served under the project prefix', async ({ request }) => {
+  const sitemap = await request.get('/lekton/sitemap.xml');
+  expect(sitemap.ok()).toBe(true);
+  expect(sitemap.headers()['content-type']).toContain('xml');
+  expect(await sitemap.text()).toContain('<loc>https://dghilardi.github.io/lekton/it/</loc>');
+  const image = await request.get('/lekton/assets/social.png');
+  expect(image.ok()).toBe(true);
+  expect(image.headers()['content-type']).toBe('image/png');
 });
 
 test('theme cycles through light, dark and system and copy uses the displayed commands', async ({ page, context }) => {

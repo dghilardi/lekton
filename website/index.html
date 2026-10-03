@@ -8,11 +8,27 @@
   <meta property="og:type" content="website">
   <meta property="og:title" content="{{title}}">
   <meta property="og:description" content="{{description}}">
+  <meta property="og:site_name" content="Lekton">
+  <meta property="og:url" content="{{canonicalUrl}}">
   <meta property="og:locale" content="{{ogLocale}}">
+  <meta property="og:locale:alternate" content="{{ogAlternateLocale}}">
+  <meta property="og:image" content="{{shareImageUrl}}">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="{{shareImageAlt}}">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{title}}">
+  <meta name="twitter:description" content="{{description}}">
+  <meta name="twitter:image" content="{{shareImageUrl}}">
+  <meta name="twitter:image:alt" content="{{shareImageAlt}}">
   <title>{{title}}</title>
+  <link rel="canonical" href="{{canonicalUrl}}">
   <link rel="icon" href="{{assetPrefix}}assets/favicon.svg" type="image/svg+xml">
-  <link rel="alternate" hreflang="en" href="{{englishHref}}">
-  <link rel="alternate" hreflang="it" href="{{italianHref}}">
+  <link rel="alternate" hreflang="en" href="{{englishUrl}}">
+  <link rel="alternate" hreflang="it" href="{{italianUrl}}">
+  <link rel="alternate" hreflang="x-default" href="{{englishUrl}}">
+  <script type="application/ld+json">{{structuredData}}</script>
   <script src="{{assetPrefix}}assets/theme-init.js"></script>
   <link rel="stylesheet" href="{{assetPrefix}}assets/theme.css">
   <link rel="stylesheet" href="{{assetPrefix}}assets/site.css">

@@ -6,7 +6,7 @@ import { parseArgs } from 'node:util';
 
 const { values } = parseArgs({ options: { port: { type: 'string', default: '4173' } } });
 const root = resolve(fileURLToPath(new URL('./dist/', import.meta.url)));
-const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml' };
+const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.png': 'image/png', '.xml': 'application/xml' };
 const base = '/lekton/';
 
 // A local-only preview under the same project prefix used by GitHub Pages.

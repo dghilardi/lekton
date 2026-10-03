@@ -21,7 +21,7 @@ rebuilds on startup; restart it after editing source files. To choose another po
 use `npm run dev:website -- --port 4174`.
 
 The generated `website/dist/` directory is ignored by Git. It contains static
-HTML for both languages, shared assets and `.nojekyll`. Language links and native
+HTML for both languages, shared assets, a sitemap and `.nojekyll`. Language links and native
 expandable content work without JavaScript. JavaScript adds theme selection and
 command copying; the system theme still applies when JavaScript is unavailable.
 
@@ -63,6 +63,41 @@ Browser tests start the static preview themselves and check both languages and
 themes, WCAG AA with axe, mobile overflow, links under `/lekton/`, native content
 without JavaScript, theme persistence and clipboard/storage failures. They also
 write desktop and mobile review captures to `.impeccable/review/`.
+If another preview is already using port 4173, run browser checks against a fresh
+server with `WEBSITE_TEST_PORT=4174 npm run test:website:e2e`.
+
+## Search and link previews
+
+Both locales have distinct titles, descriptions and self-referencing canonical
+URLs. Each page lists the absolute English, Italian and English fallback URLs
+with `hreflang`; those metadata links are independent of the relative navigation
+links used by local previews. The generated `sitemap.xml` contains both canonical
+pages, without invented modification dates. JSON-LD describes the website, page
+and software using repository-backed facts, without ratings or reviews.
+
+The public URL defaults to `https://dghilardi.github.io/lekton/` in
+`website/seo.mjs`. For a different deployment, change that default or build with:
+
+```bash
+npm run build:website -- --site-url https://example.com/lekton/
+```
+
+Use the same public URL in the publishing workflow. The builder validates HTTPS
+and rejects credentials, query strings and fragments. A local preview still
+points crawlers at the public URL rather than creating localhost canonicals.
+
+Open Graph and Twitter metadata include the same 1200×630 PNG brand image and
+localized alternative text. `website/social.svg` is its editable source, using
+the current default light-theme colors and the existing stacked-layer logo.
+After a brand change, regenerate with `rsvg-convert website/social.svg -o website/social.png`
+and preserve the raster's provenance; no image converter is required to build
+or serve the website.
+
+After publication, submit the full `sitemap.xml` URL in Google Search Console and
+check the indexed canonical and language versions. GitHub project sites cannot
+control a host-level `robots.txt` from `/lekton/`, so the project does not emit a
+misleading file at that subpath. See Google's [localized-page guidance](https://developers.google.com/search/docs/specialty/international/localized-versions)
+and [sitemap guidance](https://developers.google.com/search/docs/crawling-indexing/sitemaps/build-sitemap).
 
 ## Publishing with GitHub Pages
 

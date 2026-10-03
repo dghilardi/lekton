@@ -1,6 +1,6 @@
 export const content = {
   en: {
-    title: 'Lekton — documentation from your repositories',
+    title: 'Lekton — Self-hosted Developer Portal',
     description: 'A self-hosted developer portal for Markdown, API schemas and reusable prompts. Sync content from CI, with access controls in the portal.',
     skip: 'Skip to content', navigation: 'Main navigation', language: 'Language', theme: 'Change theme',
     themeSystem: 'System theme (switch to light)', themeLight: 'Light theme (switch to dark)', themeDark: 'Dark theme (switch to system)',
@@ -42,9 +42,10 @@ export const content = {
     closeBody: 'Try the local instance, sync a small repository, and see how the portal fits your team’s workflow.',
     releases: 'Download a release', documentation: 'Documentation', license: 'AGPL-3.0',
     footerCopy: 'Open source. Self-hosted. Built in Rust.',
+    shareImageAlt: 'Lekton stacked-layer logo',
   },
   it: {
-    title: 'Lekton — documentazione dai tuoi repository',
+    title: 'Lekton — Portale per sviluppatori self-hosted',
     description: 'Un portale per sviluppatori da ospitare sulla tua infrastruttura: Markdown, schemi API e prompt riutilizzabili. Sincronizza i contenuti dalla CI e gestisci gli accessi nel portale.',
     skip: 'Vai al contenuto', navigation: 'Navigazione principale', language: 'Lingua', theme: 'Cambia tema',
     themeSystem: 'Tema di sistema (passa al chiaro)', themeLight: 'Tema chiaro (passa allo scuro)', themeDark: 'Tema scuro (passa al sistema)',
@@ -86,5 +87,6 @@ export const content = {
     closeBody: 'Prova l’istanza locale, sincronizza un piccolo repository e valuta come il portale si inserisce nel lavoro del tuo team.',
     releases: 'Scarica una release', documentation: 'Documentazione', license: 'AGPL-3.0',
     footerCopy: 'Open source. Sulla tua infrastruttura. Sviluppato in Rust.',
+    shareImageAlt: 'Logo di Lekton a livelli sovrapposti',
   },
 };

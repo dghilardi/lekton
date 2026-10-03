@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.33.1] 2026-10-03
+
 ### Added
 - Bilingual project website with the portal's light/dark themes, CI sync examples, local setup instructions, service requirements, direct access to GitHub releases, search-engine metadata and automated GitHub Pages publishing.
 

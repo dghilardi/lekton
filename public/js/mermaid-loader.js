@@ -30,8 +30,12 @@
     });
   }
 
+  // Mermaid 12's default appearance (neo look, ELK layout) in its light and
+  // dark colour themes.
   function currentTheme() {
-    return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'default';
+    return document.documentElement.getAttribute('data-theme') === 'dark'
+      ? 'redux-dark-color'
+      : 'redux-color';
   }
 
   function loadAndRun() {

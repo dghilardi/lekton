@@ -42,5 +42,19 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      # Same libpdfium as the Dockerfile; keep the release and checksum in sync.
+      - name: Install libpdfium
+        env:
+          PDFIUM_RELEASE: "8076"
+          PDFIUM_SHA256: d9d67bc40af03aef4fe28a60b19b1086f28ace019c8c9caf19cb7fe3d14ceca3
+        run: |
+          curl -fsSL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F${PDFIUM_RELEASE}/pdfium-linux-x64.tgz" \
+            -o "$RUNNER_TEMP/pdfium.tgz"
+          echo "${PDFIUM_SHA256}  $RUNNER_TEMP/pdfium.tgz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/pdfium"
+          tar -xzf "$RUNNER_TEMP/pdfium.tgz" -C "$RUNNER_TEMP/pdfium" lib/libpdfium.so
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/pdfium/lib" >> "$GITHUB_ENV"
+          echo "LEKTON_REQUIRE_PDFIUM=1" >> "$GITHUB_ENV"
+
       - name: Run integration tests
         run: cargo test --features ssr --test '*' -- --test-threads=1

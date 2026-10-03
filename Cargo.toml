@@ -144,7 +144,7 @@ reqwest = { version = "0.12", features = ["json"], optional = true }
 urlencoding = { version = "2", optional = true }
 
 # PDF text extraction and page rendering (binds to the system libpdfium)
-pdfium-render = { version = "0.8", optional = true }
+pdfium-render = { version = "0.9", optional = true }
 
 # PNG encoding of rendered PDF pages for VLM transcription
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }

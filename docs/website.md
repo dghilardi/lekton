@@ -41,6 +41,9 @@ The portal illustration is HTML rather than an application screenshot. Its
 caption labels it as illustrative; its navigation and search field are static.
 Keep examples and claims aligned with the implementation and configuration.
 In particular, search and RAG require their feature flags and configured services.
+The header, closing action and footer link to the complete GitHub Releases page,
+so visitors can choose a version and the matching assets instead of being forced
+to the latest release.
 The local setup command selects Lekton and the demo loader plus their dependencies,
 avoiding the optional Infinity model download. This is an evaluation environment;
 the operations guide covers production configuration.

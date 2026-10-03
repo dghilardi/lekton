@@ -146,7 +146,7 @@ The public website uses `website-display` for its opening heading and `website-h
 
 The application’s established layout tokens are a sidebar width of (16rem), content maximum of (72rem), and header height of (3.75rem). Its shared spacing steps are captured in the frontmatter.
 
-**Public website:** the container caps at (83.75rem) with fluid side margins. Desktop opening content and portal preview use a (44% / 53%) split with a (3%) gap. Capability and setup sections use equal columns; thin separators organize the page. At (800px) and below, major sections stack in source order. At (520px) and below, navigation wraps onto a second header row and the illustrative portal becomes denser. Technical blocks scroll horizontally when needed. These are website-specific compositions.
+**Public website:** the container caps at (83.75rem) with fluid side margins. Desktop opening content and portal preview use a (44% / 53%) split with a (3%) gap. Capability and setup sections use equal columns; thin separators organize the page. At (800px) and below, major sections stack in source order. At (520px) and below, navigation wraps onto a second header row and the illustrative portal becomes denser. At (360px) and below, the repository → sync → portal workflow stacks vertically with downward arrows. Technical blocks scroll horizontally when needed. These are website-specific compositions.
 
 ## Elevation & Depth
 

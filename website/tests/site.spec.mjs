@@ -80,6 +80,25 @@ test('Italian mobile layout and expandable content fit narrow screens', async ({
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
+test('release selection is reachable in both locales on desktop and narrow mobile screens', async ({ page }) => {
+  for (const locale of ['en', 'it']) {
+    await page.goto(locale === 'en' ? '/lekton/' : '/lekton/it/');
+    const name = locale === 'en' ? 'Releases' : 'Versioni';
+    const headerLink = page.locator('header').getByRole('link', { name, exact: true });
+    await expect(headerLink).toHaveAttribute('href', 'https://github.com/dghilardi/lekton/releases');
+    await expect(page.locator('footer').getByRole('link', { name, exact: true })).toHaveAttribute('href', 'https://github.com/dghilardi/lekton/releases');
+    for (const width of [1440, 390, 320]) {
+      await page.setViewportSize({ width, height: 844 });
+      await page.evaluate(() => document.fonts.ready);
+      await expect(headerLink).toBeVisible();
+      const overflow = await page.evaluate(() => [...document.querySelectorAll('body *')]
+        .filter(element => element.getBoundingClientRect().right > innerWidth && element.getBoundingClientRect().width)
+        .slice(0, 8).map(element => ({ tag: element.tagName, class: element.className, text: element.textContent.slice(0, 60), right: element.getBoundingClientRect().right })));
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${locale}/${width}: ${JSON.stringify(overflow)}`).toBe(true);
+    }
+  }
+});
+
 test('capture desktop and mobile theme variants for visual verification', async ({ page }) => {
   await mkdir('.impeccable/review', { recursive: true });
   for (const capture of [
@@ -88,6 +107,7 @@ test('capture desktop and mobile theme variants for visual verification', async 
     { name: 'desktop-dark', width: 1440, height: 1000, theme: 'dark', locale: 'en', fullPage: true },
     { name: 'mobile', width: 390, height: 844, theme: 'light', locale: 'it', fullPage: true },
     { name: 'mobile-dark', width: 390, height: 844, theme: 'dark', locale: 'it', fullPage: true },
+    { name: 'mobile-small', width: 320, height: 844, theme: 'light', locale: 'it', fullPage: true },
     { name: 'user-1280', width: 1280, height: 800, theme: 'dark', locale: 'en', fullPage: true },
     { name: 'desktop-it', width: 1440, height: 1000, theme: 'light', locale: 'it', fullPage: true },
   ]) {

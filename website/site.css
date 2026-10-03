@@ -201,6 +201,10 @@ summary::-webkit-details-marker { display: none; }
   .workflow-brand .brand-mark { width: 1.4rem; height: 1.4rem; }
   .capabilities summary { font-size: .88rem; gap: .75rem; }
 }
+@media (max-width: 360px) {
+  .workflow-path { flex-direction: column; align-items: start; gap: .65rem; }
+  .workflow-path > .flow-arrow { transform: rotate(90deg); margin-left: .7rem; }
+}
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after { transition: none !important; }

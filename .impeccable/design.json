@@ -367,6 +367,10 @@
       {
         "name": "website-compact",
         "value": "520px"
+      },
+      {
+        "name": "website-workflow-stack",
+        "value": "360px"
       }
     ]
   },

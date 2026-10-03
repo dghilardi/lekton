@@ -288,8 +288,10 @@ fn apply_syntax_highlighting(html: &str) -> String {
     use syntect::parsing::SyntaxSet;
     use syntect::util::LinesWithEndings;
 
+    // two-face bundles bat's syntax set: a superset of syntect's defaults that
+    // adds TOML, TypeScript, Dockerfile, INI, HCL, GraphQL, etc.
     static SS: OnceLock<SyntaxSet> = OnceLock::new();
-    let ss = SS.get_or_init(SyntaxSet::load_defaults_newlines);
+    let ss = SS.get_or_init(two_face::syntax::extra_newlines);
 
     const NEEDLE: &str = "<pre><code class=\"language-";
 
@@ -331,9 +333,7 @@ fn apply_syntax_highlighting(html: &str) -> String {
                 result.push_str(lang);
                 result.push_str("\">");
 
-                let syntax = ss
-                    .find_syntax_by_token(lang)
-                    .or_else(|| ss.find_syntax_by_extension(lang));
+                let syntax = find_syntax(ss, lang);
 
                 match syntax {
                     Some(syntax) => {
@@ -359,6 +359,35 @@ fn apply_syntax_highlighting(html: &str) -> String {
     }
 
     result
+}
+
+/// Resolve a fenced code block language tag to a syntax definition.
+///
+/// Handles common tags that don't match any syntax name or file extension
+/// (`shell`, `console`, `jsonc`, `env`, …) and Rustdoc-style attributes
+/// such as `rust,ignore`.
+#[cfg(feature = "ssr")]
+fn find_syntax<'a>(
+    ss: &'a syntect::parsing::SyntaxSet,
+    lang: &str,
+) -> Option<&'a syntect::parsing::SyntaxReference> {
+    let lang = lang.split(',').next().unwrap_or(lang).to_ascii_lowercase();
+    let token = match lang.as_str() {
+        "shell" | "console" | "shellsession" | "sh-session" | "terminal" => "bash",
+        "jsonc" | "json5" | "jsonl" | "ndjson" | "geojson" => "json",
+        "conf" | "cfg" => "ini",
+        "docker" | "containerfile" => "dockerfile",
+        "kt" | "kts" => "kotlin",
+        "proto" => "protobuf",
+        "gql" => "graphql",
+        "py" => "python",
+        "rs" => "rust",
+        "md" => "markdown",
+        "patch" => "diff",
+        other => other,
+    };
+    ss.find_syntax_by_token(token)
+        .or_else(|| ss.find_syntax_by_extension(token))
 }
 
 #[cfg(test)]
@@ -391,6 +420,59 @@ mod tests {
         assert!(result.contains("<code"));
         // syntect wraps tokens in separate spans, so "fn main()" is not a contiguous string
         assert!(result.contains("fn") && result.contains("main"));
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn test_code_block_highlights_extra_languages() {
+        for (lang, code, scope) in [
+            ("toml", "[server]\nport = 8080\n", "hl-toml"),
+            ("ts", "const x: number = 1;\n", "hl-ts"),
+            ("typescript", "let s: string;\n", "hl-ts"),
+            ("dockerfile", "FROM rust:1\n", "hl-dockerfile"),
+            ("ini", "[a]\nb=1\n", "hl-ini"),
+            ("hcl", "resource \"a\" \"b\" {}\n", "hl-terraform"),
+            ("graphql", "query { a }\n", "hl-graphql"),
+        ] {
+            let result = render_markdown(&format!("```{lang}\n{code}```"));
+            assert!(
+                result.contains(scope),
+                "{lang} block should be highlighted, got: {result}"
+            );
+        }
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn test_code_block_language_aliases() {
+        for (lang, scope) in [
+            ("shell", "hl-shell"),
+            ("console", "hl-shell"),
+            ("jsonc", "hl-json"),
+            ("env", "hl-env"),
+            ("terraform", "hl-terraform"),
+            ("rust,ignore", "hl-rust"),
+            ("JSON", "hl-json"),
+            ("docker", "hl-dockerfile"),
+            ("kt", "hl-kotlin"),
+            ("proto", "hl-proto"),
+            ("gql", "hl-graphql"),
+        ] {
+            let result = render_markdown(&format!("```{lang}\nx = 1\n```"));
+            assert!(
+                result.contains(scope),
+                "{lang} should resolve to {scope}, got: {result}"
+            );
+        }
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn test_code_block_unknown_language_left_plain() {
+        let result = render_markdown("```nosuchlang\na < b\n```");
+        assert!(result.contains("language-nosuchlang"));
+        assert!(result.contains("a &lt; b"));
+        assert!(!result.contains("hl-"));
     }
 
     #[test]

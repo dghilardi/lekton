@@ -63,7 +63,21 @@
  *   }
  *
  * ═══════════════════════════════════════════════════════════════════
- * SECTION 4 — Logo theme switching
+ * SECTION 4 — Code block colors
+ * ═══════════════════════════════════════════════════════════════════
+ *
+ * Syntax highlighting colors, per theme. Available tokens:
+ * keyword, string, comment, constant, function, type, variable,
+ * key (JSON/YAML/TOML keys, HTML tags), section (TOML/INI tables,
+ * diff hunks), inserted, deleted, invalid.
+ *
+ *   [data-theme="dark"] {
+ *     --lekton-code-key:    #7ee787;
+ *     --lekton-code-string: #a5d6ff;
+ *   }
+ *
+ * ═══════════════════════════════════════════════════════════════════
+ * SECTION 5 — Logo theme switching
  * ═══════════════════════════════════════════════════════════════════
  *
  * If you upload custom logos via the admin UI, these rules

@@ -536,71 +536,106 @@ label > span:first-child {
 /* Syntect uses ClassStyle::SpacedPrefixed { prefix: "hl-" }, so every   */
 /* scope component is prefixed with "hl-" to avoid Tailwind class clashes */
 /* (e.g. `.block`, `.meta`, `.storage` are Tailwind utilities).           */
+/* Colors are --lekton-code-* tokens so public/custom.css can override.   */
 
-/* Light theme */
-[data-theme="light"] .prose pre code .hl-keyword,
-[data-theme="light"] .prose pre code .hl-storage {
-    color: #cf222e;
-}
-[data-theme="light"] .prose pre code .hl-string,
-[data-theme="light"] .prose pre code .hl-string.hl-quoted {
-    color: #0a3069;
-}
-[data-theme="light"] .prose pre code .hl-comment {
-    color: #6e7781;
-    font-style: italic;
-}
-[data-theme="light"] .prose pre code .hl-constant {
-    color: #0550ae;
-}
-[data-theme="light"] .prose pre code .hl-entity.hl-name.hl-function,
-[data-theme="light"] .prose pre code .hl-entity.hl-name.hl-method,
-[data-theme="light"] .prose pre code .hl-support.hl-function {
-    color: #8250df;
-}
-[data-theme="light"] .prose pre code .hl-entity.hl-name.hl-type,
-[data-theme="light"] .prose pre code .hl-entity.hl-name.hl-class,
-[data-theme="light"] .prose pre code .hl-support.hl-type {
-    color: #953800;
-}
-[data-theme="light"] .prose pre code .hl-variable.hl-parameter {
-    color: #953800;
-}
-[data-theme="light"] .prose pre code .hl-punctuation.hl-definition {
-    color: #cf222e;
+:root,
+[data-theme="light"] {
+    --lekton-code-keyword:   #cf222e;
+    --lekton-code-string:    #0a3069;
+    --lekton-code-comment:   #6e7781;
+    --lekton-code-constant:  #0550ae;
+    --lekton-code-function:  #8250df;
+    --lekton-code-type:      #953800;
+    --lekton-code-variable:  #953800;
+    --lekton-code-key:       #116329;
+    --lekton-code-section:   #8250df;
+    --lekton-code-inserted:  #116329;
+    --lekton-code-deleted:   #82071e;
+    --lekton-code-invalid:   #cf222e;
 }
 
-/* Dark theme */
-[data-theme="dark"] .prose pre code .hl-keyword,
-[data-theme="dark"] .prose pre code .hl-storage {
-    color: #ff7b72;
+[data-theme="dark"] {
+    --lekton-code-keyword:   #ff7b72;
+    --lekton-code-string:    #a5d6ff;
+    --lekton-code-comment:   #8b949e;
+    --lekton-code-constant:  #79c0ff;
+    --lekton-code-function:  #d2a8ff;
+    --lekton-code-type:      #ffa657;
+    --lekton-code-variable:  #ffa657;
+    --lekton-code-key:       #7ee787;
+    --lekton-code-section:   #d2a8ff;
+    --lekton-code-inserted:  #aff5b4;
+    --lekton-code-deleted:   #ffdcd7;
+    --lekton-code-invalid:   #f85149;
 }
-[data-theme="dark"] .prose pre code .hl-string,
-[data-theme="dark"] .prose pre code .hl-string.hl-quoted {
-    color: #a5d6ff;
+
+.prose pre code .hl-keyword,
+.prose pre code .hl-storage {
+    color: var(--lekton-code-keyword);
 }
-[data-theme="dark"] .prose pre code .hl-comment {
-    color: #8b949e;
+.prose pre code .hl-string {
+    color: var(--lekton-code-string);
+}
+.prose pre code .hl-comment {
+    color:      var(--lekton-code-comment);
     font-style: italic;
 }
-[data-theme="dark"] .prose pre code .hl-constant {
-    color: #79c0ff;
+.prose pre code .hl-constant {
+    color: var(--lekton-code-constant);
 }
-[data-theme="dark"] .prose pre code .hl-entity.hl-name.hl-function,
-[data-theme="dark"] .prose pre code .hl-entity.hl-name.hl-method,
-[data-theme="dark"] .prose pre code .hl-support.hl-function {
-    color: #d2a8ff;
+.prose pre code .hl-entity.hl-name.hl-function,
+.prose pre code .hl-entity.hl-name.hl-method,
+.prose pre code .hl-support.hl-function,
+.prose pre code .hl-variable.hl-function {
+    color: var(--lekton-code-function);
 }
-[data-theme="dark"] .prose pre code .hl-entity.hl-name.hl-type,
-[data-theme="dark"] .prose pre code .hl-entity.hl-name.hl-class,
-[data-theme="dark"] .prose pre code .hl-support.hl-type {
-    color: #ffa657;
+.prose pre code .hl-entity.hl-name.hl-type,
+.prose pre code .hl-entity.hl-name.hl-class,
+.prose pre code .hl-support.hl-type,
+.prose pre code .hl-support.hl-class {
+    color: var(--lekton-code-type);
 }
-[data-theme="dark"] .prose pre code .hl-variable.hl-parameter {
-    color: #ffa657;
+.prose pre code .hl-variable.hl-parameter {
+    color: var(--lekton-code-variable);
 }
-[data-theme="dark"] .prose pre code .hl-punctuation.hl-definition {
-    color: #ff7b72;
+
+/* Keys: YAML/TOML keys and HTML/XML tags (entity.name.tag), JSON object  */
+/* keys, attribute and property names. Distinguishes keys from values.    */
+.prose pre code .hl-entity.hl-name.hl-tag,
+.prose pre code .hl-entity.hl-other.hl-attribute-name,
+.prose pre code .hl-support.hl-type.hl-property-name,
+.prose pre code .hl-meta.hl-mapping.hl-key .hl-string {
+    color: var(--lekton-code-key);
+}
+
+/* Sections: TOML/INI tables, Markdown headings, diff hunk ranges. */
+.prose pre code .hl-entity.hl-name.hl-table,
+.prose pre code .hl-entity.hl-name.hl-section,
+.prose pre code .hl-markup.hl-heading,
+.prose pre code .hl-meta.hl-range.hl-diff {
+    color:       var(--lekton-code-section);
+    font-weight: 600;
+}
+
+.prose pre code .hl-markup.hl-inserted {
+    color: var(--lekton-code-inserted);
+}
+.prose pre code .hl-markup.hl-deleted {
+    color: var(--lekton-code-deleted);
+}
+.prose pre code .hl-markup.hl-bold {
+    font-weight: 700;
+}
+.prose pre code .hl-markup.hl-italic {
+    font-style: italic;
+}
+
+/* Syntax errors flagged by the grammar (invalid.* scopes). */
+.prose pre code .hl-invalid {
+    color:                     var(--lekton-code-invalid);
+    text-decoration:           underline wavy var(--lekton-code-invalid);
+    text-decoration-thickness: 1px;
+    text-underline-offset:     3px;
 }
 
 .prose ul {

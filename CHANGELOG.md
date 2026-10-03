@@ -7,6 +7,9 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - The rate-limit documentation described `rate_limit_per_second` as a rate and advised raising it for users behind a shared NAT address, which makes the limit stricter. It is the interval in seconds between replenished requests; the docs now say so and advise lowering it.
 
+### Security
+- Resolved the high-severity `braces` advisory in the build tooling: the Tailwind CLI pins `@parcel/watcher` 2.5.1, which pulls `micromatch` and `braces`, so an npm override moves it to 2.6.0, which no longer depends on them. Remove the override once the Tailwind CLI ships 2.6.0 itself.
+
 ## [0.33.0] 2026-10-03
 
 ### Changed

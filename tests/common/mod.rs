@@ -52,6 +52,7 @@ pub struct TestEnv {
     _minio: ContainerAsync<MinIO>,
     _meili: ContainerAsync<Meilisearch>,
     pub router: Router,
+    pub app_state: AppState,
     /// Raw handle to the test database. Migrations are **not** applied by
     /// `start()`, so a test that needs them runs `build_plan()` itself.
     pub db: mongodb::Database,
@@ -351,13 +352,14 @@ impl TestEnv {
                 "/api/auth/logout",
                 post(lekton::auth::demo_auth::logout_handler),
             )
-            .with_state(app_state);
+            .with_state(app_state.clone());
 
         Self {
             _mongo: mongo_container,
             _minio: minio_container,
             _meili: meili_container,
             router,
+            app_state,
             db: mongo_db.clone(),
             repo,
             release_repo,

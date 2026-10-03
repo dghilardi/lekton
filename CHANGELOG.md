@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 - Bilingual project website with the portal's light/dark themes, CI sync examples, local setup instructions, service requirements, direct access to GitHub releases, search-engine metadata and automated GitHub Pages publishing.
 
 ### Fixed
+- The admin AI usage report shows user emails instead of internal IDs, falling back to the recorded ID when an email is unavailable.
 - The rate-limit documentation described `rate_limit_per_second` as a rate and advised raising it for users behind a shared NAT address, which makes the limit stricter. It is the interval in seconds between replenished requests; the docs now say so and advise lowering it.
 
 ### Security

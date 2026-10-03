@@ -69,6 +69,16 @@ scrape_configs:
 
 ## MongoDB
 
+### AI usage report identities
+
+The admin AI usage report resolves user IDs to their current account email when
+the report loads. It keeps the recorded ID as a fallback for missing accounts,
+blank emails or lookup failures; the ID is also available on hover. Machine
+tokens, anonymous calls and background work keep their existing labels.
+Built-in demo accounts resolve to their demo email only while demo mode is enabled.
+The admin-only `ListTopConsumers` server function includes an optional
+`actor_email` alongside `actor_id`; usage events continue to store IDs.
+
 ### Backup
 
 ```bash

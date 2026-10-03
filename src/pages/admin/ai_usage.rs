@@ -87,7 +87,8 @@ pub fn AiUsageReport() -> impl IntoView {
                                     </thead>
                                     <tbody>
                                         {rows.iter().map(|row| {
-                                            let ConsumerUsage { actor_kind, actor_id, calls, prompt_tokens, completion_tokens, credits } = row.clone();
+                                            let caller = row.caller_label().to_string();
+                                            let ConsumerUsage { actor_kind, actor_id, calls, prompt_tokens, completion_tokens, credits, .. } = row.clone();
                                             let tokens = prompt_tokens + completion_tokens;
                                             // Relative to the top spender: the
                                             // question this page answers is who
@@ -98,8 +99,8 @@ pub fn AiUsageReport() -> impl IntoView {
                                                     <td>
                                                         <div class="flex items-center gap-2">
                                                             <span class="badge badge-ghost badge-sm font-mono">{actor_kind}</span>
-                                                            <span class="font-mono text-xs">
-                                                                {actor_id.unwrap_or_else(|| "—".to_string())}
+                                                            <span class="font-mono text-xs break-all" title=actor_id>
+                                                                {caller}
                                                             </span>
                                                         </div>
                                                     </td>

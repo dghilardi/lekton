@@ -63,11 +63,31 @@ pub struct ConsumerUsage {
     pub actor_kind: String,
     /// User or token id; absent for anonymous and background work.
     pub actor_id: Option<String>,
+    /// Current user email, when the account still exists and has an email.
+    #[serde(default)]
+    pub actor_email: Option<String>,
     pub calls: u64,
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     /// Cost in credits, priced per model.
     pub credits: f64,
+}
+
+impl ConsumerUsage {
+    /// Prefer a user's email, retaining the recorded identity as a fallback.
+    pub fn caller_label(&self) -> &str {
+        if self.actor_kind == "user" {
+            if let Some(email) = self
+                .actor_email
+                .as_deref()
+                .map(str::trim)
+                .filter(|email| !email.is_empty())
+            {
+                return email;
+            }
+        }
+        self.actor_id.as_deref().unwrap_or("—")
+    }
 }
 
 /// Top AI consumers over the last `days`, most expensive first.
@@ -107,6 +127,7 @@ pub async fn list_top_consumers(
             .or_insert_with(|| ConsumerUsage {
                 actor_kind: row.actor_kind.clone(),
                 actor_id: row.actor_id.clone(),
+                actor_email: None,
                 calls: 0,
                 prompt_tokens: 0,
                 completion_tokens: 0,
@@ -121,5 +142,88 @@ pub async fn list_top_consumers(
     let mut consumers: Vec<ConsumerUsage> = by_actor.into_values().collect();
     consumers.sort_by(|a, b| b.credits.total_cmp(&a.credits));
     consumers.truncate(limit.clamp(1, 200));
+
+    // Resolve only the users in the bounded report, after ranking. Keep usage
+    // attributed to the recorded ID even if the account is missing or lookup fails.
+    for consumer in &mut consumers {
+        if consumer.actor_kind != "user" {
+            continue;
+        }
+        let Some(id) = consumer.actor_id.as_deref() else {
+            continue;
+        };
+        match state.user_repo.find_user_by_id(id).await {
+            Ok(Some(user)) => {
+                let email = user.email.trim();
+                if !email.is_empty() {
+                    consumer.actor_email = Some(email.to_string());
+                }
+            }
+            Ok(None) if state.demo_mode => {
+                consumer.actor_email = id
+                    .strip_prefix("demo-")
+                    .and_then(crate::auth::demo_auth::resolve_demo_session_user)
+                    .map(|user| user.email);
+            }
+            Ok(None) => {}
+            Err(error) => tracing::warn!(%error, "Failed to resolve AI usage user email"),
+        }
+    }
     Ok(consumers)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn consumer(kind: &str, id: Option<&str>, email: Option<&str>) -> ConsumerUsage {
+        ConsumerUsage {
+            actor_kind: kind.into(),
+            actor_id: id.map(str::to_string),
+            actor_email: email.map(str::to_string),
+            calls: 1,
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            credits: 1.0,
+        }
+    }
+
+    #[test]
+    fn user_label_prefers_email_and_preserves_id() {
+        let row = consumer("user", Some("user-1"), Some(" person@example.com "));
+        assert_eq!(row.caller_label(), "person@example.com");
+        assert_eq!(row.actor_id.as_deref(), Some("user-1"));
+    }
+
+    #[test]
+    fn missing_or_blank_email_falls_back_to_user_id() {
+        for email in [None, Some(""), Some(" \t ")] {
+            assert_eq!(
+                consumer("user", Some("user-1"), email).caller_label(),
+                "user-1"
+            );
+        }
+        assert_eq!(consumer("user", None, None).caller_label(), "—");
+    }
+
+    #[test]
+    fn non_user_callers_keep_their_recorded_identity() {
+        assert_eq!(
+            consumer("service_token", Some("token-1"), Some("person@example.com")).caller_label(),
+            "token-1"
+        );
+        for kind in ["system", "anonymous"] {
+            assert_eq!(consumer(kind, None, None).caller_label(), "—");
+        }
+    }
+
+    #[test]
+    fn reports_without_email_remain_deserializable() {
+        let row: ConsumerUsage = serde_json::from_value(serde_json::json!({
+            "actor_kind": "user", "actor_id": "user-1", "calls": 1,
+            "prompt_tokens": 10, "completion_tokens": 5, "credits": 1.0
+        }))
+        .unwrap();
+        assert_eq!(row.caller_label(), "user-1");
+    }
 }

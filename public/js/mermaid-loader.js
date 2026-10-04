@@ -19,7 +19,9 @@
     nodes.forEach(function (node) {
       var source = node.getAttribute('data-mermaid-source');
       if (source !== null) {
-        node.textContent = source;
+        node.textContent = node.getAttribute('data-mermaid-surface') === 'light'
+          ? withLightTheme(source)
+          : source;
       }
     });
 
@@ -28,6 +30,26 @@
       nodes.forEach(function (n) { n.removeAttribute('data-mermaid-queued'); });
       removeSpinners();
     });
+  }
+
+  // Diagrams that set their own colours (classDef, style, linkStyle or theme
+  // variables) are written for a light page: their fills rarely set a text
+  // colour, so the dark theme's light text becomes unreadable on them. Such
+  // diagrams always render with the light theme on a light surface (see the
+  // data-mermaid-surface rule in tailwind.css).
+  function isAuthorStyled(source) {
+    return /^\s*(?:classDef|style|linkStyle)\s/m.test(source) ||
+      /themeVariables|["']?theme["']?\s*:/.test(source);
+  }
+
+  // Prepend a light-theme directive, after any YAML frontmatter (which must
+  // stay first). A theme chosen by the author in a later directive still wins.
+  function withLightTheme(source) {
+    var directive = '%%{init: {"theme": "redux-color"}}%%\n';
+    var frontmatter = source.match(/^\s*---\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n/);
+    return frontmatter
+      ? frontmatter[0] + directive + source.slice(frontmatter[0].length)
+      : directive + source;
   }
 
   // Mermaid 12's default appearance (neo look, ELK layout) in its light and
@@ -77,6 +99,9 @@
       // Persist original diagram source before mermaid replaces the element content with SVG
       if (!node.hasAttribute('data-mermaid-source')) {
         node.setAttribute('data-mermaid-source', node.textContent || '');
+      }
+      if (isAuthorStyled(node.getAttribute('data-mermaid-source'))) {
+        node.setAttribute('data-mermaid-surface', 'light');
       }
       node.setAttribute('data-mermaid-queued', '');
       var spinner = document.createElement('div');

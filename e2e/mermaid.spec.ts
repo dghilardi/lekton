@@ -64,6 +64,20 @@ test.describe('Mermaid diagrams', () => {
     expect(await colourLuminance(page, 'pre.mermaid')).toBeGreaterThan(0.8);
   });
 
+  test('author-coloured diagrams render light in the dark theme', async ({ page }) => {
+    await openMermaidPage(page, 'dark');
+    const plain = 'pre.mermaid:not([data-mermaid-surface])';
+    const styled = 'pre.mermaid[data-mermaid-surface="light"]';
+    await expect(page.locator(plain)).toHaveCount(1);
+    await expect(page.locator(styled)).toHaveCount(1);
+
+    // Plain diagrams follow the site theme; author-coloured ones get the light
+    // theme's dark labels on a light surface, readable on their pale fills.
+    expect(await colourLuminance(page, plain)).toBeLessThan(0.05);
+    expect(await colourLuminance(page, styled)).toBeGreaterThan(0.8);
+    expect(await colourLuminance(page, `${styled} .nodeLabel`, 'color')).toBeLessThan(0.1);
+  });
+
   test('renders mermaid code block as SVG', async ({ page }) => {
     test.setTimeout(90_000);
 
@@ -108,7 +122,7 @@ test.describe('Mermaid diagrams', () => {
     await expect(page.getByText('Syntax error in text')).toHaveCount(0);
     expect(consoleErrors.filter((message) => message.includes('[mermaid] render failed'))).toEqual([]);
     // The pre element should still have the mermaid class (mermaid renders SVG inside it)
-    await expect(page.locator('pre.mermaid')).toBeAttached();
+    await expect(page.locator('pre.mermaid').first()).toBeAttached();
   });
 
   test('mermaid re-renders after theme toggle', async ({ page }) => {

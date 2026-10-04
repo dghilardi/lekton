@@ -495,6 +495,14 @@ html[data-theme] .prose pre.mermaid > svg {
     margin-inline: auto;
 }
 
+/* Diagrams with author-set colours render with the light theme in every site
+ * theme (see mermaid-loader.js), so they always sit on a light surface. */
+html[data-theme] .prose pre.mermaid[data-mermaid-surface="light"] {
+    background-color: #ffffff;
+    border-color:     #d8dfe1;
+    color:            #1c1f2b;
+}
+
 /* Language badge */
 .code-lang-badge {
     position:      absolute;

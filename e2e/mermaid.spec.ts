@@ -20,7 +20,64 @@ async function waitForMermaidSvg(page: Page, timeout = 30_000): Promise<void> {
   );
 }
 
+/** Open the Mermaid test page with the given theme already applied. */
+async function openMermaidPage(page: Page, theme: 'light' | 'dark'): Promise<void> {
+  await page.addInitScript((t) => localStorage.setItem('lekton-theme', t), theme);
+  await page.goto('/docs/mermaid-test');
+  await expect(page.locator('article h1', { hasText: 'Mermaid Test' })).toBeVisible({
+    timeout: 30_000,
+  });
+  await waitForMermaidSvg(page);
+}
+
+/**
+ * Relative luminance (0 = black, 1 = white) of an element's computed colour
+ * (background by default). The colour is resolved through a canvas so
+ * oklch() values compare like rgb().
+ */
+async function colourLuminance(
+  page: Page,
+  selector: string,
+  property: 'backgroundColor' | 'color' = 'backgroundColor',
+): Promise<number> {
+  return page.locator(selector).first().evaluate((el, prop) => {
+    const ctx = document.createElement('canvas').getContext('2d')!;
+    ctx.fillStyle = getComputedStyle(el)[prop];
+    ctx.fillRect(0, 0, 1, 1);
+    const [r, g, b] = Array.from(ctx.getImageData(0, 0, 1, 1).data.slice(0, 3)).map((v) => {
+      const c = v / 255;
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  }, property);
+}
+
 test.describe('Mermaid diagrams', () => {
+  test('diagrams keep the page surface when custom CSS darkens code blocks', async ({ page }) => {
+    await openMermaidPage(page, 'light');
+    // Same override as a corporate theme that paints every code block dark.
+    await page.addStyleTag({
+      content: 'html[data-theme="light"] .prose pre { background-color: #151820; }',
+    });
+
+    expect(await colourLuminance(page, 'pre:not(.mermaid)')).toBeLessThan(0.05);
+    expect(await colourLuminance(page, 'pre.mermaid')).toBeGreaterThan(0.8);
+  });
+
+  test('author-coloured diagrams render light in the dark theme', async ({ page }) => {
+    await openMermaidPage(page, 'dark');
+    const plain = 'pre.mermaid:not([data-mermaid-surface])';
+    const styled = 'pre.mermaid[data-mermaid-surface="light"]';
+    await expect(page.locator(plain)).toHaveCount(1);
+    await expect(page.locator(styled)).toHaveCount(1);
+
+    // Plain diagrams follow the site theme; author-coloured ones get the light
+    // theme's dark labels on a light surface, readable on their pale fills.
+    expect(await colourLuminance(page, plain)).toBeLessThan(0.05);
+    expect(await colourLuminance(page, styled)).toBeGreaterThan(0.8);
+    expect(await colourLuminance(page, `${styled} .nodeLabel`, 'color')).toBeLessThan(0.1);
+  });
+
   test('renders mermaid code block as SVG', async ({ page }) => {
     test.setTimeout(90_000);
 
@@ -65,7 +122,7 @@ test.describe('Mermaid diagrams', () => {
     await expect(page.getByText('Syntax error in text')).toHaveCount(0);
     expect(consoleErrors.filter((message) => message.includes('[mermaid] render failed'))).toEqual([]);
     // The pre element should still have the mermaid class (mermaid renders SVG inside it)
-    await expect(page.locator('pre.mermaid')).toBeAttached();
+    await expect(page.locator('pre.mermaid').first()).toBeAttached();
   });
 
   test('mermaid re-renders after theme toggle', async ({ page }) => {
@@ -102,5 +159,48 @@ test.describe('Mermaid diagrams', () => {
     await expect(page.locator('text=And some text after')).toBeVisible({ timeout: 10_000 });
     await expect(page.locator('pre.mermaid .code-copy-btn')).toHaveCount(0);
     await expect(page.locator('pre:not(.mermaid) .code-copy-btn')).toHaveCount(1);
+  });
+});
+
+test.describe('Mermaid expanded view', () => {
+  test('expand button opens a zoomable full-screen view', async ({ page }) => {
+    await openMermaidPage(page, 'light');
+
+    await page.locator('pre.mermaid .mermaid-expand-btn').first().click();
+    const viewer = page.locator('dialog.mermaid-viewer');
+    await expect(viewer).toBeVisible();
+    await expect(viewer.locator('.mermaid-viewer-canvas svg')).toBeVisible();
+
+    const canvas = viewer.locator('.mermaid-viewer-canvas');
+    const fitted = await canvas.evaluate((el) => el.style.transform);
+    await viewer.getByRole('button', { name: 'Zoom in' }).click();
+    await expect.poll(() => canvas.evaluate((el) => el.style.transform)).not.toBe(fitted);
+
+    await page.keyboard.press('Escape');
+    await expect(viewer).toBeHidden();
+    await expect(viewer.locator('svg')).toHaveCount(0);
+  });
+});
+
+test.describe('Mermaid theme changes', () => {
+  test('theme change during the first render still renders every diagram', async ({ page }) => {
+    const renderErrors: string[] = [];
+    page.on('console', (msg) => {
+      if (msg.type() === 'error' && msg.text().includes('[mermaid] render failed')) {
+        renderErrors.push(msg.text());
+      }
+    });
+    await page.goto('/docs/mermaid-test');
+    // Mermaid marks a diagram as processed when it starts rendering it; switch
+    // theme at that moment so the re-render overlaps the first render.
+    await page.waitForFunction(() => document.querySelector('pre.mermaid[data-processed]') !== null);
+    await page.evaluate(() => {
+      const html = document.documentElement;
+      html.setAttribute('data-theme', html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+    });
+
+    await waitForMermaidSvg(page);
+    await expect(page.locator('.mermaid-spinner')).toHaveCount(0);
+    expect(renderErrors).toEqual([]);
   });
 });

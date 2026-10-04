@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 - Mermaid diagrams have an expand button that opens them full screen, with zoom (buttons, mouse wheel, `+`/`-`/`0`) and drag to pan.
 
 ### Fixed
+- Switching theme while Mermaid diagrams were still rendering could leave a diagram as raw source. Renders now run one after another.
 - Mermaid diagrams that set their own colours (`classDef`, `style`, `linkStyle`, theme variables) were unreadable in the dark theme. They now always render with the light theme on a light surface.
 - Mermaid diagrams were hard to read in the light theme when custom CSS gave code blocks a dark background: connectors and message labels disappeared. Diagrams now keep the page surface and are centred.
 

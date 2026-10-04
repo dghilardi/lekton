@@ -181,3 +181,26 @@ test.describe('Mermaid expanded view', () => {
     await expect(viewer.locator('svg')).toHaveCount(0);
   });
 });
+
+test.describe('Mermaid theme changes', () => {
+  test('theme change during the first render still renders every diagram', async ({ page }) => {
+    const renderErrors: string[] = [];
+    page.on('console', (msg) => {
+      if (msg.type() === 'error' && msg.text().includes('[mermaid] render failed')) {
+        renderErrors.push(msg.text());
+      }
+    });
+    await page.goto('/docs/mermaid-test');
+    // Mermaid marks a diagram as processed when it starts rendering it; switch
+    // theme at that moment so the re-render overlaps the first render.
+    await page.waitForFunction(() => document.querySelector('pre.mermaid[data-processed]') !== null);
+    await page.evaluate(() => {
+      const html = document.documentElement;
+      html.setAttribute('data-theme', html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+    });
+
+    await waitForMermaidSvg(page);
+    await expect(page.locator('.mermaid-spinner')).toHaveCount(0);
+    expect(renderErrors).toEqual([]);
+  });
+});

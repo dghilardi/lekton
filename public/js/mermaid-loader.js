@@ -2,6 +2,10 @@
   var state = 'idle'; // 'idle' | 'loading' | 'ready'
   var pending = [];
   var mermaidMod = null; // cached module reference so we can re-init on theme change
+  // Renders and theme re-renders run one after another: a theme change that
+  // resets a diagram while Mermaid is still rendering it makes the render fail
+  // and leaves the raw source on the page.
+  var rendering = Promise.resolve();
 
   function removeSpinners() {
     document.querySelectorAll('.mermaid-spinner').forEach(function (el) {
@@ -10,28 +14,39 @@
   }
 
   function runPending(mermaid) {
-    var nodes = pending.splice(0);
-    if (nodes.length === 0) return;
+    var batch = pending.splice(0);
+    if (batch.length === 0) return;
 
-    // Other progressive enhancements may touch <pre> elements while the
-    // Mermaid module is loading. Render only the source captured when the
-    // diagram was queued, never the node's potentially mutated live content.
-    nodes.forEach(function (node) {
-      var source = node.getAttribute('data-mermaid-source');
-      if (source !== null) {
-        node.textContent = node.getAttribute('data-mermaid-surface') === 'light'
-          ? withLightTheme(source)
-          : source;
-      }
-    });
+    rendering = rendering.then(function () {
+      // A theme change may have queued a diagram twice, or rendered it
+      // already; rendering it again would wipe the SVG. Diagrams replaced
+      // in the meantime (e.g. by hydration) are rendered via their new node.
+      var nodes = batch.filter(function (node, i) {
+        return batch.indexOf(node) === i && node.isConnected &&
+          !node.hasAttribute('data-processed');
+      });
+      if (nodes.length === 0) return removeSpinners();
 
-    mermaid.run({ nodes: nodes }).then(function () {
-      removeSpinners();
-      addExpandButtons(nodes);
-    }).catch(function (err) {
-      console.error('[mermaid] render failed:', err);
-      nodes.forEach(function (n) { n.removeAttribute('data-mermaid-queued'); });
-      removeSpinners();
+      // Other progressive enhancements may touch <pre> elements while the
+      // Mermaid module is loading. Render only the source captured when the
+      // diagram was queued, never the node's potentially mutated live content.
+      nodes.forEach(function (node) {
+        var source = node.getAttribute('data-mermaid-source');
+        if (source !== null) {
+          node.textContent = node.getAttribute('data-mermaid-surface') === 'light'
+            ? withLightTheme(source)
+            : source;
+        }
+      });
+
+      return mermaid.run({ nodes: nodes }).then(function () {
+        removeSpinners();
+        addExpandButtons(nodes);
+      }).catch(function (err) {
+        console.error('[mermaid] render failed:', err);
+        nodes.forEach(function (n) { n.removeAttribute('data-mermaid-queued'); });
+        removeSpinners();
+      });
     });
   }
 
@@ -213,13 +228,15 @@
   // Each processed node has its original diagram source stored in data-mermaid-source.
   function rerenderAll() {
     if (!mermaidMod) return;
-    mermaidMod.initialize({ startOnLoad: false, theme: currentTheme() });
-    document.querySelectorAll('pre.mermaid[data-mermaid-source]').forEach(function (node) {
-      node.textContent = node.getAttribute('data-mermaid-source');
-      node.removeAttribute('data-processed');
-      node.removeAttribute('data-mermaid-queued');
+    rendering = rendering.then(function () {
+      mermaidMod.initialize({ startOnLoad: false, theme: currentTheme() });
+      document.querySelectorAll('pre.mermaid[data-mermaid-source]').forEach(function (node) {
+        node.textContent = node.getAttribute('data-mermaid-source');
+        node.removeAttribute('data-processed');
+        node.removeAttribute('data-mermaid-queued');
+      });
+      window.renderMermaid();
     });
-    window.renderMermaid();
   }
 
   window.renderMermaid = function () {

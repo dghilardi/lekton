@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- "Let me Lekton that for you": opening `/chat?lmltfy=<question>` while signed in shows a fake cursor that clicks the chat box, types the question and sends it. Questions longer than 300 characters are truncated.
+
 ## [0.35.0] 2026-10-04
 
 ### Added

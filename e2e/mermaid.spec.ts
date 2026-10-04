@@ -161,3 +161,23 @@ test.describe('Mermaid diagrams', () => {
     await expect(page.locator('pre:not(.mermaid) .code-copy-btn')).toHaveCount(1);
   });
 });
+
+test.describe('Mermaid expanded view', () => {
+  test('expand button opens a zoomable full-screen view', async ({ page }) => {
+    await openMermaidPage(page, 'light');
+
+    await page.locator('pre.mermaid .mermaid-expand-btn').first().click();
+    const viewer = page.locator('dialog.mermaid-viewer');
+    await expect(viewer).toBeVisible();
+    await expect(viewer.locator('.mermaid-viewer-canvas svg')).toBeVisible();
+
+    const canvas = viewer.locator('.mermaid-viewer-canvas');
+    const fitted = await canvas.evaluate((el) => el.style.transform);
+    await viewer.getByRole('button', { name: 'Zoom in' }).click();
+    await expect.poll(() => canvas.evaluate((el) => el.style.transform)).not.toBe(fitted);
+
+    await page.keyboard.press('Escape');
+    await expect(viewer).toBeHidden();
+    await expect(viewer.locator('svg')).toHaveCount(0);
+  });
+});

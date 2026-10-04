@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.35.0] 2026-10-04
+
 ### Added
 - Mermaid diagrams have an expand button that opens them full screen, with zoom (buttons, mouse wheel, `+`/`-`/`0`) and drag to pan.
 

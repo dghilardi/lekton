@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use leptos::portal::Portal;
 use leptos::prelude::StoredValue;
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -9,6 +10,21 @@ use serde::{Deserialize, Serialize};
 static CLIENT_MSG_COUNTER: AtomicU64 = AtomicU64::new(0);
 #[cfg(feature = "hydrate")]
 const STREAM_RENDER_THROTTLE_MS: u32 = 50;
+
+/// Query parameter of the "Let Me Lekton That For You" easter egg: opening
+/// `/chat?lmltfy=<question>` shows a fake cursor typing and sending the question.
+#[cfg(feature = "hydrate")]
+const LMLTFY_PARAM: &str = "lmltfy";
+/// Longest question the easter egg types out; longer ones are truncated.
+#[cfg(any(feature = "hydrate", test))]
+const LMLTFY_MAX_CHARS: usize = 300;
+
+/// The question to type for a raw `lmltfy` value, if there is one.
+#[cfg(any(feature = "hydrate", test))]
+fn lmltfy_question(raw: Option<String>) -> Option<String> {
+    let question: String = raw?.trim().chars().take(LMLTFY_MAX_CHARS).collect();
+    (!question.is_empty()).then_some(question)
+}
 
 fn next_client_msg_id() -> String {
     format!(
@@ -151,6 +167,10 @@ fn ChatContent() -> impl IntoView {
 
     let (input, set_input) = signal(String::new());
     let textarea_ref = NodeRef::<leptos::html::Textarea>::new();
+    let send_button_ref = NodeRef::<leptos::html::Button>::new();
+    // Position (viewport px) and pressed state of the lmltfy fake cursor.
+    let cursor_pos = RwSignal::new(None::<(f64, f64)>);
+    let cursor_pressed = RwSignal::new(false);
 
     // Budget standing, re-read whenever a turn finishes. Resolves to None on an
     // instance that does not enforce budgets, and the indicator stays hidden.
@@ -259,8 +279,113 @@ fn ChatContent() -> impl IntoView {
         }
     };
 
+    #[cfg(feature = "hydrate")]
+    if let Some(question) = lmltfy_question(
+        leptos_router::hooks::use_query_map()
+            .read_untracked()
+            .get(LMLTFY_PARAM),
+    ) {
+        use gloo_timers::future::TimeoutFuture;
+
+        // Consume the link, so reloading the page does not send the question again.
+        let window = leptos::prelude::window();
+        if let (Ok(href), Ok(history)) = (window.location().href(), window.history()) {
+            if let Ok(url) = web_sys::Url::new(&href) {
+                url.search_params().delete(LMLTFY_PARAM);
+                let state = history.state().unwrap_or(wasm_bindgen::JsValue::NULL);
+                let _ = history.replace_state_with_url(&state, "", Some(&url.href()));
+            }
+        }
+
+        leptos::task::spawn_local(async move {
+            // Viewport centre of an element, or None once the chat has been
+            // unmounted.
+            let aim = |el: Option<web_sys::Element>| {
+                let rect = el?.get_bounding_client_rect();
+                Some((
+                    rect.left() + rect.width() / 2.0,
+                    rect.top() + rect.height() / 2.0,
+                ))
+            };
+            let textarea = || textarea_ref.try_get_untracked().flatten();
+            let click = || async move {
+                cursor_pressed.set(true);
+                TimeoutFuture::new(150).await;
+                cursor_pressed.set(false);
+            };
+
+            // Let the page settle, then drop the cursor in the upper middle.
+            TimeoutFuture::new(600).await;
+            let width = window
+                .inner_width()
+                .ok()
+                .and_then(|w| w.as_f64())
+                .unwrap_or(800.0);
+            let height = window
+                .inner_height()
+                .ok()
+                .and_then(|h| h.as_f64())
+                .unwrap_or(600.0);
+            cursor_pos.set(Some((width / 2.0, height / 4.0)));
+            TimeoutFuture::new(400).await;
+
+            let Some(target) = aim(textarea().map(Into::into)) else {
+                return;
+            };
+            cursor_pos.set(Some(target));
+            TimeoutFuture::new(1300).await;
+            click().await;
+            let Some(el) = textarea() else { return };
+            let _ = el.focus();
+
+            for ch in question.chars() {
+                set_input.update(|text| text.push(ch));
+                if let Some(el) = textarea() {
+                    autosize_textarea(&el);
+                }
+                TimeoutFuture::new(40 + (js_sys::Math::random() * 90.0) as u32).await;
+            }
+            TimeoutFuture::new(400).await;
+
+            let button = send_button_ref.try_get_untracked().flatten();
+            let Some(target) = aim(button.map(Into::into)) else {
+                return;
+            };
+            cursor_pos.set(Some(target));
+            TimeoutFuture::new(900).await;
+            click().await;
+            send_message();
+            TimeoutFuture::new(500).await;
+            cursor_pos.set(None);
+        });
+    }
+
     view! {
         <div class="flex flex-col h-full bg-base-100">
+            <Show when=move || cursor_pos.get().is_some() fallback=|| ()>
+                // Portalled to <body>: an ancestor with a transform would otherwise
+                // become the containing block of this `fixed` overlay and offset it.
+                <Portal>
+                    <div
+                        class="fixed left-0 top-0 z-[9999] pointer-events-none drop-shadow-md transition-transform duration-[1200ms] ease-in-out"
+                        style=move || {
+                            // The arrow tip sits at (4, 2) inside the icon.
+                            let (x, y) = cursor_pos.get().unwrap_or_default();
+                            format!("transform: translate({}px, {}px);", x - 4.0, y - 2.0)
+                        }
+                    >
+                        <svg
+                            width="24"
+                            height="24"
+                            viewBox="0 0 24 24"
+                            class="origin-[4px_2px] transition-transform duration-100"
+                            class:scale-75=move || cursor_pressed.get()
+                        >
+                            <path d="M4 2v17l4.5-4.5 3 6.5 2.5-1-3-6.5H17z" fill="white" stroke="black" stroke-width="1.5" stroke-linejoin="round"/>
+                        </svg>
+                    </div>
+                </Portal>
+            </Show>
             // Main chat area
             <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
 
@@ -430,13 +555,7 @@ fn ChatContent() -> impl IntoView {
                                         use wasm_bindgen::JsCast;
                                         if let Some(target) = ev.target() {
                                             if let Ok(el) = target.dyn_into::<web_sys::HtmlTextAreaElement>() {
-                                                let style = web_sys::HtmlElement::style(el.as_ref());
-                                                let _ = style.set_property("height", "auto");
-                                                let sh = el.scroll_height();
-                                                let capped = sh.min(192); // ~6 rows max
-                                                let _ = style.set_property("height", &format!("{capped}px"));
-                                                let overflow = if sh > 192 { "auto" } else { "hidden" };
-                                                let _ = style.set_property("overflow-y", overflow);
+                                                autosize_textarea(&el);
                                             }
                                         }
                                     }
@@ -462,6 +581,7 @@ fn ChatContent() -> impl IntoView {
                                         "Send message"
                                     }
                                 }
+                                node_ref=send_button_ref
                                 on:click=move |_| send_message()
                                 prop:disabled=move || is_loading.get() || input.get().trim().is_empty()
                             >
@@ -484,6 +604,18 @@ fn ChatContent() -> impl IntoView {
             </div>
         </div>
     }
+}
+
+/// Grows the chat textarea with its content, up to about six rows.
+#[cfg(feature = "hydrate")]
+fn autosize_textarea(el: &web_sys::HtmlTextAreaElement) {
+    let style = web_sys::HtmlElement::style(el.as_ref());
+    let _ = style.set_property("height", "auto");
+    let sh = el.scroll_height();
+    let capped = sh.min(192); // ~6 rows max
+    let _ = style.set_property("height", &format!("{capped}px"));
+    let overflow = if sh > 192 { "auto" } else { "hidden" };
+    let _ = style.set_property("overflow-y", overflow);
 }
 
 /// Quiet indicator of what the signed-in user has left to spend.
@@ -1194,5 +1326,30 @@ fn optional_sources(sources: Vec<SourceReference>) -> Option<Vec<SourceReference
         None
     } else {
         Some(sources)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lmltfy_question_trims_the_value() {
+        assert_eq!(
+            lmltfy_question(Some("  What is Lekton?\n".into())),
+            Some("What is Lekton?".into())
+        );
+    }
+
+    #[test]
+    fn lmltfy_question_ignores_missing_or_blank_values() {
+        assert_eq!(lmltfy_question(None), None);
+        assert_eq!(lmltfy_question(Some(" \t ".into())), None);
+    }
+
+    #[test]
+    fn lmltfy_question_truncates_long_values_on_char_boundaries() {
+        let question = lmltfy_question(Some("è".repeat(LMLTFY_MAX_CHARS + 10))).unwrap();
+        assert_eq!(question.chars().count(), LMLTFY_MAX_CHARS);
     }
 }

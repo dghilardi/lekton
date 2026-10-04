@@ -480,6 +480,21 @@ label > span:first-child {
     line-height: inherit;
 }
 
+/* Mermaid diagrams are figures, not code: keep them on the page surface so
+ * the Mermaid theme stays legible even when a custom stylesheet darkens
+ * `.prose pre` (the html[data-theme] prefix outranks such overrides). */
+html[data-theme] .prose pre.mermaid {
+    background-color: var(--color-base-100);
+    border-color:     var(--color-base-300);
+    color:            var(--color-base-content);
+    padding:          1.25em;
+    text-align:       center;
+}
+
+html[data-theme] .prose pre.mermaid > svg {
+    margin-inline: auto;
+}
+
 /* Language badge */
 .code-lang-badge {
     position:      absolute;

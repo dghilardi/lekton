@@ -20,7 +20,50 @@ async function waitForMermaidSvg(page: Page, timeout = 30_000): Promise<void> {
   );
 }
 
+/** Open the Mermaid test page with the given theme already applied. */
+async function openMermaidPage(page: Page, theme: 'light' | 'dark'): Promise<void> {
+  await page.addInitScript((t) => localStorage.setItem('lekton-theme', t), theme);
+  await page.goto('/docs/mermaid-test');
+  await expect(page.locator('article h1', { hasText: 'Mermaid Test' })).toBeVisible({
+    timeout: 30_000,
+  });
+  await waitForMermaidSvg(page);
+}
+
+/**
+ * Relative luminance (0 = black, 1 = white) of an element's computed colour
+ * (background by default). The colour is resolved through a canvas so
+ * oklch() values compare like rgb().
+ */
+async function colourLuminance(
+  page: Page,
+  selector: string,
+  property: 'backgroundColor' | 'color' = 'backgroundColor',
+): Promise<number> {
+  return page.locator(selector).first().evaluate((el, prop) => {
+    const ctx = document.createElement('canvas').getContext('2d')!;
+    ctx.fillStyle = getComputedStyle(el)[prop];
+    ctx.fillRect(0, 0, 1, 1);
+    const [r, g, b] = Array.from(ctx.getImageData(0, 0, 1, 1).data.slice(0, 3)).map((v) => {
+      const c = v / 255;
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  }, property);
+}
+
 test.describe('Mermaid diagrams', () => {
+  test('diagrams keep the page surface when custom CSS darkens code blocks', async ({ page }) => {
+    await openMermaidPage(page, 'light');
+    // Same override as a corporate theme that paints every code block dark.
+    await page.addStyleTag({
+      content: 'html[data-theme="light"] .prose pre { background-color: #151820; }',
+    });
+
+    expect(await colourLuminance(page, 'pre:not(.mermaid)')).toBeLessThan(0.05);
+    expect(await colourLuminance(page, 'pre.mermaid')).toBeGreaterThan(0.8);
+  });
+
   test('renders mermaid code block as SVG', async ({ page }) => {
     test.setTimeout(90_000);
 

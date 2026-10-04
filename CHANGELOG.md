@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Mermaid diagrams were hard to read in the light theme when custom CSS gave code blocks a dark background: connectors and message labels disappeared. Diagrams now keep the page surface and are centred.
+
 ## [0.34.0] 2026-10-03
 
 ### Added

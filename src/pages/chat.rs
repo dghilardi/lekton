@@ -286,6 +286,17 @@ fn ChatContent() -> impl IntoView {
             .get(LMLTFY_PARAM),
     ) {
         use gloo_timers::future::TimeoutFuture;
+
+        // Consume the link, so reloading the page does not send the question again.
+        let window = leptos::prelude::window();
+        if let (Ok(href), Ok(history)) = (window.location().href(), window.history()) {
+            if let Ok(url) = web_sys::Url::new(&href) {
+                url.search_params().delete(LMLTFY_PARAM);
+                let state = history.state().unwrap_or(wasm_bindgen::JsValue::NULL);
+                let _ = history.replace_state_with_url(&state, "", Some(&url.href()));
+            }
+        }
+
         leptos::task::spawn_local(async move {
             // Viewport centre of an element, or None once the chat has been
             // unmounted.
@@ -305,7 +316,6 @@ fn ChatContent() -> impl IntoView {
 
             // Let the page settle, then drop the cursor in the upper middle.
             TimeoutFuture::new(600).await;
-            let window = leptos::prelude::window();
             let width = window
                 .inner_width()
                 .ok()

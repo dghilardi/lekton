@@ -36,4 +36,20 @@ test.describe('Chat page', () => {
       'chat page should show chat UI, an unavailability notice, or the feature-disabled 404 page',
     ).toBeTruthy();
   });
+
+  test('lmltfy link types and sends the question, then is consumed', async ({ page }) => {
+    test.setTimeout(90_000);
+
+    await loginAsDemo(page);
+    await page.goto('/chat?foo=bar&lmltfy=How%20do%20I%20configure%20OIDC%3F');
+    await page.waitForLoadState('networkidle');
+    test.skip(await page.locator('textarea').count() === 0, 'chat UI not available');
+
+    // Reloading must not replay it, so the parameter goes as soon as it starts.
+    await expect(page).toHaveURL(/\/chat\?foo=bar$/);
+    // Typing the question and sending it takes a few seconds.
+    await expect(page.locator('.whitespace-pre-wrap', { hasText: 'How do I configure OIDC?' }))
+      .toBeVisible({ timeout: 20_000 });
+    await expect(page.locator('textarea')).toHaveValue('');
+  });
 });

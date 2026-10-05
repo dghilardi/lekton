@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.37.0] 2026-10-05
+
 ### Added
 - "Let me Lekton that for you" links can hide the question: `/chat?lmltfy64=<question>` takes it URL-safe base64 encoded (padding optional). Invalid values are ignored.
 

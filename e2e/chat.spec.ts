@@ -52,4 +52,19 @@ test.describe('Chat page', () => {
       .toBeVisible({ timeout: 20_000 });
     await expect(page.locator('textarea')).toHaveValue('');
   });
+
+  test('lmltfy64 link decodes, types and sends the question, then is consumed', async ({ page }) => {
+    test.setTimeout(90_000);
+
+    await loginAsDemo(page);
+    // URL-safe base64 of "How do I configure OIDC?".
+    await page.goto('/chat?foo=bar&lmltfy64=SG93IGRvIEkgY29uZmlndXJlIE9JREM_');
+    await page.waitForLoadState('networkidle');
+    test.skip(await page.locator('textarea').count() === 0, 'chat UI not available');
+
+    await expect(page).toHaveURL(/\/chat\?foo=bar$/);
+    await expect(page.locator('.whitespace-pre-wrap', { hasText: 'How do I configure OIDC?' }))
+      .toBeVisible({ timeout: 20_000 });
+    await expect(page.locator('textarea')).toHaveValue('');
+  });
 });

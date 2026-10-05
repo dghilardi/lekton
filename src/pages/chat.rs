@@ -15,6 +15,10 @@ const STREAM_RENDER_THROTTLE_MS: u32 = 50;
 /// `/chat?lmltfy=<question>` shows a fake cursor typing and sending the question.
 #[cfg(feature = "hydrate")]
 const LMLTFY_PARAM: &str = "lmltfy";
+/// Same as [`LMLTFY_PARAM`], with the question URL-safe base64 encoded so the
+/// link does not give it away. Takes precedence when both are present.
+#[cfg(feature = "hydrate")]
+const LMLTFY_BASE64_PARAM: &str = "lmltfy64";
 /// Longest question the easter egg types out; longer ones are truncated.
 #[cfg(any(feature = "hydrate", test))]
 const LMLTFY_MAX_CHARS: usize = 300;
@@ -24,6 +28,21 @@ const LMLTFY_MAX_CHARS: usize = 300;
 fn lmltfy_question(raw: Option<String>) -> Option<String> {
     let question: String = raw?.trim().chars().take(LMLTFY_MAX_CHARS).collect();
     (!question.is_empty()).then_some(question)
+}
+
+/// The raw question carried by a link: the decoded `lmltfy64` value if there
+/// is one (None if it is not URL-safe base64 of UTF-8 text), else `lmltfy`.
+#[cfg(any(feature = "hydrate", test))]
+fn lmltfy_raw(plain: Option<String>, encoded: Option<String>) -> Option<String> {
+    use base64::engine::{general_purpose::URL_SAFE_NO_PAD, Engine as _};
+
+    let Some(encoded) = encoded else {
+        return plain;
+    };
+    let bytes = URL_SAFE_NO_PAD
+        .decode(encoded.trim().trim_end_matches('='))
+        .ok()?;
+    String::from_utf8(bytes).ok()
 }
 
 fn next_client_msg_id() -> String {
@@ -280,11 +299,13 @@ fn ChatContent() -> impl IntoView {
     };
 
     #[cfg(feature = "hydrate")]
-    if let Some(question) = lmltfy_question(
-        leptos_router::hooks::use_query_map()
-            .read_untracked()
-            .get(LMLTFY_PARAM),
-    ) {
+    if let Some(question) = {
+        let query = leptos_router::hooks::use_query_map().read_untracked();
+        lmltfy_question(lmltfy_raw(
+            query.get(LMLTFY_PARAM),
+            query.get(LMLTFY_BASE64_PARAM),
+        ))
+    } {
         use gloo_timers::future::TimeoutFuture;
 
         // Consume the link, so reloading the page does not send the question again.
@@ -292,6 +313,7 @@ fn ChatContent() -> impl IntoView {
         if let (Ok(href), Ok(history)) = (window.location().href(), window.history()) {
             if let Ok(url) = web_sys::Url::new(&href) {
                 url.search_params().delete(LMLTFY_PARAM);
+                url.search_params().delete(LMLTFY_BASE64_PARAM);
                 let state = history.state().unwrap_or(wasm_bindgen::JsValue::NULL);
                 let _ = history.replace_state_with_url(&state, "", Some(&url.href()));
             }
@@ -1351,5 +1373,40 @@ mod tests {
     fn lmltfy_question_truncates_long_values_on_char_boundaries() {
         let question = lmltfy_question(Some("è".repeat(LMLTFY_MAX_CHARS + 10))).unwrap();
         assert_eq!(question.chars().count(), LMLTFY_MAX_CHARS);
+    }
+
+    #[test]
+    fn lmltfy_raw_uses_the_plain_value_without_an_encoded_one() {
+        assert_eq!(lmltfy_raw(Some("hi".into()), None), Some("hi".into()));
+        assert_eq!(lmltfy_raw(None, None), None);
+    }
+
+    #[test]
+    fn lmltfy_raw_decodes_url_safe_base64_with_or_without_padding() {
+        // "Perché?>" encodes to "UGVyY2jDqT8-", exercising the URL-safe alphabet.
+        assert_eq!(
+            lmltfy_raw(None, Some("UGVyY2jDqT8-".into())),
+            Some("Perché?>".into())
+        );
+        assert_eq!(lmltfy_raw(None, Some("aGk".into())), Some("hi".into()));
+        assert_eq!(lmltfy_raw(None, Some("aGk=".into())), Some("hi".into()));
+    }
+
+    #[test]
+    fn lmltfy_raw_prefers_the_encoded_value() {
+        assert_eq!(
+            lmltfy_raw(Some("plain".into()), Some("aGk".into())),
+            Some("hi".into())
+        );
+    }
+
+    #[test]
+    fn lmltfy_raw_ignores_invalid_encoded_values() {
+        assert_eq!(
+            lmltfy_raw(Some("plain".into()), Some("not base64!".into())),
+            None
+        );
+        // Valid base64, but not UTF-8.
+        assert_eq!(lmltfy_raw(None, Some("_w".into())), None);
     }
 }

@@ -1801,7 +1801,7 @@ impl LektonMcpServer {
                 )
             })?;
 
-        serde_yaml::from_slice(&content_bytes)
+        serde_saphyr::from_slice(&content_bytes)
             .map_err(|e| McpError::internal_error(format!("Invalid prompt YAML: {e}"), None))
     }
 

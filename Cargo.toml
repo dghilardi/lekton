@@ -44,7 +44,7 @@ axum-extra = { version = "0.12", features = ["cookie"], optional = true }
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_yaml = "0.9"
+serde-saphyr = { version = "2", default-features = false, features = ["serialize", "deserialize"] }
 
 # Auth (OIDC)
 openidconnect = { version = "4", optional = true }

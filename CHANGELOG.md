@@ -7,6 +7,9 @@ All notable changes to this project will be documented in this file.
 ### Added
 - Durable, sequential document imports with S3 staging, recoverable jobs, and negotiated long-polling in `lekton-sync`; older clients receive an explicit error when an import exceeds the request wait.
 
+### Security
+- Updated HTML sanitization and TLS dependencies and replaced the unmaintained YAML parser to address dependency audit findings.
+
 ## [0.37.0] 2026-10-05
 
 ### Added

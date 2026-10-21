@@ -184,7 +184,7 @@ pub async fn process_prompt_ingest(
             context_cost: request.context_cost.clone(),
             prompt_body: request.prompt_body.clone(),
         };
-        let serialized = serde_yaml::to_string(&blob)
+        let serialized = serde_saphyr::to_string(&blob)
             .map_err(|err| AppError::Internal(format!("Failed to serialize prompt blob: {err}")))?;
         ctx.storage
             .put_object(&s3_key, serialized.into_bytes())

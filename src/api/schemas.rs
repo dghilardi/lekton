@@ -620,7 +620,7 @@ pub fn extract_schema_endpoints(
 ) -> Vec<crate::db::models::SchemaEndpoint> {
     let value: serde_json::Value = if let Ok(v) = serde_json::from_str(content) {
         v
-    } else if let Ok(v) = serde_yaml::from_str::<serde_json::Value>(content) {
+    } else if let Ok(v) = serde_saphyr::from_str::<serde_json::Value>(content) {
         v
     } else {
         return vec![];

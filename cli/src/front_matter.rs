@@ -26,7 +26,7 @@ pub fn parse_front_matter(source: &str) -> (FrontMatter, String) {
         } else {
             after_marker.to_string()
         };
-        let fm = serde_yaml::from_str(fm_str).unwrap_or_default();
+        let fm = serde_saphyr::from_str(fm_str).unwrap_or_default();
         (fm, body)
     } else {
         (FrontMatter::default(), source.to_string())

@@ -102,7 +102,7 @@ async fn main() -> Result<()> {
     let config: config::LektonConfig = if config_path.exists() {
         let content = std::fs::read_to_string(&config_path)
             .with_context(|| format!("Failed to read config {}", config_path.display()))?;
-        serde_yaml::from_str(&content)
+        serde_saphyr::from_str(&content)
             .with_context(|| format!("Failed to parse config {}", config_path.display()))?
     } else {
         config::LektonConfig::default()

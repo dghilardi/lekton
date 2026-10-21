@@ -258,7 +258,7 @@ pub fn scan_prompts(root: &Path, config: &LektonConfig) -> Result<HashMap<String
         let path = entry.path();
         let source = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read {}", path.display()))?;
-        let prompt_file: PromptFile = serde_yaml::from_str(&source)
+        let prompt_file: PromptFile = serde_saphyr::from_str(&source)
             .with_context(|| format!("Failed to parse prompt YAML {}", path.display()))?;
 
         if prompt_file.lekton_import == Some(false) {
@@ -382,7 +382,7 @@ pub fn scan_schemas(root: &Path, config: &LektonConfig) -> Result<HashMap<String
         let manifest_dir = manifest_path.parent().unwrap_or(&schema_root);
         let source = std::fs::read_to_string(manifest_path)
             .with_context(|| format!("Failed to read {}", manifest_path.display()))?;
-        let manifest: SchemaManifestFile = serde_yaml::from_str(&source)
+        let manifest: SchemaManifestFile = serde_saphyr::from_str(&source)
             .with_context(|| format!("Failed to parse {}", manifest_path.display()))?;
 
         if manifest.schema_type.trim().is_empty() {

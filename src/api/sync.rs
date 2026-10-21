@@ -107,8 +107,8 @@ pub async fn process_sync(
 ) -> Result<SyncResponse, AppError> {
     use std::collections::HashMap;
 
-    // (content_hash, metadata_hash, source_path, is_latest)
-    type ServerDocInfo = (Option<String>, Option<String>, Option<String>, bool);
+    // (content_hash, metadata_hash, source_path, is_latest, needs_reindex)
+    type ServerDocInfo = (Option<String>, Option<String>, Option<String>, bool, bool);
 
     // 1. Validate the service token and determine scopes
     let scopes =
@@ -171,6 +171,7 @@ pub async fn process_sync(
                 doc.metadata_hash,
                 doc.source_path,
                 doc.is_latest,
+                doc.needs_reindex,
             ),
         );
     }
@@ -228,7 +229,13 @@ pub async fn process_sync(
         });
 
         match server_by_slug.get(&actual_slug) {
-            Some((server_content_hash, server_metadata_hash, server_source_path, _is_latest)) => {
+            Some((
+                server_content_hash,
+                server_metadata_hash,
+                server_source_path,
+                _is_latest,
+                needs_reindex,
+            )) => {
                 let content_ok =
                     server_content_hash.as_deref() == Some(entry.content_hash.as_str());
                 let metadata_ok = match (
@@ -244,7 +251,7 @@ pub async fn process_sync(
                 let source_path_ok =
                     server_source_path.as_deref() == Some(entry.source_path.as_str());
 
-                if content_ok && metadata_ok && source_path_ok {
+                if content_ok && metadata_ok && source_path_ok && !needs_reindex {
                     unchanged.push(entry.source_path.clone());
                 } else {
                     to_upload.push(SyncUploadEntry {
@@ -278,7 +285,7 @@ pub async fn process_sync(
                 .await?;
             let archived_was_latest = server_by_slug
                 .get(slug)
-                .is_some_and(|(_, _, _, is_latest)| *is_latest);
+                .is_some_and(|(_, _, _, is_latest, _)| *is_latest);
             if archived_was_latest {
                 if let Some(svc) = search {
                     if let Err(e) = svc.delete_document(slug).await {
@@ -422,6 +429,14 @@ pub async fn sync_handler(
         ));
     }
 
+    if request.archive_missing && !request.dry_run {
+        crate::api::ingest_jobs::ensure_source_idle(
+            &state,
+            &request.source_id,
+            &request.service_token,
+        )
+        .await?;
+    }
     let response = process_sync(
         state.document_repo.as_ref(),
         state.release_repo.as_ref(),
@@ -1017,6 +1032,41 @@ mod tests {
         .unwrap();
         assert!(result.to_upload.is_empty());
         assert_eq!(result.unchanged, vec!["docs/a.md"]);
+        assert!(result.to_archive.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_sync_retries_failed_indexing_even_when_hashes_match() {
+        let mut doc = make_doc("docs/a", "sha256:abc");
+        doc.needs_reindex = true;
+        let repo = MockRepo::with_docs(vec![doc]);
+        let token_repo = MockServiceTokenRepo;
+        let release_repo = MockReleaseRepo::default();
+        let request = SyncRequest {
+            service_token: "legacy".to_string(),
+            source_id: "test-source".to_string(),
+            documents: vec![entry("docs/a", "sha256:abc")],
+            archive_missing: false,
+            release: None,
+            dry_run: false,
+        };
+
+        let result = process_sync(
+            &repo,
+            &release_repo,
+            &token_repo,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("legacy"),
+            request,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.to_upload, vec![upload("docs/a.md", "docs/a")]);
+        assert!(result.unchanged.is_empty());
         assert!(result.to_archive.is_empty());
     }
 

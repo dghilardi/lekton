@@ -60,6 +60,7 @@ lekton-sync [OPTIONS] [ROOT]
 |---|---|---|
 | `ROOT` | `.` | Root directory to scan for markdown files, prompt definitions, and schema manifests |
 | `--archive-missing` | — | Archive documents present in Lekton but not found locally |
+| `--ingest-timeout-seconds` | `1800` | Maximum total wait per document import, including long-polling |
 | `--dry-run` | — | Show what would be done without making any changes |
 | `--config <PATH>` | `<ROOT>/.lekton.yml` | Path to config file |
 | `-v, --verbose` | — | Verbose output |
@@ -245,3 +246,23 @@ lekton-sync --archive-missing ./docs
 ## License
 
 AGPL-3.0
+
+## Waiting for document imports
+
+The CLI sends `Lekton-Long-Polling: true` when uploading documents. On servers
+with durable imports, a pending upload returns `202` with a job ID; the CLI
+polls that job until it succeeds or fails. `--verbose` prints the job ID and
+whether it is queued or processing. A queued job is not counted as uploaded.
+Release finalization and promotion happen only after the document loop succeeds.
+
+`--ingest-timeout-seconds` bounds the entire upload/poll sequence for each
+document (default 1800 seconds). A timeout fails the build but does not cancel
+server work. Retry the same sync to recover: identical active requests share the
+existing job; completed documents appear unchanged in the sync delta. A failed
+job can be retried by uploading again.
+
+Synchronous older servers remain supported; an explicit `indexed: false` response
+also fails the new CLI. Older CLI versions that do not send
+the header receive an explicit `409 ingest_pending` if a durable import exceeds
+the server's wait, rather than reporting a pending import as successful. Update
+the CLI to wait for those imports. Prompt, schema and asset APIs are unchanged.

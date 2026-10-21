@@ -105,6 +105,70 @@ mod inner {
                 "davide.ghilardi@comelit.it",
                 fix_llm_usage_events_created_at_type,
             )
+            .register(
+                "020_add_ingest_queue",
+                "davide.ghilardi@comelit.it",
+                add_ingest_queue,
+            )
+    }
+
+    async fn add_ingest_queue(db: mongodb::Database) -> Result<(), mongodb::error::Error> {
+        use mongodb::{bson::doc, options::IndexOptions, IndexModel};
+        let jobs = db.collection::<mongodb::bson::Document>("ingest_jobs");
+        jobs.create_index(
+            IndexModel::builder()
+                .keys(doc! { "id": 1 })
+                .options(IndexOptions::builder().unique(true).build())
+                .build(),
+        )
+        .await?;
+        jobs.create_index(
+            IndexModel::builder()
+                .keys(doc! { "dedup_key": 1 })
+                .options(
+                    IndexOptions::builder()
+                        .unique(true)
+                        .partial_filter_expression(doc! { "active": true })
+                        .build(),
+                )
+                .build(),
+        )
+        .await?;
+        jobs.create_index(
+            IndexModel::builder()
+                .keys(doc! { "active": 1, "sequence": 1 })
+                .build(),
+        )
+        .await?;
+        jobs.create_index(
+            IndexModel::builder()
+                .keys(doc! { "expires_at": 1 })
+                .options(
+                    IndexOptions::builder()
+                        .expire_after(std::time::Duration::ZERO)
+                        .build(),
+                )
+                .build(),
+        )
+        .await?;
+        db.collection::<mongodb::bson::Document>("ingest_worker_locks")
+            .update_one(
+                doc! { "_id": "global" },
+                doc! { "$setOnInsert": {
+                    "owner": "", "lease_until": bson::DateTime::from_millis(0)
+                } },
+            )
+            .upsert(true)
+            .await?;
+        db.collection::<mongodb::bson::Document>("ingest_worker_locks")
+            .update_one(
+                doc! { "_id": "sequence" },
+                doc! { "$setOnInsert": { "value": 0_i64 } },
+            )
+            .upsert(true)
+            .await?;
+
+        Ok(())
     }
 
     fn format_duplicate_group_id(id: &bson::Bson) -> String {

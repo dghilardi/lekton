@@ -31,6 +31,67 @@ If multiple real users share the same public NAT IP, they still share the same I
 
 ---
 
+## Durable Document Imports
+
+Document imports are queued in MongoDB (`ingest_jobs`), with content staged in
+S3 under `ingest-staging/` in the application's existing bucket. Migration 020
+creates the job indexes and the singleton worker lease. Every server replica
+starts a candidate worker; the renewable MongoDB lease serializes processing
+across replicas. There is no local staging directory or shared-filesystem
+requirement.
+
+Configuration, loaded through `AppConfig` (environment overrides use
+`LKN__INGEST__<FIELD>`):
+
+```toml
+[ingest]
+wait_seconds = 20        # HTTP wait, 0..20 seconds; leave proxy headroom
+poll_interval_ms = 250  # Database/worker polling, 1..1000 ms
+lease_seconds = 60      # Worker lease, 10..3600 seconds; renewed every third
+max_attempts = 3        # Total processing attempts, including crash recovery
+job_timeout_seconds = 1800 # Execution deadline for one processing attempt
+retention_days = 7      # Terminal job status retention, 1..365 days
+staging_prefix = "ingest-staging"
+```
+
+`POST /api/v1/ingest` keeps its existing JSON payload. Success within the wait
+returns `200` and the existing ingest result. Otherwise it returns `202` only
+when the client sends `Lekton-Long-Polling: true`; without the header it returns
+`409` with `code: "ingest_pending"`. Both contain `job_id`, `state`,
+`status_url`, and a `Location` header. Neither response cancels the durable job.
+A failed job returns `422` with `code: "ingest_failed"` and an error message.
+An indexing failure is a failed job even if its document was saved.
+
+Poll with `POST /api/v1/ingest/jobs/{job_id}/poll` and JSON
+`{"service_token":"<service token>"}`. Each poll waits up to `wait_seconds`
+and returns `202` while queued/processing, `200` with `state: "succeeded"` and
+`result`, or `422` with `state: "failed"` and `error`. Tokens are revalidated
+on every poll and must have write access to the document's slug scope. Tokens
+are never written into job records, staging objects, or polling URLs. The job
+retains the authorized submitter's name for revision audit records.
+
+Identical requests share a job while active. Different updates are queued in
+acceptance order; distinct sources also share this queue. A process restart or
+lost lease leaves an active job recoverable at the head of the queue. Delivery
+is **at least once**: a reclaimed attempt may repeat completed storage/index
+operations. Lease loss cancels local work, but an external service may already
+have accepted an in-flight operation. Lease deadlines use MongoDB server time rather than replica clocks. The existing document pipeline is not a cross-service
+transaction: S3, search and MongoDB may temporarily differ while a job runs.
+
+Terminal status is retained for seven days by default, then MongoDB TTL cleanup
+removes it. Successful and failed jobs remove their staged content after durable
+completion. A crash after upload but before enqueue/completion cleanup can leave
+an orphaned staging object: configure an S3 lifecycle rule on the dedicated
+prefix with a retention window longer than the maximum expected queue backlog
+and recovery period. Do not expire active jobs' content prematurely.
+
+An archiving sync (unless dry-run), finalization or promotion is rejected while its source has
+pending imports. New CLI versions wait for terminal outcomes before advancing.
+Use `job_id` in server logs to inspect processing attempts and failures; do not
+manually mark a job or document as indexed to clear an error.
+
+---
+
 ## Prometheus Metrics
 
 Usage metrics are exposed at `GET /metrics` when the `metrics` feature is enabled (off by default):

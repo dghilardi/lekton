@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Durable, sequential document imports with S3 staging, recoverable jobs, and negotiated long-polling in `lekton-sync`; older clients receive an explicit error when an import exceeds the request wait.
+
 ## [0.37.0] 2026-10-05
 
 ### Added

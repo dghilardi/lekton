@@ -198,6 +198,7 @@ impl TestEnv {
         ));
 
         let app_state = AppState {
+            ingest_queue: None,
             document_repo: repo.clone(),
             release_repo: release_repo.clone(),
             schema_repo: schema_repo.clone(),
@@ -531,6 +532,7 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
     ));
 
     let app_state = AppState {
+        ingest_queue: None,
         document_repo: env.repo.clone(),
         release_repo: env.release_repo.clone(),
         schema_repo: env.schema_repo.clone(),

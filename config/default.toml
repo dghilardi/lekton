@@ -276,3 +276,13 @@ Rules:
 # api_key = ""
 # vertex_project_id = ""
 # vertex_location = ""
+
+# Durable import queue; LKN__INGEST__* overrides these settings.
+[ingest]
+wait_seconds = 20
+poll_interval_ms = 250
+lease_seconds = 60
+max_attempts = 3
+job_timeout_seconds = 1800
+retention_days = 7
+staging_prefix = "ingest-staging"

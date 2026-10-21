@@ -72,6 +72,21 @@ The system supports two methods of ingestion:
 * **Payload:** Service Token, Markdown content, Metadata (Category, Version).
 * **Behavior:** Atomic update. If the document body changes, preserve the outgoing body as a new editorial revision before replacing it; if the document does not exist, create it.
 
+Document API imports use a persistent MongoDB queue and S3 staging. One worker
+across all replicas processes jobs sequentially, recovering abandoned work after
+a renewable lease expires. Identical active requests share a job; credentials
+are never persisted with the job or staged content.
+
+`POST /api/v1/ingest` waits up to `ingest.wait_seconds` (default 20). Completed
+imports retain the synchronous response. Pending imports return `202` only when
+`Lekton-Long-Polling: true` is supplied; legacy clients receive `409` with
+`ingest_pending`. The job continues after HTTP disconnect. Authenticated,
+scoped `POST /api/v1/ingest/jobs/{id}/poll` waits for completion using the same
+bound and reports queued, processing, succeeded or failed state. New CLI clients
+wait for success before finalizing/promoting releases and fail the build on job
+failure or the CLI's overall deadline. Sources with pending imports cannot start
+an archiving sync, finalize or promote a release.
+
 **B. Web Editor (GUI)**
 
 * **Technology:** **Tiptap** (via `leptos-tiptap`) or **Milkdown**.

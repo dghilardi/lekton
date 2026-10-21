@@ -6,6 +6,7 @@ mod config;
 mod front_matter;
 mod hash;
 mod http;
+mod ingest;
 mod models;
 mod scan;
 mod slug;
@@ -16,10 +17,10 @@ use anyhow::{bail, Context, Result};
 use clap::Parser;
 
 use api::{
-    CheckHashEntry, CheckHashesRequest, CheckHashesResponse, IngestRequest, IngestResponse,
-    PromptIngestRequest, PromptIngestResponse, PromptSyncEntry, PromptSyncRequest,
-    PromptSyncResponse, SchemaIngestRequest, SchemaIngestResponse, SchemaSyncEntry,
-    SchemaSyncRequest, SchemaSyncResponse, SyncDocEntry, SyncRequest, SyncResponse,
+    CheckHashEntry, CheckHashesRequest, CheckHashesResponse, IngestRequest, PromptIngestRequest,
+    PromptIngestResponse, PromptSyncEntry, PromptSyncRequest, PromptSyncResponse,
+    SchemaIngestRequest, SchemaIngestResponse, SchemaSyncEntry, SchemaSyncRequest,
+    SchemaSyncResponse, SyncDocEntry, SyncRequest, SyncResponse,
 };
 use http::{
     detect_git_remote, find_git_root, is_interactive, prompt_and_persist_source_id, send_with_retry,
@@ -66,6 +67,10 @@ struct Args {
     /// Show what would be done without making any changes
     #[arg(long)]
     dry_run: bool,
+
+    /// Maximum total time to wait for each document import, including polling.
+    #[arg(long, default_value_t = 1800, value_parser = clap::value_parser!(u64).range(1..))]
+    ingest_timeout_seconds: u64,
 
     /// Path to config file (defaults to .lekton.yml in root)
     #[arg(long)]
@@ -175,7 +180,9 @@ async fn main() -> Result<()> {
     );
 
     // ── Call sync API ─────────────────────────────────────────────────────────
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
     let document_sync_requested = !docs.is_empty() || archive_missing;
     let sync_result = if document_sync_requested {
         let sync_url = format!("{base_url}/api/v1/sync");
@@ -602,14 +609,17 @@ async fn main() -> Result<()> {
             release: release.clone(),
         };
 
-        let result = send_with_retry(|| client.post(&ingest_url).json(&ingest_body)).await;
+        let result = ingest::upload(
+            &client,
+            &ingest_url,
+            &ingest_body,
+            std::time::Duration::from_secs(args.ingest_timeout_seconds),
+            args.verbose,
+        )
+        .await;
 
         match result {
-            Ok(r) if r.status().is_success() => {
-                let ingest: IngestResponse = r.json().await.unwrap_or(IngestResponse {
-                    changed: true,
-                    indexed: true,
-                });
+            Ok(ingest) => {
                 uploaded += 1;
                 if args.verbose {
                     let note = if ingest.changed {
@@ -624,22 +634,6 @@ async fn main() -> Result<()> {
                 } else {
                     println!("  uploaded: {}", upload_entry.source_path);
                 }
-                if !ingest.indexed {
-                    eprintln!(
-                        "  warning: {} was saved but failed to index in search/RAG — \
-                         run an admin re-index to restore search/chat",
-                        upload_entry.source_path
-                    );
-                }
-            }
-            Ok(r) => {
-                let status = r.status();
-                let body = r.text().await.unwrap_or_default();
-                eprintln!(
-                    "  error: {}: HTTP {status} — {body}",
-                    upload_entry.source_path
-                );
-                errors += 1;
             }
             Err(e) => {
                 eprintln!("  error: {}: {e}", upload_entry.source_path);

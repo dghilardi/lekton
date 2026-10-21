@@ -92,6 +92,10 @@ where
             axum::routing::post(api::ingest::ingest_handler),
         )
         .route(
+            "/api/v1/ingest/jobs/{id}/poll",
+            axum::routing::post(api::ingest_jobs::poll_handler),
+        )
+        .route(
             "/api/v1/image/{filename}",
             axum::routing::get(api::upload::serve_image_handler),
         )
@@ -1040,7 +1044,14 @@ async fn main() {
     features.learn = features.learn && learn_service.is_some();
 
     // Build application state
+    let ingest_queue = Arc::new(lekton::jobs::ingest::IngestQueue {
+        repository: Arc::new(
+            lekton::db::ingest_job_repository::MongoIngestJobRepository::new(&mongo_db),
+        ),
+        config: config.ingest.clone(),
+    });
     let app_state = lekton::app::AppState {
+        ingest_queue: Some(ingest_queue.clone()),
         document_repo,
         release_repo,
         schema_repo,
@@ -1085,6 +1096,8 @@ async fn main() {
         max_attachment_size_bytes: config.server.max_attachment_size_mb * 1024 * 1024,
         features,
     };
+
+    tokio::spawn(ingest_queue.run(app_state.clone()));
 
     // Generate the Leptos route list for SSR
     let routes = generate_route_list(App);

@@ -27,3 +27,6 @@ pub mod sync;
 pub mod token_validation;
 #[cfg(feature = "ssr")]
 pub mod upload;
+
+#[cfg(feature = "ssr")]
+pub mod ingest_jobs;

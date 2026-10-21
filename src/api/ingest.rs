@@ -68,7 +68,7 @@ pub struct ProcessIngestOutcome {
 }
 
 #[cfg(feature = "ssr")]
-fn spawn_attachment_acl_recompute(
+pub(crate) fn spawn_attachment_acl_recompute(
     rag: Option<Arc<dyn RagService>>,
     asset_repo: Arc<dyn AssetRepository>,
     document_repo: Arc<dyn DocumentRepository>,
@@ -109,9 +109,18 @@ pub async fn process_ingest(
     ctx: &IngestContext<'_>,
     request: IngestRequest,
 ) -> Result<ProcessIngestOutcome, AppError> {
-    // 1. Validate the service token (legacy or scoped)
     validate_token(ctx, &request.service_token, &request.slug).await?;
+    let actor = resolve_token_name(ctx, &request.service_token).await;
+    process_authorized_ingest(ctx, request, &actor).await
+}
 
+/// Called only after the queue has authenticated and authorized the upload.
+#[cfg(feature = "ssr")]
+pub(crate) async fn process_authorized_ingest(
+    ctx: &IngestContext<'_>,
+    request: IngestRequest,
+    actor: &str,
+) -> Result<ProcessIngestOutcome, AppError> {
     // 2. Validate the slug
     if request.slug.is_empty() {
         return Err(AppError::BadRequest("Slug cannot be empty".into()));
@@ -330,7 +339,7 @@ pub async fn process_ingest(
                 }
 
                 // Determine who is updating (token name or "legacy")
-                let updated_by = resolve_token_name(ctx, &request.service_token).await;
+                let updated_by = actor.to_string();
 
                 let revision = crate::db::document_revision_repository::DocumentRevision {
                     id: uuid::Uuid::new_v4().to_string(),
@@ -613,7 +622,7 @@ fn warn_about_summary(slug: &str, summary: Option<&str>) {
 
 /// Validate the service token — either legacy global token or scoped token.
 #[cfg(feature = "ssr")]
-async fn validate_token(
+pub(crate) async fn validate_token(
     ctx: &IngestContext<'_>,
     raw_token: &str,
     slug: &str,
@@ -683,8 +692,13 @@ pub(crate) fn document_s3_key(slug: &str, release: Option<&str>) -> String {
 #[cfg(feature = "ssr")]
 pub async fn ingest_handler(
     axum::extract::State(state): axum::extract::State<crate::app::AppState>,
+    headers: axum::http::HeaderMap,
     axum::Json(request): axum::Json<IngestRequest>,
-) -> Result<axum::Json<IngestResponse>, AppError> {
+) -> Result<axum::response::Response, AppError> {
+    use axum::response::IntoResponse;
+    if state.ingest_queue.is_some() {
+        return crate::api::ingest_jobs::submit(state, headers, request).await;
+    }
     // Same gate as sync: a release-scoped write is meaningless while the reader
     // side of versioning is off.
     if request.release.is_some() && !state.features.doc_versioning {
@@ -719,7 +733,7 @@ pub async fn ingest_handler(
         outcome.assets_to_recompute,
     );
 
-    Ok(axum::Json(outcome.response))
+    Ok(axum::Json(outcome.response).into_response())
 }
 
 #[cfg(test)]

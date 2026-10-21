@@ -477,7 +477,8 @@ Most write endpoints are driven by the [`lekton-sync`](cli/README.md) CLI in CI/
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/v1/ingest` | Create/update a document |
+| `POST` | `/api/v1/ingest` | Queue a document import and wait for its result |
+| `POST` | `/api/v1/ingest/jobs/{id}/poll` | Long-poll a document import using the service token |
 | `POST` | `/api/v1/sync` | Compute document delta (which docs need re-upload) |
 | `POST` | `/api/v1/schemas` | Create/update a schema |
 | `POST` | `/api/v1/schemas/sync` | Compute schema delta / archive missing versions |

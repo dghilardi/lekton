@@ -30,3 +30,6 @@ pub mod usage_models;
 pub mod usage_repository;
 pub mod user_prompt_preference_repository;
 pub mod user_repository;
+
+#[cfg(feature = "ssr")]
+pub mod ingest_job_repository;

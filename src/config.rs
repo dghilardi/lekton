@@ -24,6 +24,8 @@ pub struct AppConfig {
     pub server: ServerConfig,
     pub database: DatabaseConfig,
     pub storage: StorageConfig,
+    #[serde(default)]
+    pub ingest: IngestConfig,
     pub search: SearchConfig,
     pub auth: AuthConfig,
     pub mcp: McpConfig,
@@ -34,6 +36,33 @@ pub struct AppConfig {
     pub learn: LearnConfig,
     #[serde(default)]
     pub usage: UsageConfig,
+}
+
+/// Durable document imports; request and poll waits stay below proxy timeouts.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct IngestConfig {
+    pub wait_seconds: u64,
+    pub poll_interval_ms: u64,
+    pub lease_seconds: u64,
+    pub max_attempts: u32,
+    pub job_timeout_seconds: u64,
+    pub retention_days: u32,
+    pub staging_prefix: String,
+}
+
+impl Default for IngestConfig {
+    fn default() -> Self {
+        Self {
+            wait_seconds: 20,
+            poll_interval_ms: 250,
+            lease_seconds: 60,
+            max_attempts: 3,
+            job_timeout_seconds: 1800,
+            retention_days: 7,
+            staging_prefix: "ingest-staging".into(),
+        }
+    }
 }
 
 // ── Features ────────────────────────────────────────────────────────────────
@@ -893,6 +922,19 @@ impl AppConfig {
     /// configuration is a startup error with an actionable message, rather than
     /// being silently downgraded. Call once after [`AppConfig::load`].
     pub fn validate_features(&self) -> Result<(), String> {
+        if self.ingest.wait_seconds > 20
+            || self.ingest.poll_interval_ms == 0
+            || self.ingest.poll_interval_ms > 1000
+            || self.ingest.lease_seconds < 10
+            || self.ingest.lease_seconds > 3600
+            || self.ingest.max_attempts == 0
+            || self.ingest.job_timeout_seconds == 0
+            || self.ingest.retention_days == 0
+            || self.ingest.retention_days > 365
+            || self.ingest.staging_prefix.trim_matches('/').is_empty()
+        {
+            return Err("Invalid ingest configuration: wait_seconds must be 0..=20, poll_interval_ms 1..=1000, lease_seconds 10..=3600, max_attempts and job_timeout_seconds positive, retention_days 1..=365 and staging_prefix non-empty".into());
+        }
         if self.features.rag {
             if self.rag.qdrant_url.is_empty() {
                 return Err("features.rag = true but rag.qdrant_url is empty — set \
@@ -1088,5 +1130,30 @@ mod tests {
         config.features.search = true;
         let err = config.validate_features().unwrap_err();
         assert!(err.contains("search.url"), "unexpected error: {err}");
+    }
+    #[test]
+    #[cfg(feature = "ssr")]
+    fn ingest_config_rejects_unbounded_waits_and_invalid_recovery_settings() {
+        let mut config: super::AppConfig = config::Config::builder()
+            .add_source(config::File::from_str(
+                include_str!("../config/default.toml"),
+                config::FileFormat::Toml,
+            ))
+            .build()
+            .unwrap()
+            .try_deserialize()
+            .unwrap();
+        assert!(config.validate_features().is_ok());
+        config.ingest.wait_seconds = 21;
+        assert!(config.validate_features().unwrap_err().contains("ingest"));
+        config.ingest = super::IngestConfig::default();
+        config.ingest.lease_seconds = 0;
+        assert!(config.validate_features().is_err());
+        config.ingest = super::IngestConfig::default();
+        config.ingest.staging_prefix = "/".into();
+        assert!(config.validate_features().is_err());
+        config.ingest = super::IngestConfig::default();
+        config.ingest.wait_seconds = 0;
+        assert!(config.validate_features().is_ok());
     }
 }

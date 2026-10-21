@@ -330,6 +330,8 @@ pub async fn finalize_release_handler(
         ));
     }
 
+    crate::api::ingest_jobs::ensure_source_idle(&state, &request.source_id, &request.service_token)
+        .await?;
     let response = process_finalize_release(
         state.document_repo.as_ref(),
         state.release_repo.as_ref(),
@@ -530,6 +532,8 @@ pub async fn promote_release_handler(
         ));
     }
 
+    crate::api::ingest_jobs::ensure_source_idle(&state, &request.source_id, &request.service_token)
+        .await?;
     let (response, affected) = process_promote_release(
         state.document_repo.as_ref(),
         state.release_repo.as_ref(),

@@ -1,3 +1,5 @@
+#[cfg(feature = "ssr")]
+pub mod ingest;
 pub mod recompute_access_levels;
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};

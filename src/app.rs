@@ -109,6 +109,7 @@ use std::sync::Arc;
 #[cfg(feature = "ssr")]
 #[derive(Clone, axum::extract::FromRef)]
 pub struct AppState {
+    pub ingest_queue: Option<Arc<crate::jobs::ingest::IngestQueue>>,
     pub document_repo: Arc<dyn crate::db::repository::DocumentRepository>,
     /// Release catalogue and the `latest` alias, backing the version selector
     /// and the release-scoped sync.

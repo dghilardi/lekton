@@ -807,6 +807,7 @@ html[data-theme] .prose pre.mermaid:has(.mermaid-expand-btn) {
 
 .prose thead {
     border-bottom: 2px solid var(--color-base-300);
+    color: var(--color-base-content);
 }
 
 .prose thead th {
@@ -816,7 +817,7 @@ html[data-theme] .prose pre.mermaid:has(.mermaid-expand-btn) {
     text-transform: uppercase;
     padding:        0.6em 0.875em;
     text-align:     left;
-    color:          color-mix(in oklch, var(--color-base-content) 50%, transparent);
+    color:          inherit;
 }
 
 .prose tbody tr {

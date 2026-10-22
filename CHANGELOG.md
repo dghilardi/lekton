@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.38.1] 2026-10-22
+
 ### Fixed
 - Markdown table headers inherit the theme's header text color, keeping them readable with custom table backgrounds.
 

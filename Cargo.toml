@@ -51,7 +51,7 @@ openidconnect = { version = "4", optional = true }
 
 # Database
 mongodb = { version = "3", optional = true }
-bson = { version = "2", features = ["chrono-0_4"] }
+bson = { version = "3", features = ["chrono-0_4"] }
 
 # Storage (S3)
 # Default features minus the legacy `rustls` client (hyper 0.14 / rustls 0.21)

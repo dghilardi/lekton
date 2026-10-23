@@ -7,7 +7,7 @@
     "@asyncapi/react-component": "^3.2.2",
     "@axe-core/playwright": "^4.14.0",
     "@playwright/test": "^1.64",
-    "@scalar/api-reference": "^1.75.0",
+    "@scalar/api-reference": "^1.75.1",
     "@tailwindcss/cli": "^4.3.0",
     "@tailwindcss/typography": "^0.5.19",
     "daisyui": "^5.7",

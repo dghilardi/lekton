@@ -65,6 +65,8 @@ test('one arrow press advances one search result', async ({ page }) => {
   await expect(input).toHaveAttribute('aria-activedescendant', 'global-search-result-0');
   await input.press('ArrowDown');
   await expect(input).toHaveAttribute('aria-activedescendant', 'global-search-result-1');
+  await expect(page.locator('#global-search-result-1')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#global-search-result-0')).toHaveAttribute('aria-selected', 'false');
 });
 
 test('search failure offers a readable recovery message', async ({ page }) => {
@@ -87,4 +89,52 @@ test('anonymous empty portal offers sign-in without duplicate primary destinatio
   await expect(page.getByRole('link', { name: 'API Schemas', exact: true })).toHaveAttribute('href', '/schemas');
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByRole('link', { name: 'Lekton home', exact: true })).toBeVisible();
+});
+
+test('home stays neutral until auth and navigation resolve', async ({ page, request }) => {
+  const html = await (await request.get('/')).text();
+  expect(html).not.toContain('Log in to explore');
+  await page.route('**/api/get_navigation*', async route => {
+    await new Promise(resolve => setTimeout(resolve, 800));
+    await route.fulfill({ contentType: 'application/json', body: '[]' });
+  });
+  await page.goto('/');
+  await expect(page.getByRole('link', { name: 'Log in to explore' })).toBeVisible();
+});
+
+test('keyboard search selection remains inside the scrolled results viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route('**/api/search_docs*', route => route.fulfill({
+    contentType: 'application/json', body: JSON.stringify(Array.from({ length: 12 }, (_, i) => ({
+      slug: `result-${i}`, title: `Result ${i}`, tags: [], content_preview: 'Illustrative result preview with enough text to occupy a result row.',
+    }))),
+  }));
+  await page.goto('/');
+  await expect(async () => {
+    await page.getByRole('button', { name: 'Open search', exact: true }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+  }).toPass();
+  const input = page.getByRole('combobox');
+  await input.fill('result');
+  await expect(page.getByRole('option')).toHaveCount(12);
+  for (let i = 0; i < 9; i++) await input.press('ArrowDown');
+  await expect(input).toHaveAttribute('aria-activedescendant', 'global-search-result-9');
+  const result = await page.locator('#global-search-result-9').boundingBox();
+  const list = await page.locator('#global-search-results').boundingBox();
+  expect(result!.y).toBeGreaterThanOrEqual(list!.y - 1);
+  expect(result!.y + result!.height).toBeLessThanOrEqual(list!.y + list!.height + 1);
+});
+
+test('signed-in readers with no docs or registry get a profile action', async ({ page }) => {
+  const login = await page.request.post('/api/auth/login', { data: { username: 'admin', password: 'admin' } });
+  expect(login.ok()).toBeTruthy();
+  expect(await (await page.request.get('/')).text()).not.toContain('Log in to explore');
+  await page.route('**/api/get_navigation*', route => route.fulfill({ contentType: 'application/json', body: '[]' }));
+  await page.route('**/api/get_feature_flags*', async route => {
+    const response = await route.fetch();
+    await route.fulfill({ json: { ...await response.json(), schema_registry: false } });
+  });
+  await page.goto('/');
+  await expect(page.getByRole('link', { name: 'View your profile' })).toHaveAttribute('href', '/profile');
+  await expect(page.getByRole('link', { name: 'Log in to explore' })).toHaveCount(0);
 });

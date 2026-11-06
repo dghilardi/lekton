@@ -160,6 +160,17 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
         });
     });
 
+    Effect::new(move || {
+        if let Some(index) = active_index.get() {
+            #[cfg(feature = "hydrate")]
+            let _ = js_sys::eval(&format!(
+                "document.getElementById('global-search-result-{index}')?.scrollIntoView({{block:'nearest'}})"
+            ));
+            #[cfg(not(feature = "hydrate"))]
+            let _ = index;
+        }
+    });
+
     view! {
         <dialog
             id="global-search-dialog"
@@ -293,7 +304,7 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                                             target=target
                                                             role="option"
                                                             tabindex="-1"
-                                                            aria-selected=move || active_index.get() == Some(idx)
+                                                            aria-selected=move || (active_index.get() == Some(idx)).to_string()
                                                             class=move || format!(
                                                                 "block p-4 transition-colors {}",
                                                                 if active_index.get() == Some(idx) {

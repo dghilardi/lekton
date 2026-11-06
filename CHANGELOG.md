@@ -8,6 +8,9 @@ All notable changes to this project will be documented in this file.
 - Prompt library: filters by owner, tag, context cost and favorites, a compact list, and a detail view with the prompt text, its variables and a copy button.
 - Theming interface: `--lekton-header-*`, `--lekton-sidebar-*`, `--lekton-code-*`, link, heading, table and font variables, plus stable `data-lekton-*` hooks, so a custom theme only assigns variables. Documented in `docs/theming.md` and listed in Admin → Custom CSS. With no custom CSS the look is unchanged.
 
+### Changed
+- Admin → Documentation Feedback is a compact list that expands one item at a time; `lekton://docs/…` URIs link to the document, "Duplicate of" is picked from the existing items by title, and kinds and statuses use readable labels.
+
 ### Fixed
 - Wide Markdown tables made the whole page scroll sideways on phones; tables now scroll inside their own box.
 - Chat history titles were unreadable in a dark sidebar set by custom CSS; sidebar entries now follow the sidebar colours.

@@ -6,11 +6,12 @@ use crate::app::{
     deactivate_service_token, delete_admin_access_level, get_custom_css, get_navigation,
     get_navigation_order, get_rag_reindex_status, get_schema_endpoint_reindex_status,
     get_search_reindex_status, list_admin_access_levels, list_admin_users,
-    list_documentation_feedback, list_service_tokens, mark_documentation_feedback_duplicate,
-    resolve_documentation_feedback, save_custom_css, save_navigation_order,
-    set_admin_user_access_levels, trigger_rag_reindex, trigger_schema_endpoint_reindex,
-    trigger_search_reindex, update_admin_access_level, AccessLevelInfo, CreateTokenResult,
-    DocumentationFeedbackAdminItem, DocumentationFeedbackAdminListResult, NavItem,
+    list_documentation_feedback, list_documentation_feedback_choices, list_service_tokens,
+    mark_documentation_feedback_duplicate, resolve_documentation_feedback, save_custom_css,
+    save_navigation_order, set_admin_user_access_levels, trigger_rag_reindex,
+    trigger_schema_endpoint_reindex, trigger_search_reindex, update_admin_access_level,
+    AccessLevelInfo, CreateTokenResult, DocumentationFeedbackAdminItem,
+    DocumentationFeedbackAdminListResult, DocumentationFeedbackChoice, NavItem,
     NavigationOrderEntry, ServiceTokenInfo,
 };
 #[allow(unused_imports)]
@@ -43,6 +44,20 @@ pub fn DocumentationFeedbackAdminPanel() -> impl IntoView {
             .await
         }
     });
+
+    // Candidates for "Duplicate of", and titles for the ids shown in details.
+    let choices_resource = LocalResource::new(move || {
+        let _ = refresh_counter.get();
+        async move { with_auth_retry(list_documentation_feedback_choices).await }
+    });
+    let choices = Signal::derive(move || {
+        choices_resource
+            .get()
+            .and_then(Result::ok)
+            .unwrap_or_default()
+    });
+    // Only one item is expanded at a time, so the page stays a short list.
+    let expanded = RwSignal::new(None::<String>);
 
     let trigger_refresh = move || set_refresh_counter.update(|value| *value += 1);
 
@@ -114,6 +129,8 @@ pub fn DocumentationFeedbackAdminPanel() -> impl IntoView {
                                     page=page
                                     set_page=set_page
                                     trigger_refresh=trigger_refresh
+                                    expanded=expanded
+                                    choices=choices
                                 />
                             }.into_any(),
                             Err(e) => view! {
@@ -129,6 +146,31 @@ pub fn DocumentationFeedbackAdminPanel() -> impl IntoView {
     }
 }
 
+/// Readable label for a feedback kind (`missing_info` → "Missing information").
+pub fn feedback_kind_label(kind: &str) -> String {
+    match kind {
+        "missing_info" => "Missing information".to_string(),
+        "improvement" => "Improvement".to_string(),
+        other => other.replace('_', " "),
+    }
+}
+
+/// Readable label for a feedback status (`in_progress` → "In progress").
+pub fn feedback_status_label(status: &str) -> String {
+    match status {
+        "open" => "Open".to_string(),
+        "in_progress" => "In progress".to_string(),
+        "resolved" => "Resolved".to_string(),
+        other => other.replace('_', " "),
+    }
+}
+
+/// In-app link for a `lekton://docs/<slug>` resource URI, if it is one.
+pub fn docs_uri_href(uri: &str) -> Option<String> {
+    let slug = uri.trim().strip_prefix("lekton://docs/")?;
+    (!slug.is_empty()).then(|| format!("/docs/{slug}"))
+}
+
 #[allow(unused_variables)]
 #[component]
 fn DocumentationFeedbackList(
@@ -136,6 +178,8 @@ fn DocumentationFeedbackList(
     page: ReadSignal<u64>,
     set_page: WriteSignal<u64>,
     trigger_refresh: impl Fn() + Copy + Send + Sync + 'static,
+    expanded: RwSignal<Option<String>>,
+    choices: Signal<Vec<DocumentationFeedbackChoice>>,
 ) -> impl IntoView {
     if result.items.is_empty() {
         return view! {
@@ -153,36 +197,49 @@ fn DocumentationFeedbackList(
     let has_next = result.page + 1 < total_pages;
 
     view! {
-        <div class="space-y-5">
+        <div class="space-y-4">
             <div class="flex flex-wrap items-center justify-between gap-2 text-sm text-base-content/60">
                 <span>{format!("{} total item(s)", result.total)}</span>
                 <span>{format!("Page {} of {}", result.page + 1, total_pages)}</span>
             </div>
 
-            <div class="space-y-4">
+            <ul class="divide-y divide-base-200 overflow-hidden rounded-xl border border-base-200">
                 {result
                     .items
                     .into_iter()
-                    .map(|item| view! { <DocumentationFeedbackCard item=item trigger_refresh=trigger_refresh /> })
+                    .map(|item| view! {
+                        <DocumentationFeedbackRow
+                            item=item
+                            expanded=expanded
+                            choices=choices
+                            trigger_refresh=trigger_refresh
+                        />
+                    })
                     .collect::<Vec<_>>()}
-            </div>
+            </ul>
 
             <div class="flex items-center justify-end gap-3 pt-2">
                 <button
                     class="btn btn-outline btn-sm"
                     disabled=!has_prev
-                    on:click=move |_| set_page.update(|value| {
-                        if *value > 0 {
-                            *value -= 1;
-                        }
-                    })
+                    on:click=move |_| {
+                        expanded.set(None);
+                        set_page.update(|value| {
+                            if *value > 0 {
+                                *value -= 1;
+                            }
+                        })
+                    }
                 >
                     "Previous"
                 </button>
                 <button
                     class="btn btn-outline btn-sm"
                     disabled=!has_next
-                    on:click=move |_| set_page.update(|value| *value += 1)
+                    on:click=move |_| {
+                        expanded.set(None);
+                        set_page.update(|value| *value += 1)
+                    }
                 >
                     "Next"
                 </button>
@@ -191,23 +248,83 @@ fn DocumentationFeedbackList(
     }.into_any()
 }
 
+/// One feedback item: a one-line summary that expands into the details and
+/// the resolve / duplicate form.
 #[component]
-fn DocumentationFeedbackCard(
+fn DocumentationFeedbackRow(
     item: DocumentationFeedbackAdminItem,
+    expanded: RwSignal<Option<String>>,
+    choices: Signal<Vec<DocumentationFeedbackChoice>>,
     trigger_refresh: impl Fn() + Copy + Send + Sync + 'static,
 ) -> impl IntoView {
-    // Both open and in-progress items can be resolved/duplicated by an admin.
-    let status_is_actionable = item.status != "resolved";
-    let status_label = match item.status.as_str() {
-        "in_progress" => "in progress",
-        other => other,
-    }
-    .to_string();
+    let id = item.id.clone();
+    let panel_id = format!("feedback-{}", item.id);
+    let is_open = Memo::new({
+        let id = id.clone();
+        move |_| expanded.get().as_deref() == Some(id.as_str())
+    });
     let status_badge_class = match item.status.as_str() {
         "open" => "badge badge-sm badge-outline badge-primary",
         "in_progress" => "badge badge-sm badge-outline badge-info",
         _ => "badge badge-sm badge-outline badge-ghost",
     };
+    let kind_badge_class = if item.kind == "missing_info" {
+        "badge badge-sm badge-soft badge-warning"
+    } else {
+        "badge badge-sm badge-soft badge-info"
+    };
+    let header = view! {
+        <button
+            class="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-base-200/50"
+            aria-expanded=move || if is_open.get() { "true" } else { "false" }
+            aria-controls=panel_id.clone()
+            on:click=move |_| {
+                expanded.update(|current| {
+                    *current = if current.as_deref() == Some(id.as_str()) { None } else { Some(id.clone()) };
+                })
+            }
+        >
+            <svg
+                class=move || format!("mt-1 h-4 w-4 shrink-0 opacity-60 transition-transform {}", if is_open.get() { "rotate-90" } else { "" })
+                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+            ><path d="m9 18 6-6-6-6"/></svg>
+            <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-2">
+                    <span class=kind_badge_class>{feedback_kind_label(&item.kind)}</span>
+                    <span class=status_badge_class>{feedback_status_label(&item.status)}</span>
+                    <span class="font-semibold">{item.title.clone()}</span>
+                </div>
+                <p class="mt-0.5 text-sm text-base-content/65 line-clamp-1 break-all sm:break-normal">{item.summary.clone()}</p>
+            </div>
+            <div class="hidden shrink-0 text-right text-xs leading-relaxed text-base-content/60 sm:block">
+                <div class="max-w-[14rem] truncate">{item.created_by.clone()}</div>
+                <div class="whitespace-nowrap">{item.created_at.clone()}</div>
+            </div>
+        </button>
+    };
+    let panel_id = format!("feedback-{}", item.id);
+    let item = StoredValue::new(item);
+
+    view! {
+        <li>
+            {header}
+            <Show when=move || is_open.get() fallback=|| ()>
+                <div id=panel_id.clone() class="border-t border-base-200 bg-base-200/20 px-4 py-5 sm:px-11">
+                    <DocumentationFeedbackDetail item=item.get_value() choices=choices trigger_refresh=trigger_refresh />
+                </div>
+            </Show>
+        </li>
+    }
+}
+
+#[component]
+fn DocumentationFeedbackDetail(
+    item: DocumentationFeedbackAdminItem,
+    choices: Signal<Vec<DocumentationFeedbackChoice>>,
+    trigger_refresh: impl Fn() + Copy + Send + Sync + 'static,
+) -> impl IntoView {
+    // Both open and in-progress items can be resolved/duplicated by an admin.
+    let status_is_actionable = item.status != "resolved";
     // Delivery box shown when the item has been claimed (agent took it in charge).
     let delivery_box = item.delivery_source_id.clone().map(|source_id| {
         let claimed_at = item.claimed_at.clone();
@@ -233,6 +350,7 @@ fn DocumentationFeedbackCard(
             </div>
         }
     });
+    let item_id = StoredValue::new(item.id.clone());
     let item_id_for_resolve = item.id.clone();
     let item_id_for_duplicate = item.id.clone();
     let (resolution_note, set_resolution_note) =
@@ -280,216 +398,250 @@ fn DocumentationFeedbackCard(
         }
     });
 
-    let detail_sections = {
-        let mut sections = Vec::new();
-
-        if let Some(view) =
-            documentation_feedback_detail_view("Related resources", item.related_resources.clone())
-        {
-            sections.push(view);
-        }
-        if let Some(view) =
-            documentation_feedback_detail_view("Search queries", item.search_queries.clone())
-        {
-            sections.push(view);
-        }
-        if let Some(view) =
-            documentation_feedback_optional_view("User goal", item.user_goal.clone())
-        {
-            sections.push(view);
-        }
-        if let Some(view) = documentation_feedback_optional_view(
-            "Missing information",
-            item.missing_information.clone(),
-        ) {
-            sections.push(view);
-        }
-        if let Some(view) = documentation_feedback_optional_view("Impact", item.impact.clone()) {
-            sections.push(view);
-        }
-        if let Some(view) = documentation_feedback_optional_view(
+    let sections: Vec<AnyView> = [
+        resource_list_view("Related resources", item.related_resources.clone()),
+        text_list_view("Search queries", item.search_queries.clone()),
+        text_view("User goal", item.user_goal.clone()),
+        text_view("Missing information", item.missing_information.clone()),
+        text_view("Impact", item.impact.clone()),
+        resource_view(
             "Suggested target resource",
             item.suggested_target_resource.clone(),
-        ) {
-            sections.push(view);
-        }
-        if let Some(view) = documentation_feedback_optional_view(
-            "Target resource",
-            item.target_resource_uri.clone(),
-        ) {
-            sections.push(view);
-        }
-        if let Some(view) =
-            documentation_feedback_optional_view("Problem summary", item.problem_summary.clone())
-        {
-            sections.push(view);
-        }
-        if let Some(view) = documentation_feedback_optional_view("Proposal", item.proposal.clone())
-        {
-            sections.push(view);
-        }
-        if let Some(view) = documentation_feedback_detail_view(
-            "Supporting resources",
-            item.supporting_resources.clone(),
-        ) {
-            sections.push(view);
-        }
-        if let Some(view) =
-            documentation_feedback_optional_view("Expected benefit", item.expected_benefit.clone())
-        {
-            sections.push(view);
-        }
-        if let Some(view) = documentation_feedback_detail_view(
-            "Related feedback ids",
+        ),
+        resource_view("Target resource", item.target_resource_uri.clone()),
+        text_view("Problem summary", item.problem_summary.clone()),
+        text_view("Proposal", item.proposal.clone()),
+        resource_list_view("Supporting resources", item.supporting_resources.clone()),
+        text_view("Expected benefit", item.expected_benefit.clone()),
+        feedback_refs_view(
+            "Related feedback",
             item.related_feedback_ids.clone(),
-        ) {
-            sections.push(view);
-        }
-        if let Some(view) =
-            documentation_feedback_optional_view("Duplicate of", item.duplicate_of.clone())
-        {
-            sections.push(view);
-        }
-        if let Some(view) =
-            documentation_feedback_optional_view("Resolution note", item.resolution_note.clone())
-        {
-            sections.push(view);
-        }
-
-        sections
-    };
+            choices,
+        ),
+        feedback_refs_view(
+            "Duplicate of",
+            item.duplicate_of.clone().into_iter().collect(),
+            choices,
+        ),
+        text_view("Resolution note", item.resolution_note.clone()),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
 
     view! {
-        <div class="rounded-2xl border border-base-200 bg-base-100 shadow-sm">
-            <div class="p-6 space-y-5">
-                <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                    <div class="space-y-2 min-w-0">
-                        <div class="flex flex-wrap items-center gap-2">
-                            <span class=move || format!(
-                                "badge badge-sm font-semibold {}",
-                                if item.kind == "missing_info" { "badge-warning" } else { "badge-info" }
-                            )>
-                                {item.kind.clone()}
-                            </span>
-                            <span class=status_badge_class>
-                                {status_label}
-                            </span>
-                            <span class="text-xs text-base-content/65 font-mono break-all">{item.id.clone()}</span>
-                        </div>
-                        <h3 class="text-lg font-bold">{item.title.clone()}</h3>
-                        <p class="text-sm text-base-content/70 break-words">{item.summary.clone()}</p>
-                    </div>
-                    <div class="self-start rounded-xl bg-base-200/40 px-3 py-2 text-xs leading-relaxed text-base-content/60 md:max-w-xs md:text-right">
-                        <div class="font-medium break-words text-base-content/75">{item.created_by.clone()}</div>
-                        <div class="whitespace-nowrap">{item.created_at.clone()}</div>
-                    </div>
+        <div class="space-y-5">
+            <div class="space-y-1">
+                <p class="text-sm whitespace-pre-wrap break-words">{item.summary.clone()}</p>
+                <p class="text-xs text-base-content/55">
+                    <span class="sm:hidden">{format!("{} · {} · ", item.created_by, item.created_at)}</span>
+                    <span class="font-mono break-all">{item.id.clone()}</span>
+                </p>
+            </div>
+
+            <Show when=move || error.get().is_some()>
+                <div class="alert alert-error shadow-sm border-none bg-error/10 text-error text-sm">
+                    <span>{move || error.get().unwrap_or_default()}</span>
                 </div>
+            </Show>
 
-                <Show when=move || error.get().is_some()>
-                    <div class="alert alert-error shadow-sm border-none bg-error/10 text-error text-sm">
-                        <span>{move || error.get().unwrap_or_default()}</span>
-                    </div>
-                </Show>
+            {delivery_box}
 
-                {delivery_box}
+            <div class="grid grid-cols-1 gap-5 text-sm lg:grid-cols-2">
+                {sections}
+            </div>
 
-                <div class="grid grid-cols-1 gap-5 text-sm lg:grid-cols-2">
-                    {detail_sections}
-                </div>
+            <Show when=move || status_is_actionable>
+                <div class="border-t border-base-200 pt-5">
+                    <div class="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
+                        <label class="form-control">
+                            <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Resolution note"</span>
+                            <textarea
+                                class="textarea textarea-bordered min-h-24 w-full focus:textarea-primary"
+                                placeholder="Optional note describing how the item was resolved or why it was marked duplicate."
+                                prop:value=move || resolution_note.get()
+                                on:input=move |ev| set_resolution_note.set(event_target_value(&ev))
+                            ></textarea>
+                        </label>
 
-                <Show when=move || status_is_actionable>
-                    <div class="border-t border-base-200 pt-5">
-                        <div class="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
-                            <label class="form-control">
-                                <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Resolution note"</span>
-                                <textarea
-                                    class="textarea textarea-bordered min-h-28 w-full focus:textarea-primary"
-                                    placeholder="Optional note describing how the item was resolved or why it was marked duplicate."
-                                    prop:value=move || resolution_note.get()
-                                    on:input=move |ev| set_resolution_note.set(event_target_value(&ev))
-                                ></textarea>
+                        <div class="flex h-full flex-col gap-3">
+                            <label class="form-control flex-1">
+                                <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Duplicate of"</span>
+                                <select
+                                    class="select select-bordered w-full focus:select-primary"
+                                    prop:value=move || duplicate_of.get()
+                                    on:change=move |ev| set_duplicate_of.set(event_target_value(&ev))
+                                >
+                                    <option value="">"Choose the original item…"</option>
+                                    {move || {
+                                        let current = item_id.get_value();
+                                        choices
+                                            .get()
+                                            .into_iter()
+                                            .filter(|choice| choice.id != current)
+                                            .map(|choice| {
+                                                let label = format!(
+                                                    "{} — {} · {}",
+                                                    choice.title,
+                                                    feedback_status_label(&choice.status),
+                                                    choice.created_at
+                                                );
+                                                view! { <option value=choice.id>{label}</option> }
+                                            })
+                                            .collect::<Vec<_>>()
+                                    }}
+                                </select>
                             </label>
 
-                            <div class="flex h-full flex-col gap-3">
-                                <label class="form-control flex-1">
-                                    <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Duplicate of"</span>
-                                    <input
-                                        type="text"
-                                        class="input input-bordered h-12 w-full focus:input-primary font-mono"
-                                        placeholder="Existing feedback id"
-                                        prop:value=move || duplicate_of.get()
-                                        on:input=move |ev| set_duplicate_of.set(event_target_value(&ev))
-                                    />
-                                </label>
+                            <div class="flex flex-col gap-3 sm:flex-row xl:justify-end">
+                                <button
+                                    class="btn btn-outline sm:flex-1 xl:flex-none"
+                                    on:click=move |_| { resolve_action.dispatch(()); }
+                                >
+                                    "Resolve"
+                                </button>
 
-                                <div class="flex flex-col gap-3 sm:flex-row xl:justify-end">
-                                    <button
-                                        class="btn btn-outline sm:flex-1 xl:flex-none"
-                                        on:click=move |_| { resolve_action.dispatch(()); }
-                                    >
-                                        "Resolve"
-                                    </button>
-
-                                    <button
-                                        class="btn btn-primary sm:flex-1 xl:flex-none"
-                                        disabled=move || duplicate_of.get().trim().is_empty()
-                                        on:click=move |_| { duplicate_action.dispatch(()); }
-                                    >
-                                        "Mark Duplicate"
-                                    </button>
-                                </div>
+                                <button
+                                    class="btn btn-primary sm:flex-1 xl:flex-none"
+                                    disabled=move || duplicate_of.get().trim().is_empty()
+                                    on:click=move |_| { duplicate_action.dispatch(()); }
+                                >
+                                    "Mark Duplicate"
+                                </button>
                             </div>
                         </div>
                     </div>
-                </Show>
-            </div>
+                </div>
+            </Show>
         </div>
     }
 }
 
-fn documentation_feedback_detail_view(title: &'static str, values: Vec<String>) -> Option<AnyView> {
+fn section_title(title: &'static str) -> impl IntoView {
+    view! { <div class="text-xs font-bold uppercase tracking-wider text-base-content/65">{title}</div> }
+}
+
+/// A resource reference: `lekton://docs/…` URIs become links into the portal.
+fn resource_link(value: String) -> AnyView {
+    match docs_uri_href(&value) {
+        Some(href) => view! {
+            <a class="link link-primary font-mono text-xs break-all" href=href>{value}</a>
+        }
+        .into_any(),
+        None => view! { <span class="font-mono text-xs break-all">{value}</span> }.into_any(),
+    }
+}
+
+fn resource_list_view(title: &'static str, values: Vec<String>) -> Option<AnyView> {
     if values.is_empty() {
         return None;
     }
-
-    let multiline = title == "Search queries";
-
     Some(view! {
         <div class="space-y-2">
-            <div class="text-xs font-bold uppercase tracking-wider text-base-content/65">{title}</div>
-            {if multiline {
-                view! {
-                    <div class="space-y-2">
-                        {values.into_iter().map(|value| view! {
-                            <div class="rounded-xl border border-base-300/70 bg-base-200/30 px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words overflow-hidden">
-                                {value}
-                            </div>
-                        }).collect::<Vec<_>>()}
-                    </div>
-                }.into_any()
-            } else {
-                view! {
-                    <div class="flex flex-wrap gap-2">
-                        {values.into_iter().map(|value| view! {
-                            <span class="badge badge-outline badge-sm max-w-full font-mono whitespace-normal break-all py-3">{value}</span>
-                        }).collect::<Vec<_>>()}
-                    </div>
-                }.into_any()
-            }}
+            {section_title(title)}
+            <ul class="space-y-1">
+                {values.into_iter().map(|value| view! { <li>{resource_link(value)}</li> }).collect::<Vec<_>>()}
+            </ul>
         </div>
     }.into_any())
 }
 
-fn documentation_feedback_optional_view(
-    title: &'static str,
-    value: Option<String>,
-) -> Option<AnyView> {
+fn resource_view(title: &'static str, value: Option<String>) -> Option<AnyView> {
     let value = value.filter(|value| !value.trim().is_empty())?;
+    Some(
+        view! {
+            <div class="space-y-2">
+                {section_title(title)}
+                <div>{resource_link(value)}</div>
+            </div>
+        }
+        .into_any(),
+    )
+}
 
+fn text_list_view(title: &'static str, values: Vec<String>) -> Option<AnyView> {
+    if values.is_empty() {
+        return None;
+    }
     Some(view! {
         <div class="space-y-2">
-            <div class="text-xs font-bold uppercase tracking-wider text-base-content/65">{title}</div>
-            <div class="rounded-xl bg-base-200/40 px-4 py-3 whitespace-pre-wrap break-words">{value}</div>
+            {section_title(title)}
+            <div class="space-y-2">
+                {values.into_iter().map(|value| view! {
+                    <div class="rounded-xl border border-base-300/70 bg-base-100 px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words overflow-hidden">
+                        {value}
+                    </div>
+                }).collect::<Vec<_>>()}
+            </div>
         </div>
     }.into_any())
+}
+
+fn text_view(title: &'static str, value: Option<String>) -> Option<AnyView> {
+    let value = value.filter(|value| !value.trim().is_empty())?;
+    Some(view! {
+        <div class="space-y-2">
+            {section_title(title)}
+            <div class="rounded-xl bg-base-100 px-4 py-3 whitespace-pre-wrap break-words">{value}</div>
+        </div>
+    }.into_any())
+}
+
+/// Other feedback items referenced by id, shown by title when known.
+fn feedback_refs_view(
+    title: &'static str,
+    ids: Vec<String>,
+    choices: Signal<Vec<DocumentationFeedbackChoice>>,
+) -> Option<AnyView> {
+    if ids.is_empty() {
+        return None;
+    }
+    Some(view! {
+        <div class="space-y-2">
+            {section_title(title)}
+            <ul class="space-y-1">
+                {ids.into_iter().map(|id| {
+                    let label = {
+                        let id = id.clone();
+                        move || {
+                            choices
+                                .get()
+                                .into_iter()
+                                .find(|choice| choice.id == id)
+                                .map(|choice| format!("{} ({})", choice.title, feedback_status_label(&choice.status)))
+                        }
+                    };
+                    view! {
+                        <li>
+                            {move || label().map(|l| view! { <span>{l}</span> })}
+                            <span class="ml-1 font-mono text-xs text-base-content/55 break-all">{id.clone()}</span>
+                        </li>
+                    }
+                }).collect::<Vec<_>>()}
+            </ul>
+        </div>
+    }.into_any())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn docs_uris_link_into_the_portal() {
+        assert_eq!(
+            docs_uri_href("lekton://docs/docs/guides/getting-started").as_deref(),
+            Some("/docs/docs/guides/getting-started")
+        );
+        assert_eq!(docs_uri_href("lekton://docs/").as_deref(), None);
+        assert_eq!(docs_uri_href("https://example.test/page"), None);
+    }
+
+    #[test]
+    fn kinds_and_statuses_have_readable_labels() {
+        assert_eq!(feedback_kind_label("missing_info"), "Missing information");
+        assert_eq!(feedback_kind_label("improvement"), "Improvement");
+        assert_eq!(feedback_status_label("in_progress"), "In progress");
+        assert_eq!(feedback_kind_label("new_kind"), "new kind");
+    }
 }

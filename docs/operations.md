@@ -29,6 +29,12 @@ proxy_set_header Host $host;
 
 If multiple real users share the same public NAT IP, they still share the same IP quota; for that deployment profile raise `rate_limit_burst` and **lower** `rate_limit_per_second` (e.g. `1` for one request per second).
 
+### Streaming responses (chat)
+
+Chat answers stream as Server-Sent Events. Lekton sends `X-Accel-Buffering: no`, so nginx forwards them as they are produced even with `proxy_buffering on`, and a keep-alive comment every 15 seconds, so a slow first token does not trip `proxy_read_timeout`. Other proxies need buffering turned off for `/api/v1/rag/chat` and a read timeout above 15 seconds.
+
+An answer whose stream ends before the model finished — a proxy or the LLM gateway closing the connection — is saved as `interrupted` (or `error` when the stream failed), shown with a warning and a **Regenerate** button, and left out of the context of the next question. When the browser disconnects, the server still finishes and saves the answer.
+
 ---
 
 ## Durable Document Imports

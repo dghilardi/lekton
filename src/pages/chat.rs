@@ -55,7 +55,7 @@ fn next_client_msg_id() -> String {
 use crate::app::BudgetStatus;
 use crate::auth::refresh_client::with_auth_retry;
 use crate::components::MarkdownContent;
-use crate::db::chat_models::SourceReference;
+use crate::db::chat_models::{ChatMessageStatus, SourceReference};
 use crate::rendering::markdown::render_markdown;
 
 /// Feedback state on a single assistant message.
@@ -77,6 +77,10 @@ pub struct UiMessage {
     pub sources: Option<Vec<SourceReference>>,
     /// Current feedback given by the user for this message, if any.
     pub feedback: Option<UiFeedback>,
+    /// How the answer ended. An unfinished answer is flagged and can be
+    /// regenerated instead of passing for a complete one.
+    #[serde(default)]
+    pub status: ChatMessageStatus,
 }
 
 /// Session summary for the sidebar.
@@ -226,6 +230,58 @@ fn ChatContent() -> impl IntoView {
         }
     });
 
+    // Streams one turn — a new question, or a regeneration of an unfinished
+    // answer — and commits the result. A partial answer keeps its status, so
+    // it is never shown as complete.
+    #[cfg_attr(not(feature = "hydrate"), allow(unused_variables))]
+    let run_turn = move |message: String, regenerate_message_id: Option<String>| {
+        error_msg.set(None);
+        streaming_content.set(String::new());
+        streaming_sources.set(Vec::new());
+        is_loading.set(true);
+
+        #[cfg(feature = "hydrate")]
+        {
+            let sid = session_id.get_untracked();
+            use leptos::task::spawn_local;
+            spawn_local(async move {
+                match fetch_chat_stream(
+                    sid,
+                    message,
+                    regenerate_message_id,
+                    session_id,
+                    sessions,
+                    streaming_content,
+                    streaming_sources,
+                )
+                .await
+                {
+                    Ok(outcome) => {
+                        let content = streaming_content.get_untracked();
+                        if !content.is_empty() || !outcome.status.is_complete() {
+                            let sources = optional_sources(streaming_sources.get_untracked());
+                            messages.update(|msgs| {
+                                msgs.push(UiMessage {
+                                    id: outcome.message_id,
+                                    role: "assistant".into(),
+                                    content,
+                                    sources,
+                                    feedback: None,
+                                    status: outcome.status,
+                                });
+                            });
+                        }
+                        error_msg.set(outcome.error);
+                    }
+                    Err(e) => error_msg.set(Some(e)),
+                }
+                streaming_content.set(String::new());
+                streaming_sources.set(Vec::new());
+                is_loading.set(false);
+            });
+        }
+    };
+
     let send_message = move || {
         let msg = input.get_untracked().trim().to_string();
         if msg.is_empty() || is_loading.get_untracked() {
@@ -239,9 +295,6 @@ fn ChatContent() -> impl IntoView {
             let style = web_sys::HtmlElement::style(el.as_ref());
             let _ = style.set_property("height", "auto");
         }
-        error_msg.set(None);
-        streaming_content.set(String::new());
-        streaming_sources.set(Vec::new());
 
         // Add user message to completed messages list with a stable client-side ID.
         messages.update(|msgs| {
@@ -251,52 +304,35 @@ fn ChatContent() -> impl IntoView {
                 content: msg.clone(),
                 sources: None,
                 feedback: None,
+                status: ChatMessageStatus::Complete,
             });
         });
 
-        is_loading.set(true);
+        run_turn(msg, None);
+    };
 
+    // Replace an unfinished answer: the server asks its question again.
+    let regenerate = Callback::new(move |message_id: String| {
+        if is_loading.get_untracked() {
+            return;
+        }
+        messages.update(|msgs| msgs.retain(|m| m.id.as_deref() != Some(message_id.as_str())));
+        run_turn(String::new(), Some(message_id));
+    });
+
+    // The stream broke before the server confirmed the answer. The server
+    // keeps generating after a disconnect, so reloading usually shows it.
+    let reload_session = Callback::new(move |_: ()| {
         #[cfg(feature = "hydrate")]
-        {
-            let sid = session_id.get_untracked();
-            use leptos::task::spawn_local;
-            spawn_local(async move {
-                match fetch_chat_stream(
-                    sid,
-                    msg,
-                    session_id,
-                    sessions,
-                    streaming_content,
-                    streaming_sources,
-                )
-                .await
-                {
-                    Ok(message_id) => {
-                        // Commit the streamed content as a completed assistant message
-                        let content = streaming_content.get_untracked();
-                        let sources = optional_sources(streaming_sources.get_untracked());
-                        messages.update(|msgs| {
-                            msgs.push(UiMessage {
-                                id: message_id,
-                                role: "assistant".into(),
-                                content: content.clone(),
-                                sources: sources.clone(),
-                                feedback: None,
-                            });
-                        });
-                        streaming_content.set(String::new());
-                        streaming_sources.set(Vec::new());
-                        is_loading.set(false);
-                    }
-                    Err(e) => {
-                        error_msg.set(Some(e));
-                        streaming_sources.set(Vec::new());
-                        is_loading.set(false);
-                    }
+        if let Some(sid) = session_id.get_untracked() {
+            leptos::task::spawn_local(async move {
+                match fetch_session_messages(&sid).await {
+                    Ok(msgs) => messages.set(msgs),
+                    Err(e) => error_msg.set(Some(e)),
                 }
             });
         }
-    };
+    });
 
     #[cfg(feature = "hydrate")]
     if let Some(question) = {
@@ -448,6 +484,9 @@ fn ChatContent() -> impl IntoView {
                         children=move |(idx, msg)| {
                             let is_user = msg.role == "user";
                             let msg_id = msg.id.clone();
+                            let status = msg.status;
+                            let is_last = Signal::derive(move || messages.with(|m| m.len() == idx + 1));
+                            let notice_id = msg.id.clone();
                             let initial_feedback = msg.feedback.clone();
                             let msg_sources = msg.sources.clone();
                             view! {
@@ -483,10 +522,23 @@ fn ChatContent() -> impl IntoView {
                                             )>
                                                 {if is_user {
                                                     view! { <div class="whitespace-pre-wrap">{msg.content.clone()}</div> }.into_any()
+                                                } else if msg.content.is_empty() {
+                                                    view! { <p class="italic text-base-content/60">"No answer was received."</p> }.into_any()
                                                 } else {
                                                     view! { <MarkdownContent html=render_markdown(&msg.content) /> }.into_any()
                                                 }}
                                             </div>
+
+                                            {(!is_user && !status.is_complete()).then(|| view! {
+                                                <UnfinishedAnswerNotice
+                                                    status=status
+                                                    message_id=notice_id.clone()
+                                                    is_last=is_last
+                                                    is_loading=is_loading
+                                                    on_regenerate=regenerate
+                                                    on_reload=reload_session
+                                                />
+                                            })}
 
                                             {if is_user {
                                                 view! { <div></div> }.into_any()
@@ -496,8 +548,8 @@ fn ChatContent() -> impl IntoView {
                                                 view! { <div></div> }.into_any()
                                             }}
 
-                                            // Feedback bar — only for assistant messages with a known ID
-                                            {if !is_user {
+                                            // Feedback bar — only for complete assistant messages with a known ID
+                                            {if !is_user && status.is_complete() {
                                                 if let Some(mid) = msg_id {
                                                     view! {
                                                         <MessageFeedbackBar
@@ -565,6 +617,7 @@ fn ChatContent() -> impl IntoView {
                         <div class="absolute -inset-0.5 bg-gradient-to-r from-primary/20 to-secondary/20 rounded-2xl blur opacity-0 group-focus-within:opacity-100 transition duration-300"></div>
                         <div class="relative flex items-end gap-3 bg-base-100 border border-base-200 shadow-xl rounded-2xl px-4 py-3 transition-all group-focus-within:border-primary/50 group-focus-within:ring-2 group-focus-within:ring-primary/10">
                             <textarea
+                                data-lekton-chat-input
                                 class="w-full bg-transparent outline-none border-0 resize-none text-sm text-base-content placeholder:text-base-content/65 leading-6 overflow-y-hidden"
                                 style="height: 24px; min-height: 24px;"
                                 placeholder="Type your message..."
@@ -685,6 +738,62 @@ fn BudgetIndicator(
     }
 }
 
+/// Shown under an answer that did not finish, so a partial reply is never
+/// mistaken for a complete one. The last answer of the session can be
+/// regenerated (or reloaded, when the server never confirmed it).
+#[component]
+fn UnfinishedAnswerNotice(
+    status: ChatMessageStatus,
+    /// Server ID of the answer; `None` when the stream broke before the
+    /// server confirmed it.
+    message_id: Option<String>,
+    #[prop(into)] is_last: Signal<bool>,
+    #[prop(into)] is_loading: Signal<bool>,
+    on_regenerate: Callback<String>,
+    on_reload: Callback<()>,
+) -> impl IntoView {
+    let (text, status_attr) = match status {
+        ChatMessageStatus::Error => ("This answer failed before it was complete.", "error"),
+        _ => (
+            "This answer was interrupted before it was complete.",
+            "interrupted",
+        ),
+    };
+
+    view! {
+        <div
+            role="status"
+            data-lekton-chat-status=status_attr
+            class="flex flex-wrap items-center gap-2 rounded-lg border border-warning/50 bg-warning/10 px-3 py-2 text-xs text-base-content"
+        >
+            <svg class="w-4 h-4 shrink-0 text-warning" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+            <span class="flex-1 min-w-0">{text}</span>
+            <Show when=move || is_last.get() fallback=|| ()>
+                {match message_id.clone() {
+                    Some(id) => view! {
+                        <button
+                            class="btn btn-xs btn-warning"
+                            prop:disabled=move || is_loading.get()
+                            on:click=move |_| on_regenerate.run(id.clone())
+                        >
+                            "Regenerate"
+                        </button>
+                    }.into_any(),
+                    None => view! {
+                        <button
+                            class="btn btn-xs btn-ghost border border-base-300"
+                            prop:disabled=move || is_loading.get()
+                            on:click=move |_| on_reload.run(())
+                        >
+                            "Reload conversation"
+                        </button>
+                    }.into_any(),
+                }}
+            </Show>
+        </div>
+    }
+}
+
 #[component]
 fn SourceReferencesBlock(sources: Vec<SourceReference>) -> impl IntoView {
     let count = sources.len();
@@ -693,6 +802,7 @@ fn SourceReferencesBlock(sources: Vec<SourceReference>) -> impl IntoView {
         <details class="rounded-xl border border-base-300/80 bg-base-100/70 overflow-hidden">
             <summary class="cursor-pointer list-none px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-base-content/60">
                 {format!("Sources ({count})")}
+                <span class="ml-2 font-normal normal-case tracking-normal text-base-content/50">"most relevant first"</span>
             </summary>
             <div class="flex flex-col gap-2 border-t border-base-300/80 px-3 py-3">
                 <For
@@ -707,8 +817,10 @@ fn SourceReferencesBlock(sources: Vec<SourceReference>) -> impl IntoView {
                         let document_title = source.document_title.clone();
                         let section_title = source.section_title.clone();
                         let section_anchor = source.section_anchor.clone();
-                        let score = source.score;
-                        let snippet = source.snippet.clone();
+                        // The retrieval score is not shown: its scale depends on the
+                        // retrieval mode (cosine, fused rank, reranker), so a bare
+                        // "0.70" means nothing to a reader. The order carries it.
+                        let snippet = source.display_snippet();
                         let snippet_for_show = snippet.clone();
                         let display_title = section_title.clone().unwrap_or_else(|| document_title.clone());
                         let show_document_title = section_title.is_some();
@@ -743,17 +855,12 @@ fn SourceReferencesBlock(sources: Vec<SourceReference>) -> impl IntoView {
                                 target=link_target
                                 class="block rounded-lg border border-base-300/70 bg-base-100 px-3 py-2 no-underline transition-colors hover:border-primary/40 hover:bg-base-100"
                             >
-                                <div class="flex items-start justify-between gap-3">
-                                    <div class="min-w-0">
-                                        <div class="text-sm font-medium text-base-content">{display_title}</div>
-                                        <Show when=move || show_document_title fallback=|| ()>
-                                            <div class="text-xs text-base-content/60">{document_title.clone()}</div>
-                                        </Show>
-                                        <div class="text-xs text-base-content/65 break-all">{source_ref_label}</div>
-                                    </div>
-                                    <div class="shrink-0 text-[11px] font-mono text-base-content/45">
-                                        {format!("{:.2}", score)}
-                                    </div>
+                                <div class="min-w-0">
+                                    <div class="text-sm font-medium text-base-content">{display_title}</div>
+                                    <Show when=move || show_document_title fallback=|| ()>
+                                        <div class="text-xs text-base-content/60">{document_title.clone()}</div>
+                                    </Show>
+                                    <div class="text-xs text-base-content/65 break-all">{source_ref_label}</div>
                                 </div>
                                 <Show when=move || snippet_for_show.as_ref().map(|s| !s.is_empty()).unwrap_or(false) fallback=|| ()>
                                     <p class="mt-2 text-xs leading-5 text-base-content/65">{snippet.clone().unwrap_or_default()}</p>
@@ -1093,6 +1200,8 @@ pub async fn fetch_session_messages(session_id: &str) -> Result<Vec<UiMessage>, 
         content: String,
         sources: Option<Vec<SourceReference>>,
         feedback: Option<UiFeedback>,
+        #[serde(default)]
+        status: ChatMessageStatus,
     }
     let msgs: Vec<MsgResp> = serde_wasm_bindgen::from_value(json).map_err(|e| format!("{e}"))?;
     Ok(msgs
@@ -1103,6 +1212,7 @@ pub async fn fetch_session_messages(session_id: &str) -> Result<Vec<UiMessage>, 
             content: m.content,
             sources: m.sources,
             feedback: m.feedback,
+            status: m.status,
         })
         .collect())
 }
@@ -1196,17 +1306,30 @@ async fn fetch_delete_feedback(message_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// How a streamed chat turn ended, as far as the client could tell.
+#[cfg(feature = "hydrate")]
+pub struct StreamOutcome {
+    /// ID of the saved assistant message (from the `done` event).
+    pub message_id: Option<String>,
+    pub status: ChatMessageStatus,
+    /// Error reported by the server during the stream, if any.
+    pub error: Option<String>,
+}
+
 /// Stream chat response via fetch + ReadableStream.
-/// Returns the saved message ID on success (from the `done` event).
+///
+/// A stream that ends — or breaks — before the `done` event yields an
+/// `Interrupted` outcome: the content received so far is partial.
 #[cfg(feature = "hydrate")]
 pub async fn fetch_chat_stream(
     session_id: Option<String>,
     message: String,
+    regenerate_message_id: Option<String>,
     set_session_id: RwSignal<Option<String>>,
     set_sessions: RwSignal<Vec<SessionSummary>>,
     set_streaming: RwSignal<String>,
     set_streaming_sources: RwSignal<Vec<SourceReference>>,
-) -> Result<Option<String>, String> {
+) -> Result<StreamOutcome, String> {
     use js_sys::Reflect;
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;
@@ -1218,6 +1341,7 @@ pub async fn fetch_chat_stream(
     let body_str = serde_json::json!({
         "session_id": session_id,
         "message": message,
+        "regenerate_message_id": regenerate_message_id,
     })
     .to_string();
 
@@ -1257,11 +1381,14 @@ pub async fn fetch_chat_stream(
 
     let decoder = TextDecoder::new().map_err(|e| format!("{e:?}"))?;
     let mut buffer = String::new();
+    let mut stream_error = None;
 
     loop {
-        let chunk = JsFuture::from(reader.read())
-            .await
-            .map_err(|e| format!("{e:?}"))?;
+        // A network error mid-stream (proxy timeout, dropped connection)
+        // leaves a partial answer, not a failed request.
+        let Ok(chunk) = JsFuture::from(reader.read()).await else {
+            break;
+        };
 
         let done = Reflect::get(&chunk, &JsValue::from_str("done"))
             .map_err(|e| format!("{e:?}"))?
@@ -1318,18 +1445,32 @@ pub async fn fetch_chat_stream(
                                 }
                             }
                             Some("error") => {
+                                // Keep reading: the server follows up with `done`,
+                                // carrying the ID of the partial answer it saved.
                                 let msg = event
                                     .get("message")
                                     .and_then(|m| m.as_str())
                                     .unwrap_or("Unknown error");
-                                return Err(msg.to_string());
+                                stream_error = Some(msg.to_string());
                             }
                             Some("done") => {
                                 let message_id = event
                                     .get("message_id")
                                     .and_then(|v| v.as_str())
                                     .map(|s| s.to_string());
-                                return Ok(message_id);
+                                let status = event
+                                    .get("status")
+                                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                                    .unwrap_or(if stream_error.is_some() {
+                                        ChatMessageStatus::Error
+                                    } else {
+                                        ChatMessageStatus::Complete
+                                    });
+                                return Ok(StreamOutcome {
+                                    message_id,
+                                    status,
+                                    error: stream_error,
+                                });
                             }
                             _ => {}
                         }
@@ -1339,7 +1480,11 @@ pub async fn fetch_chat_stream(
         }
     }
 
-    Ok(None)
+    Ok(StreamOutcome {
+        message_id: None,
+        status: ChatMessageStatus::Interrupted,
+        error: stream_error,
+    })
 }
 
 #[cfg(feature = "hydrate")]

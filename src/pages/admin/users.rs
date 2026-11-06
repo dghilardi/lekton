@@ -10,7 +10,7 @@ use crate::app::{
     resolve_documentation_feedback, save_custom_css, save_navigation_order,
     set_admin_user_access_levels, set_admin_user_budget_plan, trigger_rag_reindex,
     trigger_schema_endpoint_reindex, trigger_search_reindex, update_admin_access_level,
-    AccessLevelInfo, CreateTokenResult, DocumentationFeedbackAdminItem,
+    AccessLevelInfo, AdminUserFilter, CreateTokenResult, DocumentationFeedbackAdminItem,
     DocumentationFeedbackAdminListResult, NavItem, NavigationOrderEntry, ServiceTokenInfo,
 };
 #[allow(unused_imports)]
@@ -39,6 +39,15 @@ pub fn UserManager() -> impl IntoView {
     let edit_can_write_draft = RwSignal::new(false);
     let edit_budget_plan = RwSignal::new(String::new());
     let error_msg = RwSignal::new(Option::<String>::None);
+
+    let query = RwSignal::new(String::new());
+    let level_filter = RwSignal::new(String::new());
+    let admins_only = RwSignal::new(false);
+    let filter = Memo::new(move |_| AdminUserFilter {
+        query: query.get(),
+        level: Some(level_filter.get()).filter(|l| !l.is_empty()),
+        admins_only: admins_only.get(),
+    });
 
     let save_action = Action::new_local(move |_: &()| async move {
         let Some(user_id) = editing.get_untracked() else {
@@ -86,7 +95,46 @@ pub fn UserManager() -> impl IntoView {
                     </div>
                 })}
 
-                <div class="p-8 space-y-3">
+                <div class="px-8 pt-8 flex flex-wrap items-center gap-2" role="search">
+                    <input
+                        type="search"
+                        class="input input-bordered input-sm w-full md:w-72"
+                        placeholder="Search email or name"
+                        aria-label="Search users"
+                        prop:value=move || query.get()
+                        on:input=move |ev| query.set(event_target_value(&ev))
+                    />
+                    <select
+                        class="select select-bordered select-sm w-full sm:w-auto"
+                        aria-label="Filter by access level"
+                        prop:value=move || level_filter.get()
+                        on:change=move |ev| level_filter.set(event_target_value(&ev))
+                    >
+                        <option value="">"Any access level"</option>
+                        {move || {
+                            let mut names: Vec<String> = levels_resource
+                                .get()
+                                .and_then(Result::ok)
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|l| l.name)
+                                .collect();
+                            names.sort();
+                            names.into_iter().map(|n| view! { <option value=n.clone()>{n.clone()}</option> }).collect::<Vec<_>>()
+                        }}
+                    </select>
+                    <label class="label cursor-pointer gap-2 px-1">
+                        <input
+                            type="checkbox"
+                            class="toggle toggle-sm toggle-primary"
+                            prop:checked=move || admins_only.get()
+                            on:change=move |ev| admins_only.set(event_target_checked(&ev))
+                        />
+                        <span class="label-text">"Admins only"</span>
+                    </label>
+                </div>
+
+                <div class="p-8 pt-4 space-y-3">
                     <Suspense fallback=move || view! {
                         <div class="flex justify-center py-8">
                             <span class="loading loading-spinner loading-md text-primary"></span>
@@ -110,10 +158,20 @@ pub fn UserManager() -> impl IntoView {
                                     </div>
                                 }.into_any());
                             }
+                            let total = users.len();
+                            let users = StoredValue::new(users);
+                            let visible = move || {
+                                users.with_value(|users| {
+                                    filter.with(|f| users.iter().filter(|u| f.matches(u)).cloned().collect::<Vec<_>>())
+                                })
+                            };
                             Some(view! {
+                                <p class="text-sm text-base-content/60" aria-live="polite">
+                                    {move || format!("{} of {} users", visible().len(), total)}
+                                </p>
                                 <div class="space-y-2">
                                     <For
-                                        each=move || users.clone()
+                                        each=visible
                                         key=|u| u.id.clone()
                                         children=move |user| {
                                             let uid = user.id.clone();
@@ -129,7 +187,10 @@ pub fn UserManager() -> impl IntoView {
                                                     <div class="flex items-start gap-3 p-4">
                                                         <div class="flex-1 min-w-0">
                                                             <div class="flex items-center gap-2 flex-wrap">
-                                                                <span class="font-medium text-sm">{user.email.clone()}</span>
+                                                                {user.name.clone().map(|name| view! { <span class="font-medium text-sm">{name}</span> })}
+                                                                <span class=if user.name.is_some() { "text-sm text-base-content/65 break-all" } else { "font-medium text-sm break-all" }>
+                                                                    {user.email.clone()}
+                                                                </span>
                                                                 {if user.is_admin {
                                                                     view! { <span class="badge badge-primary badge-sm">"admin"</span> }.into_any()
                                                                 } else { view! { <span /> }.into_any() }}
@@ -153,15 +214,13 @@ pub fn UserManager() -> impl IntoView {
                                                                     }.into_any()
                                                                 }}
                                                             </div>
-                                                            {if !user.effective_access_levels.is_empty() && user.effective_access_levels != user.assigned_access_levels {
-                                                                let eff = user.effective_access_levels.clone();
-                                                                view! {
-                                                                    <div class="text-xs text-base-content/65 mt-1">
-                                                                        "effective: "
-                                                                        {eff.join(", ")}
-                                                                    </div>
-                                                                }.into_any()
-                                                            } else { view! { <span /> }.into_any() }}
+                                                            // Both lists come sorted and de-duplicated from the server.
+                                                            {(!user.effective_access_levels.is_empty() && user.effective_access_levels != user.assigned_access_levels).then(|| view! {
+                                                                <div class="text-xs text-base-content/65 mt-1">
+                                                                    "effective: "
+                                                                    {user.effective_access_levels.join(", ")}
+                                                                </div>
+                                                            })}
                                                         </div>
                                                         <div class="flex gap-2 shrink-0">
                                                             <button

@@ -62,46 +62,13 @@ pub fn CustomCssEditor() -> impl IntoView {
                         <div class="form-control">
                             <textarea
                                 class="textarea textarea-bordered w-full min-h-[28rem] xl:min-h-[34rem] resize-y font-mono text-sm leading-7 focus:textarea-primary transition-all shadow-inner bg-base-200/20"
-                                placeholder={"/* Example:\n:root,\n[data-theme=\"light\"] {\n  --color-primary: #0f766e;\n  --lekton-content-max-width: 78rem;\n}\n\n[data-theme=\"dark\"] {\n  --color-primary: #2dd4bf;\n}\n\n.navbar {\n  border-bottom-color: color-mix(in oklab, var(--color-primary) 45%, transparent);\n}\n*/"}
+                                placeholder={"/* A theme assigns variables; components read them.\n   Reference: docs/theming.md */\n\n:root {\n  --lekton-font-family: \"Inter\", sans-serif;\n  --lekton-code-scheme: dark;\n  --lekton-code-bg: #0b1220;\n  --lekton-code-text: #e2e8f0;\n}\n\n[data-theme=\"light\"] {\n  --color-primary: #0d9488;\n  --lekton-sidebar-bg: #0f172a;\n  --lekton-sidebar-text: #e2e8f0;\n}\n\n[data-theme=\"dark\"] {\n  --color-primary: #2dd4bf;\n}"}
                                 prop:value=move || css.get()
                                 on:input=move |ev| set_css.set(event_target_value(&ev))
                             ></textarea>
                         </div>
 
-                        <div class="space-y-4">
-                            <div class="rounded-2xl border border-base-200 bg-base-200/20 p-4">
-                                <p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/55">"Theme tokens"</p>
-                                <div class="mt-3 space-y-2 text-sm text-base-content/70">
-                                    <p><code>"--color-primary"</code> " / " <code>"--color-base-100"</code></p>
-                                    <p><code>"--color-base-content"</code> " / " <code>"--color-base-300"</code></p>
-                                    <p><code>"--radius-box"</code> " / " <code>"--radius-field"</code></p>
-                                </div>
-                            </div>
-
-                            <div class="rounded-2xl border border-base-200 bg-base-200/20 p-4">
-                                <p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/55">"Layout tokens"</p>
-                                <div class="mt-3 space-y-2 text-sm text-base-content/70">
-                                    <p><code>"--lekton-sidebar-width"</code></p>
-                                    <p><code>"--lekton-header-height"</code></p>
-                                    <p><code>"--lekton-content-max-width"</code></p>
-                                </div>
-                            </div>
-
-                            <div class="rounded-2xl border border-base-200 bg-base-200/20 p-4">
-                                <p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/55">"Recommended strategy"</p>
-                                <p class="mt-3 text-sm leading-6 text-base-content/70">
-                                    "Prefer overriding shared primitives like "
-                                    <code>"body"</code>
-                                    ", "
-                                    <code>".navbar"</code>
-                                    ", "
-                                    <code>".card"</code>
-                                    ", "
-                                    <code>".btn"</code>
-                                    " and the theme variables above, so custom branding stays consistent across docs, registry, and admin pages."
-                                </p>
-                            </div>
-                        </div>
+                        <ThemingReference />
                     </div>
 
                     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -148,6 +115,130 @@ pub fn CustomCssEditor() -> impl IntoView {
                     </div>
                 </div>
             </div>
+        </div>
+    }
+}
+
+/// Theming variables, grouped as in `docs/theming.md`.
+const THEMING_GROUPS: &[(&str, &[&str])] = &[
+    (
+        "Palette & shape (DaisyUI)",
+        &[
+            "--color-primary",
+            "--color-base-100 … 300",
+            "--color-base-content",
+            "--radius-box / -field / -selector",
+        ],
+    ),
+    (
+        "Typography & layout",
+        &[
+            "--lekton-font-family",
+            "--lekton-heading-font",
+            "--lekton-mono-font",
+            "--lekton-sidebar-width",
+            "--lekton-content-max-width",
+        ],
+    ),
+    (
+        "Header",
+        &[
+            "--lekton-header-bg",
+            "--lekton-header-text",
+            "--lekton-header-hover-bg",
+            "--lekton-header-border-color / -width",
+            "--lekton-header-shadow",
+        ],
+    ),
+    (
+        "Sidebar",
+        &[
+            "--lekton-sidebar-bg",
+            "--lekton-sidebar-text",
+            "--lekton-sidebar-text-muted",
+            "--lekton-sidebar-heading",
+            "--lekton-sidebar-accent",
+            "--lekton-sidebar-hover-bg",
+            "--lekton-sidebar-active-bg / -text",
+            "--lekton-sidebar-border",
+            "--lekton-sidebar-tree-line",
+        ],
+    ),
+    (
+        "Content",
+        &[
+            "--lekton-content-text",
+            "--lekton-heading-color",
+            "--lekton-link-color",
+            "--lekton-link-decoration",
+            "--lekton-table-header-bg / -text",
+            "--lekton-table-border",
+        ],
+    ),
+    (
+        "Code",
+        &[
+            "--lekton-code-bg / -text / -border",
+            "--lekton-code-scheme (light | dark)",
+            "--lekton-code-toolbar-text",
+            "--lekton-code-copy-border / -hover-bg",
+            "--lekton-inline-code-bg / -text / -border",
+        ],
+    ),
+];
+
+/// Side panel listing the theming variables, so a theme can be written
+/// without hunting for selectors.
+#[component]
+fn ThemingReference() -> impl IntoView {
+    view! {
+        <div class="space-y-4 text-sm">
+            <div class="rounded-2xl border border-base-200 bg-base-200/20 p-4">
+                <p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/55">"Theming variables"</p>
+                <p class="mt-3 leading-6 text-base-content/70">
+                    "Assign variables on "
+                    <code>":root"</code>
+                    " (both modes) or on "
+                    <code>"[data-theme=\"light\"]"</code>
+                    " / "
+                    <code>"[data-theme=\"dark\"]"</code>
+                    ". Components read them, so a theme does not need component selectors. Full reference and an example theme: "
+                    <a
+                        class="link link-primary"
+                        href="https://github.com/dghilardi/lekton/blob/main/docs/theming.md"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                    >
+                        "docs/theming.md"
+                    </a>
+                    "."
+                </p>
+            </div>
+            {THEMING_GROUPS
+                .iter()
+                .map(|(title, vars)| {
+                    view! {
+                        <details class="rounded-2xl border border-base-200 bg-base-200/20 px-4 py-3">
+                            <summary class="cursor-pointer text-xs font-semibold uppercase tracking-[0.14em] text-base-content/55">
+                                {*title}
+                            </summary>
+                            <ul class="mt-2 space-y-1 text-base-content/70">
+                                {vars
+                                    .iter()
+                                    .map(|var| view! { <li><code class="text-xs">{*var}</code></li> })
+                                    .collect::<Vec<_>>()}
+                            </ul>
+                        </details>
+                    }
+                })
+                .collect::<Vec<_>>()}
+            <p class="px-1 text-xs leading-5 text-base-content/55">
+                "Stable hooks when a variable is not enough: "
+                <code>"[data-lekton-header]"</code> ", "
+                <code>"[data-lekton-sidebar]"</code> ", "
+                <code>"[data-lekton-markdown]"</code> ", "
+                <code>"[data-lekton-chat-session]"</code> "."
+            </p>
         </div>
     }
 }

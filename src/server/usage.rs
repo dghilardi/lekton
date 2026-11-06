@@ -67,10 +67,60 @@ pub struct ConsumerUsage {
     #[serde(default)]
     pub actor_email: Option<String>,
     pub calls: u64,
+    /// Of `calls`, how many were embeddings. Embedding a search query costs a
+    /// handful of tokens, so a caller with many of them shows few tokens per
+    /// call without anything being lost.
+    #[serde(default)]
+    pub embedding_calls: u64,
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     /// Cost in credits, priced per model.
     pub credits: f64,
+}
+
+/// `1234567` → `"1,234,567"`.
+pub fn format_count(value: u64) -> String {
+    let digits = value.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// Credits with enough precision to tell small amounts from zero: two
+/// decimals below 10, one above, thousands separators throughout, and
+/// "< 0.01" rather than a misleading "0.00" for tiny non-zero spend.
+pub fn format_credits(credits: f64) -> String {
+    if credits <= 0.0 {
+        return "0".to_string();
+    }
+    if credits < 0.01 {
+        return "< 0.01".to_string();
+    }
+    let decimals = if credits < 10.0 { 2 } else { 1 };
+    let fixed = format!("{credits:.decimals$}");
+    let (whole, fraction) = fixed.split_once('.').unwrap_or((&fixed, ""));
+    let whole = format_count(whole.parse().unwrap_or(0));
+    format!("{whole}.{fraction}")
+}
+
+/// Each row's share of the total credits, in percent (all zero when nothing
+/// was spent).
+pub fn credit_shares(rows: &[ConsumerUsage]) -> Vec<f64> {
+    let total: f64 = rows.iter().map(|row| row.credits).sum();
+    rows.iter()
+        .map(|row| {
+            if total > 0.0 {
+                (row.credits / total * 100.0).clamp(0.0, 100.0)
+            } else {
+                0.0
+            }
+        })
+        .collect()
 }
 
 impl ConsumerUsage {
@@ -129,11 +179,15 @@ pub async fn list_top_consumers(
                 actor_id: row.actor_id.clone(),
                 actor_email: None,
                 calls: 0,
+                embedding_calls: 0,
                 prompt_tokens: 0,
                 completion_tokens: 0,
                 credits: 0.0,
             });
         entry.calls += row.calls;
+        if row.feature == crate::usage::LlmFeature::Embedding.as_str() {
+            entry.embedding_calls += row.calls;
+        }
         entry.prompt_tokens += row.prompt_tokens;
         entry.completion_tokens += row.completion_tokens;
         entry.credits += credits;
@@ -182,10 +236,40 @@ mod tests {
             actor_id: id.map(str::to_string),
             actor_email: email.map(str::to_string),
             calls: 1,
+            embedding_calls: 0,
             prompt_tokens: 10,
             completion_tokens: 5,
             credits: 1.0,
         }
+    }
+
+    #[test]
+    fn counts_get_thousands_separators() {
+        assert_eq!(format_count(0), "0");
+        assert_eq!(format_count(999), "999");
+        assert_eq!(format_count(1_728), "1,728");
+        assert_eq!(format_count(12_345_678), "12,345,678");
+    }
+
+    #[test]
+    fn small_credits_do_not_round_to_zero() {
+        assert_eq!(format_credits(0.0), "0");
+        assert_eq!(format_credits(0.004), "< 0.01");
+        assert_eq!(format_credits(0.0412), "0.04");
+        assert_eq!(format_credits(1.728), "1.73");
+        assert_eq!(format_credits(12_345.67), "12,345.7");
+    }
+
+    #[test]
+    fn shares_are_relative_to_the_total() {
+        let mut a = consumer("user", Some("a"), None);
+        a.credits = 3.0;
+        let mut b = consumer("user", Some("b"), None);
+        b.credits = 1.0;
+        assert_eq!(credit_shares(&[a.clone(), b.clone()]), vec![75.0, 25.0]);
+        a.credits = 0.0;
+        b.credits = 0.0;
+        assert_eq!(credit_shares(&[a, b]), vec![0.0, 0.0]);
     }
 
     #[test]

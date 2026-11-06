@@ -52,6 +52,16 @@ pub struct DocumentationFeedbackAdminItem {
     pub claimed_at: Option<String>,
 }
 
+/// A feedback item as offered in the "Duplicate of" picker.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DocumentationFeedbackChoice {
+    pub id: String,
+    pub title: String,
+    pub kind: String,
+    pub status: String,
+    pub created_at: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DocumentationFeedbackAdminListResult {
     pub items: Vec<DocumentationFeedbackAdminItem>,
@@ -214,6 +224,58 @@ pub async fn list_documentation_feedback(
         page: result.page,
         per_page: result.per_page,
     })
+}
+
+/// Upper bound on the items offered as duplicate targets.
+#[cfg(feature = "ssr")]
+const MAX_FEEDBACK_CHOICES: usize = 500;
+
+/// Every feedback item (most recent first, up to [`MAX_FEEDBACK_CHOICES`]),
+/// so an admin can pick a duplicate target by title instead of pasting an id.
+#[server(ListDocumentationFeedbackChoices, "/api")]
+pub async fn list_documentation_feedback_choices(
+) -> Result<Vec<DocumentationFeedbackChoice>, ServerFnError> {
+    use crate::db::documentation_feedback_repository::DocumentationFeedbackListParams;
+
+    let state = expect_context::<AppState>();
+    require_admin_user(&state).await?;
+
+    let mut choices = Vec::new();
+    for page in 0.. {
+        let result = state
+            .documentation_feedback_repo
+            .list(DocumentationFeedbackListParams {
+                query: None,
+                kind: None,
+                status: None,
+                delivery_source_id: None,
+                page,
+                per_page: 100,
+            })
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        let fetched = result.items.len();
+        choices.extend(
+            result
+                .items
+                .into_iter()
+                .map(|item| DocumentationFeedbackChoice {
+                    id: item.id,
+                    title: item.title,
+                    kind: item.kind.as_str().to_string(),
+                    status: item.status.as_str().to_string(),
+                    created_at: item.created_at.format("%Y-%m-%d").to_string(),
+                }),
+        );
+        if fetched == 0
+            || choices.len() as u64 >= result.total
+            || choices.len() >= MAX_FEEDBACK_CHOICES
+        {
+            break;
+        }
+    }
+    choices.truncate(MAX_FEEDBACK_CHOICES);
+    Ok(choices)
 }
 
 #[server(ResolveDocumentationFeedback, "/api")]

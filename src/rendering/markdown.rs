@@ -15,6 +15,9 @@ pub struct TocHeading {
     pub id: String,
 }
 
+/// Class of the scroll container wrapped around every Markdown table.
+pub const TABLE_SCROLL_CLASS: &str = "lekton-table-scroll";
+
 /// Render a raw Markdown string to sanitized HTML with heading anchor IDs.
 ///
 /// Supports GitHub Flavored Markdown (GFM) features: tables,
@@ -62,6 +65,15 @@ pub fn render_markdown(raw: &str) -> String {
                 Event::End(TagEnd::BlockQuote(Some(_))) => {
                     vec![Event::Html("</blockquote>".into())]
                 }
+                // Wide tables scroll inside their own box instead of
+                // widening the whole page on narrow screens.
+                Event::Start(Tag::Table(alignments)) => vec![
+                    Event::Html(format!("<div class=\"{TABLE_SCROLL_CLASS}\">").into()),
+                    Event::Start(Tag::Table(alignments)),
+                ],
+                Event::End(TagEnd::Table) => {
+                    vec![Event::End(TagEnd::Table), Event::Html("</div>".into())]
+                }
                 other => vec![other],
             }
         }
@@ -84,6 +96,7 @@ pub fn render_markdown(raw: &str) -> String {
 /// - `id` on headings (anchor navigation)
 /// - `id`/`name` on `<a>` (manual in-page anchor targets, e.g. `<a id="git_repo"></a>`)
 /// - `<input>` with `type`/`disabled`/`checked` (GFM task list checkboxes)
+/// - the table scroll container class on `<div>` (no other `div` classes)
 ///
 /// Also used to sanitize LLM-generated HTML (Learn mode lessons), so the same
 /// XSS allowlist governs every HTML surface in the app.
@@ -104,6 +117,7 @@ pub fn sanitize_html(html: &str) -> String {
         .add_tag_attributes("input", &["type", "disabled", "checked"])
         .add_tag_attributes("blockquote", &["class"])
         .add_tag_attributes("p", &["class"])
+        .add_allowed_classes("div", &[TABLE_SCROLL_CLASS])
         .clean(html)
         .to_string()
 }
@@ -489,6 +503,30 @@ mod tests {
         let result = render_markdown(input);
         assert!(result.contains("<table>"));
         assert!(result.contains("<td>1</td>"));
+    }
+
+    #[test]
+    fn tables_are_wrapped_in_a_scroll_container() {
+        let input = "Intro\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\nAfter";
+        let result = render_markdown(input);
+        let open = result
+            .find("<div class=\"lekton-table-scroll\"><table>")
+            .expect("table wrapped in the scroll container");
+        let close = result
+            .find("</table>\n</div>")
+            .expect("wrapper closed after the table");
+        assert!(open < close);
+        assert!(result.ends_with("<p>After</p>\n"));
+    }
+
+    #[test]
+    fn sanitizer_keeps_only_the_table_scroll_class_on_divs() {
+        let result = sanitize_html(
+            "<div class=\"lekton-table-scroll fixed inset-0\">a</div><div class=\"hero\">b</div>",
+        );
+        assert!(result.contains("<div class=\"lekton-table-scroll\">a</div>"));
+        assert!(!result.contains("fixed"));
+        assert!(!result.contains("hero"));
     }
 
     #[test]

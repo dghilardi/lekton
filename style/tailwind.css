@@ -14,14 +14,21 @@
 @plugin "@tailwindcss/typography";
 
 /* ════════════════════════════════════════════════════════════════
- * Design Tokens
+ * Design Tokens — the theming interface
  * ════════════════════════════════════════════════════════════════
- * --lekton-* variables can be overridden in public/custom.css
- * to customize the portal without recompiling.
+ * --lekton-* variables (together with the DaisyUI --color-* and
+ * --radius-* variables) are the supported way to theme the portal from
+ * Admin → Custom CSS or public/custom.css, without recompiling and
+ * without targeting component selectors. See docs/theming.md.
+ *
+ * Defaults derive from the DaisyUI palette, so an empty custom CSS
+ * keeps the stock look. Override them on :root for both modes, or on
+ * [data-theme="light"] / [data-theme="dark"] for one mode.
  */
 :root {
     /* ── Typography ─────────────────────────────────────────────── */
     --lekton-font-family:  "Plus Jakarta Sans", "Geist", ui-sans-serif, system-ui, sans-serif;
+    --lekton-heading-font: var(--lekton-font-family);
     --lekton-mono-font:    "Fira Code", "JetBrains Mono", ui-monospace, monospace;
 
     /* ── Layout ─────────────────────────────────────────────────── */
@@ -35,6 +42,54 @@
     --lekton-spacing-md: 1rem;
     --lekton-spacing-lg: 1.5rem;
     --lekton-spacing-xl: 2rem;
+
+    /* ── Header (top bar) ────────────────────────────────────────── */
+    --lekton-header-bg:           color-mix(in oklab, var(--color-base-100) 80%, transparent);
+    /* currentColor: inherit the page text unless a theme sets it. */
+    --lekton-header-text:         currentColor;
+    --lekton-header-hover-bg:     color-mix(in oklab, var(--color-base-200) 50%, transparent);
+    --lekton-header-border-color: var(--color-base-200);
+    --lekton-header-border-width: 1px;
+    --lekton-header-shadow:       0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+
+    /* ── Sidebar (docs tree, chat history, admin menu) ───────────── */
+    --lekton-sidebar-bg:         var(--color-base-200);
+    /* currentColor: the derived shades below follow whatever colour the
+     * sidebar ends up with, including one set by older custom CSS. */
+    --lekton-sidebar-text:       currentColor;
+    --lekton-sidebar-text-muted: color-mix(in oklab, var(--lekton-sidebar-text) 70%, transparent);
+    --lekton-sidebar-heading:    color-mix(in oklch, var(--lekton-sidebar-text) 65%, transparent);
+    --lekton-sidebar-accent:     var(--color-primary);
+    --lekton-sidebar-hover-bg:   color-mix(in oklab, var(--color-base-300) 60%, transparent);
+    --lekton-sidebar-active-bg:  color-mix(in oklch, var(--color-primary) 10%, transparent);
+    --lekton-sidebar-active-text: var(--color-primary);
+    --lekton-sidebar-border:     var(--color-base-300);
+    --lekton-sidebar-tree-line:  var(--color-base-300);
+
+    /* ── Page content (rendered Markdown) ────────────────────────── */
+    --lekton-content-text:      color-mix(in oklch, var(--color-base-content) 85%, transparent);
+    --lekton-heading-color:     var(--color-base-content);
+    --lekton-link-color:        var(--color-primary);
+    --lekton-link-decoration:   underline;
+    --lekton-table-header-bg:   transparent;
+    --lekton-table-header-text: var(--color-base-content);
+    --lekton-table-border:      var(--color-base-300);
+
+    /* ── Code blocks ─────────────────────────────────────────────── */
+    --lekton-code-bg:            var(--color-base-200);
+    --lekton-code-text:          var(--color-base-content);
+    --lekton-code-border:        var(--color-base-300);
+    --lekton-code-radius:        0.6rem;
+    /* Language badge and copy button sit on the code background. */
+    --lekton-code-toolbar-text:  var(--lekton-code-text);
+    --lekton-code-copy-border:   var(--lekton-code-border);
+    --lekton-code-copy-hover-bg: var(--lekton-code-border);
+    /* light | dark: picks the syntax palette below. Set it to `dark`
+     * when a light theme gives code blocks a dark background. */
+    --lekton-code-scheme:        light;
+    --lekton-inline-code-bg:     var(--color-base-200);
+    --lekton-inline-code-text:   color-mix(in oklch, var(--color-base-content) 90%, transparent);
+    --lekton-inline-code-border: var(--color-base-300);
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -134,6 +189,10 @@
     --radius-box:      0.5rem;
     --depth: 1;
     --noise: 0;
+
+    /* Theming tokens that differ from the shared defaults */
+    --lekton-header-border-color: color-mix(in oklch, var(--color-base-300) 70%, transparent);
+    --lekton-code-scheme:         dark;
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -145,6 +204,10 @@ body {
     -moz-osx-font-smoothing:  grayscale;
     overflow-x:               clip;
     font-feature-settings:    "cv03", "cv04", "cv11";
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: var(--lekton-heading-font);
 }
 
 code, pre, kbd, samp, .font-mono {
@@ -179,6 +242,81 @@ code, pre, kbd, samp, .font-mono {
     border-radius: 0.4rem;
     transition:    background-color 0.12s ease, color 0.12s ease;
     gap:           0.625rem;
+}
+
+/* ── Themed shell: header and sidebar ───────────────────────────
+ * Colours come from the --lekton-header-* / --lekton-sidebar-* tokens.
+ * These rules are unlayered, so they win over the Tailwind utility
+ * classes still present on the elements (kept so older custom CSS
+ * that targets them keeps matching). */
+[data-lekton-header] {
+    background-color: var(--lekton-header-bg);
+    color:            var(--lekton-header-text);
+    border-bottom:    var(--lekton-header-border-width) solid var(--lekton-header-border-color);
+    box-shadow:       var(--lekton-header-shadow);
+}
+
+/* Menus opening from the header sit on the page surface, not on the bar. */
+[data-lekton-header] .dropdown-content {
+    color: var(--color-base-content);
+}
+
+[data-lekton-header] .lekton-header-link {
+    color: color-mix(in oklab, var(--lekton-header-text) 80%, transparent);
+}
+
+[data-lekton-header] .lekton-header-link:hover,
+[data-lekton-header] .lekton-header-link:focus-visible {
+    color:            var(--lekton-header-text);
+    background-color: var(--lekton-header-hover-bg);
+}
+
+[data-lekton-sidebar] {
+    background-color:   var(--lekton-sidebar-bg);
+    color:              var(--lekton-sidebar-text);
+    border-right-color: var(--lekton-sidebar-border);
+}
+
+[data-lekton-sidebar] .menu-title {
+    color: var(--lekton-sidebar-heading) !important;
+}
+
+[data-lekton-sidebar] summary {
+    color: color-mix(in oklab, var(--lekton-sidebar-text) 80%, transparent);
+}
+
+[data-lekton-sidebar] .lekton-sidebar-link {
+    color: var(--lekton-sidebar-text-muted);
+}
+
+/* Chat history entries are buttons, not links: same tokens apply. */
+[data-lekton-sidebar] [data-lekton-chat-session] {
+    color: color-mix(in oklab, var(--lekton-sidebar-text) 60%, transparent);
+}
+
+[data-lekton-sidebar] summary:hover,
+[data-lekton-sidebar] [data-lekton-chat-session]:hover {
+    color:            var(--lekton-sidebar-text);
+    background-color: var(--lekton-sidebar-hover-bg);
+}
+
+[data-lekton-sidebar] .lekton-sidebar-link:hover {
+    color:            var(--lekton-sidebar-accent);
+    background-color: var(--lekton-sidebar-hover-bg);
+}
+
+[data-lekton-sidebar] [data-lekton-chat-session][aria-current] {
+    color:            var(--lekton-sidebar-active-text);
+    background-color: var(--lekton-sidebar-active-bg);
+}
+
+/* Nested tree levels: the guide line is the ::before rule. */
+[data-lekton-sidebar] li > details > ul {
+    border-color: transparent;
+}
+
+[data-lekton-sidebar] li > details > ul::before {
+    background-color: var(--lekton-sidebar-tree-line);
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -243,6 +381,15 @@ label > span:first-child {
     text-transform: uppercase;
     padding:        0.2em 0.55em;
     border-radius:  0.3rem;
+}
+
+/* Document tags are content people read and click through, not status
+ * labels: readable size, original case. */
+.badge.lekton-doc-tag {
+    font-size:      0.75rem;
+    font-weight:    600;
+    letter-spacing: 0.01em;
+    text-transform: none;
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -351,16 +498,16 @@ label > span:first-child {
  * ════════════════════════════════════════════════════════════════ */
 .prose {
     line-height: 1.8;
-    color:       color-mix(in oklch, var(--color-base-content) 85%, transparent);
+    color:       var(--lekton-content-text);
     font-size:   0.9375rem;
     font-family: var(--lekton-font-family);
 }
 
 .prose :where(h1, h2, h3, h4, h5, h6) {
     scroll-margin-top: calc(var(--lekton-header-height, 3.75rem) + 1.5rem);
-    font-family:    var(--lekton-font-family);
+    font-family:    var(--lekton-heading-font);
     letter-spacing: -0.03em;
-    color:          var(--color-base-content);
+    color:          var(--lekton-heading-color);
     line-height:    1.2;
 }
 
@@ -424,8 +571,8 @@ label > span:first-child {
 }
 
 .prose a {
-    color:                     var(--color-primary);
-    text-decoration:           underline;
+    color:                     var(--lekton-link-color);
+    text-decoration-line:      var(--lekton-link-decoration);
     text-underline-offset:     3px;
     text-decoration-thickness: 1px;
     font-weight:               500;
@@ -434,29 +581,31 @@ label > span:first-child {
 
 .prose a:hover {
     opacity: 0.8;
+    text-decoration-line: underline;
 }
 
 .prose strong {
     font-weight: 700;
-    color:       var(--color-base-content);
+    color:       var(--lekton-heading-color);
 }
 
 .prose code:not(pre code) {
     font-family:      var(--lekton-mono-font);
     font-weight:      400;
     font-size:        0.84em;
-    background-color: var(--color-base-200);
-    border:           1px solid var(--color-base-300);
+    background-color: var(--lekton-inline-code-bg);
+    border:           1px solid var(--lekton-inline-code-border);
     padding:          0.15em 0.45em;
     border-radius:    0.3rem;
-    color:            color-mix(in oklch, var(--color-base-content) 90%, transparent);
+    color:            var(--lekton-inline-code-text);
 }
 
 .prose pre {
     position:         relative;
-    background-color: var(--color-base-200);
-    border:           1px solid var(--color-base-300);
-    border-radius:    0.6rem;
+    background-color: var(--lekton-code-bg);
+    border:           1px solid var(--lekton-code-border);
+    border-radius:    var(--lekton-code-radius);
+    color-scheme:     var(--lekton-code-scheme);
     overflow-x:       auto;
     margin-top:       1.5em;
     margin-bottom:    1.5em;
@@ -466,7 +615,7 @@ label > span:first-child {
     line-height:      1.75;
     box-shadow:       0 1px 3px 0 rgb(0 0 0 / 0.07),
                       0 1px 2px -1px rgb(0 0 0 / 0.07);
-    color:            var(--color-base-content);
+    color:            var(--lekton-code-text);
 }
 
 .prose pre code {
@@ -475,7 +624,7 @@ label > span:first-child {
     padding:     0;
     font-family: var(--lekton-mono-font);
     font-weight: 400;
-    color:       var(--color-base-content);
+    color:       var(--lekton-code-text);
     font-size:   inherit;
     line-height: inherit;
 }
@@ -487,6 +636,7 @@ html[data-theme] .prose pre.mermaid {
     background-color: var(--color-base-100);
     border-color:     var(--color-base-300);
     color:            var(--color-base-content);
+    color-scheme:     inherit;
     padding:          1.25em;
     text-align:       center;
 }
@@ -619,7 +769,7 @@ html[data-theme] .prose pre.mermaid:has(.mermaid-expand-btn) {
     font-family:   var(--lekton-mono-font);
     font-size:     0.72em;
     line-height:   1;
-    color:         var(--color-base-content);
+    color:         var(--lekton-code-toolbar-text);
     opacity:       0.45;
     user-select:   none;
     pointer-events: none;
@@ -637,9 +787,9 @@ html[data-theme] .prose pre.mermaid:has(.mermaid-expand-btn) {
     font-size:        0.72em;
     font-family:      var(--lekton-mono-font);
     background:       transparent;
-    border:           1px solid var(--color-base-300);
+    border:           1px solid var(--lekton-code-copy-border);
     border-radius:    0.35rem;
-    color:            var(--color-base-content);
+    color:            var(--lekton-code-toolbar-text);
     opacity:          0.5;
     cursor:           pointer;
     transition:       opacity 0.15s, background 0.15s;
@@ -648,7 +798,7 @@ html[data-theme] .prose pre.mermaid:has(.mermaid-expand-btn) {
 
 .code-copy-btn:hover {
     opacity:    1;
-    background: var(--color-base-300);
+    background: var(--lekton-code-copy-hover-bg);
 }
 
 .code-copy-btn.copied {
@@ -669,35 +819,22 @@ html[data-theme] .prose pre.mermaid:has(.mermaid-expand-btn) {
 /* (e.g. `.block`, `.meta`, `.storage` are Tailwind utilities).           */
 /* Colors are --lekton-code-* tokens so public/custom.css can override.   */
 
-:root,
-[data-theme="light"] {
-    --lekton-code-keyword:   #cf222e;
-    --lekton-code-string:    #0a3069;
-    --lekton-code-comment:   #6e7781;
-    --lekton-code-constant:  #0550ae;
-    --lekton-code-function:  #8250df;
-    --lekton-code-type:      #953800;
-    --lekton-code-variable:  #953800;
-    --lekton-code-key:       #116329;
-    --lekton-code-section:   #8250df;
-    --lekton-code-inserted:  #116329;
-    --lekton-code-deleted:   #82071e;
-    --lekton-code-invalid:   #cf222e;
-}
-
-[data-theme="dark"] {
-    --lekton-code-keyword:   #ff7b72;
-    --lekton-code-string:    #a5d6ff;
-    --lekton-code-comment:   #8b949e;
-    --lekton-code-constant:  #79c0ff;
-    --lekton-code-function:  #d2a8ff;
-    --lekton-code-type:      #ffa657;
-    --lekton-code-variable:  #ffa657;
-    --lekton-code-key:       #7ee787;
-    --lekton-code-section:   #d2a8ff;
-    --lekton-code-inserted:  #aff5b4;
-    --lekton-code-deleted:   #ffdcd7;
-    --lekton-code-invalid:   #f85149;
+:root {
+    /* light-dark() follows the code block's color-scheme, set from
+     * --lekton-code-scheme, so the palette matches the code background
+     * rather than the page theme. */
+    --lekton-code-keyword:   light-dark(#cf222e, #ff7b72);
+    --lekton-code-string:    light-dark(#0a3069, #a5d6ff);
+    --lekton-code-comment:   light-dark(#6e7781, #8b949e);
+    --lekton-code-constant:  light-dark(#0550ae, #79c0ff);
+    --lekton-code-function:  light-dark(#8250df, #d2a8ff);
+    --lekton-code-type:      light-dark(#953800, #ffa657);
+    --lekton-code-variable:  light-dark(#953800, #ffa657);
+    --lekton-code-key:       light-dark(#116329, #7ee787);
+    --lekton-code-section:   light-dark(#8250df, #d2a8ff);
+    --lekton-code-inserted:  light-dark(#116329, #aff5b4);
+    --lekton-code-deleted:   light-dark(#82071e, #ffdcd7);
+    --lekton-code-invalid:   light-dark(#cf222e, #f85149);
 }
 
 .prose pre code .hl-keyword,
@@ -805,9 +942,24 @@ html[data-theme] .prose pre.mermaid:has(.mermaid-expand-btn) {
     font-size:       0.9em;
 }
 
+/* Tables scroll inside their own box (added by the Markdown renderer), so a
+ * wide table never makes the whole page scroll sideways on a phone. */
+.prose .lekton-table-scroll {
+    max-width:     100%;
+    overflow-x:    auto;
+    margin-top:    1.8em;
+    margin-bottom: 1.8em;
+}
+
+.prose .lekton-table-scroll > table {
+    margin-top:    0;
+    margin-bottom: 0;
+}
+
 .prose thead {
-    border-bottom: 2px solid var(--color-base-300);
-    color: var(--color-base-content);
+    border-bottom:    2px solid var(--lekton-table-border);
+    background-color: var(--lekton-table-header-bg);
+    color:            var(--lekton-table-header-text);
 }
 
 .prose thead th {
@@ -821,7 +973,7 @@ html[data-theme] .prose pre.mermaid:has(.mermaid-expand-btn) {
 }
 
 .prose tbody tr {
-    border-bottom: 1px solid color-mix(in oklch, var(--color-base-300) 50%, transparent);
+    border-bottom: 1px solid color-mix(in oklch, var(--lekton-table-border) 50%, transparent);
     transition:    background-color 0.1s ease;
 }
 
@@ -930,10 +1082,7 @@ html[data-theme] .prose pre.mermaid:has(.mermaid-expand-btn) {
 /* ════════════════════════════════════════════════════════════════
  * Navbar — amber glow on primary accent elements
  * ════════════════════════════════════════════════════════════════ */
-[data-theme="dark"] header.fixed,
-[data-theme="dark"] header[class*="fixed"] {
-    border-bottom-color: color-mix(in oklch, var(--color-base-300) 70%, transparent);
-}
+/* Dark header border: see --lekton-header-border-color in the dark theme. */
 
 /* ════════════════════════════════════════════════════════════════
  * Sidebar — left accent bar on active items
@@ -941,8 +1090,8 @@ html[data-theme] .prose pre.mermaid:has(.mermaid-expand-btn) {
  * ════════════════════════════════════════════════════════════════ */
 .menu li > a[aria-current="page"],
 .menu li > a.active {
-    background-color: color-mix(in oklch, var(--color-primary) 10%, transparent) !important;
-    color: var(--color-primary) !important;
+    background-color: var(--lekton-sidebar-active-bg) !important;
+    color: var(--lekton-sidebar-active-text) !important;
     font-weight: 600 !important;
 }
 

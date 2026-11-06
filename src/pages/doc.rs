@@ -166,7 +166,7 @@ fn PdfDocContent(
                 <div class="flex flex-wrap gap-2">
                     {tags.iter().map(|tag| {
                         let tag_text = tag.clone();
-                        view! { <span class="badge badge-outline badge-sm">{tag_text}</span> }
+                        view! { <span class="badge badge-outline badge-sm lekton-doc-tag">{tag_text}</span> }
                     }).collect::<Vec<_>>()}
                 </div>
             </Show>
@@ -313,7 +313,7 @@ pub fn DocPage() -> impl IntoView {
                                         {tags.iter().map(|tag| {
                                             let tag_text = tag.clone();
                                             view! {
-                                                <span class="badge badge-outline badge-sm">{tag_text}</span>
+                                                <span class="badge badge-outline badge-sm lekton-doc-tag">{tag_text}</span>
                                             }
                                         }).collect::<Vec<_>>()}
                                     </div>

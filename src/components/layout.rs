@@ -3,12 +3,13 @@ use leptos::prelude::*;
 use super::contextual_sidebars::{AdminSidebar, ChatSidebar, DocsSidebar, RegistrySidebar};
 use super::custom_css::RuntimeCustomCss;
 use super::logo::BrandedLogo;
+use super::navigation::use_navigation;
 use super::release_pin_strip::ReleasePinStrip;
 use super::search::SearchModal;
 use super::theme::ThemeToggle;
 use super::user_menu::UserMenu;
-use crate::app::{get_navbar_groups, get_navigation};
-use crate::auth::refresh_client::with_auth_retry;
+use crate::app::{get_navbar_groups, NavItem};
+use crate::db::settings_repository::NavGroup;
 
 const MAX_DOCS_ITEMS: usize = 5;
 
@@ -33,15 +34,12 @@ fn TopNavbarLinksSkeleton() -> impl IntoView {
 #[component]
 pub fn TopNavbarLinks() -> impl IntoView {
     // Reader-facing navbar: follows the URL's release pins like the sidebar.
-    let nav_query = leptos_router::hooks::use_query_map();
-    let nav_resource = LocalResource::new(move || {
-        let pins = nav_query
-            .read()
-            .get_all(crate::versioning::PIN_PARAM)
-            .unwrap_or_default();
-        with_auth_retry(move || get_navigation(Some(pins.clone())))
-    });
-    let groups_resource = Resource::new(|| (), |_| get_navbar_groups());
+    let nav_resource = super::navigation::use_navigation();
+    let groups_resource = use_navbar_groups();
+    // Pages with a sidebar put these links in the drawer instead (see
+    // `SectionMenuItems`), so small screens get one menu, not two.
+    let location = leptos_router::hooks::use_location();
+    let has_drawer = Memo::new(move |_| has_context_sidebar(&location.pathname.get()));
     let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
     let is_rag = use_context::<crate::app::IsRagEnabled>();
     let schema_enabled = crate::app::use_feature(|f| f.schema_registry);
@@ -73,7 +71,6 @@ pub fn TopNavbarLinks() -> impl IntoView {
                     // Clones for each tier
                     let t2_standalone = standalone.clone();
                     let t2_groups = groups.clone();
-                    let t3_standalone = standalone;
                     let t3_groups = groups;
 
                     // Items for group filtering per tier
@@ -89,7 +86,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                             {t1_standalone.into_iter().map(|item| {
                                 view! {
                                     <a href=crate::components::pinned_doc_href(&format!("/docs/{}", item.slug))
-                                       class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">
+                                       class="btn btn-ghost btn-sm font-normal lekton-header-link">
                                         {item.title}
                                     </a>
                                 }
@@ -106,7 +103,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                 view! {
                                     <div class="dropdown dropdown-hover dropdown-bottom">
                                         <div tabindex="0" role="button" aria-haspopup="menu"
-                                             class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50 m-1">
+                                             class="btn btn-ghost btn-sm font-normal lekton-header-link m-1">
                                             {group.title.clone()}
                                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="ml-1 opacity-60"><path d="m6 9 6 6 6-6"/></svg>
                                         </div>
@@ -127,7 +124,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                 view! {
                                     <div class="dropdown dropdown-hover dropdown-bottom shrink-0">
                                         <div tabindex="0" role="button" aria-haspopup="menu"
-                                             class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50 m-1">
+                                             class="btn btn-ghost btn-sm font-normal lekton-header-link m-1">
                                             "Altro"
                                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="ml-1 opacity-60"><path d="m6 9 6 6 6-6"/></svg>
                                         </div>
@@ -159,7 +156,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
 
                             <div class="flex items-center gap-2 shrink-0">
                             {move || if schema_enabled.get() { view! {
-                            <a href="/schemas" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">
+                            <a href="/schemas" class="btn btn-ghost btn-sm font-normal lekton-header-link">
                                 "Registry"
                             </a>
                             }.into_any() } else { view! { <span></span> }.into_any() }}
@@ -167,7 +164,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                 let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
                                 let rag_enabled = is_rag.map(|sig| sig.0.get()).unwrap_or(false);
                                 if logged_in && rag_enabled {
-                                    view! { <a href="/chat" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">"Chat"</a> }.into_any()
+                                    view! { <a href="/chat" class="btn btn-ghost btn-sm font-normal lekton-header-link">"Chat"</a> }.into_any()
                                 } else {
                                     view! { <span></span> }.into_any()
                                 }
@@ -175,7 +172,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                             {move || {
                                 let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
                                 if logged_in && learn_enabled.get() {
-                                    view! { <a href="/learn" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">"Learn"</a> }.into_any()
+                                    view! { <a href="/learn" class="btn btn-ghost btn-sm font-normal lekton-header-link">"Learn"</a> }.into_any()
                                 } else {
                                     view! { <span></span> }.into_any()
                                 }
@@ -183,7 +180,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                             {move || {
                                 let is_admin = current_user.and_then(|sig| sig.get()).map(|u| u.is_admin).unwrap_or(false);
                                 if is_admin {
-                                    view! { <a href="/admin/tokens" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">"Admin"</a> }.into_any()
+                                    view! { <a href="/admin/tokens" class="btn btn-ghost btn-sm font-normal lekton-header-link">"Admin"</a> }.into_any()
                                 } else {
                                     view! { <span></span> }.into_any()
                                 }
@@ -196,7 +193,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                             <div class="flex flex-1 items-center min-w-0 overflow-x-clip">
                             <div class="dropdown dropdown-hover dropdown-bottom">
                                 <div tabindex="0" role="button" aria-haspopup="menu"
-                                     class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50 m-1">
+                                     class="btn btn-ghost btn-sm font-normal lekton-header-link m-1">
                                     "Docs"
                                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="ml-1 opacity-60"><path d="m6 9 6 6 6-6"/></svg>
                                 </div>
@@ -225,7 +222,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
 
                             <div class="flex items-center gap-2 shrink-0">
                             {move || if schema_enabled.get() { view! {
-                            <a href="/schemas" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">
+                            <a href="/schemas" class="btn btn-ghost btn-sm font-normal lekton-header-link">
                                 "Registry"
                             </a>
                             }.into_any() } else { view! { <span></span> }.into_any() }}
@@ -233,7 +230,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                 let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
                                 let rag_enabled = is_rag.map(|sig| sig.0.get()).unwrap_or(false);
                                 if logged_in && rag_enabled {
-                                    view! { <a href="/chat" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">"Chat"</a> }.into_any()
+                                    view! { <a href="/chat" class="btn btn-ghost btn-sm font-normal lekton-header-link">"Chat"</a> }.into_any()
                                 } else {
                                     view! { <span></span> }.into_any()
                                 }
@@ -241,7 +238,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                             {move || {
                                 let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
                                 if logged_in && learn_enabled.get() {
-                                    view! { <a href="/learn" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">"Learn"</a> }.into_any()
+                                    view! { <a href="/learn" class="btn btn-ghost btn-sm font-normal lekton-header-link">"Learn"</a> }.into_any()
                                 } else {
                                     view! { <span></span> }.into_any()
                                 }
@@ -249,7 +246,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                             {move || {
                                 let is_admin = current_user.and_then(|sig| sig.get()).map(|u| u.is_admin).unwrap_or(false);
                                 if is_admin {
-                                    view! { <a href="/admin/tokens" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">"Admin"</a> }.into_any()
+                                    view! { <a href="/admin/tokens" class="btn btn-ghost btn-sm font-normal lekton-header-link">"Admin"</a> }.into_any()
                                 } else {
                                     view! { <span></span> }.into_any()
                                 }
@@ -258,10 +255,11 @@ pub fn TopNavbarLinks() -> impl IntoView {
                         </div>
 
                         // ── TIER 3: <lg — one labelled menu (icon-only items are ambiguous on touch) ─
-                        <div class="flex lg:hidden items-center">
+                        // Hidden where the drawer (☰) already carries these links.
+                        <div class=move || if has_drawer.get() { "hidden" } else { "flex lg:hidden items-center" }>
                             <div class="dropdown dropdown-bottom">
                                 <div tabindex="0" role="button" aria-haspopup="menu"
-                                     class="btn btn-ghost btn-sm gap-1.5 px-2.5 text-base-content/80 hover:text-base-content hover:bg-base-200/50"
+                                     class="btn btn-ghost btn-sm gap-1.5 px-2.5 lekton-header-link"
                                      aria-label="Navigation menu">
                                     // Grid icon — distinct from the sidebar drawer's hamburger
                                     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
@@ -269,47 +267,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                     <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="opacity-60"><path d="m6 9 6 6 6-6"/></svg>
                                 </div>
                                 <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-56 border border-base-200 max-h-[70vh] flex-nowrap overflow-y-auto">
-                                    <li class="menu-title">"Documentation"</li>
-                                    {t3_standalone.into_iter().map(|item| view! {
-                                        <li><a href=crate::components::pinned_doc_href(&format!("/docs/{}", item.slug)) class="active:!bg-primary active:!text-primary-content">{item.title}</a></li>
-                                    }).collect::<Vec<_>>()}
-                                    {t3_groups.into_iter().flat_map(|group| {
-                                        let gis: Vec<_> = items_t3.iter()
-                                            .filter(|i| group.items.contains(&i.slug))
-                                            .cloned()
-                                            .collect();
-                                        let mut all = vec![
-                                            view! { <li class="menu-title">{group.title}</li> }.into_any()
-                                        ];
-                                        all.extend(gis.into_iter().map(|i| view! {
-                                            <li><a href=crate::components::pinned_doc_href(&format!("/docs/{}", i.slug)) class="active:!bg-primary active:!text-primary-content">{i.title}</a></li>
-                                        }.into_any()));
-                                        all
-                                    }).collect::<Vec<_>>()}
-
-                                    // Top-level sections
-                                    {move || if schema_enabled.get() {
-                                        view! { <li><a href="/schemas" class="active:!bg-primary active:!text-primary-content">"Registry"</a></li> }.into_any()
-                                    } else { view! { <li class="hidden"></li> }.into_any() }}
-                                    {move || {
-                                        let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
-                                        let rag_enabled = is_rag.map(|sig| sig.0.get()).unwrap_or(false);
-                                        if logged_in && rag_enabled {
-                                            view! { <li><a href="/chat" class="active:!bg-primary active:!text-primary-content">"Chat"</a></li> }.into_any()
-                                        } else { view! { <li class="hidden"></li> }.into_any() }
-                                    }}
-                                    {move || {
-                                        let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
-                                        if logged_in && learn_enabled.get() {
-                                            view! { <li><a href="/learn" class="active:!bg-primary active:!text-primary-content">"Learn"</a></li> }.into_any()
-                                        } else { view! { <li class="hidden"></li> }.into_any() }
-                                    }}
-                                    {move || {
-                                        let is_admin = current_user.and_then(|sig| sig.get()).map(|u| u.is_admin).unwrap_or(false);
-                                        if is_admin {
-                                            view! { <li><a href="/admin/tokens" class="active:!bg-primary active:!text-primary-content">"Admin"</a></li> }.into_any()
-                                        } else { view! { <li class="hidden"></li> }.into_any() }
-                                    }}
+                                    <SectionMenuItems items=items_t3.clone() groups=t3_groups.clone() />
                                 </ul>
                             </div>
                         </div>
@@ -319,6 +277,84 @@ pub fn TopNavbarLinks() -> impl IntoView {
                 }
             }}
         </Suspense>
+    }
+}
+
+/// Whether a path shows a context sidebar (and so a ☰ drawer on small screens).
+fn has_context_sidebar(path: &str) -> bool {
+    path.starts_with("/docs")
+        || path.starts_with("/schemas")
+        || path.starts_with("/chat")
+        || path.starts_with("/admin")
+}
+
+/// Navbar groups, fetched once per page by the layout.
+#[derive(Clone, Copy)]
+struct SharedNavbarGroups(Resource<Result<Vec<NavGroup>, ServerFnError>>);
+
+fn use_navbar_groups() -> Resource<Result<Vec<NavGroup>, ServerFnError>> {
+    use_context::<SharedNavbarGroups>()
+        .map(|shared| shared.0)
+        .unwrap_or_else(|| Resource::new(|| (), |_| get_navbar_groups()))
+}
+
+/// Documentation entries and top-level sections as menu items: the "Menu"
+/// dropdown on small screens without a sidebar, and the drawer's "Browse
+/// sections" list on pages with one.
+#[component]
+fn SectionMenuItems(items: Vec<NavItem>, groups: Vec<NavGroup>) -> impl IntoView {
+    let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
+    let is_rag = use_context::<crate::app::IsRagEnabled>();
+    let schema_enabled = crate::app::use_feature(|f| f.schema_registry);
+    let learn_enabled = crate::app::use_feature(|f| f.learn);
+    let standalone: Vec<NavItem> = items
+        .iter()
+        .filter(|item| !groups.iter().any(|g| g.items.contains(&item.slug)))
+        .cloned()
+        .collect();
+
+    view! {
+        <li class="menu-title">"Documentation"</li>
+        {standalone.into_iter().map(|item| view! {
+            <li><a href=crate::components::pinned_doc_href(&format!("/docs/{}", item.slug)) class="active:!bg-primary active:!text-primary-content">{item.title}</a></li>
+        }).collect::<Vec<_>>()}
+        {groups.into_iter().flat_map(|group| {
+            let gis: Vec<_> = items.iter()
+                .filter(|i| group.items.contains(&i.slug))
+                .cloned()
+                .collect();
+            let mut all = vec![
+                view! { <li class="menu-title">{group.title}</li> }.into_any()
+            ];
+            all.extend(gis.into_iter().map(|i| view! {
+                <li><a href=crate::components::pinned_doc_href(&format!("/docs/{}", i.slug)) class="active:!bg-primary active:!text-primary-content">{i.title}</a></li>
+            }.into_any()));
+            all
+        }).collect::<Vec<_>>()}
+
+        // Top-level sections
+        {move || if schema_enabled.get() {
+            view! { <li><a href="/schemas" class="active:!bg-primary active:!text-primary-content">"Registry"</a></li> }.into_any()
+        } else { view! { <li class="hidden"></li> }.into_any() }}
+        {move || {
+            let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
+            let rag_enabled = is_rag.map(|sig| sig.0.get()).unwrap_or(false);
+            if logged_in && rag_enabled {
+                view! { <li><a href="/chat" class="active:!bg-primary active:!text-primary-content">"Chat"</a></li> }.into_any()
+            } else { view! { <li class="hidden"></li> }.into_any() }
+        }}
+        {move || {
+            let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
+            if logged_in && learn_enabled.get() {
+                view! { <li><a href="/learn" class="active:!bg-primary active:!text-primary-content">"Learn"</a></li> }.into_any()
+            } else { view! { <li class="hidden"></li> }.into_any() }
+        }}
+        {move || {
+            let is_admin = current_user.and_then(|sig| sig.get()).map(|u| u.is_admin).unwrap_or(false);
+            if is_admin {
+                view! { <li><a href="/admin/tokens" class="active:!bg-primary active:!text-primary-content">"Admin"</a></li> }.into_any()
+            } else { view! { <li class="hidden"></li> }.into_any() }
+        }}
     }
 }
 
@@ -334,16 +370,18 @@ pub fn Layout(children: Children) -> impl IntoView {
             .unwrap_or_default()
     });
     provide_context(super::ActiveReleasePins(active_release_pins));
+    // One navigation fetch per page, shared by the navbar, sidebar and pages.
+    provide_context(super::navigation::SharedNavigation(
+        super::navigation::navigation_resource(),
+    ));
     let search_enabled = crate::app::use_feature(|f| f.search);
     let location = leptos_router::hooks::use_location();
     let path = Memo::new(move |_| location.pathname.get());
-    let has_context_sidebar = Memo::new(move |_| {
-        let path = path.get();
-        path.starts_with("/docs")
-            || path.starts_with("/schemas")
-            || path.starts_with("/chat")
-            || path.starts_with("/admin")
-    });
+    let has_context_sidebar = Memo::new(move |_| has_context_sidebar(&path.get()));
+    provide_context(SharedNavbarGroups(Resource::new(
+        || (),
+        |_| get_navbar_groups(),
+    )));
     let is_chat_layout = Memo::new(move |_| path.get().starts_with("/chat"));
 
     use leptos::ev;
@@ -361,7 +399,8 @@ pub fn Layout(children: Children) -> impl IntoView {
 
         <div class="min-h-screen bg-base-100/50">
             // Navbar
-            <header class="bg-base-100/80 backdrop-blur-md fixed top-0 inset-x-0 z-50 border-b border-base-200 px-4 h-16 flex items-center gap-2 shadow-sm lekton-header-enter">
+            // Colours come from the --lekton-header-* theming tokens (see style/tailwind.css).
+            <header data-lekton-header class="bg-base-100/80 backdrop-blur-md fixed top-0 inset-x-0 z-50 border-b border-base-200 px-4 h-16 flex items-center gap-2 shadow-sm lekton-header-enter">
                 // Left — shrinks only when space is truly exhausted
                 <div class="flex items-center gap-2 min-w-0 flex-1">
                     <Show when=move || has_context_sidebar.get()>
@@ -448,9 +487,30 @@ pub fn Layout(children: Children) -> impl IntoView {
 
                 // Sidebar
                 <Show when=move || has_context_sidebar.get()>
-                    <div class="drawer-side z-40">
+                    // Below lg the drawer overlays the page: start it under the
+                    // fixed header, which would otherwise cover its first entries.
+                    <div class="drawer-side z-40 max-lg:top-16 max-lg:h-[calc(100dvh-4rem)]">
                         <label for="sidebar-drawer" aria-label="close sidebar" class="drawer-overlay"></label>
-                        <div class="menu bg-base-200 min-h-full h-[calc(100vh-4rem)] w-[var(--lekton-sidebar-width)] p-4 text-base-content border-r border-base-300 pt-6 overflow-y-auto block">
+                        // Colours come from the --lekton-sidebar-* theming tokens.
+                        <div data-lekton-sidebar class="menu bg-base-200 min-h-full h-[calc(100vh-4rem)] w-[var(--lekton-sidebar-width)] p-4 text-base-content border-r border-base-300 pt-6 overflow-y-auto block">
+                            // Small screens: the top-level sections, which the navbar
+                            // has no room for, live here rather than in a second menu.
+                            <ul class="lg:hidden mb-2">
+                                <li>
+                                    <details>
+                                        <summary class="transition-colors font-medium text-sm">"Browse sections"</summary>
+                                        <ul>
+                                            <Suspense fallback=|| ()>
+                                                {move || {
+                                                    let items = use_navigation().get()?.ok()?;
+                                                    let groups = use_navbar_groups().get()?.ok()?;
+                                                    Some(view! { <SectionMenuItems items=items groups=groups /> })
+                                                }}
+                                            </Suspense>
+                                        </ul>
+                                    </details>
+                                </li>
+                            </ul>
                             {move || {
                                 let path = path.get();
 

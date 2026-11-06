@@ -67,3 +67,20 @@ async fn list_all_returns_all_seeded_levels() {
         "seed_defaults should create at least 4 levels"
     );
 }
+
+#[tokio::test]
+async fn effective_levels_are_sorted() {
+    let env = common::TestEnv::start().await;
+
+    env.access_level_repo.seed_defaults().await.unwrap();
+
+    let levels = env
+        .access_level_repo
+        .compute_effective_levels(&["architect".to_string()])
+        .await
+        .unwrap();
+    assert!(levels.len() > 1, "architect should inherit other levels");
+    let mut sorted = levels.clone();
+    sorted.sort();
+    assert_eq!(levels, sorted);
+}

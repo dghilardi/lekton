@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+- Updated Markdown parsing and AWS cryptography dependencies, and documented temporary audit exceptions for transitive dependencies without compatible upgrades.
+
+### Added
+- Prompt library: filters by owner, tag, context cost and favorites, a compact list, and a detail view with the prompt text, its variables and a copy button.
+- Theming interface: `--lekton-header-*`, `--lekton-sidebar-*`, `--lekton-code-*`, link, heading, table and font variables, plus stable `data-lekton-*` hooks, so a custom theme only assigns variables. Documented in `docs/theming.md` and listed in Admin → Custom CSS. With no custom CSS the look is unchanged.
+
+### Changed
+- Chat sources no longer show the raw retrieval score (they are listed most relevant first), and their previews skip Markdown headings and other markup, so a section previews its text rather than `## Usage`.
+- Admin → AI Usage: the share column is relative to the total of all callers, numbers have thousands separators, small credit amounts no longer round to 0.0, calls show how many were embeddings, and a total row sums every caller. The share bar exposes a rounded, labelled percentage to screen readers.
+- Admin → Users: search by email or name, filters by access level and admin role, and names next to emails. Access levels are listed in name order, and effective levels are stored sorted.
+- Admin → Documentation Feedback is a compact list that expands one item at a time; `lekton://docs/…` URIs link to the document, "Duplicate of" is picked from the existing items by title, and kinds and statuses use readable labels.
+
+### Fixed
+- Small screens showed two menus in the header (☰ and "Menu"); pages with a sidebar now list the sections in the drawer, which also no longer opens under the header.
+- Navigation was fetched twice per page (navbar and sidebar); it is now fetched once and shared.
+- Document tags were 9.9 px; they are now 12 px in their original case. The Admin badge is no longer red, and the profile no longer repeats the email for users without a name.
+- Wide Markdown tables made the whole page scroll sideways on phones; tables now scroll inside their own box.
+- Chat history titles were unreadable in a dark sidebar set by custom CSS; sidebar entries now follow the sidebar colours.
+- The code block copy button kept the page text colour on dark code backgrounds; it now uses the code colours, and `--lekton-code-scheme` switches to the dark syntax palette.
+- Chat answers cut off mid-stream (a proxy timeout, the LLM gateway closing the connection) were saved as complete. They are now saved as interrupted, shown with a warning and a Regenerate button, and left out of the context of the next question.
+- Chat streams send `X-Accel-Buffering: no` and a keep-alive every 15 seconds, so buffering reverse proxies forward them live; an answer is still finished and saved when the browser disconnects.
+
 ## [0.38.1] 2026-10-22
 
 ### Fixed

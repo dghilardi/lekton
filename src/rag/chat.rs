@@ -7,8 +7,8 @@ use async_openai::types::chat::{
     ChatCompletionRequestAssistantMessage, ChatCompletionRequestAssistantMessageContent,
     ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage,
     ChatCompletionRequestSystemMessageContent, ChatCompletionRequestUserMessage,
-    ChatCompletionRequestUserMessageContent, ChatCompletionStreamOptions,
-    CreateChatCompletionRequest, FinishReason,
+    ChatCompletionRequestUserMessageContent, ChatCompletionStreamOptions, CompletionUsage,
+    CreateChatCompletionRequest, CreateChatCompletionStreamResponse, FinishReason,
 };
 use chrono::Utc;
 use futures::StreamExt;
@@ -16,7 +16,9 @@ use uuid::Uuid;
 
 use crate::auth::models::UserContext;
 use crate::config::RagConfig;
-use crate::db::chat_models::{ChatMessage, ChatSession, SourceReference};
+use crate::db::chat_models::{
+    source_snippet, ChatMessage, ChatMessageStatus, ChatSession, SourceReference,
+};
 use crate::db::chat_repository::ChatRepository;
 use crate::error::AppError;
 use crate::rag::analyzer::{Complexity, QueryAnalyzer, QueryPlan};
@@ -174,9 +176,13 @@ pub enum ChatEvent {
     #[serde(rename = "delta")]
     Delta { content: String },
     /// Stream finished — carries the saved message ID so the client can
-    /// attach feedback to the correct message.
+    /// attach feedback to the correct message, and whether the answer is
+    /// complete (an interrupted or failed answer can be regenerated).
     #[serde(rename = "done")]
-    Done { message_id: Option<String> },
+    Done {
+        message_id: Option<String>,
+        status: ChatMessageStatus,
+    },
     /// An error occurred.
     #[serde(rename = "error")]
     Error { message: String },
@@ -497,6 +503,32 @@ impl ChatService {
         session_id: Option<String>,
         user_message: String,
     ) -> Result<std::pin::Pin<Box<dyn futures::Stream<Item = ChatEvent> + Send>>, AppError> {
+        self.stream_turn(user_ctx, session_id, ChatTurn::Ask(user_message))
+            .await
+    }
+
+    /// Replace the session's last, unfinished answer with a new one.
+    ///
+    /// The question it answered is asked again without being stored twice.
+    /// Only an interrupted or failed answer can be regenerated, and only while
+    /// it is still the last message of the session.
+    #[tracing::instrument(skip(self, user_ctx), fields(session_id = %session_id))]
+    pub async fn regenerate_response(
+        &self,
+        user_ctx: &UserContext,
+        session_id: String,
+        message_id: String,
+    ) -> Result<std::pin::Pin<Box<dyn futures::Stream<Item = ChatEvent> + Send>>, AppError> {
+        self.stream_turn(user_ctx, Some(session_id), ChatTurn::Regenerate(message_id))
+            .await
+    }
+
+    async fn stream_turn(
+        &self,
+        user_ctx: &UserContext,
+        session_id: Option<String>,
+        turn: ChatTurn,
+    ) -> Result<std::pin::Pin<Box<dyn futures::Stream<Item = ChatEvent> + Send>>, AppError> {
         // 0. Admission control, before any retrieval work is done on the
         //    caller's behalf — a refused turn should cost nothing.
         let admission =
@@ -525,8 +557,13 @@ impl ChatService {
                 id
             }
             None => {
+                let ChatTurn::Ask(question) = &turn else {
+                    return Err(AppError::BadRequest(
+                        "Regenerating an answer requires a session".into(),
+                    ));
+                };
                 let id = Uuid::new_v4().to_string();
-                let title = truncate_title(&user_message);
+                let title = truncate_title(question);
                 let now = Utc::now();
                 self.chat_repo
                     .create_session(ChatSession {
@@ -541,23 +578,41 @@ impl ChatService {
             }
         };
 
-        // 2. Fetch conversation history (needed both for query rewriting and prompt building)
-        let history = self
-            .chat_repo
-            .get_messages(&session_id, MAX_HISTORY_MESSAGES)
-            .await?;
-
-        // 3. Save user message
-        self.chat_repo
-            .add_message(ChatMessage {
-                id: Uuid::new_v4().to_string(),
-                session_id: session_id.clone(),
-                role: "user".into(),
-                content: user_message.clone(),
-                sources: None,
-                created_at: Utc::now(),
-            })
-            .await?;
+        // 2-3. Fetch conversation history (needed both for query rewriting and
+        //      prompt building) and record the question.
+        let (history, user_message) = match turn {
+            ChatTurn::Ask(user_message) => {
+                let history = self
+                    .chat_repo
+                    .get_messages(&session_id, MAX_HISTORY_MESSAGES)
+                    .await?;
+                self.chat_repo
+                    .add_message(ChatMessage {
+                        id: Uuid::new_v4().to_string(),
+                        session_id: session_id.clone(),
+                        role: "user".into(),
+                        content: user_message.clone(),
+                        sources: None,
+                        status: ChatMessageStatus::Complete,
+                        created_at: Utc::now(),
+                    })
+                    .await?;
+                (history, user_message)
+            }
+            ChatTurn::Regenerate(message_id) => {
+                // Two extra messages: the answer being replaced and its question.
+                let messages = self
+                    .chat_repo
+                    .get_messages(&session_id, MAX_HISTORY_MESSAGES + 2)
+                    .await?;
+                let (history, question) = plan_regeneration(messages, &message_id)?;
+                self.chat_repo.delete_message(&message_id).await?;
+                (history, question)
+            }
+        };
+        // An unfinished answer is not something the model said: feeding a
+        // stray "Il" back as context derails the next turn.
+        let history = prompt_history(history);
 
         // 4-7. Pure retrieval (analyzer + HyDE + decomposition + vector search +
         //      hybrid RRF + reranker). Side-effect-free w.r.t. chat persistence.
@@ -682,103 +737,75 @@ impl ChatService {
                 sources: sources.clone(),
             };
 
-            let mut full_response = String::new();
-            let mut hit_output_cap = false;
-            let mut reported_usage = None;
+            let mut answer = AnswerAccumulator::default();
+            let mut failed = false;
 
             while let Some(chunk_result) = stream.next().await {
                 match chunk_result {
                     Ok(chunk) => {
-                        if let Some(chunk_usage) = &chunk.usage {
-                            reported_usage = Some(chunk_usage.clone());
-                        }
-                        for choice in &chunk.choices {
-                            if let Some(content) = &choice.delta.content {
-                                if !content.is_empty() {
-                                    full_response.push_str(content);
-                                    yield ChatEvent::Delta {
-                                        content: content.clone(),
-                                    };
-                                }
-                            }
-                            if choice.finish_reason == Some(FinishReason::Length) {
-                                hit_output_cap = true;
-                            }
+                        for content in answer.push(&chunk) {
+                            yield ChatEvent::Delta { content };
                         }
                     }
                     Err(e) => {
                         let error_message = format_llm_error(&e);
                         tracing::error!("LLM stream error: {error_message}");
-                        // A stream that dies partway still burned whatever the
-                        // provider generated before it broke.
-                        usage::record_chat(
-                            &usage_key,
-                            usage::LlmFeature::Chat,
-                            &chat_model,
-                            reported_usage.as_ref(),
-                            prompt_chars,
-                            full_response.len(),
-                        );
                         yield ChatEvent::Error {
                             message: format!("LLM error: {error_message}"),
                         };
-                        // Persist any partial response so the client can reload it
-                        // and emit Done so stream consumers are not left hanging.
-                        let saved_message_id = if !full_response.is_empty() {
-                            full_response.push_str("\n\n*(response truncated due to error)*");
-                            let msg_id = Uuid::new_v4().to_string();
-                            let msg = ChatMessage {
-                                id: msg_id.clone(),
-                                session_id: sid.clone(),
-                                role: "assistant".into(),
-                                content: full_response,
-                                sources: Some(sources.clone()),
-                                created_at: Utc::now(),
-                            };
-                            if let Err(save_err) = chat_repo.add_message(msg).await {
-                                tracing::error!("Failed to save partial assistant message: {save_err}");
-                            }
-                            if let Err(touch_err) = chat_repo.touch_session(&sid).await {
-                                tracing::error!("Failed to touch session after error: {touch_err}");
-                            }
-                            Some(msg_id)
-                        } else {
-                            None
-                        };
-                        yield ChatEvent::Done { message_id: saved_message_id };
-                        return;
+                        failed = true;
+                        break;
                     }
                 }
             }
 
+            // A stream that dies partway still burned whatever the provider
+            // generated before it broke.
             usage::record_chat(
                 &usage_key,
                 usage::LlmFeature::Chat,
                 &chat_model,
-                reported_usage.as_ref(),
+                answer.usage.as_ref(),
                 prompt_chars,
-                full_response.len(),
+                answer.content.len(),
             );
+
+            let status = if failed {
+                ChatMessageStatus::Error
+            } else {
+                answer.status()
+            };
+            if status == ChatMessageStatus::Interrupted {
+                tracing::warn!(
+                    session_id = %sid,
+                    model = %chat_model,
+                    chars = answer.content.len(),
+                    "RAG: LLM stream ended without a finish reason; saving the answer as interrupted"
+                );
+            }
 
             // The model stopped because it reached `rag.chat.max_output_tokens`.
             // Say so instead of letting the answer end mid-sentence: the note is
             // both streamed and persisted, so it survives a reload.
-            if hit_output_cap {
+            if answer.hit_output_cap {
                 tracing::warn!(
                     session_id = %sid,
                     model = %chat_model,
                     "RAG: chat response truncated at the configured output cap"
                 );
-                full_response.push_str(OUTPUT_CAP_NOTICE);
+                answer.content.push_str(OUTPUT_CAP_NOTICE);
                 yield ChatEvent::Delta { content: OUTPUT_CAP_NOTICE.to_string() };
             }
 
-            // Save the full assistant response
-            let saved_message_id = if !full_response.is_empty() {
+            // Save the assistant response. An unfinished one is saved even when
+            // empty, so a reload still shows that the question went unanswered
+            // and the client can regenerate it.
+            let saved_message_id = if !answer.content.is_empty() || !status.is_complete() {
                 tracing::debug!(
                     session_id = %sid,
                     model = %chat_model,
-                    response = %preview_text(&full_response, 4_000),
+                    status = ?status,
+                    response = %preview_text(&answer.content, 4_000),
                     "RAG: received chat response from LLM"
                 );
                 let msg_id = Uuid::new_v4().to_string();
@@ -786,8 +813,9 @@ impl ChatService {
                     id: msg_id.clone(),
                     session_id: sid.clone(),
                     role: "assistant".into(),
-                    content: full_response,
+                    content: answer.content,
                     sources: Some(sources.clone()),
+                    status,
                     created_at: Utc::now(),
                 };
                 if let Err(e) = chat_repo.add_message(msg).await {
@@ -801,7 +829,7 @@ impl ChatService {
                 None
             };
 
-            yield ChatEvent::Done { message_id: saved_message_id };
+            yield ChatEvent::Done { message_id: saved_message_id, status };
         };
 
         Ok(Box::pin(event_stream))
@@ -1433,7 +1461,6 @@ fn build_source_references(
     let mut deduped: HashMap<(String, String), SourceReference> = HashMap::new();
 
     for result in results {
-        let snippet = preview_text(&result.chunk_text, 180);
         let is_attachment = result.source_kind == crate::rag::vectorstore::SourceKind::Attachment;
         // For attachments the heading path is unused; surface the page instead.
         let section_title = if is_attachment {
@@ -1452,11 +1479,7 @@ fn build_source_references(
             section_title,
             section_anchor: section_anchor.clone(),
             score: result.score,
-            snippet: if snippet.is_empty() {
-                None
-            } else {
-                Some(snippet)
-            },
+            snippet: source_snippet(&result.chunk_text, 180),
             attachment_key: result.attachment_key.clone(),
             source_page: result.source_page,
         };
@@ -1545,6 +1568,91 @@ fn build_context_prompt(
     }
 
     context
+}
+
+/// What a chat turn asks the model to do.
+enum ChatTurn {
+    /// Answer a new question.
+    Ask(String),
+    /// Answer again the question behind this (unfinished) assistant message.
+    Regenerate(String),
+}
+
+/// Accumulates a streamed LLM answer and decides how it ended.
+#[derive(Default)]
+struct AnswerAccumulator {
+    content: String,
+    /// The model reported a finish reason, i.e. it ended the answer itself.
+    finished: bool,
+    hit_output_cap: bool,
+    usage: Option<CompletionUsage>,
+}
+
+impl AnswerAccumulator {
+    /// Record one stream chunk and return the content deltas to forward.
+    fn push(&mut self, chunk: &CreateChatCompletionStreamResponse) -> Vec<String> {
+        if let Some(usage) = &chunk.usage {
+            self.usage = Some(usage.clone());
+        }
+        let mut deltas = Vec::new();
+        for choice in &chunk.choices {
+            if let Some(content) = &choice.delta.content {
+                if !content.is_empty() {
+                    self.content.push_str(content);
+                    deltas.push(content.clone());
+                }
+            }
+            if let Some(reason) = choice.finish_reason {
+                self.finished = true;
+                if reason == FinishReason::Length {
+                    self.hit_output_cap = true;
+                }
+            }
+        }
+        deltas
+    }
+
+    /// How the answer ended, once the stream is over without an error.
+    ///
+    /// A stream that closes before any finish reason was cut off — by a proxy
+    /// timeout, the provider or the network — so it must not pass for a
+    /// complete answer even though no error was raised.
+    fn status(&self) -> ChatMessageStatus {
+        if self.finished {
+            ChatMessageStatus::Complete
+        } else {
+            ChatMessageStatus::Interrupted
+        }
+    }
+}
+
+/// Split a session's messages into the history before a regenerated answer
+/// and the question that answer was for.
+fn plan_regeneration(
+    mut messages: Vec<ChatMessage>,
+    message_id: &str,
+) -> Result<(Vec<ChatMessage>, String), AppError> {
+    let replaceable = messages.last().is_some_and(|last| {
+        last.id == message_id && last.role == "assistant" && !last.status.is_complete()
+    });
+    if !replaceable {
+        return Err(AppError::BadRequest(
+            "Only the last unfinished answer of a session can be regenerated".into(),
+        ));
+    }
+    messages.pop();
+    match messages.pop() {
+        Some(question) if question.role == "user" => Ok((messages, question.content)),
+        _ => Err(AppError::BadRequest(
+            "The answer to regenerate has no question before it".into(),
+        )),
+    }
+}
+
+/// Drop unfinished assistant answers from the history given to the model.
+fn prompt_history(mut history: Vec<ChatMessage>) -> Vec<ChatMessage> {
+    history.retain(|msg| msg.role != "assistant" || msg.status.is_complete());
+    history
 }
 
 fn select_history_for_prompt(history: &[ChatMessage], max_chars: usize) -> &[ChatMessage] {
@@ -1649,7 +1757,7 @@ mod tests {
             },
             VectorSearchResult {
                 point_id: "p2".into(),
-                chunk_text: "Better chunk".into(),
+                chunk_text: "## Intro\nBetter chunk with enough words".into(),
                 document_slug: "docs/a".into(),
                 document_title: "Doc A".into(),
                 chunk_index: 1,
@@ -1676,7 +1784,10 @@ mod tests {
         assert_eq!(sources[0].section_title.as_deref(), Some("Intro"));
         assert_eq!(sources[0].section_anchor.as_deref(), Some("intro"));
         assert_eq!(sources[0].score, 0.81);
-        assert_eq!(sources[0].snippet.as_deref(), Some("Better chunk"));
+        assert_eq!(
+            sources[0].snippet.as_deref(),
+            Some("Better chunk with enough words")
+        );
         assert_eq!(sources[1].document_slug, "docs/b");
     }
 
@@ -1957,6 +2068,7 @@ mod tests {
                 role: "user".into(),
                 content: "12345".into(),
                 sources: None,
+                status: Default::default(),
                 created_at: Utc::now(),
             },
             ChatMessage {
@@ -1965,6 +2077,7 @@ mod tests {
                 role: "assistant".into(),
                 content: "6789".into(),
                 sources: None,
+                status: Default::default(),
                 created_at: Utc::now(),
             },
             ChatMessage {
@@ -1973,6 +2086,7 @@ mod tests {
                 role: "user".into(),
                 content: "abc".into(),
                 sources: None,
+                status: Default::default(),
                 created_at: Utc::now(),
             },
         ];
@@ -1997,5 +2111,189 @@ mod tests {
         assert!(context.chars().count() <= 80);
         assert!(context.starts_with("--- BEGIN DOCUMENT: Doc A (docs/a) ---\n"));
         assert!(context.ends_with("\n--- END DOCUMENT ---"));
+    }
+
+    fn stream_chunk(
+        content: Option<&str>,
+        finish_reason: Option<&str>,
+    ) -> CreateChatCompletionStreamResponse {
+        serde_json::from_value(serde_json::json!({
+            "id": "chatcmpl-1",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "test-model",
+            "choices": [{
+                "index": 0,
+                "delta": { "content": content },
+                "finish_reason": finish_reason,
+            }],
+        }))
+        .unwrap()
+    }
+
+    fn usage_chunk(prompt: u32, completion: u32) -> CreateChatCompletionStreamResponse {
+        serde_json::from_value(serde_json::json!({
+            "id": "chatcmpl-1",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "test-model",
+            "choices": [],
+            "usage": {
+                "prompt_tokens": prompt,
+                "completion_tokens": completion,
+                "total_tokens": prompt + completion,
+            },
+        }))
+        .unwrap()
+    }
+
+    fn msg(id: &str, role: &str, content: &str, status: ChatMessageStatus) -> ChatMessage {
+        ChatMessage {
+            id: id.into(),
+            session_id: "s1".into(),
+            role: role.into(),
+            content: content.into(),
+            sources: None,
+            status,
+            created_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn stream_closed_without_finish_reason_is_interrupted() {
+        // A proxy timing out mid-answer closes the stream cleanly: no error,
+        // just no finish reason. That must not pass for a complete answer.
+        let mut answer = AnswerAccumulator::default();
+        assert_eq!(answer.push(&stream_chunk(Some("Il"), None)), vec!["Il"]);
+        assert_eq!(answer.content, "Il");
+        assert_eq!(answer.status(), ChatMessageStatus::Interrupted);
+    }
+
+    #[test]
+    fn stream_with_finish_reason_is_complete() {
+        let mut answer = AnswerAccumulator::default();
+        answer.push(&stream_chunk(Some("Il servizio "), None));
+        answer.push(&stream_chunk(Some("usa Kafka."), None));
+        answer.push(&stream_chunk(None, Some("stop")));
+        answer.push(&usage_chunk(1200, 42));
+        assert_eq!(answer.content, "Il servizio usa Kafka.");
+        assert_eq!(answer.status(), ChatMessageStatus::Complete);
+        assert!(!answer.hit_output_cap);
+        assert_eq!(answer.usage.as_ref().unwrap().completion_tokens, 42);
+    }
+
+    #[test]
+    fn usage_reported_after_the_finish_chunk_is_kept() {
+        // Shape observed from an OpenAI-compatible gateway: the usage chunk
+        // comes after the `stop` chunk and still carries one choice, with an
+        // empty delta and no finish reason.
+        let usage_with_choice: CreateChatCompletionStreamResponse =
+            serde_json::from_value(serde_json::json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1,
+                "model": "test-model",
+                "choices": [{ "index": 0, "delta": {}, "finish_reason": null }],
+                "usage": {
+                    "prompt_tokens": 1830,
+                    "completion_tokens": 211,
+                    "total_tokens": 2041,
+                    "completion_tokens_details": { "reasoning_tokens": 0 },
+                },
+            }))
+            .unwrap();
+        let mut answer = AnswerAccumulator::default();
+        answer.push(&stream_chunk(Some("Ciao"), None));
+        answer.push(&stream_chunk(None, Some("stop")));
+        answer.push(&usage_with_choice);
+        assert_eq!(answer.status(), ChatMessageStatus::Complete);
+        let usage = answer.usage.as_ref().expect("usage kept");
+        assert_eq!((usage.prompt_tokens, usage.completion_tokens), (1830, 211));
+    }
+
+    #[test]
+    fn stream_stopped_at_output_cap_is_complete_but_flagged() {
+        let mut answer = AnswerAccumulator::default();
+        answer.push(&stream_chunk(Some("Long answer"), Some("length")));
+        assert_eq!(answer.status(), ChatMessageStatus::Complete);
+        assert!(answer.hit_output_cap);
+    }
+
+    #[test]
+    fn empty_stream_is_interrupted() {
+        assert_eq!(
+            AnswerAccumulator::default().status(),
+            ChatMessageStatus::Interrupted
+        );
+    }
+
+    #[test]
+    fn prompt_history_drops_unfinished_answers() {
+        let history = vec![
+            msg(
+                "u1",
+                "user",
+                "Come funziona il device service?",
+                ChatMessageStatus::Complete,
+            ),
+            msg("a1", "assistant", "Il", ChatMessageStatus::Interrupted),
+            msg(
+                "u2",
+                "user",
+                "E il log inject?",
+                ChatMessageStatus::Complete,
+            ),
+            msg("a2", "assistant", "Partial", ChatMessageStatus::Error),
+            msg(
+                "a3",
+                "assistant",
+                "Full answer",
+                ChatMessageStatus::Complete,
+            ),
+        ];
+        let kept: Vec<_> = prompt_history(history).into_iter().map(|m| m.id).collect();
+        assert_eq!(kept, vec!["u1", "u2", "a3"]);
+    }
+
+    #[test]
+    fn plan_regeneration_returns_question_and_prior_history() {
+        let messages = vec![
+            msg("u1", "user", "First", ChatMessageStatus::Complete),
+            msg("a1", "assistant", "Answer", ChatMessageStatus::Complete),
+            msg("u2", "user", "Second", ChatMessageStatus::Complete),
+            msg("a2", "assistant", "Il", ChatMessageStatus::Interrupted),
+        ];
+        let (history, question) = plan_regeneration(messages, "a2").unwrap();
+        assert_eq!(question, "Second");
+        let ids: Vec<_> = history.into_iter().map(|m| m.id).collect();
+        assert_eq!(ids, vec!["u1", "a1"]);
+    }
+
+    #[test]
+    fn plan_regeneration_rejects_complete_or_older_answers() {
+        let messages = vec![
+            msg("u1", "user", "First", ChatMessageStatus::Complete),
+            msg("a1", "assistant", "Il", ChatMessageStatus::Interrupted),
+            msg("u2", "user", "Second", ChatMessageStatus::Complete),
+            msg("a2", "assistant", "Done", ChatMessageStatus::Complete),
+        ];
+        // Not the last message.
+        assert!(plan_regeneration(messages.clone(), "a1").is_err());
+        // Complete answers are not replaced.
+        assert!(plan_regeneration(messages, "a2").is_err());
+        // An answer without a question before it.
+        let orphan = vec![msg("a1", "assistant", "Il", ChatMessageStatus::Interrupted)];
+        assert!(plan_regeneration(orphan, "a1").is_err());
+    }
+
+    #[test]
+    fn done_event_serializes_status() {
+        let event = ChatEvent::Done {
+            message_id: Some("m1".into()),
+            status: ChatMessageStatus::Interrupted,
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["type"], "done");
+        assert_eq!(json["status"], "interrupted");
     }
 }

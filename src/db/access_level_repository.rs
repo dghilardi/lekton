@@ -299,7 +299,11 @@ impl AccessLevelRepository for MongoAccessLevelRepository {
             }
         }
 
-        Ok(effective.into_iter().collect())
+        // Sorted: a HashSet iterates in no particular order, and the result is
+        // stored on the user and shown to admins as is.
+        let mut levels: Vec<String> = effective.into_iter().collect();
+        levels.sort();
+        Ok(levels)
     }
 }
 

@@ -4,10 +4,8 @@
 //! that long-running LLM calls do not hit the GCP Load Balancer 30-second
 //! timeout that would occur with a non-streaming Leptos server function.
 
-use std::convert::Infallible;
-
 use axum::extract::{Query, State};
-use axum::response::sse::{Event, Sse};
+use axum::response::sse::Event;
 use futures::StreamExt;
 use serde::Deserialize;
 
@@ -34,7 +32,7 @@ pub async fn summary_stream_handler(
     RequiredAuthUser(user): RequiredAuthUser,
     State(state): State<AppState>,
     Query(params): Query<SummaryStreamQuery>,
-) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, AppError> {
+) -> Result<impl axum::response::IntoResponse, AppError> {
     if !user.is_admin {
         return Err(AppError::Forbidden("Admin privileges required".into()));
     }
@@ -98,5 +96,5 @@ pub async fn summary_stream_handler(
         yield Ok(Event::default().event("done").data("ok"));
     };
 
-    Ok(Sse::new(sse_stream))
+    Ok(super::sse::proxy_friendly(sse_stream))
 }

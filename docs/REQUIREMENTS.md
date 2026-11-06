@@ -311,7 +311,7 @@ backlog for search/RAG reconciliation.
 * **Performance:** The Rust binary should consume <100MB RAM under normal load.
 * **Availability:** Stateless backend allows for horizontal scaling (Kubernetes ReplicaSet).
 * **Maintainability:** Codebase must be a standard Cargo workspace. No forked frameworks.
-* **Style Customizability:** The application MUST allow users to inject custom CSS styles at runtime (e.g., via a settings UI or a specific CSS file) to override the default theme without requiring a project recompilation.
+* **Style Customizability:** The application MUST allow users to inject custom CSS styles at runtime (e.g., via a settings UI or a specific CSS file) to override the default theme without requiring a project recompilation. Theming is a documented interface of CSS custom properties (`--lekton-*` plus the DaisyUI palette, see `docs/theming.md`): components read their colours, fonts and radii from these variables, so a theme assigns variables rather than overriding component selectors. Defaults reproduce the stock look, and `data-lekton-*` attributes are stable hooks for what variables do not cover.
 * **Observability:** Integrated `tracing` (OpenTelemetry) for all requests. Errors logged to stdout/Sentry.
 
 ---

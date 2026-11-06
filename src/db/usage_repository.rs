@@ -16,6 +16,8 @@ pub struct UsageByModel {
     pub actor_kind: String,
     pub actor_id: Option<String>,
     pub model: String,
+    /// The [`LlmFeature`](crate::usage::LlmFeature) that made the calls.
+    pub feature: String,
     pub calls: u64,
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
@@ -89,7 +91,12 @@ impl UsageEventRepository for MongoUsageEventRepository {
         let pipeline = vec![
             doc! { "$match": { "created_at": { "$gte": mongodb::bson::DateTime::from_chrono(since) } } },
             doc! { "$group": {
-                "_id": { "actor_kind": "$actor_kind", "actor_id": "$actor_id", "model": "$model" },
+                "_id": {
+                    "actor_kind": "$actor_kind",
+                    "actor_id": "$actor_id",
+                    "model": "$model",
+                    "feature": "$feature",
+                },
                 "calls": { "$sum": 1 },
                 "prompt_tokens": { "$sum": "$prompt_tokens" },
                 "completion_tokens": { "$sum": "$completion_tokens" },
@@ -113,6 +120,7 @@ impl UsageEventRepository for MongoUsageEventRepository {
                     actor_kind: id.get_str("actor_kind").unwrap_or("unknown").to_string(),
                     actor_id: id.get_str("actor_id").ok().map(ToOwned::to_owned),
                     model: id.get_str("model").unwrap_or("unknown").to_string(),
+                    feature: id.get_str("feature").unwrap_or("unknown").to_string(),
                     calls: count(&row, "calls"),
                     prompt_tokens: count(&row, "prompt_tokens"),
                     completion_tokens: count(&row, "completion_tokens"),

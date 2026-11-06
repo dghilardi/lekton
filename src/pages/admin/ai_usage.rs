@@ -1,12 +1,16 @@
 use leptos::prelude::*;
 
-use crate::app::{list_top_consumers, ConsumerUsage};
+use crate::app::{credit_shares, format_count, format_credits, list_top_consumers, ConsumerUsage};
 use crate::auth::refresh_client::with_auth_retry;
 
 /// Windows offered for the report, in days.
 const WINDOWS: &[(u32, &str)] = &[(1, "24 hours"), (7, "7 days"), (30, "30 days")];
-/// Kept short: the point is to find the outliers, not to browse everyone.
-const LIMIT: usize = 25;
+/// Callers fetched: all of them in practice (the server caps at 200), so the
+/// totals and shares cover everyone, not just the rows shown.
+const FETCH_LIMIT: usize = 200;
+/// Rows shown. Kept short: the point is to find the outliers, not to browse
+/// everyone.
+const SHOWN: usize = 25;
 
 /// Who is spending on AI features, and how much.
 ///
@@ -19,7 +23,7 @@ pub fn AiUsageReport() -> impl IntoView {
 
     let consumers = LocalResource::new(move || {
         let window = days.get();
-        with_auth_retry(move || list_top_consumers(window, LIMIT))
+        with_auth_retry(move || list_top_consumers(window, FETCH_LIMIT))
     });
 
     view! {
@@ -72,7 +76,12 @@ pub fn AiUsageReport() -> impl IntoView {
                             }.into_any());
                         }
 
-                        let top = rows.first().map(|r| r.credits).unwrap_or(1.0).max(f64::EPSILON);
+                        let shares = credit_shares(&rows);
+                        let hidden = rows.len().saturating_sub(SHOWN);
+                        let total_calls: u64 = rows.iter().map(|r| r.calls).sum();
+                        let total_embedding_calls: u64 = rows.iter().map(|r| r.embedding_calls).sum();
+                        let total_tokens: u64 = rows.iter().map(|r| r.prompt_tokens + r.completion_tokens).sum();
+                        let total_credits: f64 = rows.iter().map(|r| r.credits).sum();
                         Some(view! {
                             <div class="overflow-x-auto">
                                 <table class="table table-sm">
@@ -82,18 +91,15 @@ pub fn AiUsageReport() -> impl IntoView {
                                             <th class="text-right">"Calls"</th>
                                             <th class="text-right">"Tokens"</th>
                                             <th class="text-right">"Credits"</th>
-                                            <th class="w-1/4">"Share"</th>
+                                            <th class="w-1/4">"Share of total"</th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {rows.iter().map(|row| {
+                                        {rows.iter().zip(shares).take(SHOWN).map(|(row, share)| {
                                             let caller = row.caller_label().to_string();
-                                            let ConsumerUsage { actor_kind, actor_id, calls, prompt_tokens, completion_tokens, credits, .. } = row.clone();
+                                            let ConsumerUsage { actor_kind, actor_id, calls, embedding_calls, prompt_tokens, completion_tokens, credits, .. } = row.clone();
                                             let tokens = prompt_tokens + completion_tokens;
-                                            // Relative to the top spender: the
-                                            // question this page answers is who
-                                            // stands out, not the absolute total.
-                                            let share = (credits / top * 100.0).clamp(0.0, 100.0);
+                                            let share_label = format!("{share:.1}%");
                                             view! {
                                                 <tr>
                                                     <td>
@@ -104,22 +110,61 @@ pub fn AiUsageReport() -> impl IntoView {
                                                             </span>
                                                         </div>
                                                     </td>
-                                                    <td class="text-right tabular-nums">{calls}</td>
-                                                    <td class="text-right tabular-nums">{tokens}</td>
+                                                    <td class="text-right tabular-nums">
+                                                        {format_count(calls)}
+                                                        // Embedding a query costs a few tokens: say how many
+                                                        // calls were embeddings, so a low tokens-per-call
+                                                        // figure does not read as missing data.
+                                                        {(embedding_calls > 0).then(|| view! {
+                                                            <div class="text-xs text-base-content/55 whitespace-nowrap">
+                                                                {format!("{} embeddings", format_count(embedding_calls))}
+                                                            </div>
+                                                        })}
+                                                    </td>
+                                                    <td class="text-right tabular-nums">{format_count(tokens)}</td>
                                                     <td class="text-right tabular-nums font-medium">
-                                                        {format!("{credits:.1}")}
+                                                        {format_credits(credits)}
                                                     </td>
                                                     <td>
-                                                        <progress
-                                                            class="progress progress-primary w-full"
-                                                            value=share
-                                                            max="100"
-                                                        ></progress>
+                                                        <div class="flex items-center gap-2">
+                                                            <progress
+                                                                class="progress progress-primary w-full"
+                                                                value=format!("{share:.1}")
+                                                                max="100"
+                                                                aria-label=format!("{share_label} of total credits")
+                                                            ></progress>
+                                                            <span class="w-12 shrink-0 text-right text-xs tabular-nums text-base-content/65">
+                                                                {share_label}
+                                                            </span>
+                                                        </div>
                                                     </td>
                                                 </tr>
                                             }
                                         }).collect::<Vec<_>>()}
                                     </tbody>
+                                    <tfoot>
+                                        <tr class="font-semibold">
+                                            <td>
+                                                {format!("Total, {} callers", format_count(rows.len() as u64))}
+                                                {(hidden > 0).then(|| view! {
+                                                    <div class="text-xs font-normal text-base-content/55">
+                                                        {format!("{hidden} smaller callers not listed")}
+                                                    </div>
+                                                })}
+                                            </td>
+                                            <td class="text-right tabular-nums">
+                                                {format_count(total_calls)}
+                                                {(total_embedding_calls > 0).then(|| view! {
+                                                    <div class="text-xs font-normal text-base-content/55 whitespace-nowrap">
+                                                        {format!("{} embeddings", format_count(total_embedding_calls))}
+                                                    </div>
+                                                })}
+                                            </td>
+                                            <td class="text-right tabular-nums">{format_count(total_tokens)}</td>
+                                            <td class="text-right tabular-nums">{format_credits(total_credits)}</td>
+                                            <td></td>
+                                        </tr>
+                                    </tfoot>
                                 </table>
                             </div>
                         }.into_any())

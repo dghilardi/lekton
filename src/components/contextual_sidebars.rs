@@ -99,7 +99,7 @@ fn SchemaTreeItem(node: SchemaTreeNode, #[prop(optional)] level: u32) -> impl In
         view! {
             <li>
                 <details open=is_in_active_branch>
-                    <summary class="hover:bg-base-200/50 transition-colors font-medium text-base-content/80 text-sm hover:text-base-content">
+                    <summary class="transition-colors font-medium text-sm">
                         <span class="truncate">{title.clone()}</span>
                     </summary>
                     <ul class="before:w-[1px] before:bg-base-300 ml-2 border-l border-base-200/50 mt-1">
@@ -109,7 +109,7 @@ fn SchemaTreeItem(node: SchemaTreeNode, #[prop(optional)] level: u32) -> impl In
                                     <a
                                         href=href
                                         aria-current=move || if is_active() { Some("page") } else { None }
-                                        class="hover:bg-base-200/50 hover:text-primary transition-colors text-base-content/70 text-sm py-1.5"
+                                        class="lekton-sidebar-link transition-colors text-sm py-1.5"
                                     >
                                         {"Overview"}
                                     </a>
@@ -132,12 +132,13 @@ fn SchemaTreeItem(node: SchemaTreeNode, #[prop(optional)] level: u32) -> impl In
                 <a
                     href=href
                     aria-current=move || if is_active() { Some("page") } else { None }
-                    class="hover:bg-base-200/50 hover:text-primary transition-colors text-base-content/70 text-sm py-1.5"
+                    class="lekton-sidebar-link transition-colors text-sm py-1.5"
                 >
                     {title}
                 </a>
             </li>
-        }.into_any()
+        }
+        .into_any()
     }
 }
 
@@ -349,18 +350,17 @@ pub fn ChatSidebar() -> impl IntoView {
                                 let sid_delete = session.id.clone();
                                 let is_active = {
                                     let sid = session.id.clone();
-                                    move || session_id.get().as_deref() == Some(&sid)
+                                    Memo::new(move |_| session_id.get().as_deref() == Some(sid.as_str()))
                                 };
                                 view! {
                                     <li class="relative group/session list-none">
+                                        // Colours come from the --lekton-sidebar-* tokens.
                                         <button
+                                            data-lekton-chat-session
+                                            aria-current=move || is_active.get().then_some("true")
                                             class=move || format!(
                                                 "w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs transition-colors text-left pr-7 {}",
-                                                if is_active() {
-                                                    "bg-primary/10 text-primary font-medium"
-                                                } else {
-                                                    "text-base-content/60 hover:bg-base-300/60 hover:text-base-content"
-                                                }
+                                                if is_active.get() { "font-medium" } else { "" }
                                             )
                                             on:click={
                                                 let sid = sid_click.clone();

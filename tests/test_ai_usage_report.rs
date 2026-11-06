@@ -152,3 +152,35 @@ async fn report_does_not_disclose_user_emails_to_non_admins() {
         assert!(!response.text().contains("person@test.com"));
     }
 }
+
+#[tokio::test]
+async fn report_counts_embedding_calls_separately() {
+    let env = common::TestEnv::start().await;
+    let admin = env
+        .create_test_user("admin-1", "admin@test.com", true)
+        .await;
+    let repo = MongoUsageEventRepository::new(&env.db);
+    let mut embedding = event("user", Some("user-1"), "embed-model");
+    embedding.feature = "embedding".into();
+    embedding.completion_tokens = 0;
+    repo.record_events(vec![
+        embedding.clone(),
+        embedding,
+        event("user", Some("user-1"), "chat-model"),
+    ])
+    .await
+    .unwrap();
+
+    let response = report_server(&env, false)
+        .post(ListTopConsumers::PATH)
+        .add_cookie(env.auth_cookie(&admin))
+        .form(&ListTopConsumers { days: 7, limit: 25 })
+        .await;
+    response.assert_status_ok();
+    let rows: Vec<ConsumerUsage> = response.json();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].calls, 3);
+    assert_eq!(rows[0].embedding_calls, 2);
+    assert_eq!(rows[0].prompt_tokens, 30);
+    assert_eq!(rows[0].completion_tokens, 5);
+}

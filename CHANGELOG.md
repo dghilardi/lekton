@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Improve code toolbar and light syntax contrast while preserving the existing syntax palette.
+
 - Guide readers with no visible documentation or schemas to sign in, avoid duplicate home destinations, and give the brand and theme controls descriptive accessible names.
 
 - Keep global search modal focus isolated, restore its trigger on close, expose search result semantics and provide a visible close action.

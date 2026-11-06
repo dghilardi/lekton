@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.39.0] 2026-11-06
+
 ### Security
 - Updated Markdown parsing and AWS cryptography dependencies, and documented temporary audit exceptions for transitive dependencies without compatible upgrades.
 

@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - Theming interface: `--lekton-header-*`, `--lekton-sidebar-*`, `--lekton-code-*`, link, heading, table and font variables, plus stable `data-lekton-*` hooks, so a custom theme only assigns variables. Documented in `docs/theming.md` and listed in Admin → Custom CSS. With no custom CSS the look is unchanged.
 
 ### Changed
+- Admin → Users: search by email or name, filters by access level and admin role, and names next to emails. Access levels are listed in name order, and effective levels are stored sorted.
 - Admin → Documentation Feedback is a compact list that expands one item at a time; `lekton://docs/…` URIs link to the document, "Duplicate of" is picked from the existing items by title, and kinds and statuses use readable labels.
 
 ### Fixed

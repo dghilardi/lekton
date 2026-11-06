@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 - Theming interface: `--lekton-header-*`, `--lekton-sidebar-*`, `--lekton-code-*`, link, heading, table and font variables, plus stable `data-lekton-*` hooks, so a custom theme only assigns variables. Documented in `docs/theming.md` and listed in Admin → Custom CSS. With no custom CSS the look is unchanged.
 
 ### Fixed
+- Wide Markdown tables made the whole page scroll sideways on phones; tables now scroll inside their own box.
 - Chat history titles were unreadable in a dark sidebar set by custom CSS; sidebar entries now follow the sidebar colours.
 - The code block copy button kept the page text colour on dark code backgrounds; it now uses the code colours, and `--lekton-code-scheme` switches to the dark syntax palette.
 - Chat answers cut off mid-stream (a proxy timeout, the LLM gateway closing the connection) were saved as complete. They are now saved as interrupted, shown with a warning and a Regenerate button, and left out of the context of the next question.

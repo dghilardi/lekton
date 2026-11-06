@@ -933,6 +933,20 @@ html[data-theme] .prose pre.mermaid:has(.mermaid-expand-btn) {
     font-size:       0.9em;
 }
 
+/* Tables scroll inside their own box (added by the Markdown renderer), so a
+ * wide table never makes the whole page scroll sideways on a phone. */
+.prose .lekton-table-scroll {
+    max-width:     100%;
+    overflow-x:    auto;
+    margin-top:    1.8em;
+    margin-bottom: 1.8em;
+}
+
+.prose .lekton-table-scroll > table {
+    margin-top:    0;
+    margin-bottom: 0;
+}
+
 .prose thead {
     border-bottom:    2px solid var(--lekton-table-border);
     background-color: var(--lekton-table-header-bg);

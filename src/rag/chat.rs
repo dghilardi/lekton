@@ -2183,6 +2183,35 @@ mod tests {
     }
 
     #[test]
+    fn usage_reported_after_the_finish_chunk_is_kept() {
+        // Shape observed from an OpenAI-compatible gateway: the usage chunk
+        // comes after the `stop` chunk and still carries one choice, with an
+        // empty delta and no finish reason.
+        let usage_with_choice: CreateChatCompletionStreamResponse =
+            serde_json::from_value(serde_json::json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1,
+                "model": "test-model",
+                "choices": [{ "index": 0, "delta": {}, "finish_reason": null }],
+                "usage": {
+                    "prompt_tokens": 1830,
+                    "completion_tokens": 211,
+                    "total_tokens": 2041,
+                    "completion_tokens_details": { "reasoning_tokens": 0 },
+                },
+            }))
+            .unwrap();
+        let mut answer = AnswerAccumulator::default();
+        answer.push(&stream_chunk(Some("Ciao"), None));
+        answer.push(&stream_chunk(None, Some("stop")));
+        answer.push(&usage_with_choice);
+        assert_eq!(answer.status(), ChatMessageStatus::Complete);
+        let usage = answer.usage.as_ref().expect("usage kept");
+        assert_eq!((usage.prompt_tokens, usage.completion_tokens), (1830, 211));
+    }
+
+    #[test]
     fn stream_stopped_at_output_cap_is_complete_but_flagged() {
         let mut answer = AnswerAccumulator::default();
         answer.push(&stream_chunk(Some("Long answer"), Some("length")));

@@ -12,6 +12,12 @@
  *
  * The file is loaded LAST, so every rule here overrides the defaults.
  *
+ * A theme should only assign variables: besides the ones below there are
+ * --lekton-header-*, --lekton-sidebar-*, --lekton-code-*, --lekton-link-*,
+ * --lekton-heading-* and --lekton-table-* tokens for the header, sidebar,
+ * code blocks and page content. Full reference and an example theme:
+ * docs/theming.md.
+ *
  * ═══════════════════════════════════════════════════════════════════
  * SECTION 1 — Brand colors (DaisyUI 5 format)
  * ═══════════════════════════════════════════════════════════════════
@@ -65,6 +71,10 @@
  * ═══════════════════════════════════════════════════════════════════
  * SECTION 4 — Code block colors
  * ═══════════════════════════════════════════════════════════════════
+ *
+ * Code block surface: --lekton-code-bg, --lekton-code-text,
+ * --lekton-code-border. Set --lekton-code-scheme: dark when a light theme
+ * gives code blocks a dark background, to switch to the dark syntax palette.
  *
  * Syntax highlighting colors, per theme. Available tokens:
  * keyword, string, comment, constant, function, type, variable,

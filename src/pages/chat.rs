@@ -617,6 +617,7 @@ fn ChatContent() -> impl IntoView {
                         <div class="absolute -inset-0.5 bg-gradient-to-r from-primary/20 to-secondary/20 rounded-2xl blur opacity-0 group-focus-within:opacity-100 transition duration-300"></div>
                         <div class="relative flex items-end gap-3 bg-base-100 border border-base-200 shadow-xl rounded-2xl px-4 py-3 transition-all group-focus-within:border-primary/50 group-focus-within:ring-2 group-focus-within:ring-primary/10">
                             <textarea
+                                data-lekton-chat-input
                                 class="w-full bg-transparent outline-none border-0 resize-none text-sm text-base-content placeholder:text-base-content/65 leading-6 overflow-y-hidden"
                                 style="height: 24px; min-height: 24px;"
                                 placeholder="Type your message..."

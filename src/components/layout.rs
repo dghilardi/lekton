@@ -89,7 +89,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                             {t1_standalone.into_iter().map(|item| {
                                 view! {
                                     <a href=crate::components::pinned_doc_href(&format!("/docs/{}", item.slug))
-                                       class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">
+                                       class="btn btn-ghost btn-sm font-normal lekton-header-link">
                                         {item.title}
                                     </a>
                                 }
@@ -106,7 +106,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                 view! {
                                     <div class="dropdown dropdown-hover dropdown-bottom">
                                         <div tabindex="0" role="button" aria-haspopup="menu"
-                                             class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50 m-1">
+                                             class="btn btn-ghost btn-sm font-normal lekton-header-link m-1">
                                             {group.title.clone()}
                                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="ml-1 opacity-60"><path d="m6 9 6 6 6-6"/></svg>
                                         </div>
@@ -127,7 +127,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                 view! {
                                     <div class="dropdown dropdown-hover dropdown-bottom shrink-0">
                                         <div tabindex="0" role="button" aria-haspopup="menu"
-                                             class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50 m-1">
+                                             class="btn btn-ghost btn-sm font-normal lekton-header-link m-1">
                                             "Altro"
                                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="ml-1 opacity-60"><path d="m6 9 6 6 6-6"/></svg>
                                         </div>
@@ -159,7 +159,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
 
                             <div class="flex items-center gap-2 shrink-0">
                             {move || if schema_enabled.get() { view! {
-                            <a href="/schemas" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">
+                            <a href="/schemas" class="btn btn-ghost btn-sm font-normal lekton-header-link">
                                 "Registry"
                             </a>
                             }.into_any() } else { view! { <span></span> }.into_any() }}
@@ -167,7 +167,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                 let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
                                 let rag_enabled = is_rag.map(|sig| sig.0.get()).unwrap_or(false);
                                 if logged_in && rag_enabled {
-                                    view! { <a href="/chat" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">"Chat"</a> }.into_any()
+                                    view! { <a href="/chat" class="btn btn-ghost btn-sm font-normal lekton-header-link">"Chat"</a> }.into_any()
                                 } else {
                                     view! { <span></span> }.into_any()
                                 }
@@ -175,7 +175,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                             {move || {
                                 let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
                                 if logged_in && learn_enabled.get() {
-                                    view! { <a href="/learn" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">"Learn"</a> }.into_any()
+                                    view! { <a href="/learn" class="btn btn-ghost btn-sm font-normal lekton-header-link">"Learn"</a> }.into_any()
                                 } else {
                                     view! { <span></span> }.into_any()
                                 }
@@ -183,7 +183,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                             {move || {
                                 let is_admin = current_user.and_then(|sig| sig.get()).map(|u| u.is_admin).unwrap_or(false);
                                 if is_admin {
-                                    view! { <a href="/admin/tokens" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">"Admin"</a> }.into_any()
+                                    view! { <a href="/admin/tokens" class="btn btn-ghost btn-sm font-normal lekton-header-link">"Admin"</a> }.into_any()
                                 } else {
                                     view! { <span></span> }.into_any()
                                 }
@@ -196,7 +196,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                             <div class="flex flex-1 items-center min-w-0 overflow-x-clip">
                             <div class="dropdown dropdown-hover dropdown-bottom">
                                 <div tabindex="0" role="button" aria-haspopup="menu"
-                                     class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50 m-1">
+                                     class="btn btn-ghost btn-sm font-normal lekton-header-link m-1">
                                     "Docs"
                                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="ml-1 opacity-60"><path d="m6 9 6 6 6-6"/></svg>
                                 </div>
@@ -225,7 +225,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
 
                             <div class="flex items-center gap-2 shrink-0">
                             {move || if schema_enabled.get() { view! {
-                            <a href="/schemas" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">
+                            <a href="/schemas" class="btn btn-ghost btn-sm font-normal lekton-header-link">
                                 "Registry"
                             </a>
                             }.into_any() } else { view! { <span></span> }.into_any() }}
@@ -233,7 +233,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                 let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
                                 let rag_enabled = is_rag.map(|sig| sig.0.get()).unwrap_or(false);
                                 if logged_in && rag_enabled {
-                                    view! { <a href="/chat" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">"Chat"</a> }.into_any()
+                                    view! { <a href="/chat" class="btn btn-ghost btn-sm font-normal lekton-header-link">"Chat"</a> }.into_any()
                                 } else {
                                     view! { <span></span> }.into_any()
                                 }
@@ -241,7 +241,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                             {move || {
                                 let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
                                 if logged_in && learn_enabled.get() {
-                                    view! { <a href="/learn" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">"Learn"</a> }.into_any()
+                                    view! { <a href="/learn" class="btn btn-ghost btn-sm font-normal lekton-header-link">"Learn"</a> }.into_any()
                                 } else {
                                     view! { <span></span> }.into_any()
                                 }
@@ -249,7 +249,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                             {move || {
                                 let is_admin = current_user.and_then(|sig| sig.get()).map(|u| u.is_admin).unwrap_or(false);
                                 if is_admin {
-                                    view! { <a href="/admin/tokens" class="btn btn-ghost btn-sm font-normal text-base-content/80 hover:text-base-content hover:bg-base-200/50">"Admin"</a> }.into_any()
+                                    view! { <a href="/admin/tokens" class="btn btn-ghost btn-sm font-normal lekton-header-link">"Admin"</a> }.into_any()
                                 } else {
                                     view! { <span></span> }.into_any()
                                 }
@@ -261,7 +261,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                         <div class="flex lg:hidden items-center">
                             <div class="dropdown dropdown-bottom">
                                 <div tabindex="0" role="button" aria-haspopup="menu"
-                                     class="btn btn-ghost btn-sm gap-1.5 px-2.5 text-base-content/80 hover:text-base-content hover:bg-base-200/50"
+                                     class="btn btn-ghost btn-sm gap-1.5 px-2.5 lekton-header-link"
                                      aria-label="Navigation menu">
                                     // Grid icon — distinct from the sidebar drawer's hamburger
                                     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
@@ -361,7 +361,8 @@ pub fn Layout(children: Children) -> impl IntoView {
 
         <div class="min-h-screen bg-base-100/50">
             // Navbar
-            <header class="bg-base-100/80 backdrop-blur-md fixed top-0 inset-x-0 z-50 border-b border-base-200 px-4 h-16 flex items-center gap-2 shadow-sm lekton-header-enter">
+            // Colours come from the --lekton-header-* theming tokens (see style/tailwind.css).
+            <header data-lekton-header class="bg-base-100/80 backdrop-blur-md fixed top-0 inset-x-0 z-50 border-b border-base-200 px-4 h-16 flex items-center gap-2 shadow-sm lekton-header-enter">
                 // Left — shrinks only when space is truly exhausted
                 <div class="flex items-center gap-2 min-w-0 flex-1">
                     <Show when=move || has_context_sidebar.get()>
@@ -450,7 +451,8 @@ pub fn Layout(children: Children) -> impl IntoView {
                 <Show when=move || has_context_sidebar.get()>
                     <div class="drawer-side z-40">
                         <label for="sidebar-drawer" aria-label="close sidebar" class="drawer-overlay"></label>
-                        <div class="menu bg-base-200 min-h-full h-[calc(100vh-4rem)] w-[var(--lekton-sidebar-width)] p-4 text-base-content border-r border-base-300 pt-6 overflow-y-auto block">
+                        // Colours come from the --lekton-sidebar-* theming tokens.
+                        <div data-lekton-sidebar class="menu bg-base-200 min-h-full h-[calc(100vh-4rem)] w-[var(--lekton-sidebar-width)] p-4 text-base-content border-r border-base-300 pt-6 overflow-y-auto block">
                             {move || {
                                 let path = path.get();
 

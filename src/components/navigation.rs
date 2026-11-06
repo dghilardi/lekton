@@ -25,7 +25,7 @@ pub fn NavigationItem(item: NavItem, #[prop(optional)] level: u32) -> impl IntoV
             view! {
                 <li>
                     <details open=true>
-                        <summary class="hover:bg-base-200/50 transition-colors font-medium text-base-content/80 text-sm hover:text-base-content">{item.title}</summary>
+                        <summary class="transition-colors font-medium text-sm">{item.title}</summary>
                         <ul class="before:w-[1px] before:bg-base-300 ml-2 border-l border-base-200/50 mt-1">
                             {children.into_iter().map(|child| {
                                 view! {
@@ -47,12 +47,13 @@ pub fn NavigationItem(item: NavItem, #[prop(optional)] level: u32) -> impl IntoV
                 <a
                     href=move || crate::components::pinned_doc_href(&path)
                     aria-current=move || if is_active() { Some("page") } else { None }
-                    class="hover:bg-base-200/50 hover:text-primary transition-colors text-base-content/70 text-sm py-1.5"
+                    class="lekton-sidebar-link transition-colors text-sm py-1.5"
                 >
                     {item.title}
                 </a>
             </li>
-        }.into_any()
+        }
+        .into_any()
     }
 }
 

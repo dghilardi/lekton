@@ -29,6 +29,10 @@ pub use crate::server::sources::*;
 pub use crate::server::usage::*;
 pub use crate::server::users::*;
 
+/// True once the authentication bootstrap successfully resolves, including anonymous users.
+#[derive(Clone, Copy)]
+pub struct AuthResolved(pub Signal<bool>);
+
 /// Newtype wrapper for the demo-mode signal, used as Leptos context.
 #[derive(Clone, Copy)]
 pub struct IsDemoMode(pub Signal<bool>);
@@ -361,6 +365,9 @@ pub fn App() -> impl IntoView {
     });
 
     provide_context(current_user);
+    provide_context(AuthResolved(Signal::derive(move || {
+        matches!(user_resource.get(), Some(Ok(_)))
+    })));
     provide_context(IsDemoMode(is_demo_mode));
     provide_context(IsRagEnabled(is_rag_enabled));
     provide_context(Features(features));

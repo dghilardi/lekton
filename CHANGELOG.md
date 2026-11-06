@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Keep the home action neutral until authentication and navigation resolve, and keep keyboard-selected search results visible while scrolling.
+
 - Improve code toolbar and light syntax contrast while preserving the existing syntax palette.
 
 - Guide readers with no visible documentation or schemas to sign in, avoid duplicate home destinations, and give the brand and theme controls descriptive accessible names.

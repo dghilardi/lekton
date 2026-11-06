@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Chat answers cut off mid-stream (a proxy timeout, the LLM gateway closing the connection) were saved as complete. They are now saved as interrupted, shown with a warning and a Regenerate button, and left out of the context of the next question.
+- Chat streams send `X-Accel-Buffering: no` and a keep-alive every 15 seconds, so buffering reverse proxies forward them live; an answer is still finished and saved when the browser disconnects.
+
 ## [0.38.1] 2026-10-22
 
 ### Fixed

@@ -500,10 +500,10 @@ Most write endpoints are driven by the [`lekton-sync`](cli/README.md) CLI in CI/
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/v1/rag/chat` | Streamed chat completion (SSE) over the corpus |
+| `POST` | `/api/v1/rag/chat` | Streamed chat completion (SSE) over the corpus. `regenerate_message_id` (with `session_id`) replaces the session's last unfinished answer; the final `done` event carries the answer's `status` (`complete`, `interrupted`, `error`) |
 | `GET` | `/api/v1/rag/sessions` | List the user's chat sessions |
 | `DELETE` | `/api/v1/rag/sessions/{id}` | Delete a session |
-| `GET` | `/api/v1/rag/sessions/{id}/messages` | Load a session's messages |
+| `GET` | `/api/v1/rag/sessions/{id}/messages` | Load a session's messages (each with its `status`) |
 | `POST`/`DELETE` | `/api/v1/rag/messages/{id}/feedback` | Submit / clear feedback on an answer |
 
 ### Personal Access Tokens (authenticated user)

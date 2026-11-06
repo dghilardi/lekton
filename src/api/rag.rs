@@ -18,7 +18,8 @@ use std::sync::atomic::Ordering;
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::response::sse::{Event, Sse};
+use axum::response::sse::Event;
+use axum::response::IntoResponse;
 use axum::Json;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -26,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use crate::app::AppState;
 use crate::auth::extractor::RequiredAuthUser;
 use crate::auth::models::UserContext;
-use crate::db::chat_models::{FeedbackRating, SourceReference};
+use crate::db::chat_models::{ChatMessageStatus, FeedbackRating, SourceReference};
 use crate::db::feedback_repository::FeedbackListParams;
 use crate::error::AppError;
 
@@ -144,7 +145,13 @@ pub async fn reindex_status_handler(
 #[derive(Deserialize)]
 pub struct ChatRequest {
     pub session_id: Option<String>,
+    /// The question. Ignored when regenerating.
+    #[serde(default)]
     pub message: String,
+    /// Replace this unfinished answer (the session's last message) with a new
+    /// one instead of asking a new question. Requires `session_id`.
+    #[serde(default)]
+    pub regenerate_message_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -164,6 +171,8 @@ pub struct SessionMessageResponse {
     pub sources: Option<Vec<SourceReference>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub feedback: Option<serde_json::Value>,
+    /// Whether the answer is complete, interrupted or failed.
+    pub status: ChatMessageStatus,
 }
 
 /// `POST /api/v1/rag/chat` — stream a RAG chat response (requires auth).
@@ -171,7 +180,7 @@ pub async fn chat_handler(
     RequiredAuthUser(user): RequiredAuthUser,
     State(state): State<AppState>,
     Json(request): Json<ChatRequest>,
-) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, AppError> {
+) -> Result<impl IntoResponse, AppError> {
     let chat_svc = state
         .chat_service
         .as_ref()
@@ -180,18 +189,42 @@ pub async fn chat_handler(
     // Build UserContext for access-level filtering
     let user_ctx = build_user_context(&state, &user).await?;
 
-    let event_stream = chat_svc
-        .stream_response(&user_ctx, request.session_id, request.message)
-        .await?;
+    let mut event_stream = match request.regenerate_message_id {
+        Some(message_id) => {
+            let session_id = request.session_id.ok_or_else(|| {
+                AppError::BadRequest("regenerate_message_id requires session_id".into())
+            })?;
+            chat_svc
+                .regenerate_response(&user_ctx, session_id, message_id)
+                .await?
+        }
+        None => {
+            chat_svc
+                .stream_response(&user_ctx, request.session_id, request.message)
+                .await?
+        }
+    };
 
-    let sse_stream = event_stream.map(|event| {
-        let data = serde_json::to_string(&event).unwrap_or_default();
-        Ok::<_, Infallible>(Event::default().data(data))
+    // Drive the generation on its own task. When the client goes away — tab
+    // closed, proxy timeout — the answer is still finished and saved with its
+    // real status; only the forwarding stops.
+    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+    tokio::spawn(async move {
+        while let Some(event) = event_stream.next().await {
+            let _ = tx.send(event).await;
+        }
     });
+
+    let sse_stream = async_stream::stream! {
+        while let Some(event) = rx.recv().await {
+            let data = serde_json::to_string(&event).unwrap_or_default();
+            yield Ok::<_, Infallible>(Event::default().data(data));
+        }
+    };
 
     metrics::counter!("lekton_rag_chat_messages_total").increment(1);
 
-    Ok(Sse::new(sse_stream))
+    Ok(super::sse::proxy_friendly(sse_stream))
 }
 
 /// `GET /api/v1/rag/sessions` — list the authenticated user's chat sessions.
@@ -284,6 +317,7 @@ pub async fn get_session_messages_handler(
             content: m.content,
             sources,
             feedback,
+            status: m.status,
         });
     }
 

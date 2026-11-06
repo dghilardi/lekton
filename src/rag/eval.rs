@@ -365,6 +365,10 @@ impl ChatRepository for NoopChatRepository {
     async fn get_message_by_id(&self, _id: &str) -> Result<Option<ChatMessage>, AppError> {
         Ok(None)
     }
+
+    async fn delete_message(&self, _id: &str) -> Result<(), AppError> {
+        Ok(())
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

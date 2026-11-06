@@ -171,6 +171,7 @@ mod tests {
             role: role.into(),
             content: content.into(),
             sources: None,
+            status: Default::default(),
             created_at: Utc::now(),
         }
     }

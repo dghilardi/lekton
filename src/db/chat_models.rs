@@ -74,6 +74,31 @@ pub struct ChatSession {
     pub updated_at: DateTime<Utc>,
 }
 
+/// How an assistant message ended.
+///
+/// Messages stored before this field existed deserialize as [`Complete`],
+/// which is what the old code assumed for every saved answer.
+///
+/// [`Complete`]: ChatMessageStatus::Complete
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatMessageStatus {
+    /// The model finished the answer (it reported a finish reason).
+    #[default]
+    Complete,
+    /// The token stream ended before the model finished, e.g. because a
+    /// proxy or the provider closed the connection mid-answer.
+    Interrupted,
+    /// The token stream failed with an error partway through.
+    Error,
+}
+
+impl ChatMessageStatus {
+    pub fn is_complete(self) -> bool {
+        self == Self::Complete
+    }
+}
+
 /// A single message in a chat session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
@@ -88,6 +113,9 @@ pub struct ChatMessage {
     /// Source references used to generate this response (assistant messages only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sources: Option<Vec<SourceReference>>,
+    /// Whether the answer is complete. Always `Complete` for user messages.
+    #[serde(default)]
+    pub status: ChatMessageStatus,
     #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub created_at: DateTime<Utc>,
 }
@@ -113,6 +141,7 @@ mod tests {
                 attachment_key: None,
                 source_page: None,
             }]),
+            status: ChatMessageStatus::Complete,
             created_at: Utc::now(),
         };
 
@@ -143,5 +172,28 @@ mod tests {
 
         let decoded: ChatMessage = serde_json::from_str(json).unwrap();
         assert!(decoded.sources.is_none());
+    }
+
+    #[test]
+    fn chat_message_without_status_is_complete() {
+        let json = r#"{
+            "id":"m1",
+            "session_id":"s1",
+            "role":"assistant",
+            "content":"Answer",
+            "created_at":{"$date":{"$numberLong":"1704067200000"}}
+        }"#;
+
+        let decoded: ChatMessage = serde_json::from_str(json).unwrap();
+        assert_eq!(decoded.status, ChatMessageStatus::Complete);
+    }
+
+    #[test]
+    fn chat_message_status_roundtrips_as_snake_case() {
+        let json = serde_json::to_string(&ChatMessageStatus::Interrupted).unwrap();
+        assert_eq!(json, r#""interrupted""#);
+        let decoded: ChatMessageStatus = serde_json::from_str(r#""error""#).unwrap();
+        assert_eq!(decoded, ChatMessageStatus::Error);
+        assert!(!decoded.is_complete());
     }
 }

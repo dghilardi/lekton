@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Refreshed the validated design-system sidecar for `DESIGN.md`.
+
 ## [0.39.0] 2026-11-06
 
 ### Security

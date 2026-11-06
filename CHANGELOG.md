@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Guide readers with no visible documentation or schemas to sign in, avoid duplicate home destinations, and give the brand and theme controls descriptive accessible names.
+
 - Keep global search modal focus isolated, restore its trigger on close, expose search result semantics and provide a visible close action.
 - Make mobile section navigation keyboard accessible, add a skip link and main/navigation landmarks, and remove the invisible drawer tab stop.
 

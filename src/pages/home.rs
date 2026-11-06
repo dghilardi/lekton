@@ -20,6 +20,7 @@ pub fn HomePage() -> impl IntoView {
     // The landing page follows the URL's release pins like the rest of the
     // shell, through the layout's shared navigation.
     let navigation_resource = crate::components::use_navigation();
+    let current_user = expect_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
     let schema_registry_enabled = crate::app::use_feature(|f| f.schema_registry);
 
     let get_started_href = Signal::derive(move || {
@@ -29,7 +30,7 @@ pub fn HomePage() -> impl IntoView {
             .and_then(|items| first_doc_href(&items))
             .map(|href| crate::components::pinned_doc_href(&href))
             .unwrap_or_else(|| {
-                if schema_registry_enabled.get() {
+                if current_user.get().is_some() && schema_registry_enabled.get() {
                     "/schemas".to_string()
                 } else {
                     "/login".to_string()
@@ -45,11 +46,11 @@ pub fn HomePage() -> impl IntoView {
                     <p class="py-6 text-lg text-base-content/70 text-pretty">
                         "Your dynamic Internal Developer Portal. Search documentation, explore API schemas, and collaborate — all in one place."
                     </p>
-                    <div class="flex gap-4 justify-center">
+                    <div class="flex flex-wrap gap-4 justify-center">
                         <a href=get_started_href class="btn btn-primary btn-lg">
-                            "Get Started"
+                            {move || if get_started_href.get() == "/login" { "Log in to explore" } else { "Get Started" }}
                         </a>
-                        <Show when=move || schema_registry_enabled.get()>
+                        <Show when=move || schema_registry_enabled.get() && get_started_href.get() != "/schemas">
                             <a href="/schemas" class="btn btn-outline btn-lg">
                                 "API Schemas"
                             </a>

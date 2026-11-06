@@ -79,3 +79,12 @@ test('search failure offers a readable recovery message', async ({ page }) => {
   await page.getByRole('button', { name: 'Close search' }).click();
   await expect(page.getByRole('dialog')).not.toBeVisible();
 });
+
+test('anonymous empty portal offers sign-in without duplicate primary destinations', async ({ page }) => {
+  await page.route('**/api/get_navigation*', route => route.fulfill({ contentType: 'application/json', body: '[]' }));
+  await page.goto('/');
+  await expect(page.getByRole('link', { name: 'Log in to explore' })).toHaveAttribute('href', '/login');
+  await expect(page.getByRole('link', { name: 'API Schemas', exact: true })).toHaveAttribute('href', '/schemas');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole('link', { name: 'Lekton home', exact: true })).toBeVisible();
+});

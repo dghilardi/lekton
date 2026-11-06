@@ -55,6 +55,7 @@ pub async fn get_schema_content(name: String, version: String) -> Result<String,
 #[component]
 pub fn SchemaListPage() -> impl IntoView {
     let schemas_resource = LocalResource::new(|| with_auth_retry(list_schemas));
+    let current_user = expect_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
 
     view! {
         <div>
@@ -76,7 +77,14 @@ pub fn SchemaListPage() -> impl IntoView {
                                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                                     </svg>
-                                    <span>"No schemas registered yet. Use the ingestion API to add schemas."</span>
+                                    <div>
+                                        <p>"No schemas available to you."</p>
+                                        {move || match current_user.get() {
+                                            None => view! { <a href="/login" class="link">"Log in to see the schemas you can access."</a> }.into_any(),
+                                            Some(user) if user.is_admin => view! { <p>"Use the ingestion API to add schemas."</p> }.into_any(),
+                                            Some(_) => view! { <p>"Contact your portal administrator if you expected access."</p> }.into_any(),
+                                        }}
+                                    </div>
                                 </div>
                             }.into_any()
                         }

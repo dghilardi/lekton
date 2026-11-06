@@ -16,7 +16,8 @@ ignore = [
     { id = "RUSTSEC-2024-0384", reason = "instant: transitive via async-openai's backoff, unmaintained, no alternative" },
     { id = "RUSTSEC-2023-0071", reason = "rsa: transitive via openidconnect, only used for public-key signature verification; Marvin Attack targets private-key operations and no patched rsa release exists" },
     { id = "RUSTSEC-2025-0141", reason = "bincode: transitive via syntect (used for syntax set serialization); governance issue, not a security vulnerability, no alternative in syntect" },
-    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2: transitive via leptos/leptos_router/reactive_stores macros; no stable upstream release removes it yet, and even leptos 0.9.0-alpha still depends on it" },
+    { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5.x: pinned by openidconnect 4.x through elliptic-curve; Lekton only verifies ECDSA signatures with public keys on this path. AWS signing uses patched crypto-bigint 0.7.x. Remove when a compatible stable OIDC release upgrades the ECDSA stack" },
+    { id = "RUSTSEC-2026-0440", reason = "astral-tokio-tar: maintenance-only advisory, dev-only via testcontainers for local integration-test containers; even testcontainers 0.28.0 still requires it. Remove when a compatible testcontainers release migrates to a maintained archive crate" },
 ]
 
 # License policy

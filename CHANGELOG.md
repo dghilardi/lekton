@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+- Updated Markdown parsing and AWS cryptography dependencies, and documented temporary audit exceptions for transitive dependencies without compatible upgrades.
+
 ### Added
 - Prompt library: filters by owner, tag, context cost and favorites, a compact list, and a detail view with the prompt text, its variables and a copy button.
 - Theming interface: `--lekton-header-*`, `--lekton-sidebar-*`, `--lekton-code-*`, link, heading, table and font variables, plus stable `data-lekton-*` hooks, so a custom theme only assigns variables. Documented in `docs/theming.md` and listed in Admin → Custom CSS. With no custom CSS the look is unchanged.

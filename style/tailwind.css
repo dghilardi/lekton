@@ -1243,3 +1243,37 @@ html.lekton-play .lekton-splash {
  * Mount public/custom.css (or a Docker volume) to override
  * any variable or rule without recompiling.
  */
+
+/* Native search modality keeps keyboard focus and the background isolated. */
+.lekton-search-dialog {
+    width: min(42rem, calc(100% - 2rem));
+    max-height: calc(100dvh - min(5rem, 6dvh) - 1rem);
+    margin: min(5rem, 6dvh) auto 0;
+    padding: 0;
+    border: 1px solid var(--color-base-300);
+    overflow: hidden;
+}
+.lekton-search-dialog[open] { display: flex; flex-direction: column; }
+.lekton-search-dialog::backdrop { background: rgb(0 0 0 / 50%); backdrop-filter: blur(4px); }
+.lekton-search-dialog > :first-child + div,
+.lekton-search-dialog > :last-child { flex-shrink: 0; }
+@media (pointer: coarse) { .lekton-search-hints { display: none; } }
+
+.lekton-skip-link {
+    position: fixed;
+    top: .5rem;
+    left: .5rem;
+    z-index: 250;
+    transform: translateY(-200%);
+    padding: .75rem 1rem;
+    background: var(--color-base-100);
+    color: var(--color-base-content);
+    border: 2px solid var(--color-primary);
+}
+.lekton-skip-link:focus { transform: translateY(0); }
+#content { scroll-margin-top: 5rem; }
+
+/* DaisyUI delays visibility on opening; focus must enter the drawer immediately. */
+.drawer-toggle:checked ~ .drawer-side {
+    transition: opacity 0.2s ease-out;
+}

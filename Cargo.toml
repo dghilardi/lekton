@@ -129,6 +129,7 @@ web-sys = { version = "0.3", features = [
     "Url",
     "UrlSearchParams",
     "HtmlElement",
+    "HtmlDialogElement",
     "Performance",
     "ReadableStream",
     "ReadableStreamDefaultReader",

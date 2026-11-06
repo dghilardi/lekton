@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - Theming interface: `--lekton-header-*`, `--lekton-sidebar-*`, `--lekton-code-*`, link, heading, table and font variables, plus stable `data-lekton-*` hooks, so a custom theme only assigns variables. Documented in `docs/theming.md` and listed in Admin → Custom CSS. With no custom CSS the look is unchanged.
 
 ### Changed
+- Chat sources no longer show the raw retrieval score (they are listed most relevant first), and their previews skip Markdown headings and other markup, so a section previews its text rather than `## Usage`.
 - Admin → AI Usage: the share column is relative to the total of all callers, numbers have thousands separators, small credit amounts no longer round to 0.0, calls show how many were embeddings, and a total row sums every caller. The share bar exposes a rounded, labelled percentage to screen readers.
 - Admin → Users: search by email or name, filters by access level and admin role, and names next to emails. Access levels are listed in name order, and effective levels are stored sorted.
 - Admin → Documentation Feedback is a compact list that expands one item at a time; `lekton://docs/…` URIs link to the document, "Duplicate of" is picked from the existing items by title, and kinds and statuses use readable labels.

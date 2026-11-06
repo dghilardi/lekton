@@ -16,7 +16,9 @@ use uuid::Uuid;
 
 use crate::auth::models::UserContext;
 use crate::config::RagConfig;
-use crate::db::chat_models::{ChatMessage, ChatMessageStatus, ChatSession, SourceReference};
+use crate::db::chat_models::{
+    source_snippet, ChatMessage, ChatMessageStatus, ChatSession, SourceReference,
+};
 use crate::db::chat_repository::ChatRepository;
 use crate::error::AppError;
 use crate::rag::analyzer::{Complexity, QueryAnalyzer, QueryPlan};
@@ -1459,7 +1461,6 @@ fn build_source_references(
     let mut deduped: HashMap<(String, String), SourceReference> = HashMap::new();
 
     for result in results {
-        let snippet = preview_text(&result.chunk_text, 180);
         let is_attachment = result.source_kind == crate::rag::vectorstore::SourceKind::Attachment;
         // For attachments the heading path is unused; surface the page instead.
         let section_title = if is_attachment {
@@ -1478,11 +1479,7 @@ fn build_source_references(
             section_title,
             section_anchor: section_anchor.clone(),
             score: result.score,
-            snippet: if snippet.is_empty() {
-                None
-            } else {
-                Some(snippet)
-            },
+            snippet: source_snippet(&result.chunk_text, 180),
             attachment_key: result.attachment_key.clone(),
             source_page: result.source_page,
         };
@@ -1760,7 +1757,7 @@ mod tests {
             },
             VectorSearchResult {
                 point_id: "p2".into(),
-                chunk_text: "Better chunk".into(),
+                chunk_text: "## Intro\nBetter chunk with enough words".into(),
                 document_slug: "docs/a".into(),
                 document_title: "Doc A".into(),
                 chunk_index: 1,
@@ -1787,7 +1784,10 @@ mod tests {
         assert_eq!(sources[0].section_title.as_deref(), Some("Intro"));
         assert_eq!(sources[0].section_anchor.as_deref(), Some("intro"));
         assert_eq!(sources[0].score, 0.81);
-        assert_eq!(sources[0].snippet.as_deref(), Some("Better chunk"));
+        assert_eq!(
+            sources[0].snippet.as_deref(),
+            Some("Better chunk with enough words")
+        );
         assert_eq!(sources[1].document_slug, "docs/b");
     }
 

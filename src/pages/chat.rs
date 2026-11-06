@@ -802,6 +802,7 @@ fn SourceReferencesBlock(sources: Vec<SourceReference>) -> impl IntoView {
         <details class="rounded-xl border border-base-300/80 bg-base-100/70 overflow-hidden">
             <summary class="cursor-pointer list-none px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-base-content/60">
                 {format!("Sources ({count})")}
+                <span class="ml-2 font-normal normal-case tracking-normal text-base-content/50">"most relevant first"</span>
             </summary>
             <div class="flex flex-col gap-2 border-t border-base-300/80 px-3 py-3">
                 <For
@@ -816,8 +817,10 @@ fn SourceReferencesBlock(sources: Vec<SourceReference>) -> impl IntoView {
                         let document_title = source.document_title.clone();
                         let section_title = source.section_title.clone();
                         let section_anchor = source.section_anchor.clone();
-                        let score = source.score;
-                        let snippet = source.snippet.clone();
+                        // The retrieval score is not shown: its scale depends on the
+                        // retrieval mode (cosine, fused rank, reranker), so a bare
+                        // "0.70" means nothing to a reader. The order carries it.
+                        let snippet = source.display_snippet();
                         let snippet_for_show = snippet.clone();
                         let display_title = section_title.clone().unwrap_or_else(|| document_title.clone());
                         let show_document_title = section_title.is_some();
@@ -852,17 +855,12 @@ fn SourceReferencesBlock(sources: Vec<SourceReference>) -> impl IntoView {
                                 target=link_target
                                 class="block rounded-lg border border-base-300/70 bg-base-100 px-3 py-2 no-underline transition-colors hover:border-primary/40 hover:bg-base-100"
                             >
-                                <div class="flex items-start justify-between gap-3">
-                                    <div class="min-w-0">
-                                        <div class="text-sm font-medium text-base-content">{display_title}</div>
-                                        <Show when=move || show_document_title fallback=|| ()>
-                                            <div class="text-xs text-base-content/60">{document_title.clone()}</div>
-                                        </Show>
-                                        <div class="text-xs text-base-content/65 break-all">{source_ref_label}</div>
-                                    </div>
-                                    <div class="shrink-0 text-[11px] font-mono text-base-content/45">
-                                        {format!("{:.2}", score)}
-                                    </div>
+                                <div class="min-w-0">
+                                    <div class="text-sm font-medium text-base-content">{display_title}</div>
+                                    <Show when=move || show_document_title fallback=|| ()>
+                                        <div class="text-xs text-base-content/60">{document_title.clone()}</div>
+                                    </Show>
+                                    <div class="text-xs text-base-content/65 break-all">{source_ref_label}</div>
                                 </div>
                                 <Show when=move || snippet_for_show.as_ref().map(|s| !s.is_empty()).unwrap_or(false) fallback=|| ()>
                                     <p class="mt-2 text-xs leading-5 text-base-content/65">{snippet.clone().unwrap_or_default()}</p>

@@ -383,6 +383,15 @@ label > span:first-child {
     border-radius:  0.3rem;
 }
 
+/* Document tags are content people read and click through, not status
+ * labels: readable size, original case. */
+.badge.lekton-doc-tag {
+    font-size:      0.75rem;
+    font-weight:    600;
+    letter-spacing: 0.01em;
+    text-transform: none;
+}
+
 /* ════════════════════════════════════════════════════════════════
  * Cards
  * ════════════════════════════════════════════════════════════════ */

@@ -57,18 +57,37 @@ pub fn NavigationItem(item: NavItem, #[prop(optional)] level: u32) -> impl IntoV
     }
 }
 
-/// Navigation tree component that fetches and renders the sidebar navigation.
-#[component]
-pub fn NavigationTree() -> impl IntoView {
-    // The pins are part of the URL, so the tree re-resolves whenever they change.
+/// Reader navigation for the URL's release pins, shared through context by
+/// the layout so the navbar, the sidebar and the home page fetch it once per
+/// page instead of once each.
+#[derive(Clone, Copy)]
+pub struct SharedNavigation(pub LocalResource<Result<Vec<NavItem>, ServerFnError>>);
+
+/// A navigation resource that follows the URL's release pins: the tree
+/// re-resolves whenever they change.
+pub fn navigation_resource() -> LocalResource<Result<Vec<NavItem>, ServerFnError>> {
     let query = leptos_router::hooks::use_query_map();
-    let nav_resource = LocalResource::new(move || {
+    LocalResource::new(move || {
         let pins = query
             .read()
             .get_all(crate::versioning::PIN_PARAM)
             .unwrap_or_default();
         with_auth_retry(move || get_navigation(Some(pins.clone())))
-    });
+    })
+}
+
+/// The layout's shared navigation, or a resource of its own when rendered
+/// outside the layout.
+pub fn use_navigation() -> LocalResource<Result<Vec<NavItem>, ServerFnError>> {
+    use_context::<SharedNavigation>()
+        .map(|shared| shared.0)
+        .unwrap_or_else(navigation_resource)
+}
+
+/// Navigation tree component that renders the sidebar navigation.
+#[component]
+pub fn NavigationTree() -> impl IntoView {
+    let nav_resource = use_navigation();
 
     let location = leptos_router::hooks::use_location();
 

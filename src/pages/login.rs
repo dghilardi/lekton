@@ -121,7 +121,7 @@ fn DemoLoginForm() -> impl IntoView {
                                     <tr>
                                         <td><code>"admin"</code></td>
                                         <td><code>"admin"</code></td>
-                                        <td><span class="badge badge-error">"Admin"</span></td>
+                                        <td><span class="badge badge-primary">"Admin"</span></td>
                                     </tr>
                                     <tr>
                                         <td><code>"public"</code></td>

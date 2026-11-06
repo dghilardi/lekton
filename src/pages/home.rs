@@ -1,7 +1,6 @@
 use leptos::prelude::*;
 
-use crate::app::{get_navigation, NavItem};
-use crate::auth::refresh_client::with_auth_retry;
+use crate::app::NavItem;
 
 fn first_doc_href(items: &[NavItem]) -> Option<String> {
     for item in items {
@@ -18,15 +17,9 @@ fn first_doc_href(items: &[NavItem]) -> Option<String> {
 /// Home page component.
 #[component]
 pub fn HomePage() -> impl IntoView {
-    // The landing page follows the URL's release pins like the rest of the shell.
-    let nav_query = leptos_router::hooks::use_query_map();
-    let navigation_resource = LocalResource::new(move || {
-        let pins = nav_query
-            .read()
-            .get_all(crate::versioning::PIN_PARAM)
-            .unwrap_or_default();
-        with_auth_retry(move || get_navigation(Some(pins.clone())))
-    });
+    // The landing page follows the URL's release pins like the rest of the
+    // shell, through the layout's shared navigation.
+    let navigation_resource = crate::components::use_navigation();
     let schema_registry_enabled = crate::app::use_feature(|f| f.schema_registry);
 
     let get_started_href = Signal::derive(move || {

@@ -43,13 +43,16 @@ pub fn ProfilePage() -> impl IntoView {
                                         </div>
                                     </div>
                                     <div>
-                                        <p class="font-semibold">
+                                        <p class="font-semibold break-all">
                                             {user.name.clone().unwrap_or_else(|| user.email.clone())}
                                         </p>
-                                        <p class="text-sm text-base-content/60">{user.email.clone()}</p>
+                                        // Without a name the email is already the heading above.
+                                        {user.name.is_some().then(|| view! {
+                                            <p class="text-sm text-base-content/60 break-all">{user.email.clone()}</p>
+                                        })}
                                     </div>
                                     {if user.is_admin {
-                                        view! { <span class="badge badge-error ml-auto">"Admin"</span> }.into_any()
+                                        view! { <span class="badge badge-primary ml-auto">"Admin"</span> }.into_any()
                                     } else {
                                         view! { <span class="badge badge-ghost ml-auto">"User"</span> }.into_any()
                                     }}

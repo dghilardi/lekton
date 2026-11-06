@@ -15,6 +15,9 @@ All notable changes to this project will be documented in this file.
 - Admin → Documentation Feedback is a compact list that expands one item at a time; `lekton://docs/…` URIs link to the document, "Duplicate of" is picked from the existing items by title, and kinds and statuses use readable labels.
 
 ### Fixed
+- Small screens showed two menus in the header (☰ and "Menu"); pages with a sidebar now list the sections in the drawer, which also no longer opens under the header.
+- Navigation was fetched twice per page (navbar and sidebar); it is now fetched once and shared.
+- Document tags were 9.9 px; they are now 12 px in their original case. The Admin badge is no longer red, and the profile no longer repeats the email for users without a name.
 - Wide Markdown tables made the whole page scroll sideways on phones; tables now scroll inside their own box.
 - Chat history titles were unreadable in a dark sidebar set by custom CSS; sidebar entries now follow the sidebar colours.
 - The code block copy button kept the page text colour on dark code backgrounds; it now uses the code colours, and `--lekton-code-scheme` switches to the dark syntax palette.

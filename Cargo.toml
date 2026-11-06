@@ -101,7 +101,7 @@ async-stream = { version = "0.3", optional = true }
 
 # Encoding
 base64 = "0.22"
-rand = "0.9"
+rand = "0.10"
 
 # Unique ID generation
 uuid = { version = "1", features = ["v4"] }

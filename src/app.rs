@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use leptos_meta::*;
 use leptos_router::components::*;
-use leptos_router::path;
+use leptos_router::{path, SsrMode};
 use serde::{Deserialize, Serialize};
 
 use crate::components::Layout;
@@ -323,10 +323,43 @@ pub async fn resolve_user_visibility(
 pub fn App() -> impl IntoView {
     provide_meta_context();
 
-    let user_resource =
-        LocalResource::new(|| crate::auth::refresh_client::with_auth_bootstrap(get_current_user));
-    let demo_mode_resource = LocalResource::new(get_is_demo_mode);
-    let features_resource = LocalResource::new(get_feature_flags);
+    let user_resource = Resource::new_blocking(
+        || (),
+        |_| {
+            #[cfg(feature = "hydrate")]
+            {
+                send_wrapper::SendWrapper::new(crate::auth::refresh_client::with_auth_bootstrap(
+                    get_current_user,
+                ))
+            }
+            #[cfg(not(feature = "hydrate"))]
+            {
+                get_current_user()
+            }
+        },
+    );
+    #[cfg(feature = "hydrate")]
+    {
+        let attempted = RwSignal::new(false);
+        Effect::new(move || {
+            if attempted.get_untracked() {
+                return;
+            }
+            if let Some(result) = user_resource.get() {
+                attempted.set(true);
+                let marked = js_sys::eval("/(?:^|;\\s*)lekton_logged_in=/.test(document.cookie)")
+                    .ok()
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let expired = matches!(&result, Err(ServerFnError::ServerError(message)) if message == crate::auth::models::UNAUTHORIZED_SENTINEL);
+                if expired || (matches!(result, Ok(None)) && marked) {
+                    user_resource.refetch();
+                }
+            }
+        });
+    }
+    let demo_mode_resource = Resource::new_blocking(|| (), |_| get_is_demo_mode());
+    let features_resource = Resource::new_blocking(|| (), |_| get_feature_flags());
 
     let current_user: Signal<Option<crate::auth::models::AuthenticatedUser>> =
         Signal::derive(move || user_resource.get().and_then(|res| res.ok()).flatten());
@@ -376,25 +409,16 @@ pub fn App() -> impl IntoView {
     view! {
         <Title text="Lekton — Internal Developer Portal" />
 
-        // Splash screen: visible by default in SSR HTML, hidden via CSS once
-        // 'lekton-play' is on <html>. For anonymous users the inline <head>
-        // script applies that class before the body renders, so the splash is
-        // effectively skipped. Authenticated users see it until the access
-        // token is validated.
-        <div class="lekton-splash">
-            <span class="loading loading-spinner loading-xl text-primary"></span>
-        </div>
-
         <Router>
             <Layout>
                 <Routes fallback=|| view! { <NotFound /> }>
-                    <Route path=path!("/") view=HomePage />
+                    <Route ssr=SsrMode::Async path=path!("/") view=HomePage />
                     <Route path=path!("/login") view=LoginPage />
-                    <Route path=path!("/docs/*slug") view=DocPage />
-                    <Route path=path!("/edit") view=EditorRoute />
-                    <Route path=path!("/edit/*slug") view=EditorRoute />
-                    <Route path=path!("/schemas") view=SchemaListRoute />
-                    <Route path=path!("/schemas/*name") view=SchemaViewerRoute />
+                    <Route ssr=SsrMode::Async path=path!("/docs/*slug") view=DocPage />
+                    <Route ssr=SsrMode::Async path=path!("/edit") view=EditorRoute />
+                    <Route ssr=SsrMode::Async path=path!("/edit/*slug") view=EditorRoute />
+                    <Route ssr=SsrMode::Async path=path!("/schemas") view=SchemaListRoute />
+                    <Route ssr=SsrMode::Async path=path!("/schemas/*name") view=SchemaViewerRoute />
                     <Route path=path!("/chat") view=ChatRoute />
                     <Route path=path!("/learn") view=LearnRoute />
                     <Route path=path!("/learn/:path_id") view=LearnPathRoute />

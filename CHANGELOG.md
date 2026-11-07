@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Render authorized documents and reader navigation on the server, reuse those reads during hydration, and prevent shared caching of private HTML.
+
 - Keep long sidebar labels inside the navigation column and align schema viewer surfaces and controls with portal theme tokens.
 
 - Keep the home action neutral until authentication and navigation resolve, and keep keyboard-selected search results visible while scrolling.

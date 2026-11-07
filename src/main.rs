@@ -36,6 +36,20 @@ async fn static_cache_headers(
 
     let mut response = next.run(request).await;
 
+    // SSR HTML can contain authorized reader data. Never allow shared caches
+    // to reuse one reader's hydrated payload for another request.
+    if response
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("text/html"))
+    {
+        response.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("private, no-store"),
+        );
+    }
+
     if is_js_asset {
         let cache_header = if has_version {
             axum::http::HeaderValue::from_static("public, max-age=31536000, immutable")

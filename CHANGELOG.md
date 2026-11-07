@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Load the editor and schema viewer bundles on demand, share schema-list reads, keep schema source available when viewers fail, and preserve keyboard operation navigation and theme changes.
+
 - Render authorized documents and reader navigation on the server, reuse those reads during hydration, and prevent shared caching of private HTML.
 
 - Keep long sidebar labels inside the navigation column and align schema viewer surfaces and controls with portal theme tokens.

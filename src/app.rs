@@ -183,15 +183,7 @@ pub struct AppState {
 }
 
 #[cfg(feature = "ssr")]
-pub fn shell(options: LeptosOptions, features: FeatureFlags) -> impl IntoView {
-    // The WYSIWYG editor bundle is only needed when the editor feature is on.
-    let editor_scripts = features.editor.then(|| {
-        view! {
-            <script type="module" src="/js/tiptap-bundle.min.js"></script>
-            <script type="module" src="/js/tiptap.js"></script>
-        }
-    });
-
+pub fn shell(options: LeptosOptions, _features: FeatureFlags) -> impl IntoView {
     // Favicon follows the same override priority as the navbar logo
     // (logo-{theme}.svg > logo.svg > the built-in Lekton mark), resolved here at
     // SSR time so a deployment's custom logo also becomes the browser tab icon.
@@ -226,11 +218,10 @@ pub fn shell(options: LeptosOptions, features: FeatureFlags) -> impl IntoView {
                 <script>
                     r#"(function(){var t=localStorage.getItem('lekton-theme');if(t==='dark'||t==='light'){document.documentElement.setAttribute('data-theme',t)}else{var d=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',d)}})()"#
                 </script>
-                // lekton_logged_in is NOT httpOnly so JS can read it.
-                // If absent the user is anonymous: play entrance animations immediately
-                // (before the body renders) so they fire from SSR HTML without WASM.
+                // Authorization is enforced by request-scoped server reads;
+                // reveal the rendered shell without waiting for WASM.
                 <script>
-                    r#"(function(){if(!/(?:^|;\s*)lekton_logged_in=/.test(document.cookie)){document.documentElement.classList.add('lekton-play')}})()"#
+                    r#"document.documentElement.classList.add('lekton-play')"#
                 </script>
                 <AutoReload options=options.clone() />
                 <HydrationScripts options=options />
@@ -239,7 +230,13 @@ pub fn shell(options: LeptosOptions, features: FeatureFlags) -> impl IntoView {
                 {favicon}
                 <Stylesheet id="leptos" href="/pkg/lekton.css" />
                 <Link rel="stylesheet" href="/custom.css" />
-                {editor_scripts}
+                {[
+                    "/js/scalar-standalone.js", "/js/scalar-style.css",
+                    "/js/asyncapi-standalone.js", "/js/asyncapi-default.min.css",
+                    "/js/tiptap-bundle.min.js",
+                ].into_iter().map(|path| view! {
+                    <meta name="lekton-asset" data-path=path content=crate::static_assets::versioned_url(path) />
+                }).collect::<Vec<_>>()}
                 <script src="/js/mermaid-loader.js"></script>
                 <script src="/js/code-blocks.js"></script>
             </head>

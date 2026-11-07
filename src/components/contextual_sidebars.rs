@@ -2,9 +2,7 @@
 use crate::api::schemas::SchemaListItem;
 #[allow(unused_imports)]
 use crate::app::{get_navigation, NavItem};
-use crate::auth::refresh_client::with_auth_retry;
 use crate::pages::chat::ChatContext;
-use crate::schema::component::list_schemas;
 use leptos::prelude::*;
 use std::collections::BTreeMap;
 
@@ -159,9 +157,10 @@ pub fn DocsSidebar() -> impl IntoView {
 /// Shows a searchable list of all registered schemas.
 #[component]
 pub fn RegistrySidebar() -> impl IntoView {
-    let schemas_resource = LocalResource::new(|| with_auth_retry(list_schemas));
+    let schemas_resource = crate::schema::component::use_schemas();
 
     view! {
+        <Suspense fallback=|| view! { <span role="status">"Loading schemas…"</span> }>
         <ul class="flex flex-col gap-1 mt-6">
             <li class="menu-title text-xs font-semibold tracking-wider text-base-content/60 uppercase mb-1">"Schemas"</li>
             {move || {
@@ -183,6 +182,7 @@ pub fn RegistrySidebar() -> impl IntoView {
                 .unwrap_or_else(|| view! { <li><span class="loading loading-spinner loading-sm"></span></li> }.into_any())
             }}
         </ul>
+        </Suspense>
     }
 }
 

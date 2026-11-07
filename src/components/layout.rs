@@ -382,6 +382,18 @@ pub fn Layout(children: Children) -> impl IntoView {
         || (),
         |_| get_navbar_groups(),
     )));
+    provide_context(crate::schema::component::SharedSchemas(
+        crate::components::reader_resource(
+            move || path.get().starts_with("/schemas"),
+            |active| async move {
+                if active {
+                    crate::schema::component::list_schemas().await
+                } else {
+                    Ok(vec![])
+                }
+            },
+        ),
+    ));
     let is_chat_layout = Memo::new(move |_| path.get().starts_with("/chat"));
     let sidebar_open = RwSignal::new(false);
     let close_sidebar = move || {

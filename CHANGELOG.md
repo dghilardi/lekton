@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Keep long sidebar labels inside the navigation column and align schema viewer surfaces and controls with portal theme tokens.
+
 - Keep the home action neutral until authentication and navigation resolve, and keep keyboard-selected search results visible while scrolling.
 
 - Improve code toolbar and light syntax contrast while preserving the existing syntax palette.

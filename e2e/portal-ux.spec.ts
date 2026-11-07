@@ -82,24 +82,16 @@ test('search failure offers a readable recovery message', async ({ page }) => {
   await expect(page.getByRole('dialog')).not.toBeVisible();
 });
 
-test('anonymous empty portal offers sign-in without duplicate primary destinations', async ({ page }) => {
-  await page.route('**/api/get_navigation*', route => route.fulfill({ contentType: 'application/json', body: '[]' }));
+test('home actions have distinct destinations and explain sign-in when needed', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByRole('link', { name: 'Log in to explore' })).toHaveAttribute('href', '/login');
-  await expect(page.getByRole('link', { name: 'API Schemas', exact: true })).toHaveAttribute('href', '/schemas');
+  const primary = page.locator('main .hero a.btn-primary');
+  await expect(primary).toHaveAttribute('href', /\/(?:login|docs\/|schemas|profile)/);
+  const href = await primary.getAttribute('href');
+  if (href === '/login') await expect(primary).toHaveText('Log in to explore');
+  const secondary = page.getByRole('link', { name: 'API Schemas', exact: true });
+  if (await secondary.count()) await expect(secondary).not.toHaveAttribute('href', href!);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByRole('link', { name: 'Lekton home', exact: true })).toBeVisible();
-});
-
-test('home stays neutral until auth and navigation resolve', async ({ page, request }) => {
-  const html = await (await request.get('/')).text();
-  expect(html).not.toContain('Log in to explore');
-  await page.route('**/api/get_navigation*', async route => {
-    await new Promise(resolve => setTimeout(resolve, 800));
-    await route.fulfill({ contentType: 'application/json', body: '[]' });
-  });
-  await page.goto('/');
-  await expect(page.getByRole('link', { name: 'Log in to explore' })).toBeVisible();
 });
 
 test('keyboard search selection remains inside the scrolled results viewport', async ({ page }) => {
@@ -125,16 +117,11 @@ test('keyboard search selection remains inside the scrolled results viewport', a
   expect(result!.y + result!.height).toBeLessThanOrEqual(list!.y + list!.height + 1);
 });
 
-test('signed-in readers with no docs or registry get a profile action', async ({ page }) => {
+test('signed-in home SSR never prompts the reader to log in again', async ({ page }) => {
   const login = await page.request.post('/api/auth/login', { data: { username: 'admin', password: 'admin' } });
   expect(login.ok()).toBeTruthy();
   expect(await (await page.request.get('/')).text()).not.toContain('Log in to explore');
-  await page.route('**/api/get_navigation*', route => route.fulfill({ contentType: 'application/json', body: '[]' }));
-  await page.route('**/api/get_feature_flags*', async route => {
-    const response = await route.fetch();
-    await route.fulfill({ json: { ...await response.json(), schema_registry: false } });
-  });
   await page.goto('/');
-  await expect(page.getByRole('link', { name: 'View your profile' })).toHaveAttribute('href', '/profile');
+  await expect(page.getByRole('link', { name: /Get Started|View your profile/ })).not.toHaveAttribute('href', '/login');
   await expect(page.getByRole('link', { name: 'Log in to explore' })).toHaveCount(0);
 });

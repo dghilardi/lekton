@@ -347,3 +347,18 @@ backlog for search/RAG reconciliation.
 * ✅ MCP server exposing docs/schemas/prompts as tools; versioned Prompt Library; documentation feedback loop.
 
 See `IMPLEMENTATION_ROADMAP.md` Phase 7 for the full breakdown and candidate next steps.
+
+### Reader delivery and progressive enhancement
+
+- Documentation and schema metadata/content are resolved on the server using the
+  requesting reader's existing access checks. The initial authorized HTML includes
+  the reading content; hydration reuses the serialized result instead of repeating
+  those reads. Responses containing reader HTML use `Cache-Control: private, no-store`.
+- Navigation and the schema list are shared within one layout/request, never in
+  a process-global cache that could cross user or release boundaries.
+- Client navigation retains the centralized auth retry contract. If an SSR read
+  encounters an expired session, client bootstrap refreshes it and retries only
+  unauthorized reads; successfully hydrated reads are not fetched again.
+- Interactive schema viewers and the editor's heavy bundle load on demand and
+  share in-flight library requests. The untouched schema source is available in
+  SSR and remains accessible when parsing or loading a viewer fails.

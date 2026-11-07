@@ -4,7 +4,7 @@ import { defineConfig } from '@playwright/test';
 // globalSetup or webServer: it must not seed a corpus or reuse port 3000.
 export default defineConfig({
   testDir: './e2e',
-  testMatch: ['portal-ux.spec.ts', 'theme.spec.ts'],
+  testMatch: ['portal-ux.spec.ts', 'theme.spec.ts', 'reader-viewers.spec.ts'],
   workers: 1,
   reporter: 'list',
   outputDir: 'test-results/portal-ux',

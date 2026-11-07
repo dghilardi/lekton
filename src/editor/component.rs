@@ -357,13 +357,33 @@ async fn finalize_document_save(
 /// blank editor with an editable slug for creating one (creation mode).
 #[component]
 pub fn EditorPage() -> impl IntoView {
+    let editor_ready = RwSignal::new(false);
+    let editor_error = RwSignal::new(false);
+    #[cfg(feature = "hydrate")]
+    Effect::new(move || {
+        leptos::task::spawn_local(async move {
+            let load = js_sys::eval("import('/js/editor-loader.js').then(m=>m.load())");
+            match load {
+                Ok(promise) => {
+                    match wasm_bindgen_futures::JsFuture::from(js_sys::Promise::from(promise)).await
+                    {
+                        Ok(_) => editor_ready.set(true),
+                        Err(_) => editor_error.set(true),
+                    }
+                }
+                Err(_) => editor_error.set(true),
+            }
+        });
+    });
+
     let params = leptos_router::hooks::use_params_map();
     let route_slug = move || params.read().get("slug").unwrap_or_default();
 
     #[allow(clippy::redundant_closure)]
-    let doc_resource = Resource::new(move || route_slug(), |slug| get_doc_content(slug));
-    let levels_resource = LocalResource::new(list_levels);
-    let nav_resource = LocalResource::new(|| crate::server::nav::get_navigation(None));
+    let doc_resource = crate::components::reader_resource(move || route_slug(), get_doc_content);
+    let levels_resource = crate::components::reader_resource(|| (), |_| list_levels());
+    let nav_resource =
+        crate::components::reader_resource(|| (), |_| crate::server::nav::get_navigation(None));
 
     let (msg, set_msg) = signal(TiptapInstanceMsg::Noop);
     let (value, set_value) = signal(String::new());
@@ -623,6 +643,9 @@ pub fn EditorPage() -> impl IntoView {
 
                                 // Editor
                                 <div class="border border-base-300 rounded-lg min-h-[400px] p-4 bg-base-100 prose prose-lg max-w-none">
+                                    <Show when=move || editor_ready.get() fallback=move || view! {
+                                        <p role="status">{move || if editor_error.get() { "The editor could not load. Reload the page to try again." } else { "Loading editor…" }}</p>
+                                    }>
                                     <TiptapInstance
                                         id=Signal::derive(|| "lekton-editor".to_string())
                                         msg=msg
@@ -638,6 +661,7 @@ pub fn EditorPage() -> impl IntoView {
                                             set_selection.set(state);
                                         })
                                     />
+                                    </Show>
                                 </div>
 
                                 // Save controls

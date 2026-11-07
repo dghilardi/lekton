@@ -80,7 +80,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                     let items_t3 = items;
 
                     view! {
-                        // ── TIER 1: xl+ — full text, max items, "Altro" overflow ──────────────
+                        // ── TIER 1: xl+ — full text, max items, "More" overflow ──────────────
                         <div class="hidden xl:flex w-full items-center gap-3 min-w-0">
                             <div class="flex flex-1 items-center gap-2 min-w-0 overflow-x-clip">
                             {t1_standalone.into_iter().map(|item| {
@@ -117,7 +117,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                             }).collect::<Vec<_>>()}
                             </div>
 
-                            // "Altro" overflow dropdown — kept outside the clipped row (shrink-0) so
+                            // "More" overflow dropdown — kept outside the clipped row (shrink-0) so
                             // it never gets squeezed out when the centered search bar (2xl+) halves
                             // the space available to the nav-links row.
                             {if has_overflow {
@@ -125,7 +125,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                     <div class="dropdown dropdown-hover dropdown-bottom shrink-0">
                                         <div tabindex="0" role="button" aria-haspopup="menu"
                                              class="btn btn-ghost btn-sm font-normal lekton-header-link m-1">
-                                            "Altro"
+                                            "More"
                                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="ml-1 opacity-60"><path d="m6 9 6 6 6-6"/></svg>
                                         </div>
                                         <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52 border border-base-200">
@@ -382,10 +382,49 @@ pub fn Layout(children: Children) -> impl IntoView {
         || (),
         |_| get_navbar_groups(),
     )));
+    provide_context(crate::schema::component::SharedSchemas(
+        crate::components::reader_resource(
+            move || path.get().starts_with("/schemas"),
+            |active| async move {
+                if active {
+                    crate::schema::component::list_schemas().await
+                } else {
+                    Ok(vec![])
+                }
+            },
+        ),
+    ));
     let is_chat_layout = Memo::new(move |_| path.get().starts_with("/chat"));
+    let sidebar_open = RwSignal::new(false);
+    let close_sidebar = move || {
+        sidebar_open.set(false);
+        #[cfg(feature = "hydrate")]
+        leptos::task::spawn_local(async move {
+            gloo_timers::future::TimeoutFuture::new(0).await;
+            let _ = js_sys::eval("document.getElementById('sidebar-trigger')?.focus()");
+        });
+    };
+    Effect::new(move || {
+        let _ = path.get();
+        sidebar_open.set(false);
+    });
+    Effect::new(move || {
+        if sidebar_open.get() {
+            #[cfg(feature = "hydrate")]
+            leptos::task::spawn_local(async move {
+                gloo_timers::future::TimeoutFuture::new(0).await;
+                let _ =
+                    js_sys::eval("document.querySelector('#portal-navigation button')?.focus()");
+            });
+        }
+    });
 
     use leptos::ev;
+    window_event_listener(ev::resize, move |_| sidebar_open.set(false));
     window_event_listener(ev::keydown, move |ev| {
+        if ev.key() == "Escape" && sidebar_open.get_untracked() {
+            close_sidebar();
+        }
         if search_enabled.get() && (ev.ctrl_key() || ev.meta_key()) && ev.key() == "k" {
             ev.prevent_default();
             ev.stop_propagation();
@@ -398,19 +437,28 @@ pub fn Layout(children: Children) -> impl IntoView {
         <RuntimeCustomCss />
 
         <div class="min-h-screen bg-base-100/50">
+            <a href="#content" class="lekton-skip-link" inert=move || sidebar_open.get() on:click=move |ev| {
+                ev.prevent_default();
+                #[cfg(feature = "hydrate")]
+                let _ = js_sys::eval("document.getElementById('content')?.focus(); document.getElementById('content')?.scrollIntoView()");
+            }>"Skip to content"</a>
             // Navbar
             // Colours come from the --lekton-header-* theming tokens (see style/tailwind.css).
-            <header data-lekton-header class="bg-base-100/80 backdrop-blur-md fixed top-0 inset-x-0 z-50 border-b border-base-200 px-4 h-16 flex items-center gap-2 shadow-sm lekton-header-enter">
+            <header inert=move || sidebar_open.get() data-lekton-header class="bg-base-100/80 backdrop-blur-md fixed top-0 inset-x-0 z-50 border-b border-base-200 px-4 h-16 flex items-center gap-2 shadow-sm lekton-header-enter">
                 // Left — shrinks only when space is truly exhausted
                 <div class="flex items-center gap-2 min-w-0 flex-1">
                     <Show when=move || has_context_sidebar.get()>
-                        <label
-                            for="sidebar-drawer"
+                        <button
+                            id="sidebar-trigger"
+                            type="button"
+                            aria-controls="portal-navigation"
+                            aria-expanded=move || sidebar_open.get().to_string()
+                            on:click=move |_| sidebar_open.set(true)
                             aria-label="Open navigation menu"
                             class="btn btn-square btn-ghost drawer-button lg:hidden"
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="inline-block w-5 h-5 stroke-current"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
-                        </label>
+                        </button>
                     </Show>
                     <BrandedLogo />
                     <div class="flex items-center gap-1 min-w-0 ml-2 pl-2 sm:ml-4 sm:pl-4 border-l border-base-300 overflow-visible lg:overflow-x-clip">
@@ -468,13 +516,13 @@ pub fn Layout(children: Children) -> impl IntoView {
                     "drawer pt-16"
                 }
             }>
-                <input id="sidebar-drawer" type="checkbox" class="drawer-toggle" aria-label="Toggle navigation sidebar" />
-                <div class="drawer-content lg:col-start-2 flex flex-col bg-base-100 min-w-0">
+                <input id="sidebar-drawer" type="checkbox" class="drawer-toggle" tabindex="-1" aria-hidden="true" prop:checked=move || sidebar_open.get() />
+                <div inert=move || sidebar_open.get() class="drawer-content lg:col-start-2 flex flex-col bg-base-100 min-w-0">
                     // Sticky under the fixed header. Lives in the shell rather than
                     // the document page because pins govern navigation and links
                     // everywhere, including search results.
                     <ReleasePinStrip />
-                    <div class=move || {
+                    <main id="content" tabindex="-1" class=move || {
                         if is_chat_layout.get() {
                             "w-full h-[calc(100vh-4rem)] flex flex-col overflow-hidden lekton-content-enter"
                         } else {
@@ -482,7 +530,7 @@ pub fn Layout(children: Children) -> impl IntoView {
                         }
                     }>
                         {children()}
-                    </div>
+                    </main>
                 </div>
 
                 // Sidebar
@@ -490,9 +538,20 @@ pub fn Layout(children: Children) -> impl IntoView {
                     // Below lg the drawer overlays the page: start it under the
                     // fixed header, which would otherwise cover its first entries.
                     <div class="drawer-side z-40 max-lg:top-16 max-lg:h-[calc(100dvh-4rem)]">
-                        <label for="sidebar-drawer" aria-label="close sidebar" class="drawer-overlay"></label>
+                        <button type="button" tabindex="-1" aria-label="Close navigation menu" class="drawer-overlay" on:click=move |_| close_sidebar()></button>
                         // Colours come from the --lekton-sidebar-* theming tokens.
-                        <div data-lekton-sidebar class="menu bg-base-200 min-h-full h-[calc(100vh-4rem)] w-[var(--lekton-sidebar-width)] p-4 text-base-content border-r border-base-300 pt-6 overflow-y-auto block">
+                        <nav id="portal-navigation" aria-label="Section navigation" data-lekton-sidebar on:click=move |ev| {
+                            #[cfg(feature = "hydrate")]
+                            {
+                                use wasm_bindgen::JsCast;
+                                if ev.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()).and_then(|e| e.closest("a").ok().flatten()).is_some() {
+                                    sidebar_open.set(false);
+                                }
+                            }
+                            #[cfg(not(feature = "hydrate"))]
+                            let _ = ev;
+                        } class="menu bg-base-200 min-h-full h-[calc(100vh-4rem)] w-[var(--lekton-sidebar-width)] p-4 text-base-content border-r border-base-300 pt-6 overflow-y-auto block">
+                            <button type="button" class="btn btn-ghost mb-2 lg:hidden" on:click=move |_| close_sidebar()>"Close navigation"</button>
                             // Small screens: the top-level sections, which the navbar
                             // has no room for, live here rather than in a second menu.
                             <ul class="lg:hidden mb-2">
@@ -526,7 +585,7 @@ pub fn Layout(children: Children) -> impl IntoView {
                                     view! { <span></span> }.into_any()
                                 }
                             }}
-                        </div>
+                        </nav>
                     </div>
                 </Show>
             </div>

@@ -236,11 +236,10 @@ pub fn DocPage() -> impl IntoView {
             .unwrap_or_default()
     };
 
-    let doc_resource = LocalResource::new(move || {
-        let slug = slug();
-        let pins = pins();
-        with_auth_retry(move || get_doc_html(slug.clone(), Some(pins.clone())))
-    });
+    let doc_resource = crate::components::reader_resource(
+        move || (slug(), pins()),
+        |(slug, pins)| get_doc_html(slug, Some(pins)),
+    );
 
     let show_archive_confirm = RwSignal::new(false);
     let archiving = RwSignal::new(false);

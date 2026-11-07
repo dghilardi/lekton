@@ -6,7 +6,7 @@ import { test, expect, type Page } from '@playwright/test';
  * Returns the new data-theme value.
  */
 async function clickThemeToggleUntilChange(page: Page): Promise<string> {
-  const themeToggle = page.locator('button[aria-label="Toggle theme"]');
+  const themeToggle = page.getByRole('button', { name: /theme; switch to/ });
   const before = await page.locator('html').getAttribute('data-theme');
 
   for (let attempt = 0; attempt < 30; attempt++) {
@@ -24,7 +24,7 @@ test.describe('Theme', () => {
   test('toggle switches theme', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
-    const themeToggle = page.locator('button[aria-label="Toggle theme"]');
+    const themeToggle = page.getByRole('button', { name: /theme; switch to/ });
     await expect(themeToggle).toBeVisible();
 
     // First click: wait for WASM hydration + theme change (system→light or light→dark)

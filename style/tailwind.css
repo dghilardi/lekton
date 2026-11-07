@@ -770,7 +770,7 @@ html[data-theme] .prose pre.mermaid:has(.mermaid-expand-btn) {
     font-size:     0.72em;
     line-height:   1;
     color:         var(--lekton-code-toolbar-text);
-    opacity:       0.45;
+    opacity:       0.75;
     user-select:   none;
     pointer-events: none;
 }
@@ -790,7 +790,7 @@ html[data-theme] .prose pre.mermaid:has(.mermaid-expand-btn) {
     border:           1px solid var(--lekton-code-copy-border);
     border-radius:    0.35rem;
     color:            var(--lekton-code-toolbar-text);
-    opacity:          0.5;
+    opacity:          0.75;
     cursor:           pointer;
     transition:       opacity 0.15s, background 0.15s;
     line-height:      1;
@@ -827,11 +827,11 @@ html[data-theme] .prose pre.mermaid:has(.mermaid-expand-btn) {
     --lekton-code-string:    light-dark(#0a3069, #a5d6ff);
     --lekton-code-comment:   light-dark(#6e7781, #8b949e);
     --lekton-code-constant:  light-dark(#0550ae, #79c0ff);
-    --lekton-code-function:  light-dark(#8250df, #d2a8ff);
+    --lekton-code-function:  light-dark(#7445c6, #d2a8ff);
     --lekton-code-type:      light-dark(#953800, #ffa657);
     --lekton-code-variable:  light-dark(#953800, #ffa657);
     --lekton-code-key:       light-dark(#116329, #7ee787);
-    --lekton-code-section:   light-dark(#8250df, #d2a8ff);
+    --lekton-code-section:   light-dark(#7445c6, #d2a8ff);
     --lekton-code-inserted:  light-dark(#116329, #aff5b4);
     --lekton-code-deleted:   light-dark(#82071e, #ffdcd7);
     --lekton-code-invalid:   light-dark(#cf222e, #f85149);
@@ -1163,7 +1163,7 @@ html[data-theme="dark"]  .lekton-logo-light { display: none !important; }
  * after token validation for authenticated ones. */
 .lekton-header-enter {
     animation: lekton-slide-from-top 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
-    animation-play-state: paused;
+    animation-play-state: running;
 }
 
 html.lekton-play .lekton-header-enter {
@@ -1172,7 +1172,7 @@ html.lekton-play .lekton-header-enter {
 
 .lekton-content-enter {
     animation: lekton-fade-up 0.5s cubic-bezier(0.4, 0, 0.2, 1) 0.12s both;
-    animation-play-state: paused;
+    animation-play-state: running;
 }
 
 html.lekton-play .lekton-content-enter {
@@ -1243,3 +1243,109 @@ html.lekton-play .lekton-splash {
  * Mount public/custom.css (or a Docker volume) to override
  * any variable or rule without recompiling.
  */
+
+/* Native search modality keeps keyboard focus and the background isolated. */
+.lekton-search-dialog {
+    width: min(42rem, calc(100% - 2rem));
+    max-height: calc(100dvh - min(5rem, 6dvh) - 1rem);
+    margin: min(5rem, 6dvh) auto 0;
+    padding: 0;
+    border: 1px solid var(--color-base-300);
+    overflow: hidden;
+}
+.lekton-search-dialog[open] { display: flex; flex-direction: column; }
+.lekton-search-dialog::backdrop { background: rgb(0 0 0 / 50%); backdrop-filter: blur(4px); }
+.lekton-search-dialog > :first-child + div,
+.lekton-search-dialog > :last-child { flex-shrink: 0; }
+@media (pointer: coarse) { .lekton-search-hints { display: none; } }
+
+.lekton-skip-link {
+    position: fixed;
+    top: .5rem;
+    left: .5rem;
+    z-index: 250;
+    transform: translateY(-200%);
+    padding: .75rem 1rem;
+    background: var(--color-base-100);
+    color: var(--color-base-content);
+    border: 2px solid var(--color-primary);
+}
+.lekton-skip-link:focus { transform: translateY(0); }
+#content { scroll-margin-top: 5rem; }
+
+/* DaisyUI delays visibility on opening; focus must enter the drawer immediately. */
+.drawer-toggle:checked ~ .drawer-side {
+    transition: opacity 0.2s ease-out;
+}
+
+/* Reader navigation keeps complete names inside its own column. */
+[data-lekton-sidebar] :is(a, summary) {
+    min-width: 0;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+[data-lekton-sidebar] summary .truncate {
+    white-space: normal;
+    overflow: visible;
+}
+[data-lekton-sidebar] :is(li, details, ul) { min-width: 0; }
+
+.lekton-spec, .lekton-spec-interactive { min-width: 0; max-width: 100%; }
+.lekton-spec-interactive { overflow-wrap: anywhere; }
+.lekton-spec :is(pre, .scalar-code-block) { overflow-x: auto; max-width: 100%; }
+.lekton-spec .scalar-api-reference {
+    --scalar-color-1: var(--color-base-content);
+    --scalar-color-2: color-mix(in oklch, var(--color-base-content) 75%, var(--color-base-100));
+    --scalar-color-3: color-mix(in oklch, var(--color-base-content) 70%, var(--color-base-100));
+    --scalar-color-accent: var(--color-primary);
+    --scalar-background-1: var(--color-base-100);
+    --scalar-background-2: var(--color-base-200);
+    --scalar-background-3: var(--color-base-300);
+    --scalar-border-color: var(--color-base-300);
+    --scalar-font: var(--lekton-font-family);
+}
+.lekton-spec .scalar-api-reference :is(.light-mode, .dark-mode) {
+    --scalar-color-1: var(--color-base-content);
+    --scalar-background-1: var(--color-base-100);
+    --scalar-background-2: var(--color-base-200);
+}
+.lekton-spec-interactive :is(.references-layout, .section-container, .section, .section-content) {
+    min-width: 0; max-width: 100%;
+}
+#asyncapi-viewer :is(.aui-root, .bg-white) { background: var(--color-base-100) !important; color: var(--color-base-content) !important; }
+#asyncapi-viewer :is(.bg-gray-50, .bg-gray-100, .bg-gray-200) { background: var(--color-base-200) !important; }
+#asyncapi-viewer :is(.bg-gray-800, .bg-gray-900, pre) { background: var(--color-base-300) !important; color: var(--color-base-content) !important; }
+#asyncapi-viewer :is(.text-gray-900, .text-gray-800, .text-gray-700, .text-gray-600, .text-gray-500, .text-gray-400) { color: var(--color-base-content) !important; }
+#asyncapi-viewer :is(.border, .border-gray-200, .border-gray-300) { border-color: var(--color-base-300) !important; }
+
+/* Scalar's document/version badges must wrap inside the reader column. */
+#scalar-api-reference .flex:has(> .badge) { flex-wrap: wrap; }
+#scalar-api-reference .badge {
+    max-width: 100%;
+    height: auto;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+#scalar-api-reference .scalar-toaster { max-width: calc(100vw - 2rem); }
+
+/* Scalar's search and download controls also consume these secondary tokens. */
+:root, .lekton-spec-interactive {
+    --scalar-color-1: var(--color-base-content);
+    --scalar-color-2: color-mix(in oklch, var(--color-base-content) 75%, var(--color-base-100));
+    --scalar-color-3: color-mix(in oklch, var(--color-base-content) 70%, var(--color-base-100));
+    --scalar-link-color: var(--color-primary);
+    --scalar-link-color-hover: var(--color-primary);
+    --scalar-background-1: var(--color-base-100);
+    --scalar-background-2: var(--color-base-200);
+    --scalar-background-3: var(--color-base-300);
+    --scalar-border-color: var(--color-base-300);
+    --scalar-button-1: var(--color-primary);
+    --scalar-button-1-color: var(--color-primary-content);
+    --scalar-button-1-hover: var(--color-primary);
+    --scalar-sidebar-background-1: var(--color-base-200);
+    --scalar-sidebar-color-1: var(--color-base-content);
+    --scalar-sidebar-search-background: var(--color-base-200);
+    --scalar-sidebar-search-color: var(--color-base-content);
+    --scalar-sidebar-search-border-color: var(--color-base-300);
+}

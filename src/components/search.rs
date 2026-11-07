@@ -63,6 +63,7 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
     let (active_index, set_active_index) = signal(None::<usize>);
     let debounce_version = RwSignal::new(0_u64);
     let input_ref = NodeRef::<leptos::html::Input>::new();
+    let dialog_ref = NodeRef::<leptos::html::Dialog>::new();
 
     let search_resource = LocalResource::new(move || {
         let q = debounced_query.get();
@@ -128,14 +129,24 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
     };
 
     Effect::new(move || {
-        if is_open.get() {
-            set_active_index.set(None);
-            #[cfg(feature = "hydrate")]
-            if let Some(input) = input_ref.get() {
-                let _ = input.focus();
-                input.select();
+        let open = is_open.get();
+        #[cfg(feature = "hydrate")]
+        if let Some(dialog) = dialog_ref.get() {
+            if open {
+                // Native modality makes the background inert and restores the
+                // invoking control on close, including Escape and backdrop clicks.
+                let _ = dialog.show_modal();
+                set_active_index.set(None);
+                if let Some(input) = input_ref.get() {
+                    let _ = input.focus();
+                    input.select();
+                }
+            } else {
+                dialog.close();
             }
         }
+        #[cfg(not(feature = "hydrate"))]
+        let _ = open;
     });
 
     Effect::new(move || {
@@ -149,21 +160,55 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
         });
     });
 
+    Effect::new(move || {
+        if let Some(index) = active_index.get() {
+            #[cfg(feature = "hydrate")]
+            let _ = js_sys::eval(&format!(
+                "document.getElementById('global-search-result-{index}')?.scrollIntoView({{block:'nearest'}})"
+            ));
+            #[cfg(not(feature = "hydrate"))]
+            let _ = index;
+        }
+    });
+
     view! {
-        <Show when=move || is_open.get()>
-            <div
-                class="fixed inset-0 z-[200] flex items-start justify-center pt-20 bg-black/50 backdrop-blur-sm"
-                on:click=move |_| set_is_open.set(false)
-            >
-                <div
-                    class="bg-base-100 rounded-lg shadow-2xl w-full max-w-2xl mx-4"
-                    on:click=move |ev: leptos::web_sys::MouseEvent| ev.stop_propagation()
-                    on:keydown=on_keydown
-                    role="dialog"
-                    aria-modal="true"
-                    aria-labelledby="global-search-title"
-                    tabindex="-1"
-                >
+        <dialog
+            id="global-search-dialog"
+            node_ref=dialog_ref
+            on:keydown=move |ev: leptos::web_sys::KeyboardEvent| {
+                if ev.key() == "Tab" {
+                    #[cfg(feature = "hydrate")]
+                    {
+                        let handled = js_sys::eval(&format!(r#"(() => {{
+                            const dialog = document.getElementById('global-search-dialog');
+                            const controls = [...dialog.querySelectorAll('input, button, a[href]')].filter(el => el.tabIndex >= 0 && !el.disabled);
+                            const first = controls[0], last = controls[controls.length - 1];
+                            if ({} && document.activeElement === first) {{ last.focus(); return true; }}
+                            if (!{} && document.activeElement === last) {{ first.focus(); return true; }}
+                            return false;
+                        }})()"#, ev.shift_key(), ev.shift_key())).ok().and_then(|v| v.as_bool()).unwrap_or(false);
+                        if handled { ev.prevent_default(); }
+                    }
+                }
+            }
+            class="lekton-search-dialog bg-base-100 text-base-content rounded-lg shadow-2xl"
+            aria-labelledby="global-search-title"
+            on:cancel=move |_: leptos::web_sys::Event| set_is_open.set(false)
+            on:close=move |_| set_is_open.set(false)
+            on:click=move |ev: leptos::web_sys::MouseEvent| {
+                #[cfg(feature = "hydrate")]
+                if let Some(dialog) = dialog_ref.get() {
+                    let rect = dialog.get_bounding_client_rect();
+                    let x = f64::from(ev.client_x());
+                    let y = f64::from(ev.client_y());
+                    if x < rect.left() || x > rect.right() || y < rect.top() || y > rect.bottom() {
+                        set_is_open.set(false);
+                    }
+                }
+                #[cfg(not(feature = "hydrate"))]
+                let _ = ev;
+            }
+        >
                     <h2 id="global-search-title" class="sr-only">"Search documentation"</h2>
                     // Search input
                     <div class="p-4 border-b border-base-200 bg-base-100/50 rounded-t-lg">
@@ -174,16 +219,18 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                             <input
                                 type="text"
                                 placeholder="Search documentation..."
-                                class="w-full bg-transparent focus:outline-none text-xl placeholder:text-base-content/30"
+                                class="min-w-0 w-full bg-transparent text-lg placeholder:text-base-content/65"
                                 node_ref=input_ref
                                 prop:value=query
                                 aria-label="Search documentation"
+                                role="combobox"
+                                aria-expanded="true"
+                                aria-autocomplete="list"
                                 aria-controls=SEARCH_RESULTS_LIST_ID
                                 aria-activedescendant=move || {
                                     active_index
                                         .get()
                                         .map(search_result_id)
-                                        .unwrap_or_default()
                                 }
                                 on:input=move |ev| {
                                     let value = event_target_value(&ev);
@@ -202,13 +249,14 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                 on:keydown=on_keydown
                                 autofocus
                             />
+                            <button type="button" class="btn btn-ghost btn-square shrink-0" aria-label="Close search" on:click=move |_| set_is_open.set(false)>"✕"</button>
                         </div>
                     </div>
 
                     // Results area — carries the id referenced by the input's
                     // `aria-controls` so the reference always resolves (the inner
                     // listbox only exists once there are results).
-                    <div id=SEARCH_RESULTS_LIST_ID class="max-h-96 overflow-y-auto">
+                    <div id=SEARCH_RESULTS_LIST_ID role=move || (!search_hits.get().is_empty()).then_some("listbox") aria-label="Search results" class="min-h-0 overflow-y-auto">
                         <Suspense fallback=move || view! {
                             <div class="flex justify-center p-8">
                                 <span class="loading loading-spinner loading-lg"></span>
@@ -218,7 +266,7 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                 let q = query.get();
                                 if q.len() < 2 {
                                     return Some(view! {
-                                        <div class="p-8 text-center text-base-content/65">
+                                        <div role="status" class="p-8 text-center text-base-content/65">
                                             "Type at least 2 characters to search..."
                                         </div>
                                     }.into_any());
@@ -227,14 +275,14 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                 search_resource.get().map(|result| match result {
                                     Ok(hits) if hits.is_empty() => {
                                         view! {
-                                            <div class="p-8 text-center text-base-content/65">
+                                            <div role="status" class="p-8 text-center text-base-content/65">
                                                 "No results found for \"" {q.clone()} "\""
                                             </div>
                                         }.into_any()
                                     }
                                     Ok(hits) => {
                                         view! {
-                                            <div role="listbox" class="divide-y divide-base-300">
+                                            <div class="divide-y divide-base-300">
                                                 {hits.into_iter().enumerate().map(|(idx, hit)| {
                                                     let href = search_hit_href(
                                                         &hit,
@@ -255,7 +303,8 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                                             href=href
                                                             target=target
                                                             role="option"
-                                                            aria-selected=move || active_index.get() == Some(idx)
+                                                            tabindex="-1"
+                                                            aria-selected=move || (active_index.get() == Some(idx)).to_string()
                                                             class=move || format!(
                                                                 "block p-4 transition-colors {}",
                                                                 if active_index.get() == Some(idx) {
@@ -298,7 +347,7 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                         // rather than leaking internals to the user.
                                         leptos::logging::error!("search failed: {e}");
                                         view! {
-                                            <div class="p-8 text-center">
+                                            <div role="status" class="p-8 text-center">
                                                 <p class="font-medium text-base-content/80">"Search is temporarily unavailable"</p>
                                                 <p class="mt-1 text-sm text-base-content/60">"Please try again in a moment."</p>
                                             </div>
@@ -309,9 +358,13 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                         </Suspense>
                     </div>
 
+                    <p class="sr-only" role="status">{move || {
+                        let count = search_hits.get().len();
+                        if count > 0 { format!("{count} results available") } else { String::new() }
+                    }}</p>
                     // Footer with keyboard hints
                     <div class="p-3 border-t border-base-300 bg-base-200/50 rounded-b-lg">
-                        <div class="flex items-center gap-4 text-xs text-base-content/65">
+                        <div class="lekton-search-hints flex flex-wrap items-center gap-4 text-xs text-base-content/65">
                             <span class="flex items-center gap-1.5">
                                 <kbd class="kbd kbd-xs">"↑"</kbd>
                                 <kbd class="kbd kbd-xs">"↓"</kbd>
@@ -327,9 +380,7 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                             </span>
                         </div>
                     </div>
-                </div>
-            </div>
-        </Show>
+        </dialog>
     }
 }
 

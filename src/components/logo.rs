@@ -70,7 +70,7 @@ pub fn BrandedLogo() -> impl IntoView {
     let on_logo_click = move |_ev: leptos::ev::MouseEvent| {};
 
     view! {
-        <a class="flex items-center gap-3 text-xl font-bold tracking-tight hover:opacity-80 transition-opacity" href="/" on:click=on_logo_click>
+        <a aria-label="Lekton home" class="flex items-center gap-3 text-xl font-bold tracking-tight hover:opacity-80 transition-opacity" href="/" on:click=on_logo_click>
 
             <div class="relative w-8 h-8 flex items-center justify-center">
                 <Suspense fallback=move || view! {

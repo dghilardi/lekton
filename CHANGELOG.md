@@ -6,6 +6,21 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Load the editor and schema viewer bundles on demand, share schema-list reads, keep schema source available when viewers fail, and preserve keyboard operation navigation and theme changes.
+
+- Render authorized documents and reader navigation on the server, reuse those reads during hydration, and prevent shared caching of private HTML.
+
+- Keep long sidebar labels inside the navigation column and align schema viewer surfaces and controls with portal theme tokens.
+
+- Keep the home action neutral until authentication and navigation resolve, and keep keyboard-selected search results visible while scrolling.
+
+- Improve code toolbar and light syntax contrast while preserving the existing syntax palette.
+
+- Guide readers with no visible documentation or schemas to sign in, avoid duplicate home destinations, and give the brand and theme controls descriptive accessible names.
+
+- Keep global search modal focus isolated, restore its trigger on close, expose search result semantics and provide a visible close action.
+- Make mobile section navigation keyboard accessible, add a skip link and main/navigation landmarks, and remove the invisible drawer tab stop.
+
 - Refreshed the validated design-system sidecar for `DESIGN.md`.
 
 ## [0.39.0] 2026-11-06

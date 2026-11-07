@@ -57,7 +57,11 @@ pub fn ThemeToggle() -> impl IntoView {
             <button
                 class="btn btn-ghost btn-sm btn-square"
                 on:click=cycle_theme
-                aria-label="Toggle theme"
+                aria-label=move || match theme.get().as_str() {
+                    "light" => "Light theme; switch to dark",
+                    "dark" => "Dark theme; switch to system",
+                    _ => "System theme; switch to light",
+                }
             >
                 {move || match theme.get().as_str() {
                     "light" => view! {

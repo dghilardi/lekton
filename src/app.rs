@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use leptos_meta::*;
 use leptos_router::components::*;
-use leptos_router::path;
+use leptos_router::{path, SsrMode};
 use serde::{Deserialize, Serialize};
 
 use crate::components::Layout;
@@ -28,6 +28,10 @@ pub use crate::server::service_tokens::*;
 pub use crate::server::sources::*;
 pub use crate::server::usage::*;
 pub use crate::server::users::*;
+
+/// True once the authentication bootstrap successfully resolves, including anonymous users.
+#[derive(Clone, Copy)]
+pub struct AuthResolved(pub Signal<bool>);
 
 /// Newtype wrapper for the demo-mode signal, used as Leptos context.
 #[derive(Clone, Copy)]
@@ -179,15 +183,7 @@ pub struct AppState {
 }
 
 #[cfg(feature = "ssr")]
-pub fn shell(options: LeptosOptions, features: FeatureFlags) -> impl IntoView {
-    // The WYSIWYG editor bundle is only needed when the editor feature is on.
-    let editor_scripts = features.editor.then(|| {
-        view! {
-            <script type="module" src="/js/tiptap-bundle.min.js"></script>
-            <script type="module" src="/js/tiptap.js"></script>
-        }
-    });
-
+pub fn shell(options: LeptosOptions, _features: FeatureFlags) -> impl IntoView {
     // Favicon follows the same override priority as the navbar logo
     // (logo-{theme}.svg > logo.svg > the built-in Lekton mark), resolved here at
     // SSR time so a deployment's custom logo also becomes the browser tab icon.
@@ -222,11 +218,10 @@ pub fn shell(options: LeptosOptions, features: FeatureFlags) -> impl IntoView {
                 <script>
                     r#"(function(){var t=localStorage.getItem('lekton-theme');if(t==='dark'||t==='light'){document.documentElement.setAttribute('data-theme',t)}else{var d=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',d)}})()"#
                 </script>
-                // lekton_logged_in is NOT httpOnly so JS can read it.
-                // If absent the user is anonymous: play entrance animations immediately
-                // (before the body renders) so they fire from SSR HTML without WASM.
+                // Authorization is enforced by request-scoped server reads;
+                // reveal the rendered shell without waiting for WASM.
                 <script>
-                    r#"(function(){if(!/(?:^|;\s*)lekton_logged_in=/.test(document.cookie)){document.documentElement.classList.add('lekton-play')}})()"#
+                    r#"document.documentElement.classList.add('lekton-play')"#
                 </script>
                 <AutoReload options=options.clone() />
                 <HydrationScripts options=options />
@@ -235,7 +230,13 @@ pub fn shell(options: LeptosOptions, features: FeatureFlags) -> impl IntoView {
                 {favicon}
                 <Stylesheet id="leptos" href="/pkg/lekton.css" />
                 <Link rel="stylesheet" href="/custom.css" />
-                {editor_scripts}
+                {[
+                    "/js/scalar-standalone.js", "/js/scalar-style.css",
+                    "/js/asyncapi-standalone.js", "/js/asyncapi-default.min.css",
+                    "/js/tiptap-bundle.min.js",
+                ].into_iter().map(|path| view! {
+                    <meta name="lekton-asset" data-path=path content=crate::static_assets::versioned_url(path) />
+                }).collect::<Vec<_>>()}
                 <script src="/js/mermaid-loader.js"></script>
                 <script src="/js/code-blocks.js"></script>
             </head>
@@ -319,10 +320,43 @@ pub async fn resolve_user_visibility(
 pub fn App() -> impl IntoView {
     provide_meta_context();
 
-    let user_resource =
-        LocalResource::new(|| crate::auth::refresh_client::with_auth_bootstrap(get_current_user));
-    let demo_mode_resource = LocalResource::new(get_is_demo_mode);
-    let features_resource = LocalResource::new(get_feature_flags);
+    let user_resource = Resource::new_blocking(
+        || (),
+        |_| {
+            #[cfg(feature = "hydrate")]
+            {
+                send_wrapper::SendWrapper::new(crate::auth::refresh_client::with_auth_bootstrap(
+                    get_current_user,
+                ))
+            }
+            #[cfg(not(feature = "hydrate"))]
+            {
+                get_current_user()
+            }
+        },
+    );
+    #[cfg(feature = "hydrate")]
+    {
+        let attempted = RwSignal::new(false);
+        Effect::new(move || {
+            if attempted.get_untracked() {
+                return;
+            }
+            if let Some(result) = user_resource.get() {
+                attempted.set(true);
+                let marked = js_sys::eval("/(?:^|;\\s*)lekton_logged_in=/.test(document.cookie)")
+                    .ok()
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let expired = matches!(&result, Err(ServerFnError::ServerError(message)) if message == crate::auth::models::UNAUTHORIZED_SENTINEL);
+                if expired || (matches!(result, Ok(None)) && marked) {
+                    user_resource.refetch();
+                }
+            }
+        });
+    }
+    let demo_mode_resource = Resource::new_blocking(|| (), |_| get_is_demo_mode());
+    let features_resource = Resource::new_blocking(|| (), |_| get_feature_flags());
 
     let current_user: Signal<Option<crate::auth::models::AuthenticatedUser>> =
         Signal::derive(move || user_resource.get().and_then(|res| res.ok()).flatten());
@@ -361,6 +395,9 @@ pub fn App() -> impl IntoView {
     });
 
     provide_context(current_user);
+    provide_context(AuthResolved(Signal::derive(move || {
+        matches!(user_resource.get(), Some(Ok(_)))
+    })));
     provide_context(IsDemoMode(is_demo_mode));
     provide_context(IsRagEnabled(is_rag_enabled));
     provide_context(Features(features));
@@ -369,25 +406,16 @@ pub fn App() -> impl IntoView {
     view! {
         <Title text="Lekton — Internal Developer Portal" />
 
-        // Splash screen: visible by default in SSR HTML, hidden via CSS once
-        // 'lekton-play' is on <html>. For anonymous users the inline <head>
-        // script applies that class before the body renders, so the splash is
-        // effectively skipped. Authenticated users see it until the access
-        // token is validated.
-        <div class="lekton-splash">
-            <span class="loading loading-spinner loading-xl text-primary"></span>
-        </div>
-
         <Router>
             <Layout>
                 <Routes fallback=|| view! { <NotFound /> }>
-                    <Route path=path!("/") view=HomePage />
+                    <Route ssr=SsrMode::Async path=path!("/") view=HomePage />
                     <Route path=path!("/login") view=LoginPage />
-                    <Route path=path!("/docs/*slug") view=DocPage />
-                    <Route path=path!("/edit") view=EditorRoute />
-                    <Route path=path!("/edit/*slug") view=EditorRoute />
-                    <Route path=path!("/schemas") view=SchemaListRoute />
-                    <Route path=path!("/schemas/*name") view=SchemaViewerRoute />
+                    <Route ssr=SsrMode::Async path=path!("/docs/*slug") view=DocPage />
+                    <Route ssr=SsrMode::Async path=path!("/edit") view=EditorRoute />
+                    <Route ssr=SsrMode::Async path=path!("/edit/*slug") view=EditorRoute />
+                    <Route ssr=SsrMode::Async path=path!("/schemas") view=SchemaListRoute />
+                    <Route ssr=SsrMode::Async path=path!("/schemas/*name") view=SchemaViewerRoute />
                     <Route path=path!("/chat") view=ChatRoute />
                     <Route path=path!("/learn") view=LearnRoute />
                     <Route path=path!("/learn/:path_id") view=LearnPathRoute />

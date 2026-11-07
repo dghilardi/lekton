@@ -20,21 +20,28 @@ pub fn HomePage() -> impl IntoView {
     // The landing page follows the URL's release pins like the rest of the
     // shell, through the layout's shared navigation.
     let navigation_resource = crate::components::use_navigation();
+    let current_user = expect_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
     let schema_registry_enabled = crate::app::use_feature(|f| f.schema_registry);
 
-    let get_started_href = Signal::derive(move || {
-        navigation_resource
-            .get()
-            .and_then(|result| result.ok())
-            .and_then(|items| first_doc_href(&items))
-            .map(|href| crate::components::pinned_doc_href(&href))
-            .unwrap_or_else(|| {
-                if schema_registry_enabled.get() {
-                    "/schemas".to_string()
-                } else {
-                    "/login".to_string()
-                }
-            })
+    let auth_resolved = expect_context::<crate::app::AuthResolved>().0;
+    let get_started_action = Signal::derive(move || {
+        let navigation = navigation_resource.get().and_then(Result::ok);
+        if !auth_resolved.get() || navigation.is_none() {
+            return (None, "Get Started");
+        }
+        if let Some(href) = navigation.as_deref().and_then(first_doc_href) {
+            return (
+                Some(crate::components::pinned_doc_href(&href)),
+                "Get Started",
+            );
+        }
+        if current_user.get().is_none() {
+            (Some("/login".to_string()), "Log in to explore")
+        } else if schema_registry_enabled.get() {
+            (Some("/schemas".to_string()), "Get Started")
+        } else {
+            (Some("/profile".to_string()), "View your profile")
+        }
     });
 
     view! {
@@ -45,16 +52,18 @@ pub fn HomePage() -> impl IntoView {
                     <p class="py-6 text-lg text-base-content/70 text-pretty">
                         "Your dynamic Internal Developer Portal. Search documentation, explore API schemas, and collaborate — all in one place."
                     </p>
-                    <div class="flex gap-4 justify-center">
-                        <a href=get_started_href class="btn btn-primary btn-lg">
-                            "Get Started"
+                    <Suspense fallback=|| view! { <span class="btn btn-primary btn-lg" aria-disabled="true">"Get Started"</span> }>
+                    <div class="flex flex-wrap gap-4 justify-center">
+                        <a href=move || get_started_action.get().0 aria-disabled=move || get_started_action.get().0.is_none().to_string() class="btn btn-primary btn-lg">
+                            {move || get_started_action.get().1}
                         </a>
-                        <Show when=move || schema_registry_enabled.get()>
+                        <Show when=move || schema_registry_enabled.get() && get_started_action.get().0.as_deref() != Some("/schemas")>
                             <a href="/schemas" class="btn btn-outline btn-lg">
                                 "API Schemas"
                             </a>
                         </Show>
                     </div>
+                    </Suspense>
                 </div>
             </div>
         </div>

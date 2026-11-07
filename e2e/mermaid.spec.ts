@@ -137,7 +137,7 @@ test.describe('Mermaid diagrams', () => {
 
     // Toggle the theme — the MutationObserver in mermaid-loader.js will re-initialize
     // mermaid and re-render all diagrams with the new theme.
-    const themeToggle = page.locator('button[aria-label="Toggle theme"]');
+    const themeToggle = page.getByRole('button', { name: /theme; switch to/ });
     await themeToggle.scrollIntoViewIfNeeded();
     await themeToggle.click();
 

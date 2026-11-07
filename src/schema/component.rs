@@ -1,8 +1,8 @@
 use leptos::prelude::*;
 
 use crate::api::schemas::{SchemaDetail, SchemaListItem, SchemaVersionInfo};
-use crate::auth::refresh_client::with_auth_retry;
 
+#[cfg(any(feature = "hydrate", test))]
 fn js_string_literal(value: &str) -> String {
     serde_json::to_string(value)
         .unwrap_or_else(|_| "\"\"".to_string())
@@ -51,10 +51,20 @@ pub async fn get_schema_content(name: String, version: String) -> Result<String,
     .map_err(|e| ServerFnError::new(e.to_string()))
 }
 
+/// One request-scoped schema list shared by the index and registry navigation.
+#[derive(Clone, Copy)]
+pub struct SharedSchemas(pub Resource<Result<Vec<SchemaListItem>, ServerFnError>>);
+
+pub fn use_schemas() -> Resource<Result<Vec<SchemaListItem>, ServerFnError>> {
+    use_context::<SharedSchemas>()
+        .map(|s| s.0)
+        .unwrap_or_else(|| crate::components::reader_resource(|| (), |_| list_schemas()))
+}
+
 /// Schema list page — shows all registered schemas.
 #[component]
 pub fn SchemaListPage() -> impl IntoView {
-    let schemas_resource = LocalResource::new(|| with_auth_retry(list_schemas));
+    let schemas_resource = use_schemas();
     let current_user = expect_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
 
     view! {
@@ -158,34 +168,36 @@ pub fn SchemaViewerPage() -> impl IntoView {
     let params = leptos_router::hooks::use_params_map();
     let name = move || params.read().get("name").unwrap_or_default();
 
-    let schema_resource = LocalResource::new(move || {
-        let n = name();
-        with_auth_retry(move || get_schema_detail(n.clone()))
-    });
+    let schema_resource = crate::components::reader_resource(move || name(), get_schema_detail);
 
-    let (selected_version, set_selected_version) = signal(String::new());
-
-    // Reset version selection whenever the route points to a different schema.
-    Effect::new(move |_| {
-        let _ = name();
-        set_selected_version.set(String::new());
-    });
-
-    // When schema loads, select the latest stable version by default
-    let content_resource = LocalResource::new(move || {
-        let name = name();
-        let version = selected_version.get();
-        with_auth_retry(move || {
-            let n = name.clone();
-            let v = version.clone();
-            async move {
-                if v.is_empty() {
-                    return Ok(None);
+    let selection = RwSignal::new(None::<(String, String)>);
+    let selected_version = Signal::derive(move || {
+        let current = name();
+        schema_resource
+            .get()
+            .and_then(Result::ok)
+            .map(|detail| {
+                if let Some((schema, version)) = selection.get() {
+                    if schema == current && detail.versions.iter().any(|v| v.version == version) {
+                        return version;
+                    }
                 }
-                get_schema_content(n, v).await.map(Some)
-            }
-        })
+                crate::api::schemas::latest_version_info(&detail.versions)
+                    .map(|v| v.version.clone())
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default()
     });
+    let content_resource = crate::components::reader_resource(
+        move || (name(), selected_version.get()),
+        |(name, version)| async move {
+            if version.is_empty() {
+                Ok(None)
+            } else {
+                get_schema_content(name, version).await.map(Some)
+            }
+        },
+    );
 
     view! {
         <Suspense fallback=move || view! {
@@ -199,19 +211,6 @@ pub fn SchemaViewerPage() -> impl IntoView {
                         let schema_name = detail.name.clone();
                         let schema_type = detail.schema_type.clone();
                         let versions = detail.versions.clone();
-
-                        // Auto-select latest stable version on first load or when the
-                        // previously selected version doesn't exist on the new schema.
-                        let selected = selected_version.get();
-                        let selection_missing =
-                            !selected.is_empty() && !versions.iter().any(|v| v.version == selected);
-                        if (selected.is_empty() || selection_missing) && !versions.is_empty() {
-                            let default_ver =
-                                crate::api::schemas::latest_version_info(&versions)
-                                    .map(|v| v.version.clone())
-                                    .unwrap_or_default();
-                            set_selected_version.set(default_ver);
-                        }
 
                         let type_label = match schema_type.as_str() {
                             "openapi" => "OpenAPI",
@@ -240,8 +239,8 @@ pub fn SchemaViewerPage() -> impl IntoView {
 
                                 // Header with version selector
                                 <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
-                                    <div class="flex items-center gap-3">
-                                        <h1 class="text-3xl font-bold">{schema_name.clone()}</h1>
+                                    <div class="flex flex-wrap min-w-0 items-center gap-3">
+                                        <h1 class="text-3xl font-bold break-all">{schema_name.clone()}</h1>
                                         <span class=format!("badge {}", badge_class)>{type_label.to_string()}</span>
                                     </div>
 
@@ -249,7 +248,7 @@ pub fn SchemaViewerPage() -> impl IntoView {
                                     <VersionSelector
                                         versions=versions.clone()
                                         selected=selected_version
-                                        set_selected=set_selected_version
+                                        set_selected=Callback::new(move |version| selection.set(Some((name(), version))))
                                     />
                                 </div>
 
@@ -312,8 +311,8 @@ pub fn SchemaViewerPage() -> impl IntoView {
 #[component]
 fn VersionSelector(
     versions: Vec<SchemaVersionInfo>,
-    selected: ReadSignal<String>,
-    set_selected: WriteSignal<String>,
+    selected: Signal<String>,
+    set_selected: Callback<String>,
 ) -> impl IntoView {
     view! {
         <div class="flex items-center gap-2">
@@ -321,7 +320,7 @@ fn VersionSelector(
             <select
                 class="select select-bordered select-sm"
                 on:change=move |ev| {
-                    set_selected.set(event_target_value(&ev));
+                    set_selected.run(event_target_value(&ev));
                 }
             >
                 {versions.into_iter().map(|v| {
@@ -369,323 +368,43 @@ fn VersionStatusBar(versions: Vec<SchemaVersionInfo>) -> impl IntoView {
     .into_any()
 }
 
-/// Spec viewer component that renders the schema content.
-/// Uses Scalar CDN for OpenAPI, syntax-highlighted pre block for others.
+/// Interactive viewers progressively enhance an SSR-readable schema source.
 #[component]
 fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
-    match schema_type.as_str() {
-        "openapi" => {
-            let spec_content = js_string_literal(&content);
-
-            let scalar_js = {
-                #[cfg(feature = "ssr")]
-                {
-                    crate::static_assets::versioned_url("/js/scalar-standalone.js")
-                }
-                #[cfg(not(feature = "ssr"))]
-                {
-                    "/js/scalar-standalone.js".to_string()
-                }
-            };
-            let scalar_css = {
-                #[cfg(feature = "ssr")]
-                {
-                    crate::static_assets::versioned_url("/js/scalar-style.css")
-                }
-                #[cfg(not(feature = "ssr"))]
-                {
-                    "/js/scalar-style.css".to_string()
-                }
-            };
-
-            let script = format!(
-                r#"
-                (function() {{
-                    const container = document.getElementById('scalar-api-reference');
-                    if (!container) return;
-                    const specContent = {spec_content};
-                    if (container.__lektonScalarInstance && container.__lektonScalarInstance.destroy) {{
-                        container.__lektonScalarInstance.destroy();
-                    }}
-                    container.innerHTML = '';
-                    const el = document.createElement('div');
-                    container.appendChild(el);
-
-                    function escapeHtml(value) {{
-                        return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                    }}
-
-                    function loadStylesheetOnce(id, href) {{
-                        if (document.getElementById(id)) return;
-                        const link = document.createElement('link');
-                        link.id = id;
-                        link.rel = 'stylesheet';
-                        link.href = href;
-                        document.head.appendChild(link);
-                    }}
-
-                    function loadScriptOnce(src, isLoaded) {{
-                        if (isLoaded()) return Promise.resolve();
-                        window.__lektonScriptLoads = window.__lektonScriptLoads || {{}};
-                        if (window.__lektonScriptLoads[src]) return window.__lektonScriptLoads[src];
-
-                        window.__lektonScriptLoads[src] = new Promise(function(resolve, reject) {{
-                            const script = document.createElement('script');
-                            script.src = src;
-                            script.onload = resolve;
-                            script.onerror = function(err) {{
-                                delete window.__lektonScriptLoads[src];
-                                reject(err);
-                            }};
-                            document.head.appendChild(script);
-                        }});
-                        return window.__lektonScriptLoads[src];
-                    }}
-
-                    function renderScalar(targetEl) {{
-                        if (window.Scalar && window.Scalar.createApiReference) {{
-                            container.__lektonScalarInstance = window.Scalar.createApiReference(targetEl, {{
-                                content: specContent,
-                                theme: 'none',
-                                showSidebar: false,
-                                withDefaultFonts: false,
-                            }});
-                        }} else if (window.ScalarApiReference) {{
-                            window.ScalarApiReference(targetEl, {{
-                                content: specContent,
-                            }});
-                        }} else {{
-                            targetEl.innerHTML = '<pre class="p-4 bg-base-200 rounded-lg overflow-auto text-sm"><code>' +
-                                escapeHtml(specContent) +
-                                '</code></pre>';
-                        }}
-                    }}
-
-                    loadStylesheetOnce('lekton-scalar-style', '{scalar_css}');
-                    loadScriptOnce('{scalar_js}', function() {{
-                        return !!(window.Scalar || window.ScalarApiReference);
-                    }})
-                        .then(function() {{ renderScalar(el); }})
-                        .catch(function(error) {{
-                            console.error('Failed to load Scalar API reference viewer', error);
-                            renderScalar(el);
-                        }});
-                }})();
-                "#
-            );
-
-            // Align Scalar's design tokens with DaisyUI 5 OKLCH variables.
-            // --scalar-background-1 must be opaque so modal/overlay panels aren't transparent.
-            let scalar_theme_css = r#"
-                .scalar-app, .scalar-api-reference {
-                    --scalar-color-1: var(--color-base-content);
-                    --scalar-color-2: color-mix(in oklch, var(--color-base-content) 70%, transparent);
-                    --scalar-color-3: color-mix(in oklch, var(--color-base-content) 50%, transparent);
-                    --scalar-color-accent: var(--color-primary);
-                    --scalar-background-1: var(--color-base-100);
-                    --scalar-background-2: var(--color-base-200);
-                    --scalar-background-3: var(--color-base-300);
-                    --scalar-border-color: var(--color-base-300);
-                    --scalar-font: var(--lekton-font-family);
-                    --scalar-font-size: 0.875rem;
-                }
-                .scalar-app .scalar-card {
-                    box-shadow: none;
-                    border: 1px solid var(--color-base-300);
-                    border-radius: 0.75rem;
-                }
-            "#;
-
-            view! {
-                <div>
-                    <style>{scalar_theme_css}</style>
-                    <div id="scalar-api-reference" class="scalar-app min-h-[600px]">
-                        <div class="flex justify-center items-center py-12">
-                            <span class="loading loading-spinner loading-lg text-primary"></span>
-                            <span class="ml-3 text-base-content/70">"Loading API reference viewer..."</span>
-                        </div>
-                    </div>
-                    <script>{script}</script>
-                </div>
-            }
-            .into_any()
-        }
-        "asyncapi" => {
-            let spec_content = js_string_literal(&content);
-
-            let asyncapi_js = {
-                #[cfg(feature = "ssr")]
-                {
-                    crate::static_assets::versioned_url("/js/asyncapi-standalone.js")
-                }
-                #[cfg(not(feature = "ssr"))]
-                {
-                    "/js/asyncapi-standalone.js".to_string()
-                }
-            };
-            let asyncapi_css = {
-                #[cfg(feature = "ssr")]
-                {
-                    crate::static_assets::versioned_url("/js/asyncapi-default.min.css")
-                }
-                #[cfg(not(feature = "ssr"))]
-                {
-                    "/js/asyncapi-default.min.css".to_string()
-                }
-            };
-
-            // Injected after the stylesheet loads so it always wins the cascade
-            let script = format!(
-                r#"
-                (function() {{
-                    const container = document.getElementById('asyncapi-viewer');
-                    if (!container) return;
-                    const specContent = {spec_content};
-                    container.innerHTML = '';
-
-                    function escapeHtml(value) {{
-                        return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                    }}
-
-                    function loadStylesheetOnce(id, href) {{
-                        if (document.getElementById(id)) return;
-                        const link = document.createElement('link');
-                        link.id = id;
-                        link.rel = 'stylesheet';
-                        link.href = href;
-                        document.head.appendChild(link);
-                    }}
-
-                    function loadScriptOnce(src, isLoaded) {{
-                        if (isLoaded()) return Promise.resolve();
-                        window.__lektonScriptLoads = window.__lektonScriptLoads || {{}};
-                        if (window.__lektonScriptLoads[src]) return window.__lektonScriptLoads[src];
-
-                        window.__lektonScriptLoads[src] = new Promise(function(resolve, reject) {{
-                            const script = document.createElement('script');
-                            script.src = src;
-                            script.onload = resolve;
-                            script.onerror = function(err) {{
-                                delete window.__lektonScriptLoads[src];
-                                reject(err);
-                            }};
-                            document.head.appendChild(script);
-                        }});
-                        return window.__lektonScriptLoads[src];
-                    }}
-
-                    function injectTheme() {{
-                        if (document.getElementById('asyncapi-theme-override')) return;
-                        const style = document.createElement('style');
-                        style.id = 'asyncapi-theme-override';
-                        style.textContent = `
-                            #asyncapi-viewer .aui-root,
-                            #asyncapi-viewer .bg-white {{
-                                background-color: transparent !important;
-                                color: var(--color-base-content) !important;
-                            }}
-                            #asyncapi-viewer .bg-gray-200,
-                            #asyncapi-viewer .bg-gray-100,
-                            #asyncapi-viewer .bg-gray-50 {{
-                                background-color: var(--color-base-200) !important;
-                            }}
-                            #asyncapi-viewer .bg-gray-800,
-                            #asyncapi-viewer .bg-gray-900,
-                            #asyncapi-viewer pre {{
-                                background-color: var(--color-base-300) !important;
-                                color: var(--color-base-content) !important;
-                            }}
-                            #asyncapi-viewer .border,
-                            #asyncapi-viewer .border-gray-200,
-                            #asyncapi-viewer .border-gray-300 {{
-                                border-color: var(--color-base-300) !important;
-                            }}
-                            #asyncapi-viewer .text-gray-900,
-                            #asyncapi-viewer .text-gray-800,
-                            #asyncapi-viewer .text-gray-700,
-                            #asyncapi-viewer .text-gray-600 {{
-                                color: var(--color-base-content) !important;
-                            }}
-                            #asyncapi-viewer .text-gray-500,
-                            #asyncapi-viewer .text-gray-400 {{
-                                color: color-mix(in oklch, var(--color-base-content) 60%, transparent) !important;
-                            }}
-                            #asyncapi-viewer .shadow,
-                            #asyncapi-viewer .shadow-md {{
-                                box-shadow: none !important;
-                            }}
-                            #asyncapi-viewer .burger-menu {{
-                                display: none !important;
-                            }}
-                        `;
-                        document.head.appendChild(style);
-                    }}
-
-                    function renderAsyncApi(targetEl) {{
-                        if (window.AsyncApiStandalone) {{
-                            AsyncApiStandalone.render({{
-                                schema: specContent,
-                                config: {{ show: {{ sidebar: true }} }},
-                            }}, targetEl);
-                        }} else {{
-                            targetEl.innerHTML = '<pre class="p-4 bg-base-200 rounded-lg overflow-auto text-sm"><code>' +
-                                escapeHtml(specContent) +
-                                '</code></pre>';
-                        }}
-                    }}
-
-                    loadStylesheetOnce('lekton-asyncapi-style', '{asyncapi_css}');
-                    loadScriptOnce('{asyncapi_js}', function() {{
-                        return !!window.AsyncApiStandalone;
-                    }})
-                        .then(function() {{
-                            injectTheme();
-                            renderAsyncApi(container);
-                        }})
-                        .catch(function(error) {{
-                            console.error('Failed to load AsyncAPI viewer', error);
-                            injectTheme();
-                            renderAsyncApi(container);
-                        }});
-                }})();
-                "#
-            );
-
-            view! {
-                <div>
-                    <div id="asyncapi-viewer" class="min-h-[600px]">
-                        <div class="flex justify-center items-center py-12">
-                            <span class="loading loading-spinner loading-lg"></span>
-                            <span class="ml-3">"Loading AsyncAPI viewer..."</span>
-                        </div>
-                    </div>
-                    <script>{script}</script>
-                </div>
-            }
-            .into_any()
-        }
-        _ => {
-            // JSON Schema or unknown — show formatted JSON/YAML
-            let formatted = if content.trim_start().starts_with('{') {
-                // Try to pretty-print JSON
-                serde_json::from_str::<serde_json::Value>(&content)
-                    .and_then(|v| serde_json::to_string_pretty(&v))
-                    .unwrap_or(content)
-            } else {
-                content
-            };
-
-            view! {
-                <div class="border border-base-300 rounded-lg">
-                    <div class="p-2 bg-base-200 border-b border-base-300 rounded-t-lg">
-                        <span class="text-sm font-semibold">"JSON Schema"</span>
-                    </div>
-                    <pre class="p-4 overflow-auto text-sm max-h-[80vh]">
-                        <code>{formatted}</code>
-                    </pre>
-                </div>
-            }
-            .into_any()
-        }
+    let id = if schema_type == "openapi" {
+        "scalar-api-reference"
+    } else {
+        "asyncapi-viewer"
+    };
+    let interactive = schema_type == "openapi" || schema_type == "asyncapi";
+    #[cfg(feature = "hydrate")]
+    if interactive {
+        let script = format!(
+            "import('/js/schema-viewers.js').then(m=>m.mount({}, {}, {}))",
+            js_string_literal(&schema_type),
+            js_string_literal(id),
+            js_string_literal(&content),
+        );
+        Effect::new(move || {
+            let _ = js_sys::eval(&script);
+        });
+        on_cleanup(move || {
+            let _ = js_sys::eval(&format!(
+                "document.getElementById('{}')?.__lektonDispose?.()",
+                id
+            ));
+        });
+    }
+    view! {
+        <div class="lekton-spec min-w-0">
+            <Show when=move || interactive>
+                <div id=id class="lekton-spec-interactive min-w-0" aria-label="Interactive schema viewer"></div>
+            </Show>
+            <details class="mt-4 border border-base-300 rounded-box" open=!interactive>
+                <summary class="cursor-pointer p-3 font-medium">"Schema source"</summary>
+                <p class="px-4 text-sm text-base-content/70">"The original specification remains available if the interactive viewer cannot render it."</p>
+                <pre class="p-4 overflow-auto max-h-[70vh] text-sm" tabindex="0" aria-label="Schema source"><code>{content}</code></pre>
+            </details>
+        </div>
     }
 }

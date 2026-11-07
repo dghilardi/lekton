@@ -52,6 +52,7 @@ pub fn HomePage() -> impl IntoView {
                     <p class="py-6 text-lg text-base-content/70 text-pretty">
                         "Your dynamic Internal Developer Portal. Search documentation, explore API schemas, and collaborate — all in one place."
                     </p>
+                    <Suspense fallback=|| view! { <span class="btn btn-primary btn-lg" aria-disabled="true">"Get Started"</span> }>
                     <div class="flex flex-wrap gap-4 justify-center">
                         <a href=move || get_started_action.get().0 aria-disabled=move || get_started_action.get().0.is_none().to_string() class="btn btn-primary btn-lg">
                             {move || get_started_action.get().1}
@@ -62,6 +63,7 @@ pub fn HomePage() -> impl IntoView {
                             </a>
                         </Show>
                     </div>
+                    </Suspense>
                 </div>
             </div>
         </div>

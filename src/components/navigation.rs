@@ -1,7 +1,6 @@
 use leptos::prelude::*;
 
 use crate::app::{get_navigation, NavItem};
-use crate::auth::refresh_client::with_auth_retry;
 
 /// Recursive navigation item component for rendering tree structure.
 #[component]
@@ -61,24 +60,26 @@ pub fn NavigationItem(item: NavItem, #[prop(optional)] level: u32) -> impl IntoV
 /// the layout so the navbar, the sidebar and the home page fetch it once per
 /// page instead of once each.
 #[derive(Clone, Copy)]
-pub struct SharedNavigation(pub LocalResource<Result<Vec<NavItem>, ServerFnError>>);
+pub struct SharedNavigation(pub Resource<Result<Vec<NavItem>, ServerFnError>>);
 
 /// A navigation resource that follows the URL's release pins: the tree
 /// re-resolves whenever they change.
-pub fn navigation_resource() -> LocalResource<Result<Vec<NavItem>, ServerFnError>> {
+pub fn navigation_resource() -> Resource<Result<Vec<NavItem>, ServerFnError>> {
     let query = leptos_router::hooks::use_query_map();
-    LocalResource::new(move || {
-        let pins = query
-            .read()
-            .get_all(crate::versioning::PIN_PARAM)
-            .unwrap_or_default();
-        with_auth_retry(move || get_navigation(Some(pins.clone())))
-    })
+    crate::components::reader_resource(
+        move || {
+            query
+                .read()
+                .get_all(crate::versioning::PIN_PARAM)
+                .unwrap_or_default()
+        },
+        |pins| get_navigation(Some(pins)),
+    )
 }
 
 /// The layout's shared navigation, or a resource of its own when rendered
 /// outside the layout.
-pub fn use_navigation() -> LocalResource<Result<Vec<NavItem>, ServerFnError>> {
+pub fn use_navigation() -> Resource<Result<Vec<NavItem>, ServerFnError>> {
     use_context::<SharedNavigation>()
         .map(|shared| shared.0)
         .unwrap_or_else(navigation_resource)

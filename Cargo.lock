@@ -3873,6 +3873,7 @@ dependencies = [
  "rmcp",
  "rustls",
  "schemars 0.8.22",
+ "send_wrapper",
  "serde",
  "serde-saphyr",
  "serde-wasm-bindgen",

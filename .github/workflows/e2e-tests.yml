@@ -123,7 +123,7 @@ jobs:
           fi
           SIZE_BYTES=$(stat -c%s "$WASM_FILE")
           SIZE_KB=$((SIZE_BYTES / 1024))
-          THRESHOLD_KB=5120  # 5 MB — adjust down once baseline is established
+          THRESHOLD_KB=5376  # 5.25 MiB: SSR reader baseline; editor is lazy (see reader-viewers audit)
           echo "WASM bundle: $WASM_FILE — ${SIZE_KB} KB"
           if [ "$SIZE_BYTES" -gt $((THRESHOLD_KB * 1024)) ]; then
             echo "FAIL: WASM bundle (${SIZE_KB} KB) exceeds ${THRESHOLD_KB} KB threshold"

@@ -40,6 +40,8 @@ pub fn TopNavbarLinks() -> impl IntoView {
     // `SectionMenuItems`), so small screens get one menu, not two.
     let location = leptos_router::hooks::use_location();
     let has_drawer = Memo::new(move |_| has_context_sidebar(&location.pathname.get()));
+    // Computed before Suspense boundaries can read it concurrently (see Layout).
+    has_drawer.with_untracked(|_| ());
     let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
     let is_rag = use_context::<crate::app::IsRagEnabled>();
     let schema_enabled = crate::app::use_feature(|f| f.schema_registry);
@@ -395,6 +397,13 @@ pub fn Layout(children: Children) -> impl IntoView {
         ),
     ));
     let is_chat_layout = Memo::new(move |_| path.get().starts_with("/chat"));
+    // Server-side, each Suspense boundary resolves on its own worker thread.
+    // reactive_graph can hand an unset value to a reader racing another
+    // thread's first computation of the same memo, so compute the shared,
+    // URL-derived memos here, before any boundary reads them concurrently.
+    active_release_pins.with_untracked(|_| ());
+    has_context_sidebar.with_untracked(|_| ());
+    is_chat_layout.with_untracked(|_| ());
     let sidebar_open = RwSignal::new(false);
     let close_sidebar = move || {
         sidebar_open.set(false);

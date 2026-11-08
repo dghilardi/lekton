@@ -66,9 +66,6 @@ test('OpenAPI fits narrow screens, follows theme and reuses its library across r
   await expect(page.getByRole('combobox', { name: 'Version:', exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   expect(schemaReads).toEqual([]);
-  // CI's latest user-api beta has no operations. Use its operation-bearing
-  // version for the keyboard check, after checking the initial SSR read.
-  if (openapi === 'user-api') await page.getByRole('combobox', { name: 'Version:', exact: true }).selectOption('1.0.0');
   await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
   await expect(page.locator('#scalar-api-reference .dark-mode').first()).toBeVisible();
   const operation = page.locator('#scalar-api-reference a.endpoint').first();

@@ -43,9 +43,9 @@ test.describe('Search', () => {
     const searchInput = page.locator('input[placeholder*="Search"]');
     await searchInput.click();
     await searchInput.fill('Architecture');
-    // Result titles render as <div class="font-semibold text-lg mb-1"> inside the modal.
-    // This class combination only appears in search result items, not the sidebar nav.
-    const resultLink = page.locator('.fixed.inset-0 a').filter({ has: page.locator('div.font-semibold') });
+    // Results are listbox options inside the native search dialog, so the
+    // sidebar navigation behind it can never match.
+    const resultLink = page.getByRole('dialog', { name: 'Search documentation' }).getByRole('option');
     await expect(resultLink.first()).toBeVisible({ timeout: 15_000 });
     await resultLink.first().click();
     await expect(page).toHaveURL(/\/docs\//);

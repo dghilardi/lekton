@@ -125,17 +125,14 @@ mod inner {
         Fut: Future<Output = Result<T, ServerFnError>>,
     {
         match f().await {
-            Err(ref e) if is_auth_error(e) => {
-                match try_refresh().await {
-                    Ok(()) => f().await,
-                    Err(_) => {
-                        // Refresh failed — session is dead, redirect to login.
-                        redirect_to_login();
-                        f().await // result will be ignored after navigation
-                    }
+            Err(error) if is_auth_error(&error) => {
+                if try_refresh().await.is_err() {
+                    redirect_to_login();
+                    return Err(error);
                 }
+                f().await
             }
-            other => other,
+            result => result,
         }
     }
 

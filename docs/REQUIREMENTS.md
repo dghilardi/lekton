@@ -359,6 +359,10 @@ See `IMPLEMENTATION_ROADMAP.md` Phase 7 for the full breakdown and candidate nex
 - Client navigation retains the centralized auth retry contract. If an SSR read
   encounters an expired session, client bootstrap refreshes it and retries only
   unauthorized reads; successfully hydrated reads are not fetched again.
+- Authenticated client reads retry at most once after a successful refresh. A
+  rejected refresh redirects to sign in and returns the original error without
+  repeating the protected request. SSR session errors offer a sign-in action
+  while client bootstrap can restore the session.
 - Interactive schema viewers and the editor's heavy bundle load on demand and
   share in-flight library requests. The untouched schema source is available in
   SSR and remains accessible when parsing or loading a viewer fails.

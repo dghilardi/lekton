@@ -164,64 +164,58 @@ fn SchemaCard(schema: SchemaListItem) -> impl IntoView {
 #[component]
 pub fn SchemaViewerPage() -> impl IntoView {
     let params = leptos_router::hooks::use_params_map();
-    // Resource sources are re-evaluated by tasks that can outlive this
-    // component: disposing the schema resource at the end of an SSR response
-    // wakes the content resource. Its source therefore reads only
-    // reference-counted signals or fallible reads, never arena values such as
-    // the router params, which may already be disposed by then.
-    let route_name = ArcRwSignal::new(params.with_untracked(|p| p.get("name").unwrap_or_default()));
-    Effect::new({
-        let route_name = route_name.clone();
-        move || {
-            let current = params.read().get("name").unwrap_or_default();
-            if route_name.get_untracked() != current {
-                route_name.set(current);
-            }
-        }
-    });
-    let name = move || route_name.get();
+    let name = move || params.read().get("name").unwrap_or_default();
 
-    let schema_resource = crate::components::reader_resource(name.clone(), get_schema_detail);
+    let schema_resource = crate::components::reader_resource(name, get_schema_detail);
+    let selection = RwSignal::new(None::<(String, String)>);
 
-    let selection = ArcRwSignal::new(None::<(String, String)>);
-    let selected_version = {
-        let name = name.clone();
-        let selection = selection.clone();
-        move || {
-            let current = name();
-            schema_resource
-                .try_get()
-                .flatten()
-                .and_then(Result::ok)
-                .map(|detail| {
-                    if let Some((schema, version)) = selection.get() {
-                        if schema == current && detail.versions.iter().any(|v| v.version == version)
-                        {
-                            return version;
+    // The content resource awaits the schema detail inside its fetcher instead
+    // of deriving its source from the schema resource. It therefore starts out
+    // loading, SSR waits for it within the response, and nothing re-runs it
+    // once the schema resolves.
+    let schema_detail: ArcResource<Result<SchemaDetail, ServerFnError>> = schema_resource.into();
+    let content_resource = crate::components::reader_resource(
+        move || (name(), selection.get()),
+        move |(name, selection)| {
+            let schema_detail = schema_detail.clone();
+            async move {
+                let version = match selection {
+                    Some((schema, version)) if schema == name => version,
+                    _ => {
+                        // On client navigation the shared resource can still
+                        // hold the previous schema; never mix their versions.
+                        let detail = match schema_detail.await {
+                            Ok(detail) if detail.name == name => detail,
+                            _ => get_schema_detail(name.clone()).await?,
+                        };
+                        match crate::api::schemas::latest_version_info(&detail.versions) {
+                            Some(latest) => latest.version.clone(),
+                            None => return Ok(None),
                         }
                     }
-                    crate::api::schemas::latest_version_info(&detail.versions)
-                        .map(|v| v.version.clone())
-                        .unwrap_or_default()
-                })
-                .unwrap_or_default()
-        }
-    };
-    let content_resource = crate::components::reader_resource(
-        {
-            let name = name.clone();
-            let selected_version = selected_version.clone();
-            move || (name(), selected_version())
-        },
-        |(name, version)| async move {
-            if version.is_empty() {
-                Ok(None)
-            } else {
+                };
                 get_schema_content(name, version).await.map(Some)
             }
         },
     );
-    let selected = Signal::derive(selected_version);
+
+    let selected = Signal::derive(move || {
+        let current = name();
+        schema_resource
+            .get()
+            .and_then(Result::ok)
+            .map(|detail| {
+                if let Some((schema, version)) = selection.get() {
+                    if schema == current && detail.versions.iter().any(|v| v.version == version) {
+                        return version;
+                    }
+                }
+                crate::api::schemas::latest_version_info(&detail.versions)
+                    .map(|v| v.version.clone())
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default()
+    });
 
     view! {
         <Suspense fallback=move || view! {
@@ -230,8 +224,6 @@ pub fn SchemaViewerPage() -> impl IntoView {
             </div>
         }>
             {move || {
-                let name = name.clone();
-                let selection = selection.clone();
                 schema_resource.get().map(|result| match result {
                     Ok(detail) => {
                         let schema_name = detail.name.clone();

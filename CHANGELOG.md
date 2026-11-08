@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
-- Prevent a server panic after schema pages render: the schema content resource no longer reads disposed router or selection state when the schema resource is released at the end of an SSR response.
+- Load schema content deterministically: the content resource awaits the schema detail in its fetcher instead of deriving its source from the schema resource, so SSR waits for it within the response and it no longer re-runs, against disposed router state, after the schema resolves.
 
 - Prevent intermittent SSR panics that aborted page loads: shared layout memos are computed before Suspense boundaries resolve concurrently on server worker threads, and the schema tree reads the router location fallibly.
 

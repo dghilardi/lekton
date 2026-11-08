@@ -537,8 +537,8 @@ pub fn Layout(children: Children) -> impl IntoView {
                 <Show when=move || has_context_sidebar.get()>
                     // Below lg the drawer overlays the page: start it under the
                     // fixed header, which would otherwise cover its first entries.
-                    <div class="drawer-side z-40 max-lg:top-16 max-lg:h-[calc(100dvh-4rem)]">
-                        <button type="button" tabindex="-1" aria-label="Close navigation menu" class="drawer-overlay" on:click=move |_| close_sidebar()></button>
+                    <div class="drawer-side z-40 top-16 h-[calc(100dvh-4rem)] overflow-hidden">
+                        <button type="button" tabindex="-1" aria-label="Close navigation menu" class="drawer-overlay lg:hidden" on:click=move |_| close_sidebar()></button>
                         // Colours come from the --lekton-sidebar-* theming tokens.
                         <nav id="portal-navigation" aria-label="Section navigation" data-lekton-sidebar on:click=move |ev| {
                             #[cfg(feature = "hydrate")]
@@ -550,7 +550,7 @@ pub fn Layout(children: Children) -> impl IntoView {
                             }
                             #[cfg(not(feature = "hydrate"))]
                             let _ = ev;
-                        } class="menu bg-base-200 min-h-full h-[calc(100vh-4rem)] w-[var(--lekton-sidebar-width)] p-4 text-base-content border-r border-base-300 pt-6 overflow-y-auto block">
+                        } class="menu bg-base-200 min-h-0 h-full w-[var(--lekton-sidebar-width)] p-4 text-base-content border-r border-base-300 pt-6 overflow-y-auto block">
                             <button type="button" class="btn btn-ghost mb-2 lg:hidden" on:click=move |_| close_sidebar()>"Close navigation"</button>
                             // Small screens: the top-level sections, which the navbar
                             // has no room for, live here rather than in a second menu.

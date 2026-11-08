@@ -8,7 +8,7 @@ All notable changes to this project will be documented in this file.
 
 - Load schema content deterministically: the content resource awaits the schema detail in its fetcher instead of deriving its source from the schema resource, so SSR waits for it within the response and it no longer re-runs, against disposed router state, after the schema resolves.
 
-- Prevent intermittent SSR panics that aborted page loads: shared layout memos are computed before Suspense boundaries resolve concurrently on server worker threads, and the schema tree reads the router location fallibly.
+- Prevent intermittent SSR panics that aborted page loads: memos shared by Suspense boundaries, which resolve concurrently on server worker threads, are computed before the first boundary renders; cheap URL checks are uncached derived signals; and the schema tree no longer looks up the router context when it renders late.
 
 - Keep the scrolling sidebar below the fixed header and fully inside the viewport, including its final navigation target.
 

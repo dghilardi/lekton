@@ -25,6 +25,12 @@ pub use search::*;
 pub use theme::*;
 pub use user_menu::*;
 
+/// The URL's release pins, shared by every link renderer.
+///
+/// Rule for SSR: a `Memo` read by more than one `Suspense` boundary must be
+/// computed before the first boundary renders (as `Layout` does for this one),
+/// because boundaries resolve concurrently on server worker threads and a
+/// first computation racing another thread can expose an unset value.
 #[derive(Clone, Copy)]
 pub struct ActiveReleasePins(pub leptos::prelude::Memo<Vec<String>>);
 

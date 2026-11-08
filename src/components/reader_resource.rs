@@ -4,6 +4,24 @@ use leptos::prelude::*;
 use serde::{de::DeserializeOwned, Serialize};
 use std::future::Future;
 
+#[component]
+pub fn ReaderErrorNotice(error: ServerFnError, context: &'static str) -> impl IntoView {
+    if crate::auth::refresh_client::is_auth_error(&error) {
+        view! {
+            <div class="alert alert-warning" role="status">
+                <span>"Your session needs to be renewed. "<a class="link" href="/login">"Log in again"</a>" to continue."</span>
+            </div>
+        }.into_any()
+    } else {
+        view! {
+            <div class="alert alert-error" role="alert">
+                <span>{format!("{context}: {error}")}</span>
+            </div>
+        }
+        .into_any()
+    }
+}
+
 pub fn reader_resource<S, T, F, Fut>(
     source: impl Fn() -> S + Send + Sync + 'static,
     fetcher: F,

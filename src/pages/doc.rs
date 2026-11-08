@@ -424,9 +424,7 @@ pub fn DocPage() -> impl IntoView {
                     }
                     Err(e) => {
                         view! {
-                            <div class="alert alert-error">
-                                <span>{format!("Error loading document: {e}")}</span>
-                            </div>
+                            <crate::components::ReaderErrorNotice error=e context="Error loading document" />
                         }.into_any()
                     }
                 })

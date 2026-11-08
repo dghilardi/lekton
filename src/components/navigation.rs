@@ -128,6 +128,11 @@ pub fn NavigationTree() -> impl IntoView {
                             }).collect::<Vec<_>>()}
                         }.into_any()
                     }
+                    Err(e) if crate::auth::refresh_client::is_auth_error(&e) => {
+                        view! {
+                            <li><a href="/login" class="text-sm">"Log in to restore navigation"</a></li>
+                        }.into_any()
+                    }
                     Err(e) => {
                         view! {
                             <li class="text-error">{format!("Error loading navigation: {}", e)}</li>

@@ -109,9 +109,7 @@ pub fn SchemaListPage() -> impl IntoView {
                         }
                         Err(e) => {
                             view! {
-                                <div class="alert alert-error">
-                                    <span>{format!("Error loading schemas: {e}")}</span>
-                                </div>
+                                <crate::components::ReaderErrorNotice error=e context="Error loading schemas" />
                             }.into_any()
                         }
                     })
@@ -282,9 +280,7 @@ pub fn SchemaViewerPage() -> impl IntoView {
                                                 }
                                                 Err(e) => {
                                                     view! {
-                                                        <div class="alert alert-error">
-                                                            <span>{format!("Error loading schema content: {e}")}</span>
-                                                        </div>
+                                                        <crate::components::ReaderErrorNotice error=e context="Error loading schema content" />
                                                     }.into_any()
                                                 }
                                             })
@@ -296,9 +292,7 @@ pub fn SchemaViewerPage() -> impl IntoView {
                     }
                     Err(e) => {
                         view! {
-                            <div class="alert alert-error">
-                                <span>{format!("Error loading schema: {e}")}</span>
-                            </div>
+                            <crate::components::ReaderErrorNotice error=e context="Error loading schema" />
                         }.into_any()
                     }
                 })
@@ -316,8 +310,9 @@ fn VersionSelector(
 ) -> impl IntoView {
     view! {
         <div class="flex items-center gap-2">
-            <label class="text-sm font-semibold text-base-content/70">"Version:"</label>
+            <label for="schema-version" class="text-sm font-semibold text-base-content/70">"Version:"</label>
             <select
+                id="schema-version"
                 class="select select-bordered select-sm"
                 on:change=move |ev| {
                     set_selected.run(event_target_value(&ev));

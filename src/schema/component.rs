@@ -375,10 +375,20 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
     #[cfg(feature = "hydrate")]
     if interactive {
         let script = format!(
-            "import('/js/schema-viewers.js').then(m=>m.mount({}, {}, {}))",
-            js_string_literal(&schema_type),
-            js_string_literal(id),
-            js_string_literal(&content),
+            r#"import(document.querySelector('meta[name="lekton-asset"][data-path="/js/schema-viewers.js"]')?.content || '/js/schema-viewers.js')
+                .then(m=>m.mount({kind}, {id}, {content}))
+                .catch(()=>{{
+                    const viewer=document.getElementById({id});
+                    if(viewer){{
+                        const status=viewer.querySelector('[role="status"]');
+                        if(status){{status.textContent='The interactive viewer is unavailable. Read the original schema source below.';status.setAttribute('role','alert');}}
+                        const source=viewer.parentElement.querySelector('details');
+                        if(source)source.open=true;
+                    }}
+                }})"#,
+            kind = js_string_literal(&schema_type),
+            id = js_string_literal(id),
+            content = js_string_literal(&content),
         );
         Effect::new(move || {
             let _ = js_sys::eval(&script);
@@ -390,16 +400,40 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
             ));
         });
     }
+    let is_json_schema = schema_type == "jsonschema";
+    let display_content = if !interactive && content.trim_start().starts_with('{') {
+        serde_json::from_str::<serde_json::Value>(&content)
+            .and_then(|value| serde_json::to_string_pretty(&value))
+            .unwrap_or(content)
+    } else {
+        content
+    };
     view! {
         <div class="lekton-spec min-w-0">
             <Show when=move || interactive>
-                <div id=id class="lekton-spec-interactive min-w-0" aria-label="Interactive schema viewer"></div>
+                <div id=id class="lekton-spec-interactive min-w-0" aria-label="Interactive schema viewer">
+                    <p role="status" class="p-4 text-base-content/70">"The interactive viewer requires JavaScript. You can read the original schema source below."</p>
+                </div>
+            </Show>
+            <Show when=move || is_json_schema>
+                <h2 class="mt-4 text-sm font-semibold">"JSON Schema"</h2>
             </Show>
             <details class="mt-4 border border-base-300 rounded-box" open=!interactive>
                 <summary class="cursor-pointer p-3 font-medium">"Schema source"</summary>
                 <p class="px-4 text-sm text-base-content/70">"The original specification remains available if the interactive viewer cannot render it."</p>
-                <pre class="p-4 overflow-auto max-h-[70vh] text-sm" tabindex="0" aria-label="Schema source"><code>{content}</code></pre>
+                <pre class="p-4 overflow-auto max-h-[70vh] text-sm" tabindex="0" aria-label="Schema source"><code>{display_content}</code></pre>
             </details>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn viewer_script_literal_round_trips_without_html_delimiters() {
+        let source = "</script><script>alert('schema')</script> & \\\"Caffè\\\"\n";
+        let literal = super::js_string_literal(source);
+        assert!(!literal.contains(['<', '>', '&']));
+        assert_eq!(serde_json::from_str::<String>(&literal).unwrap(), source);
     }
 }

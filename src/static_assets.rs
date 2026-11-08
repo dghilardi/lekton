@@ -5,6 +5,8 @@ use std::time::UNIX_EPOCH;
 static ASSET_VERSIONS: OnceLock<HashMap<&'static str, String>> = OnceLock::new();
 
 const TRACKED_ASSETS: &[&str] = &[
+    "/js/schema-viewers.js",
+    "/js/editor-loader.js",
     "/js/scalar-standalone.js",
     "/js/scalar-style.css",
     "/js/asyncapi-standalone.js",

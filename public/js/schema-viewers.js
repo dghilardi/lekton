@@ -46,7 +46,7 @@ export async function mount(kind, id, content) {
     status.className = 'p-4 border border-warning rounded-box';
     status.setAttribute('role', 'alert');
     container.prepend(status);
-    const source = container.parentElement.querySelector('details');
+    const source = container.parentElement.querySelector(':scope > details');
     if (source) source.open = true;
   };
   try {
@@ -92,6 +92,23 @@ export async function mount(kind, id, content) {
         }
       });
       errorObserver.observe(target, { childList: true, subtree: true });
+      // In the portal's content width the viewer collapses its navigation
+      // behind a clickable div. Give that toggle button semantics and keys.
+      const enhanceToggle = () => {
+        const toggle = target.querySelector('.burger-menu');
+        if (!toggle) return;
+        const sidebar = target.querySelector('.sidebar');
+        const expanded = String(!!sidebar && !sidebar.classList.contains('hidden'));
+        if (toggle.getAttribute('aria-expanded') !== expanded) toggle.setAttribute('aria-expanded', expanded);
+        if (toggle.hasAttribute('role')) return;
+        toggle.setAttribute('role', 'button'); toggle.tabIndex = 0;
+        toggle.setAttribute('aria-label', 'Schema navigation');
+        toggle.addEventListener('keydown', event => {
+          if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle.click(); }
+        });
+      };
+      linkObserver = new MutationObserver(enhanceToggle);
+      linkObserver.observe(target, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
       window.AsyncApiStandalone.render({ schema: content, config: { show: { sidebar: true } } }, target);
     }
   } catch (error) {

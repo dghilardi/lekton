@@ -362,7 +362,7 @@ pub fn EditorPage() -> impl IntoView {
     #[cfg(feature = "hydrate")]
     Effect::new(move || {
         leptos::task::spawn_local(async move {
-            let load = js_sys::eval("import('/js/editor-loader.js').then(m=>m.load())");
+            let load = js_sys::eval("import(document.querySelector('meta[name=\"lekton-asset\"][data-path=\"/js/editor-loader.js\"]')?.content || '/js/editor-loader.js').then(m=>m.load())");
             match load {
                 Ok(promise) => {
                     match wasm_bindgen_futures::JsFuture::from(js_sys::Promise::from(promise)).await

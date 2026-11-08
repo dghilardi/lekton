@@ -156,9 +156,11 @@ export default async function globalSetup() {
     JSON.stringify({
       openapi: '3.0.0',
       info: { title: 'User API', version: '1.0.0' },
+      // Scalar renders operation links (a.endpoint) only for tagged operations.
+      tags: [{ name: 'Users' }],
       paths: {
         '/users': {
-          get: { summary: 'List users', responses: { '200': { description: 'OK' } } },
+          get: { tags: ['Users'], summary: 'List users', responses: { '200': { description: 'OK' } } },
         },
       },
     }),

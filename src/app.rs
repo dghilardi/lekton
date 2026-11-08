@@ -231,6 +231,7 @@ pub fn shell(options: LeptosOptions, _features: FeatureFlags) -> impl IntoView {
                 <Stylesheet id="leptos" href="/pkg/lekton.css" />
                 <Link rel="stylesheet" href="/custom.css" />
                 {[
+                    "/js/schema-viewers.js", "/js/editor-loader.js",
                     "/js/scalar-standalone.js", "/js/scalar-style.css",
                     "/js/asyncapi-standalone.js", "/js/asyncapi-default.min.css",
                     "/js/tiptap-bundle.min.js",

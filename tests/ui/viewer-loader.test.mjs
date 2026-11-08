@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadScript, assetUrl } from '../../public/js/schema-viewers.js';
+import { load as loadEditor } from '../../public/js/editor-loader.js';
 
 test('viewer asset URLs use the deployment fingerprint', () => {
   globalThis.document = { querySelector: () => ({ content: '/js/viewer.js?v=123' }) };
@@ -34,4 +35,11 @@ test('failed script requests can be retried', async () => {
   assert.equal(scripts.length, 2);
   scripts[1].onload();
   await retry;
+});
+
+test('editor and viewer loaders share the deployment-versioned module', async () => {
+  const moduleUrl = new URL('../../public/js/schema-viewers.js?v=deployment', import.meta.url).href;
+  globalThis.document = { querySelector: () => ({ content: moduleUrl }) };
+  globalThis.window = { TipTap: {} };
+  await loadEditor();
 });

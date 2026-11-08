@@ -358,7 +358,7 @@ fn DocumentationFeedbackDetail(
     let (duplicate_of, set_duplicate_of) = signal(item.duplicate_of.clone().unwrap_or_default());
     let (error, set_error) = signal(Option::<String>::None);
 
-    let resolve_action = Action::new_local(move |_: &()| {
+    let resolve_action = crate::components::browser_action(move |_: &()| {
         let id = item_id_for_resolve.clone();
         let note = resolution_note.get_untracked();
         async move {
@@ -377,7 +377,7 @@ fn DocumentationFeedbackDetail(
         }
     });
 
-    let duplicate_action = Action::new_local(move |_: &()| {
+    let duplicate_action = crate::components::browser_action(move |_: &()| {
         let id = item_id_for_duplicate.clone();
         let duplicate_of_value = duplicate_of.get_untracked();
         let note = resolution_note.get_untracked();

@@ -134,7 +134,7 @@ fn TokenRow(
     let (deactivating, set_deactivating) = signal(false);
 
     #[cfg(feature = "hydrate")]
-    let deactivate_action = Action::new_local(move |_: &()| {
+    let deactivate_action = crate::components::browser_action(move |_: &()| {
         let id = id.clone();
         async move {
             set_deactivating.set(true);
@@ -216,7 +216,7 @@ fn CreateTokenForm(
     let (error, set_error) = signal(Option::<String>::None);
     let (submitting, set_submitting) = signal(false);
 
-    let submit_action = Action::new_local(move |_: &()| {
+    let submit_action = crate::components::browser_action(move |_: &()| {
         let name_val = name.get_untracked();
         let scopes_val = scopes.get_untracked();
         let can_write_val = can_write.get_untracked();

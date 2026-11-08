@@ -49,7 +49,7 @@ pub fn UserManager() -> impl IntoView {
         admins_only: admins_only.get(),
     });
 
-    let save_action = Action::new_local(move |_: &()| async move {
+    let save_action = crate::components::browser_action(move |_: &()| async move {
         let Some(user_id) = editing.get_untracked() else {
             return;
         };

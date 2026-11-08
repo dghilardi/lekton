@@ -57,7 +57,7 @@ where
     let (is_polling, set_is_polling) = signal(false);
 
     let has_retry = retry_trigger.is_some();
-    let retry_action = Action::new_local(move |_: &()| {
+    let retry_action = crate::components::browser_action(move |_: &()| {
         let trigger = retry_trigger.clone();
         async move {
             let Some(trigger) = trigger else {
@@ -75,7 +75,7 @@ where
         fetch_status()
     });
 
-    let trigger_action = Action::new_local(move |_: &()| {
+    let trigger_action = crate::components::browser_action(move |_: &()| {
         let fut = trigger();
         async move {
             let result = fut.await;

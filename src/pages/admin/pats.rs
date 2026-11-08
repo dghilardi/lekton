@@ -46,7 +46,7 @@ pub fn AdminPatManager() -> impl IntoView {
         }
     });
 
-    let toggle_action = Action::new_local(move |(id, active): &(String, bool)| {
+    let toggle_action = crate::components::browser_action(move |(id, active): &(String, bool)| {
         let id = id.clone();
         let active = *active;
         async move {
@@ -63,7 +63,7 @@ pub fn AdminPatManager() -> impl IntoView {
     let machine_name = RwSignal::new(String::new());
     let created = RwSignal::new(Option::<CreatePatResult>::None);
     let create_error = RwSignal::new(Option::<String>::None);
-    let create_action = Action::new_local(move |_: &()| async move {
+    let create_action = crate::components::browser_action(move |_: &()| async move {
         let name = machine_name.get_untracked();
         match with_auth_retry(|| create_machine_pat(name.clone())).await {
             Ok(result) => {

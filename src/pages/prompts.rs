@@ -48,7 +48,7 @@ fn PromptLibraryPanel() -> impl IntoView {
     let saving_slug = RwSignal::new(None::<String>);
     let open_slug = RwSignal::new(None::<String>);
 
-    let load = Action::new_local(move |_: &()| async move {
+    let load = crate::components::browser_action(move |_: &()| async move {
         match with_auth_retry(get_prompt_library_state).await {
             Ok(value) => state.set(Some(value)),
             Err(err) => tracing::error!("Failed to load prompt library: {err}"),
@@ -61,7 +61,7 @@ fn PromptLibraryPanel() -> impl IntoView {
 
     // One action for every favorite/hidden toggle; the server answers with
     // the refreshed library.
-    let save = Action::new_local(
+    let save = crate::components::browser_action(
         move |(slug, is_favorite, is_hidden): &(String, bool, bool)| {
             let (slug, is_favorite, is_hidden) = (slug.clone(), *is_favorite, *is_hidden);
             async move {

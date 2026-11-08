@@ -1,3 +1,4 @@
+mod browser_action;
 mod contextual_sidebars;
 mod custom_css;
 mod diagnostics;
@@ -12,6 +13,7 @@ mod search;
 mod theme;
 mod user_menu;
 
+pub use browser_action::*;
 pub use contextual_sidebars::*;
 pub use custom_css::*;
 pub use layout::*;

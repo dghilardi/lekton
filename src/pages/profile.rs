@@ -81,7 +81,7 @@ fn PatSection() -> impl IntoView {
     let new_token = RwSignal::new(None::<CreatePatResult>);
 
     // Load PATs on mount
-    let load_pats = Action::new_local(move |_: &()| async move {
+    let load_pats = crate::components::browser_action(move |_: &()| async move {
         match with_auth_retry(list_user_pats).await {
             Ok(tokens) => pats.set(tokens),
             Err(e) => tracing::error!("Failed to load PATs: {e}"),
@@ -185,7 +185,7 @@ fn CreatePatForm(
     let error = RwSignal::new(None::<String>);
     let loading = RwSignal::new(false);
 
-    let submit = Action::new_local(move |n: &String| {
+    let submit = crate::components::browser_action(move |n: &String| {
         let n = n.clone();
         async move {
             loading.set(true);
@@ -247,7 +247,7 @@ fn FeedbackSection() -> impl IntoView {
     let feedback: RwSignal<Option<FeedbackListResult>> = RwSignal::new(None);
     let loading = RwSignal::new(false);
 
-    let load = Action::new_local(move |p: &u64| {
+    let load = crate::components::browser_action(move |p: &u64| {
         let p = *p;
         async move {
             loading.set(true);
@@ -343,7 +343,7 @@ fn FeedbackRow(
     let msg_id = fb.message_id.clone();
     let is_positive = fb.rating == "positive";
 
-    let delete = Action::new_local(move |_: &()| {
+    let delete = crate::components::browser_action(move |_: &()| {
         let mid = msg_id.clone();
         async move {
             if with_auth_retry(|| delete_user_feedback(mid.clone()))
@@ -425,7 +425,7 @@ fn PatRow(
     let id = token.id.clone();
     let is_active = token.is_active;
 
-    let toggle = Action::new_local(move |active: &bool| {
+    let toggle = crate::components::browser_action(move |active: &bool| {
         let active = *active;
         let id = id.clone();
         async move {
@@ -440,7 +440,7 @@ fn PatRow(
 
     let id_del = token.id.clone();
     #[allow(unused_variables)]
-    let delete = Action::new_local(move |_: &()| {
+    let delete = crate::components::browser_action(move |_: &()| {
         let id = id_del.clone();
         async move {
             if with_auth_retry(|| delete_user_pat(id.clone()))

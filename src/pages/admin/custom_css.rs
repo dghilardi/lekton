@@ -33,7 +33,7 @@ pub fn CustomCssEditor() -> impl IntoView {
         }
     });
 
-    let save_action = Action::new_local(move |new_css: &String| {
+    let save_action = crate::components::browser_action(move |new_css: &String| {
         let new_css = new_css.clone();
         async move {
             set_saving.set(true);

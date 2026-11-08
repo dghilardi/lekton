@@ -41,7 +41,7 @@ pub fn AccessLevelManager() -> impl IntoView {
 
     let error_msg = RwSignal::new(Option::<String>::None);
 
-    let save_edit_action = Action::new_local(move |_: &()| async move {
+    let save_edit_action = crate::components::browser_action(move |_: &()| async move {
         let Some(name) = editing.get_untracked() else {
             return;
         };
@@ -64,7 +64,7 @@ pub fn AccessLevelManager() -> impl IntoView {
         }
     });
 
-    let create_action = Action::new_local(move |_: &()| async move {
+    let create_action = crate::components::browser_action(move |_: &()| async move {
         let result = with_auth_retry(|| {
             create_admin_access_level(
                 new_name.get_untracked(),

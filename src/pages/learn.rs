@@ -31,7 +31,7 @@ pub fn LearnDashboardPage() -> impl IntoView {
             .or_else(|| persist_res.get().and_then(|r| r.ok()))
             .unwrap_or(true)
     });
-    let toggle_privacy = Action::new_local(move |new: &bool| {
+    let toggle_privacy = crate::components::browser_action(move |new: &bool| {
         let new = *new;
         async move {
             persist_override.set(Some(new));
@@ -46,7 +46,7 @@ pub fn LearnDashboardPage() -> impl IntoView {
     let ephemeral = RwSignal::new(None::<Lesson>);
     let navigate = use_navigate();
 
-    let start = Action::new_local(move |_: &()| {
+    let start = crate::components::browser_action(move |_: &()| {
         let navigate = navigate.clone();
         let kind = scope_kind.get();
         let value = scope_value.get().trim().to_string();
@@ -79,7 +79,7 @@ pub fn LearnDashboardPage() -> impl IntoView {
     });
 
     let confirm_delete = RwSignal::new(false);
-    let delete = Action::new_local(move |_: &()| async move {
+    let delete = crate::components::browser_action(move |_: &()| async move {
         let _ = with_auth_retry(delete_my_learning_data).await;
         confirm_delete.set(false);
         refresh.update(|n| *n += 1);
@@ -229,7 +229,7 @@ pub fn LearnPathPage() -> impl IntoView {
 
     let generating = RwSignal::new(false);
     let gen_error = RwSignal::new(None::<String>);
-    let generate = Action::new_local(move |_: &()| {
+    let generate = crate::components::browser_action(move |_: &()| {
         let id = path_id();
         async move {
             generating.set(true);
@@ -346,7 +346,7 @@ fn QuizWidget(lesson_id: String, quiz: Vec<QuizQuestion>, persist: bool) -> impl
     // Correct answers, kept for client-side grading in ephemeral mode.
     let correct: Vec<usize> = quiz.iter().map(|q| q.correct_index).collect();
 
-    let submit = Action::new_local(move |_: &()| {
+    let submit = crate::components::browser_action(move |_: &()| {
         let lesson_id = lesson_id.clone();
         let correct = correct.clone();
         let selected: Vec<Option<usize>> = answers.get();

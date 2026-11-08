@@ -82,7 +82,7 @@ pub fn NavigationOrderEditor() -> impl IntoView {
         current != original_slugs.get()
     };
 
-    let save_action = Action::new_local(move |_: &()| {
+    let save_action = crate::components::browser_action(move |_: &()| {
         let current_items = items.get_untracked();
         async move {
             set_saving.set(true);

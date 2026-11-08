@@ -115,7 +115,7 @@ pub fn SourcesAdminPanel() -> impl IntoView {
         error_msg.set(None);
     };
 
-    let save_action = Action::new_local(move |_: &()| async move {
+    let save_action = crate::components::browser_action(move |_: &()| async move {
         let Some(id) = editing.get_untracked() else {
             return;
         };
@@ -150,7 +150,7 @@ pub fn SourcesAdminPanel() -> impl IntoView {
         }
     });
 
-    let delete_action = Action::new_local(move |_: &()| async move {
+    let delete_action = crate::components::browser_action(move |_: &()| async move {
         let Some(id) = editing.get_untracked() else {
             return;
         };

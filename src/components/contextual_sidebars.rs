@@ -71,22 +71,27 @@ fn build_schema_tree(schemas: Vec<SchemaListItem>) -> Vec<SchemaTreeNode> {
 }
 
 #[component]
-fn SchemaTreeItem(node: SchemaTreeNode, #[prop(optional)] level: u32) -> impl IntoView {
+fn SchemaTreeItem(
+    node: SchemaTreeNode,
+    pathname: Memo<String>,
+    #[prop(optional)] level: u32,
+) -> impl IntoView {
     let has_children = !node.children.is_empty();
     let full_name = node.full_name.clone();
     let title = node.name.clone();
     let children = node.children.clone();
     let is_schema = node.is_schema;
-    let location = leptos_router::hooks::use_location();
 
+    // The tree renders when the schema list resolves, which during SSR can be
+    // after an aborted response has disposed the router: read it fallibly.
     let is_active = {
         let full_name = full_name.clone();
-        move || location.pathname.get() == format!("/schemas/{full_name}")
+        move || pathname.try_get().unwrap_or_default() == format!("/schemas/{full_name}")
     };
     let is_in_active_branch = {
         let full_name = full_name.clone();
         move || {
-            let current = location.pathname.get();
+            let current = pathname.try_get().unwrap_or_default();
             current == format!("/schemas/{full_name}")
                 || current.starts_with(&format!("/schemas/{full_name}/"))
         }
@@ -117,7 +122,7 @@ fn SchemaTreeItem(node: SchemaTreeNode, #[prop(optional)] level: u32) -> impl In
                             ().into_any()
                         }}
                         {children.into_iter().map(|child| {
-                            view! { <SchemaTreeItem node=child level=level + 1 /> }
+                            view! { <SchemaTreeItem node=child pathname level=level + 1 /> }
                         }).collect::<Vec<_>>()}
                     </ul>
                 </details>
@@ -158,6 +163,7 @@ pub fn DocsSidebar() -> impl IntoView {
 #[component]
 pub fn RegistrySidebar() -> impl IntoView {
     let schemas_resource = crate::schema::component::use_schemas();
+    let pathname = leptos_router::hooks::use_location().pathname;
 
     view! {
         <Suspense fallback=|| view! { <span role="status">"Loading schemas…"</span> }>
@@ -172,7 +178,7 @@ pub fn RegistrySidebar() -> impl IntoView {
                             let tree = build_schema_tree(schemas);
                             view! {
                                 {tree.into_iter().map(|node| {
-                                    view! { <SchemaTreeItem node=node level=0 /> }
+                                    view! { <SchemaTreeItem node=node pathname level=0 /> }
                                 }).collect::<Vec<_>>()}
                             }.into_any()
                         }

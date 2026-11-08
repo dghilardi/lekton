@@ -14,7 +14,10 @@ fn js_string_literal(value: &str) -> String {
 /// Server function to list all schemas.
 #[server(ListSchemas, "/api")]
 pub async fn list_schemas() -> Result<Vec<SchemaListItem>, ServerFnError> {
-    let state = expect_context::<crate::app::AppState>();
+    // A resource fetcher can outlive an aborted response's owner, so a
+    // missing context is an error here, not a panic.
+    let state = use_context::<crate::app::AppState>()
+        .ok_or_else(|| ServerFnError::new("server state unavailable"))?;
     let (allowed_levels, _) = crate::server::request_document_visibility(&state).await?;
     crate::api::schemas::process_list_schemas(state.schema_repo.as_ref(), allowed_levels.as_deref())
         .await
@@ -24,7 +27,10 @@ pub async fn list_schemas() -> Result<Vec<SchemaListItem>, ServerFnError> {
 /// Server function to get schema details.
 #[server(GetSchemaDetail, "/api")]
 pub async fn get_schema_detail(name: String) -> Result<SchemaDetail, ServerFnError> {
-    let state = expect_context::<crate::app::AppState>();
+    // A resource fetcher can outlive an aborted response's owner, so a
+    // missing context is an error here, not a panic.
+    let state = use_context::<crate::app::AppState>()
+        .ok_or_else(|| ServerFnError::new("server state unavailable"))?;
     let (allowed_levels, _) = crate::server::request_document_visibility(&state).await?;
     crate::api::schemas::process_get_schema(
         state.schema_repo.as_ref(),
@@ -38,7 +44,10 @@ pub async fn get_schema_detail(name: String) -> Result<SchemaDetail, ServerFnErr
 /// Server function to get raw schema content for a specific version.
 #[server(GetSchemaContent, "/api")]
 pub async fn get_schema_content(name: String, version: String) -> Result<String, ServerFnError> {
-    let state = expect_context::<crate::app::AppState>();
+    // A resource fetcher can outlive an aborted response's owner, so a
+    // missing context is an error here, not a panic.
+    let state = use_context::<crate::app::AppState>()
+        .ok_or_else(|| ServerFnError::new("server state unavailable"))?;
     let (allowed_levels, _) = crate::server::request_document_visibility(&state).await?;
     crate::api::schemas::process_get_schema_content(
         state.schema_repo.as_ref(),
@@ -180,13 +189,17 @@ pub fn SchemaViewerPage() -> impl IntoView {
             let schema_detail = schema_detail.clone();
             async move {
                 let version = match selection {
+                    // The selector only offers versions of the current schema.
                     Some((schema, version)) if schema == name => version,
                     _ => {
                         // On client navigation the shared resource can still
                         // hold the previous schema; never mix their versions.
+                        // An error is returned as is: re-reading would repeat
+                        // the access check and, client-side, the auth refresh.
                         let detail = match schema_detail.await {
                             Ok(detail) if detail.name == name => detail,
-                            _ => get_schema_detail(name.clone()).await?,
+                            Ok(_) => get_schema_detail(name.clone()).await?,
+                            Err(error) => return Err(error),
                         };
                         match crate::api::schemas::latest_version_info(&detail.versions) {
                             Some(latest) => latest.version.clone(),

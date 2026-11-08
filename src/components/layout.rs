@@ -39,9 +39,7 @@ pub fn TopNavbarLinks() -> impl IntoView {
     // Pages with a sidebar put these links in the drawer instead (see
     // `SectionMenuItems`), so small screens get one menu, not two.
     let location = leptos_router::hooks::use_location();
-    let has_drawer = Memo::new(move |_| has_context_sidebar(&location.pathname.get()));
-    // Computed before Suspense boundaries can read it concurrently (see Layout).
-    has_drawer.with_untracked(|_| ());
+    let has_drawer = Signal::derive(move || has_context_sidebar(&location.pathname.get()));
     let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
     let is_rag = use_context::<crate::app::IsRagEnabled>();
     let schema_enabled = crate::app::use_feature(|f| f.schema_registry);
@@ -378,8 +376,10 @@ pub fn Layout(children: Children) -> impl IntoView {
     ));
     let search_enabled = crate::app::use_feature(|f| f.search);
     let location = leptos_router::hooks::use_location();
-    let path = Memo::new(move |_| location.pathname.get());
-    let has_context_sidebar = Memo::new(move |_| has_context_sidebar(&path.get()));
+    // Cheap URL checks stay uncached derived signals: unlike memos, they have
+    // no shared value that concurrent Suspense boundaries could race on.
+    let path = Signal::derive(move || location.pathname.get());
+    let has_context_sidebar = Signal::derive(move || has_context_sidebar(&path.get()));
     provide_context(SharedNavbarGroups(Resource::new(
         || (),
         |_| get_navbar_groups(),
@@ -396,14 +396,15 @@ pub fn Layout(children: Children) -> impl IntoView {
             },
         ),
     ));
-    let is_chat_layout = Memo::new(move |_| path.get().starts_with("/chat"));
-    // Server-side, each Suspense boundary resolves on its own worker thread.
-    // reactive_graph can hand an unset value to a reader racing another
-    // thread's first computation of the same memo, so compute the shared,
-    // URL-derived memos here, before any boundary reads them concurrently.
+    let is_chat_layout = Signal::derive(move || path.get().starts_with("/chat"));
+    // Server-side, each Suspense boundary resolves on its own worker thread,
+    // and reactive_graph can hand an unset value to a reader racing another
+    // thread's first computation of the same memo. Compute the memos that
+    // boundaries share here, before the first one renders: the URL does not
+    // change during SSR, so they then stay clean for the whole response.
+    location.pathname.with_untracked(|_| ());
+    location.search.with_untracked(|_| ());
     active_release_pins.with_untracked(|_| ());
-    has_context_sidebar.with_untracked(|_| ());
-    is_chat_layout.with_untracked(|_| ());
     let sidebar_open = RwSignal::new(false);
     let close_sidebar = move || {
         sidebar_open.set(false);

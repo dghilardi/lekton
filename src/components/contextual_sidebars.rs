@@ -82,8 +82,11 @@ fn SchemaTreeItem(
     let children = node.children.clone();
     let is_schema = node.is_schema;
 
-    // The tree renders when the schema list resolves, which during SSR can be
-    // after an aborted response has disposed the router: read it fallibly.
+    // `pathname` comes from RegistrySidebar: items render when the schema list
+    // resolves, and a router context lookup at that point fails once an
+    // aborted response has torn the router down. `try_get` only tolerates such
+    // an already-disposed handle; it does not guard concurrent first reads,
+    // which Layout prevents by computing `pathname` before any Suspense renders.
     let is_active = {
         let full_name = full_name.clone();
         move || pathname.try_get().unwrap_or_default() == format!("/schemas/{full_name}")

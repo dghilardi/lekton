@@ -6,6 +6,16 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Keep the scrolling sidebar below the fixed header and fully inside the viewport, including its final navigation target.
+
+- Show actionable session-renewal guidance in reader HTML and associate the schema version selector with its visible label.
+
+- Stop retrying protected reads when session refresh is rejected.
+
+- Version viewer/editor loader modules across deployments, explain the no-JavaScript fallback, recover from module-loading failures, and preserve JSON Schema headings and formatting.
+
+- Make the AsyncAPI viewer's collapsed navigation toggle keyboard operable and expose its expanded state.
+
 - Load the editor and schema viewer bundles on demand, share schema-list reads, keep schema source available when viewers fail, and preserve keyboard operation navigation and theme changes.
 
 - Render authorized documents and reader navigation on the server, reuse those reads during hydration, and prevent shared caching of private HTML.

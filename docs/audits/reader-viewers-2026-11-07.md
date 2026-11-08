@@ -12,6 +12,7 @@ Branch: `feat/portal-viewers-ssr`. Baseline for this follow-up: `20c0f9a`, conta
 - Tiptap's heavy bundle (384787 bytes on the observed installation) was eagerly included on reader pages. Only its small WASM bridge remains statically imported; the heavy editor bundle loads when entering the editor.
 - Registry index and sidebar independently requested the same 12666-byte schema list. They now share a layout-scoped resource. Initial hydration makes no list request.
 - Documentation HTML originally contained no rendered article. Authorized documents and schema data now resolve through request-scoped serializable resources, using async SSR for complete reader HTML. Hydration reuses the results rather than fetching them again.
+- Within the portal's content width the AsyncAPI viewer always collapses its navigation behind a floating `div` toggle with no role, focus or keyboard handling, so channel links were unreachable from the keyboard. The adapter now gives the toggle button semantics, Enter/Space activation and `aria-expanded`, without replacing the library's handler.
 - Schema version selection is derived from the resolved metadata and the per-schema user selection, not mutated during render. This prevents a redundant content read during hydration.
 
 ## Authentication and delivery boundaries
@@ -20,12 +21,28 @@ Existing server functions still enforce access levels. No process-global reader-
 
 The initial document is readable with JavaScript disabled. Interactive viewers progressively enhance an SSR-readable source. Successful initial reads do not need WASM to expose the content. The raw HTML can be larger than a shell-only response; fewer API round trips do not establish a bandwidth or latency percentage improvement. Production compression, cold-network timing, heap profiling and physical-device/screen-reader checks remain outside the measured coverage.
 
+## Bundle budget
+
+Release frontend builds of `75a3cc0` and of this branch used the same cargo-leptos command, one Cargo job and the same feature set. Sizes are bytes on disk; gzip -9 sizes are indicative only, since production compression was not measured.
+
+| Asset | `75a3cc0` | This branch | Delta |
+|---|---|---|---|
+| `lekton.wasm` | 5192965 (gzip 1883889) | 5349797 (gzip 1936287) | +156832 |
+| `lekton.js` | 44699 | 45269 | +570 |
+| `lekton.css` | 273196 | 278007 | +4811 |
+| Tiptap bundle on reader pages | 384787 (gzip 115227) | 0, loaded only in the editor | −384787 |
+| Reader total | 5895647 | 5673073 | −222574 |
+
+The WASM grows by about 3%, mostly from the serialization code that hydrates server-resolved reader data. Readers still download less overall, because the editor bundle is no longer eager. The CI WASM threshold therefore moves from 5120 KiB to 5376 KiB, leaving about 150 KiB of headroom above this build rather than removing the guard.
+
 ## Verification
 
 - Both cargo-leptos frontend and server builds passed with one Cargo job, dev debug information disabled and incremental compilation disabled.
 - 19 browser checks passed: preceding portal keyboard/theme regressions plus SSR HTML, no-JS reading, anonymous denial of a private document, shared schema reads, lazy editor loading, OpenAPI geometry/theme/keyboard navigation/library reuse, AsyncAPI source/recovery and valid fixture rendering, and mocked session refresh recovery.
-- Three loader unit tests pass: deployment fingerprint selection, concurrent-load deduplication and retry after a failed load.
-- Rust auth regression tests: tracked separately until the native test build completes.
+- Follow-up on 8 November: 35 browser checks passed on a server restarted from the final debug build. Added coverage: schema version switching (one content read, one viewer library), viewer module import failure, no-JS viewer notice, JSON Schema formatting, expired-session sign-in guidance without JavaScript, bounded client retry (recovered, still unauthorized, refresh rejected, unrelated error), keyboard navigation of AsyncAPI channels, and sidebar geometry at 1440/1024/768/390 px in both themes.
+- `cargo clippy --features ssr --lib -- -D warnings` and `cargo clippy --features hydrate --lib -- -D warnings` pass.
+- Four loader unit tests pass: deployment fingerprint selection, concurrent-load deduplication, retry after a failed load, and the editor loader sharing the versioned viewer module.
+- Six Rust auth-refresh regression tests pass. The first native build exhausted the VM's disk; after space was available, the serial rebuild and all six tests completed successfully.
 - `cargo fmt --all --check` and `git diff --check` pass.
 - Browser tests ran on this checkout's port 3100 against the isolated `lekton_ux_audit` metadata copy. Existing storage objects were read only. Real search used the local read-only proxy when enabled; no shared index configuration or production data changed. Port 3000 and the other worktree were not used.
 - Selected schemas use the copied development snapshot. Its metadata version and embedded `info.version` can differ; this data discrepancy was not changed by the viewer integration.
@@ -37,6 +54,7 @@ LEKTON_READER_DOC=cocode/code-guidelines-app \
 LEKTON_PRIVATE_DOC=cocode/code-guidelines-app \
 LEKTON_OPENAPI_SCHEMA=http/assets-manager \
 LEKTON_ASYNCAPI_SCHEMA=mqtt/directory \
+LEKTON_MULTI_VERSION_SCHEMA=http/remotecommand \
 npx playwright test --config playwright.ux.config.ts
 npm run test:ui-unit
 cargo fmt --all --check
@@ -46,9 +64,9 @@ The dedicated browser config starts no server and seeds no content. The default 
 
 ## Rendered evidence
 
-Baseline OpenAPI light/390×844: [PNG](/home/davide.ghilardi/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mw6bot2r-4746a9e6.png).
-After same schema, viewport and light theme: [PNG](/home/davide.ghilardi/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mw6ovgcz-5e0ada11.png).
-After dark/390×844: [PNG](/home/davide.ghilardi/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mw6ovgmp-a99a83b8.png).
+Baseline OpenAPI dark/390×844: [PNG](/home/davide.ghilardi/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mw6bot2r-4746a9e6.png).
+After the same schema, viewport and dark theme: [PNG](/home/davide.ghilardi/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mw6ovgmp-a99a83b8.png).
+Additional light/390×844 check: [PNG](/home/davide.ghilardi/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mw6ovgcz-5e0ada11.png).
 Baseline dark download control: [PNG](/home/davide.ghilardi/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mw6bo95x-170e812e.png).
 The desktop baseline and narrow captures differ in viewport; they are not a pixel-identical pair.
 

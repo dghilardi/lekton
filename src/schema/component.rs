@@ -168,7 +168,7 @@ pub fn SchemaViewerPage() -> impl IntoView {
     let params = leptos_router::hooks::use_params_map();
     let name = move || params.read().get("name").unwrap_or_default();
 
-    let schema_resource = crate::components::reader_resource(move || name(), get_schema_detail);
+    let schema_resource = crate::components::reader_resource(name, get_schema_detail);
 
     let selection = RwSignal::new(None::<(String, String)>);
     let selected_version = Signal::derive(move || {

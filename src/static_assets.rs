@@ -47,3 +47,47 @@ fn mtime_version(path: &str) -> Option<String> {
             .to_string()
     })
 }
+
+/// Whether a request path that matched neither a route nor a file names a
+/// static asset. Missing assets get a bare 404; any other unknown path gets
+/// the application's not-found page.
+pub fn is_asset_path(path: &str) -> bool {
+    path.starts_with("/pkg/")
+        || path.starts_with("/js/")
+        || path
+            .rsplit('/')
+            .next()
+            .is_some_and(|segment| segment.contains('.'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_asset_path;
+
+    #[test]
+    fn asset_paths_are_recognised() {
+        for path in [
+            "/pkg/lekton.wasm",
+            "/js/missing.js",
+            "/js/chunks/x",
+            "/favicon.ico",
+            "/img/logo.svg",
+            "/.well-known",
+        ] {
+            assert!(is_asset_path(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn page_paths_are_not_assets() {
+        for path in [
+            "/",
+            "/no-such-page",
+            "/team/handbook",
+            "/admin/unknown",
+            "/docs.v2/page",
+        ] {
+            assert!(!is_asset_path(path), "{path}");
+        }
+    }
+}

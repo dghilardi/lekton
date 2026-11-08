@@ -3,6 +3,10 @@ use leptos::prelude::*;
 /// 404 Not Found page.
 #[component]
 pub fn NotFound() -> impl IntoView {
+    #[cfg(feature = "ssr")]
+    if let Some(response) = use_context::<leptos_axum::ResponseOptions>() {
+        response.set_status(axum::http::StatusCode::NOT_FOUND);
+    }
     view! {
         <div class="hero min-h-[60vh]">
             <div class="hero-content text-center">

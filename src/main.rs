@@ -1256,15 +1256,48 @@ async fn main() {
         }
     };
 
+    // A path that is neither a route nor a file: a missing asset stays a bare
+    // 404, while any other path renders the app's not-found page. Rendering
+    // costs reads, so it shares the dynamic routes' rate limit.
+    let not_found = {
+        let render = leptos_axum::render_app_to_stream_with_context(
+            {
+                let state = app_state.clone();
+                move || provide_context(state.clone())
+            },
+            {
+                let options = app_state.leptos_options.clone();
+                move || lekton::app::shell(options.clone(), features)
+            },
+        );
+        tower::ServiceBuilder::new()
+            .layer(tower_governor::GovernorLayer::new(governor_conf.clone()))
+            .service(tower::service_fn(move |request: axum::extract::Request| {
+                let render = render.clone();
+                async move {
+                    if lekton::static_assets::is_asset_path(request.uri().path()) {
+                        return Ok::<_, std::convert::Infallible>(
+                            axum::response::IntoResponse::into_response(
+                                axum::http::StatusCode::NOT_FOUND,
+                            ),
+                        );
+                    }
+                    let mut response = render(request).await;
+                    *response.status_mut() = axum::http::StatusCode::NOT_FOUND;
+                    Ok(response)
+                }
+            }))
+    };
+
     let app = app
         // Leptos SSR routes
         .leptos_routes(&app_state, routes, {
             let options = app_state.leptos_options.clone();
             move || lekton::app::shell(options.clone(), features)
         })
-        .route_layer(tower_governor::GovernorLayer::new(governor_conf))
-        // Static files (including custom.css)
-        .fallback_service(ServeDir::new(&site_root))
+        .route_layer(tower_governor::GovernorLayer::new(governor_conf.clone()))
+        // Static files (including custom.css), then the not-found page.
+        .fallback_service(ServeDir::new(&site_root).not_found_service(not_found))
         .layer(middleware::from_fn(static_cache_headers))
         .layer(middleware::from_fn(mjs_content_type))
         .layer(cors)

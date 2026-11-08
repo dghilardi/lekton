@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Serve the not-found page with status 404 for unknown paths instead of an empty body; missing static assets remain bare 404 responses.
+
 - Stop direct loads of Learn, the RAG admin and other pages with browser-only actions from crashing the server: `Action::new_local` created during SSR was dropped from another worker thread at the end of the response, truncating the HTML and, on a second panic, aborting the process. Such actions are now inert on the server (`browser_action`).
 
 - Load schema content deterministically: the content resource awaits the schema detail in its fetcher instead of deriving its source from the schema resource, so SSR waits for it within the response and it no longer re-runs, against disposed router state, after the schema resolves.

@@ -124,16 +124,21 @@ pub fn AssetPanel(
 ) -> impl IntoView {
     let (refresh_counter, set_refresh_counter) = signal(0u32);
 
-    let assets_resource = Resource::new(move || refresh_counter.get(), |_| list_all_assets());
+    let assets_resource =
+        crate::components::reader_resource(move || refresh_counter.get(), |_| list_all_assets());
 
     let refresh = move || set_refresh_counter.update(|c| *c += 1);
     // Suppress warning on SSR where refresh is only used in hydrate cfg blocks
     let _ = &refresh;
 
-    let delete_action = Action::new(move |key: &String| {
+    let delete_action = crate::components::browser_action(move |key: &String| {
         let key = key.clone();
         async move {
-            match delete_asset_by_key(key).await {
+            match crate::auth::refresh_client::with_auth_retry(move || {
+                delete_asset_by_key(key.clone())
+            })
+            .await
+            {
                 Ok(()) => {}
                 Err(e) => {
                     leptos::logging::error!("Failed to delete asset: {}", e);

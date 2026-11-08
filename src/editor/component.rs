@@ -1,6 +1,11 @@
 use leptos::prelude::*;
 use leptos_tiptap::*;
 
+#[cfg(feature = "hydrate")]
+use super::unsaved::{self, draft_key};
+use super::unsaved::{EditorDraft, EditorFields};
+use crate::auth::refresh_client::with_auth_retry;
+
 use super::asset_panel::AssetPanel;
 
 #[cfg(feature = "hydrate")]
@@ -401,28 +406,124 @@ pub fn EditorPage() -> impl IntoView {
     // in-progress edits are never clobbered by a resource refetch for the same doc.
     let (loaded_slug, set_loaded_slug) = signal(Option::<String>::None);
 
+    // Unsaved changes are measured against what was last loaded or saved. The
+    // body counts as edited once TipTap reports a change, since it normalises
+    // the loaded HTML; the other fields compare by value.
+    let baseline = RwSignal::new(EditorFields::default());
+    let baseline_content = RwSignal::new(String::new());
+    let content_edited = RwSignal::new(false);
+    let current_fields = move || EditorFields {
+        slug: slug.get(),
+        title: title.get(),
+        access_level: access_level.get(),
+        parent_slug: parent_slug.get(),
+        order: order.get(),
+    };
+    let dirty = Signal::derive(move || {
+        loaded_slug.with(Option::is_some)
+            && (content_edited.get() || current_fields() != baseline.get())
+    });
+    // A local draft left by an earlier visit, offered until restored or discarded.
+    let draft_offer = RwSignal::new(None::<EditorDraft>);
+    // Bumped to recreate TipTap, which only reads its content when created.
+    let editor_epoch = RwSignal::new(0u32);
+
     Effect::new(move || {
         let current_slug = route_slug();
         if let Some(Ok(maybe)) = doc_resource.get() {
             if loaded_slug.get_untracked().as_deref() != Some(current_slug.as_str()) {
-                set_loaded_slug.set(Some(current_slug.clone()));
-                match maybe {
-                    Some(doc) => {
-                        set_slug.set(current_slug);
-                        set_title.set(doc.title);
-                        set_value.set(doc.html);
-                        set_access_level.set(doc.access_level);
-                        set_parent_slug.set(doc.parent_slug.unwrap_or_default());
-                        set_order.set(doc.order);
-                    }
+                let (fields, content) = match maybe {
+                    Some(doc) => (
+                        EditorFields {
+                            slug: current_slug.clone(),
+                            title: doc.title,
+                            access_level: doc.access_level,
+                            parent_slug: doc.parent_slug.unwrap_or_default(),
+                            order: doc.order,
+                        },
+                        doc.html,
+                    ),
                     // Creation mode: seed the (editable) slug from the route, if any.
-                    None => set_slug.set(current_slug),
+                    None => (
+                        EditorFields {
+                            slug: current_slug.clone(),
+                            ..Default::default()
+                        },
+                        String::new(),
+                    ),
+                };
+                set_slug.set(fields.slug.clone());
+                set_title.set(fields.title.clone());
+                set_value.set(content.clone());
+                set_access_level.set(fields.access_level.clone());
+                set_parent_slug.set(fields.parent_slug.clone());
+                set_order.set(fields.order);
+                content_edited.set(false);
+                #[cfg(feature = "hydrate")]
+                {
+                    let key = draft_key(&current_slug);
+                    match unsaved::browser::load_draft(&key) {
+                        Some(draft) if draft.differs_from(&fields, &content) => {
+                            draft_offer.set(Some(draft))
+                        }
+                        Some(_) => unsaved::browser::remove_draft(&key),
+                        None => {}
+                    }
                 }
+                baseline.set(fields);
+                baseline_content.set(content);
+                set_loaded_slug.set(Some(current_slug));
             }
         }
     });
 
-    let save_action = Action::new(move |_: &()| {
+    // Keep a local draft while there are unsaved changes, and drop it once
+    // they are saved or reverted; an offered draft is left untouched.
+    #[cfg(feature = "hydrate")]
+    Effect::new(move || {
+        let Some(route) = loaded_slug.get() else {
+            return;
+        };
+        if draft_offer.with(Option::is_some) {
+            return;
+        }
+        let key = draft_key(&route);
+        if dirty.get() {
+            let draft = EditorDraft {
+                fields: current_fields(),
+                content: value.get(),
+                saved_at: unsaved::browser::now(),
+            };
+            unsaved::browser::store_draft(&key, &draft);
+        } else {
+            unsaved::browser::remove_draft(&key);
+        }
+    });
+    #[cfg(feature = "hydrate")]
+    unsaved::browser::install_leave_guard(dirty);
+
+    let restore_draft = move |_| {
+        if let Some(draft) = draft_offer.get_untracked() {
+            set_slug.set(draft.fields.slug);
+            set_title.set(draft.fields.title);
+            set_access_level.set(draft.fields.access_level);
+            set_parent_slug.set(draft.fields.parent_slug);
+            set_order.set(draft.fields.order);
+            content_edited.set(draft.content != baseline_content.get_untracked());
+            set_value.set(draft.content);
+            editor_epoch.update(|epoch| *epoch += 1);
+            draft_offer.set(None);
+        }
+    };
+    let discard_draft = move |_| {
+        #[cfg(feature = "hydrate")]
+        if let Some(route) = loaded_slug.get_untracked() {
+            unsaved::browser::remove_draft(&draft_key(&route));
+        }
+        draft_offer.set(None);
+    };
+
+    let save_action = crate::components::browser_action(move |_: &()| {
         let current_slug = slug.get();
         let current_title = title.get();
         let current_content = value.get();
@@ -436,20 +537,36 @@ pub fn EditorPage() -> impl IntoView {
             }
         };
         let current_order = order.get();
+        let saved_fields = EditorFields {
+            slug: current_slug.clone(),
+            title: current_title.clone(),
+            access_level: current_access_level.clone(),
+            parent_slug: current_parent.clone().unwrap_or_default(),
+            order: current_order,
+        };
         async move {
             set_saving.set(true);
             set_save_status.set(String::new());
-            match save_doc_content(
-                current_slug,
-                current_title,
-                current_content,
-                current_access_level,
-                current_parent,
-                current_order,
-            )
+            let saved_content = current_content.clone();
+            match with_auth_retry(move || {
+                save_doc_content(
+                    current_slug.clone(),
+                    current_title.clone(),
+                    current_content.clone(),
+                    current_access_level.clone(),
+                    current_parent.clone(),
+                    current_order,
+                )
+            })
             .await
             {
-                Ok(msg) => set_save_status.set(msg),
+                Ok(msg) => {
+                    // Edits made while saving stay unsaved.
+                    content_edited.set(value.get_untracked() != saved_content);
+                    baseline_content.set(saved_content);
+                    baseline.set(saved_fields);
+                    set_save_status.set(msg);
+                }
                 Err(e) => set_save_status.set(format!("Error: {e}")),
             }
             set_saving.set(false);
@@ -467,6 +584,16 @@ pub fn EditorPage() -> impl IntoView {
                                 <h2 class="text-2xl font-bold">
                                     {if is_new { "Create Page" } else { "Edit Page" }}
                                 </h2>
+
+                                {move || draft_offer.get().map(|_| view! {
+                                    <div class="alert alert-info" role="status">
+                                        <span>"This page has unsaved changes from an earlier visit, kept in this browser."</span>
+                                        <div class="flex gap-2">
+                                            <button type="button" class="btn btn-sm btn-primary" on:click=restore_draft>"Restore draft"</button>
+                                            <button type="button" class="btn btn-sm btn-ghost" on:click=discard_draft>"Discard draft"</button>
+                                        </div>
+                                    </div>
+                                })}
 
                                 // Slug — editable only when creating a new page.
                                 <div class="form-control">
@@ -646,21 +773,27 @@ pub fn EditorPage() -> impl IntoView {
                                     <Show when=move || editor_ready.get() fallback=move || view! {
                                         <p role="status">{move || if editor_error.get() { "The editor could not load. Reload the page to try again." } else { "Loading editor…" }}</p>
                                     }>
-                                    <TiptapInstance
-                                        id=Signal::derive(|| "lekton-editor".to_string())
-                                        msg=msg
-                                        disabled=disabled
-                                        value=value
-                                        set_value=Callback::new(move |(v,): (TiptapContent,)| {
-                                            set_value.set(match v {
-                                                TiptapContent::Html(content) => content,
-                                                TiptapContent::Json(content) => content,
-                                            });
-                                        })
-                                        on_selection_change=Callback::new(move |(state,): (TiptapSelectionState,)| {
-                                            set_selection.set(state);
-                                        })
-                                    />
+                                    {move || {
+                                        editor_epoch.track();
+                                        view! {
+                                            <TiptapInstance
+                                                id=Signal::derive(|| "lekton-editor".to_string())
+                                                msg=msg
+                                                disabled=disabled
+                                                value=value
+                                                set_value=Callback::new(move |(v,): (TiptapContent,)| {
+                                                    content_edited.set(true);
+                                                    set_value.set(match v {
+                                                        TiptapContent::Html(content) => content,
+                                                        TiptapContent::Json(content) => content,
+                                                    });
+                                                })
+                                                on_selection_change=Callback::new(move |(state,): (TiptapSelectionState,)| {
+                                                    set_selection.set(state);
+                                                })
+                                            />
+                                        }
+                                    }}
                                     </Show>
                                 </div>
 
@@ -691,7 +824,7 @@ pub fn EditorPage() -> impl IntoView {
                                     {move || {
                                         let status = save_status.get();
                                         if status.is_empty() {
-                                            view! { <span></span> }.into_any()
+                                            view! { <span class="text-sm text-base-content/70">{move || if dirty.get() { "Unsaved changes" } else { "" }}</span> }.into_any()
                                         } else if status.starts_with("Error") {
                                             view! { <span class="text-error">{status}</span> }.into_any()
                                         } else {

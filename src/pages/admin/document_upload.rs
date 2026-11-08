@@ -1,6 +1,7 @@
 //! Admin guided document-upload form: upload a PDF, assign metadata, optionally
 //! generate an AI summary, and create (or edit) a document that links to it.
 
+use crate::auth::refresh_client::with_auth_retry;
 use leptos::prelude::*;
 
 use crate::server::document_upload::{
@@ -47,13 +48,14 @@ pub fn DocumentUploadManager() -> impl IntoView {
     let query = leptos_router::hooks::use_query_map();
     let edit_slug = Memo::new(move |_| query.read().get("edit").filter(|s| !s.is_empty()));
 
-    let levels_resource = LocalResource::new(list_levels);
-    let nav_resource = LocalResource::new(|| crate::server::nav::get_navigation(None));
+    let levels_resource = LocalResource::new(|| with_auth_retry(list_levels));
+    let nav_resource =
+        LocalResource::new(|| with_auth_retry(|| crate::server::nav::get_navigation(None)));
     let edit_resource = LocalResource::new(move || {
         let slug = edit_slug.get();
         async move {
             match slug {
-                Some(s) => Some(get_document_for_edit(s).await),
+                Some(s) => Some(with_auth_retry(move || get_document_for_edit(s.clone())).await),
                 None => None,
             }
         }
@@ -134,7 +136,7 @@ pub fn DocumentUploadManager() -> impl IntoView {
     #[cfg(not(feature = "hydrate"))]
     let _ = set_generating;
 
-    let save = Action::new(move |_: &()| {
+    let save = crate::components::browser_action(move |_: &()| {
         let form = DocumentUploadForm {
             slug: edit_slug.get_untracked(),
             title: title.get_untracked(),
@@ -166,7 +168,7 @@ pub fn DocumentUploadManager() -> impl IntoView {
                 set_error_msg.set(Some("Upload a PDF first".into()));
                 return;
             }
-            match save_document_with_attachment(form).await {
+            match with_auth_retry(move || save_document_with_attachment(form.clone())).await {
                 Ok(slug) => {
                     set_success_msg.set(Some(slug));
                 }

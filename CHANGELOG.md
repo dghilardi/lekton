@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Protect unsaved editor changes: the editor tracks them, asks before following an in-app link or unloading the page, and keeps a local draft that it offers to restore on the next visit. Editor, asset panel and document-upload server calls now go through the shared session-refresh retry.
+
 - Serve the not-found page with status 404 for unknown paths instead of an empty body; missing static assets remain bare 404 responses.
 
 - Stop direct loads of Learn, the RAG admin and other pages with browser-only actions from crashing the server: `Action::new_local` created during SSR was dropped from another worker thread at the end of the response, truncating the HTML and, on a second panic, aborting the process. Such actions are now inert on the server (`browser_action`).

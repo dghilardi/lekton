@@ -27,6 +27,17 @@ test.describe('Accessibility', () => {
     expect(violations, `axe violations on ${context}`).toEqual([]);
   }
 
+  // The search is a native <dialog> (implicit role), and Ctrl+K only works
+  // once hydration has attached the shortcut, so retry until it opens.
+  async function openSearch(page: import('@playwright/test').Page) {
+    const dialog = page.getByRole('dialog', { name: 'Search documentation' });
+    await expect(async () => {
+      await page.keyboard.press('Control+k');
+      await expect(dialog).toBeVisible({ timeout: 500 });
+    }).toPass({ timeout: 15_000 });
+    return dialog;
+  }
+
   test('home page has no axe violations', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
@@ -37,8 +48,7 @@ test.describe('Accessibility', () => {
     await page.setViewportSize({ width: 1600, height: 900 });
     await page.goto('/');
     await page.waitForLoadState('networkidle');
-    await page.keyboard.press('Control+k');
-    await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 10_000 });
+    await openSearch(page);
     await expectNoViolations(page, 'search modal');
   });
 
@@ -70,9 +80,7 @@ test.describe('Accessibility', () => {
       page.locator('button', { hasText: /search|ctrl.*k/i }).first(),
     ).toBeVisible({ timeout: 15_000 });
 
-    await page.keyboard.press('Control+k');
-    const dialog = page.locator('[role="dialog"]');
-    await expect(dialog).toBeVisible({ timeout: 10_000 });
+    const dialog = await openSearch(page);
 
     await page.keyboard.press('Escape');
     await expect(dialog).not.toBeVisible({ timeout: 10_000 });

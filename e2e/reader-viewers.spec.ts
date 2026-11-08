@@ -66,7 +66,13 @@ test('OpenAPI fits narrow screens, follows theme and reuses its library across r
   await expect(page.getByRole('combobox', { name: 'Version:', exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   expect(schemaReads).toEqual([]);
-  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+  // Switch version and theme only after hydration, which would otherwise
+  // restore the stored theme over an attribute set too early.
+  await establishHydration(page);
+  // The seeded user-api's latest version is a beta without operations, and
+  // Scalar marks themed content only on operations: use the stable version.
+  if (openapi === 'user-api') await page.getByRole('combobox', { name: 'Version:', exact: true }).selectOption('1.0.0');
+  await selectTheme(page, 'dark');
   await expect(page.locator('#scalar-api-reference .dark-mode').first()).toBeVisible();
   const operation = page.locator('#scalar-api-reference a.endpoint').first();
   await expect(operation).toHaveAttribute('tabindex', '0');

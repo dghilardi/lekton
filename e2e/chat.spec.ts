@@ -29,7 +29,7 @@ test.describe('Chat page', () => {
     // With features.rag disabled, /chat is intentionally routed to NotFound.
     const hasInput = await page.locator('textarea').count() > 0;
     const hasNotice = await page.locator('text=/not available|not configured|unavailable/i').count() > 0;
-    const hasNotFound = await page.locator('text=The page you are looking for does not exist.').count() > 0;
+    const hasNotFound = await page.getByRole('heading', { level: 1, name: 'Page not found' }).count() > 0;
 
     expect(
       hasInput || hasNotice || hasNotFound,

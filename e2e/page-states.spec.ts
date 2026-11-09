@@ -79,3 +79,10 @@ test.describe('Page states', () => {
     }
   });
 });
+
+test('a missing schema shows the not-found state with status 404', async ({ page }) => {
+  const response = await page.goto('/schemas/no-such-schema');
+  expect(response?.status()).toBe(404);
+  await expect(page.getByRole('heading', { level: 1, name: 'Page not found' })).toBeVisible();
+  await expect(page.locator('main#content')).not.toContainText('Not found:');
+});

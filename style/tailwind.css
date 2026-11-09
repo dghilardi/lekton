@@ -1356,7 +1356,35 @@ html.lekton-play .lekton-splash {
     --scalar-color-1: var(--color-base-content);
     --scalar-background-1: var(--color-base-100);
     --scalar-background-2: var(--color-base-200);
+    /* Request examples render in Scalar's dark mode on these portal surfaces:
+     * their secondary text must follow the portal theme, not Scalar's dark palette. */
+    --scalar-color-2: color-mix(in oklch, var(--color-base-content) 75%, var(--color-base-100));
+    --scalar-color-3: color-mix(in oklch, var(--color-base-content) 70%, var(--color-base-100));
 }
+/* Scalar's method and syntax colours keep their hue at AA contrast on the
+ * portal surfaces: deeper shades on light, lighter ones on dark (as for the
+ * AsyncAPI palette above). Its request examples use dark-mode classes inside
+ * a light page, so both scopes are covered. */
+:root:not([data-theme="dark"]) .lekton-spec .scalar-api-reference,
+:root:not([data-theme="dark"]) .lekton-spec .scalar-api-reference :is(.light-mode, .dark-mode) {
+    --scalar-color-blue: #005a99;
+    --scalar-color-green: #0a6b3c;
+    --scalar-color-orange: #9c4221;
+    --scalar-color-yellow: #7a5a00;
+    --scalar-color-red: #b42318;
+    --scalar-color-purple: #6b3fc4;
+}
+[data-theme="dark"] .lekton-spec .scalar-api-reference,
+[data-theme="dark"] .lekton-spec .scalar-api-reference :is(.light-mode, .dark-mode) {
+    --scalar-color-blue: #7cc4f5;
+    --scalar-color-green: #4fd18b;
+    --scalar-color-orange: #f6ad55;
+    --scalar-color-yellow: #f2cc60;
+    --scalar-color-red: #fc8181;
+    --scalar-color-purple: #c4a5ff;
+}
+/* An upsell for Scalar's hosted service, not part of reading the API. */
+#scalar-api-reference .generate-sdk-button { display: none; }
 .lekton-spec-interactive :is(.references-layout, .section-container, .section, .section-content) {
     min-width: 0; max-width: 100%;
 }

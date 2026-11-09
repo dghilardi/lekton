@@ -380,3 +380,9 @@ See `IMPLEMENTATION_ROADMAP.md` Phase 7 for the full breakdown and candidate nex
 - Interactive schema viewers and the editor's heavy bundle load on demand and
   share in-flight library requests. The untouched schema source is available in
   SSR and remains accessible when parsing or loading a viewer fails.
+- The browser bundle stays light for readers: it carries no HTML sanitizer
+  (chat Markdown uses an escaping renderer: raw HTML is shown as text and only
+  web, mail and in-page link targets survive; the server keeps the sanitizer for
+  documents and lessons), and component views are type-erased in release builds
+  (`always-erase-components`). New browser-side code should not pull in heavy
+  parsers; CI fails above its WASM size threshold.

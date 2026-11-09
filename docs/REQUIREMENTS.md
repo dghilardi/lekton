@@ -374,6 +374,9 @@ See `IMPLEMENTATION_ROADMAP.md` Phase 7 for the full breakdown and candidate nex
   permitted (403), failed to load, and managed outside the portal. Messages are
   plain text, never framework errors. Administration navigation is shown only to
   administrators.
+- A schema opens on its newest stable version (else the newest non-deprecated
+  one). JSON Schemas are outlined on the server (properties, types, required,
+  constraints, local `$ref` links) above their collapsed source.
 - Interactive schema viewers and the editor's heavy bundle load on demand and
   share in-flight library requests. The untouched schema source is available in
   SSR and remains accessible when parsing or loading a viewer fails.

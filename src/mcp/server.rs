@@ -665,7 +665,7 @@ impl LektonMcpServer {
     /// Lists all schemas visible to the authenticated user.
     #[tool(
         name = "list_schemas",
-        description = "Returns all schema registry entries visible to the authenticated user. Each entry includes name, type, service owner, tags, available version count, and latest version. Supports optional filtering by schema_type, tag, or service_owner."
+        description = "Returns all schema registry entries visible to the authenticated user. Each entry includes name, type, service owner, tags, available version count, and latest version (the newest stable one when there is one, so a newer beta does not replace it). Supports optional filtering by schema_type, tag, or service_owner."
     )]
     async fn list_schemas(
         &self,

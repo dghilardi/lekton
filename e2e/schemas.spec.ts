@@ -105,3 +105,45 @@ test.describe('AsyncAPI viewer', () => {
     await expect(viewer).toContainText('Event API', { timeout: 20_000 });
   });
 });
+
+test.describe('JSON Schema', () => {
+  const SERVICE_TOKEN = process.env.LKN__AUTH__SERVICE_TOKEN || 'test-token';
+  const schema = (version: string) => JSON.stringify({
+    title: 'E2E Customer',
+    type: 'object',
+    required: ['id'],
+    properties: {
+      id: { type: 'string', format: 'uuid', description: 'Stable identifier.' },
+      address: { $ref: '#/$defs/Address' },
+      ...(version === '2.0.0' ? { tier: { enum: ['free', 'pro'] } } : {}),
+    },
+    $defs: { Address: { type: 'object', properties: { city: { type: 'string' } } } },
+  });
+
+  test.beforeAll(async ({ request }) => {
+    for (const [version, status] of [['1.0.0', 'stable'], ['2.0.0', 'beta']]) {
+      const response = await request.post('/api/v1/schemas', {
+        data: { service_token: SERVICE_TOKEN, name: 'e2e-json-customer', schema_type: 'jsonschema', version, content: schema(version), status },
+      });
+      expect(response.ok(), await response.text()).toBeTruthy();
+    }
+  });
+
+  test('opens on the stable version and outlines its properties', async ({ page }) => {
+    await page.goto('/schemas');
+    await expect(page.locator('main a[href="/schemas/e2e-json-customer"]')).toContainText('Current version1.0.0');
+    await page.goto('/schemas/e2e-json-customer');
+    await expect(page.getByRole('combobox', { name: 'Version:', exact: true })).toHaveValue('1.0.0');
+    await expect(page.getByRole('heading', { level: 2, name: 'Properties' })).toBeVisible();
+    const id = page.locator('.lekton-json-prop').filter({ hasText: 'id' }).first();
+    await expect(id).toContainText('string');
+    await expect(id).toContainText('required');
+    await expect(page.locator('.lekton-json-outline').getByText('Stable identifier.')).toBeVisible();
+    // A local $ref links to its definition.
+    await page.getByRole('link', { name: 'Address', exact: true }).click();
+    await expect(page).toHaveURL(/#json-def-Address$/);
+    // The source stays one click away.
+    await expect(page.getByText('Schema source')).toBeVisible();
+    await expect(page.locator('.lekton-json-outline').getByText('tier')).toHaveCount(0);
+  });
+});

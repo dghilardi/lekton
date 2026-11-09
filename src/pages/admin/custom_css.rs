@@ -194,7 +194,7 @@ fn ThemingReference() -> impl IntoView {
     view! {
         <div class="space-y-4 text-sm">
             <div class="rounded-2xl border border-base-200 bg-base-200/20 p-4">
-                <p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/55">"Theming variables"</p>
+                <p class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/70">"Theming variables"</p>
                 <p class="mt-3 leading-6 text-base-content/70">
                     "Assign variables on "
                     <code>":root"</code>
@@ -219,7 +219,7 @@ fn ThemingReference() -> impl IntoView {
                 .map(|(title, vars)| {
                     view! {
                         <details class="rounded-2xl border border-base-200 bg-base-200/20 px-4 py-3">
-                            <summary class="cursor-pointer text-xs font-semibold uppercase tracking-[0.14em] text-base-content/55">
+                            <summary class="cursor-pointer text-xs font-semibold uppercase tracking-[0.14em] text-base-content/70">
                                 {*title}
                             </summary>
                             <ul class="mt-2 space-y-1 text-base-content/70">
@@ -232,7 +232,7 @@ fn ThemingReference() -> impl IntoView {
                     }
                 })
                 .collect::<Vec<_>>()}
-            <p class="px-1 text-xs leading-5 text-base-content/55">
+            <p class="px-1 text-xs leading-5 text-base-content/70">
                 "Stable hooks when a variable is not enough: "
                 <code>"[data-lekton-header]"</code> ", "
                 <code>"[data-lekton-sidebar]"</code> ", "

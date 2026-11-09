@@ -166,7 +166,7 @@ pub fn UserManager() -> impl IntoView {
                                 })
                             };
                             Some(view! {
-                                <p class="text-sm text-base-content/60" aria-live="polite">
+                                <p class="text-sm text-base-content/70" aria-live="polite">
                                     {move || format!("{} of {} users", visible().len(), total)}
                                 </p>
                                 <div class="space-y-2">

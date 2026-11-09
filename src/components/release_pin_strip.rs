@@ -103,7 +103,7 @@ pub fn ReleasePinStrip() -> impl IntoView {
                                                 href=move || remove_href.get()
                                                 aria-label=aria
                                                 title="Remove pin"
-                                                class="ml-0.5 -mr-1 flex h-4 w-4 items-center justify-center rounded-full text-base-content/50 hover:bg-base-300 hover:text-base-content"
+                                                class="ml-0.5 -mr-1 flex h-4 w-4 items-center justify-center rounded-full text-base-content/70 hover:bg-base-300 hover:text-base-content"
                                             >
                                                 <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" />
@@ -116,7 +116,7 @@ pub fn ReleasePinStrip() -> impl IntoView {
 
                             <a
                                 href=move || reset_href.get()
-                                class="btn btn-ghost btn-xs shrink-0 font-normal text-base-content/60 hover:text-base-content"
+                                class="btn btn-ghost btn-xs shrink-0 font-normal text-base-content/70 hover:text-base-content"
                             >
                                 {move || {
                                     let n = count.get();

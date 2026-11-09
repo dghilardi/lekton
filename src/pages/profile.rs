@@ -49,7 +49,7 @@ pub fn ProfilePage() -> impl IntoView {
                                         </p>
                                         // Without a name the email is already the heading above.
                                         {user.name.is_some().then(|| view! {
-                                            <p class="text-sm text-base-content/60 break-all">{user.email.clone()}</p>
+                                            <p class="text-sm text-base-content/70 break-all">{user.email.clone()}</p>
                                         })}
                                     </div>
                                     {if user.is_admin {
@@ -101,7 +101,7 @@ fn PatSection() -> impl IntoView {
     view! {
         <div>
             <h2 class="text-xl font-semibold mb-4">"Personal Access Tokens"</h2>
-            <p class="text-base-content/60 text-sm mb-6">
+            <p class="text-base-content/70 text-sm mb-6">
                 "PATs allow IDE agents (Claude Code, Cursor, RooCode) to access documentation
                  on your behalf via the MCP server. Each token inherits your permissions."
             </p>
@@ -267,7 +267,7 @@ fn FeedbackSection() -> impl IntoView {
     view! {
         <div>
             <h2 class="text-xl font-semibold mb-2">"AI Feedback History"</h2>
-            <p class="text-base-content/60 text-sm mb-6">
+            <p class="text-base-content/70 text-sm mb-6">
                 "Feedback you gave on AI responses. You can review and delete any item."
             </p>
 
@@ -456,8 +456,8 @@ fn PatRow(
     view! {
         <tr class=("opacity-40", !is_active)>
             <td class="font-mono text-sm">{token.name}</td>
-            <td class="text-sm text-base-content/60">{token.created_at}</td>
-            <td class="text-sm text-base-content/60">
+            <td class="text-sm text-base-content/70">{token.created_at}</td>
+            <td class="text-sm text-base-content/70">
                 {token.last_used_at.unwrap_or_else(|| "Never".to_string())}
             </td>
             <td>

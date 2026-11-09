@@ -92,7 +92,7 @@ The sidebar holds the documentation tree, the chat history and the admin menu.
 |---|---|---|
 | `--lekton-sidebar-bg` | base-200 | Background |
 | `--lekton-sidebar-text` | page text | Text; section titles use 80 %, chat history 60 % of it |
-| `--lekton-sidebar-text-muted` | 70 % of the sidebar text | Document links |
+| `--lekton-sidebar-text-muted` | 80 % of the sidebar text | Document links, chat history |
 | `--lekton-sidebar-heading` | 65 % of the sidebar text | Group headings ("Navigation", "AI Chat") |
 | `--lekton-sidebar-accent` | primary | Link text on hover |
 | `--lekton-sidebar-hover-bg` | base-300 at 60 % | Item background on hover |

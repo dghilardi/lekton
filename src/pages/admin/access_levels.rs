@@ -131,7 +131,7 @@ pub fn AccessLevelManager() -> impl IntoView {
                                                             <div class="flex-1 min-w-0">
                                                                 <div class="flex items-center gap-2 flex-wrap">
                                                                     <span class="font-mono text-sm font-semibold">{level.name.clone()}</span>
-                                                                    <span class="text-base-content/60 text-sm">{level.label.clone()}</span>
+                                                                    <span class="text-base-content/70 text-sm">{level.label.clone()}</span>
                                                                     {if level.is_system {
                                                                         view! { <span class="badge badge-warning badge-sm">"system"</span> }.into_any()
                                                                     } else {

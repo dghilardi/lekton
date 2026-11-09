@@ -114,7 +114,7 @@ pub async fn get_doc_html(
                                     <svg class=\"h-5 w-5\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M3 7a2 2 0 012-2h4l2 2h6a2 2 0 012 2v7a2 2 0 01-2 2H5a2 2 0 01-2-2V7z\"></path></svg>\
                                 </div>\
                                 <div class=\"min-w-0\">\
-                                    <p class=\"text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-base-content/45\">Section</p>\
+                                    <p class=\"text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-base-content/70\">Section</p>\
                                     <h2 class=\"mt-1 text-lg font-semibold leading-snug text-base-content transition-colors group-hover:text-primary\">{child_title}</h2>\
                                 </div>\
                             </div>\
@@ -172,7 +172,7 @@ pub async fn get_doc_html(
                                 <svg class=\"h-5 w-5\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\"></path></svg>\
                             </div>\
                             <div class=\"min-w-0\">\
-                                <p class=\"text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-base-content/45\">Document</p>\
+                                <p class=\"text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-base-content/70\">Document</p>\
                                 <h2 class=\"mt-1 text-lg font-semibold leading-snug text-base-content transition-colors group-hover:text-primary\">{}</h2>\
                             </div>\
                         </div>\

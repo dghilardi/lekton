@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Bring text to WCAG AA contrast and legible sizes: outline and soft status badges and warning text on light surfaces, muted metadata and chat history, the AsyncAPI viewer's descriptions, badges and example panels in both themes; badges and uppercase labels are at least 11px, functional hints 12px, and header links 14px without negative tracking. Author-coloured Mermaid diagrams follow the dark theme with labels fitted to each fill instead of a white block.
+
 - Make the prompt detail and created-token dialogs real modal dialogs (focus moves in, stays inside and returns to the opener; Escape closes), make wide Markdown and AI-usage tables keyboard-scrollable named regions, and add a “Skip to section navigation” link on desktop, where the sidebar comes after the content in tab order.
 
 - Label the editor, document-upload and Learn form controls, name the editor body and toolbar buttons, and validate required fields in place: errors appear next to their field (`aria-invalid`, `aria-describedby`) and focus moves to the first one. Editor and upload validation failures from the server now answer 400 with a plain message instead of a 500.

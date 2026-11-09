@@ -165,7 +165,7 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
                        view! {
                            <>
                                <h1 class="text-4xl font-extrabold tracking-tight">{title}</h1>
-                               <p class="text-base-content/60 mt-1">{subtitle}</p>
+                               <p class="text-base-content/70 mt-1">{subtitle}</p>
                            </>
                        }
                    }}
@@ -240,7 +240,7 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
                                 </svg>
                             </div>
                             <h2 class="text-lg font-semibold">"Section not found"</h2>
-                            <p class="text-base-content/60 mt-1 max-w-sm">"This admin section does not exist. Pick a section from the sidebar to continue."</p>
+                            <p class="text-base-content/70 mt-1 max-w-sm">"This admin section does not exist. Pick a section from the sidebar to continue."</p>
                             <a href="/admin/tokens" class="btn btn-primary btn-sm mt-4">"Go to Service Tokens"</a>
                         </div>
                     }.into_any(),
@@ -281,7 +281,7 @@ fn CreatedTokenModal(
                         </div>
                         <div>
                           <h3 id="token-created-title" class="font-black text-3xl tracking-tight">"Token Created"</h3>
-                          <p class="text-base-content/60 font-medium">"This is your only chance to copy it."</p>
+                          <p class="text-base-content/70 font-medium">"This is your only chance to copy it."</p>
                         </div>
                     </div>
 
@@ -336,11 +336,11 @@ fn CreatedTokenModal(
 
                                 <div class="grid grid-cols-2 gap-8 py-6 border-y border-base-200">
                                     <div>
-                                      <p class="text-[10px] font-black uppercase text-base-content/65 tracking-widest mb-1">"Internal Name"</p>
+                                      <p class="text-[11px] font-black uppercase text-base-content/70 tracking-widest mb-1">"Internal Name"</p>
                                       <p class="font-bold text-base">{name}</p>
                                     </div>
                                     <div>
-                                      <p class="text-[10px] font-black uppercase text-base-content/65 tracking-widest mb-1">"Scopes"</p>
+                                      <p class="text-[11px] font-black uppercase text-base-content/70 tracking-widest mb-1">"Scopes"</p>
                                       <p class="font-mono text-xs truncate" title=scopes_str.clone()>{scopes_str.clone()}</p>
                                     </div>
                                 </div>

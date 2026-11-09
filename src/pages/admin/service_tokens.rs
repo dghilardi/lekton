@@ -156,7 +156,7 @@ fn TokenRow(
                         view! { <span class="badge badge-outline badge-xs px-2 py-2 font-mono">{scope}</span> }
                     }).collect::<Vec<_>>()}
                     {if token.allowed_scopes.len() > 3 {
-                        view! { <span class="text-[10px] text-base-content/65 ml-1">" + "{token.allowed_scopes.len() - 3}" more"</span> }.into_any()
+                        view! { <span class="text-xs text-base-content/70 ml-1">" + "{token.allowed_scopes.len() - 3}" more"</span> }.into_any()
                     } else {
                         view! { <span></span> }.into_any()
                     }}
@@ -164,9 +164,9 @@ fn TokenRow(
             </td>
             <td class="text-center">
                 {if can_write {
-                    view! { <div class="badge badge-success badge-outline badge-sm font-bold text-[10px]">"WRITE"</div> }.into_any()
+                    view! { <div class="badge badge-success badge-outline badge-sm font-bold">"WRITE"</div> }.into_any()
                 } else {
-                    view! { <div class="badge badge-ghost badge-outline badge-sm font-bold text-[10px] opacity-40">"READ"</div> }.into_any()
+                    view! { <div class="badge badge-ghost badge-outline badge-sm font-bold text-base-content/70">"READ"</div> }.into_any()
                 }}
             </td>
             <td class="text-center">
@@ -176,8 +176,8 @@ fn TokenRow(
                     view! { <span class="badge badge-ghost badge-sm text-xs font-medium">"deactivated"</span> }.into_any()
                 }}
             </td>
-            <td class="text-xs text-base-content/60">{created_at}</td>
-            <td class="text-xs text-base-content/60">
+            <td class="text-xs text-base-content/70">{created_at}</td>
+            <td class="text-xs text-base-content/70">
                 <div class="flex items-center gap-1.5">
                   <svg class="w-3.5 h-3.5 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                   {last_used}
@@ -258,7 +258,7 @@ fn CreateTokenForm(
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
                 <div>
-                    <label class="block font-bold text-xs uppercase tracking-wider text-base-content/60 mb-1.5">"Token Name"</label>
+                    <label class="block font-bold text-xs uppercase tracking-wider text-base-content/70 mb-1.5">"Token Name"</label>
                     <input
                         type="text"
                         placeholder="e.g. github-actions-ci"
@@ -270,7 +270,7 @@ fn CreateTokenForm(
                 </div>
 
                 <div>
-                    <label class="block font-bold text-xs uppercase tracking-wider text-base-content/60 mb-1.5">"Permissions"</label>
+                    <label class="block font-bold text-xs uppercase tracking-wider text-base-content/70 mb-1.5">"Permissions"</label>
                     <div class="bg-base-100 rounded-lg border border-base-300 px-3 shadow-sm flex items-center min-h-12">
                       <label class="cursor-pointer flex items-center gap-4 w-full">
                           <input
@@ -290,7 +290,7 @@ fn CreateTokenForm(
             </div>
 
             <div>
-                <label class="block font-bold text-xs uppercase tracking-wider text-base-content/60 mb-1.5">"Allowed Scopes"</label>
+                <label class="block font-bold text-xs uppercase tracking-wider text-base-content/70 mb-1.5">"Allowed Scopes"</label>
                 <textarea
                     class="textarea textarea-bordered w-full h-32 font-mono text-sm leading-relaxed focus:textarea-primary transition-all shadow-sm"
                     placeholder={"docs/getting-started\nprojects/*\napi/v2/reference"}

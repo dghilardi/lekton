@@ -12,7 +12,7 @@ pub fn NavigationItem(item: NavItem, #[prop(optional)] level: u32) -> impl IntoV
     if has_children {
         if level >= 3 {
             view! {
-                <li class="menu-title text-[10px] mt-2 mb-1">{item.title}</li>
+                <li class="menu-title mt-2 mb-1">{item.title}</li>
                 {children.into_iter().map(|child| {
                     view! {
                         <NavigationItem item=child level=level + 1 />

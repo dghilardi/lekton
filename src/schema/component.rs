@@ -162,7 +162,7 @@ fn SchemaCard(schema: SchemaListItem) -> impl IntoView {
                     </span>
                 </div>
                 <div class="mt-4 pt-4 border-t border-base-200 flex items-center justify-between text-sm">
-                    <span class="text-base-content/60">"Latest version"</span>
+                    <span class="text-base-content/70">"Latest version"</span>
                     <span class="font-mono bg-base-200 px-2 py-1 rounded text-xs text-base-content/80 font-medium">{version_text.to_string()}</span>
                 </div>
             </div>

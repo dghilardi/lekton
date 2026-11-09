@@ -170,7 +170,7 @@ pub fn LearnDashboardPage() -> impl IntoView {
 
             {move || ephemeral.get().map(|l| view! {
                 <div class="space-y-2">
-                    <p class="text-xs text-base-content/60">"This lesson is not saved."</p>
+                    <p class="text-xs text-base-content/70">"This lesson is not saved."</p>
                     <LessonCard lesson=l persist=false />
                 </div>
             })}
@@ -180,7 +180,7 @@ pub fn LearnDashboardPage() -> impl IntoView {
                 <Suspense fallback=move || view! { <span class="loading loading-spinner" /> }>
                     {move || paths.get().map(|res| match res {
                         Ok(list) if list.is_empty() => view! {
-                            <p class="text-base-content/60 text-sm">"No learning paths yet."</p>
+                            <p class="text-base-content/70 text-sm">"No learning paths yet."</p>
                         }.into_any(),
                         Ok(list) => view! {
                             <ul class="menu bg-base-100 rounded-box border border-base-200">
@@ -252,7 +252,7 @@ pub fn LearnPathPage() -> impl IntoView {
 
     view! {
         <div class="max-w-3xl mx-auto px-4 py-8 space-y-6">
-            <a href="/learn" class="link link-hover text-sm text-base-content/60">"← All paths"</a>
+            <a href="/learn" class="link link-hover text-sm text-base-content/70">"← All paths"</a>
             <Suspense fallback=move || view! { <span class="loading loading-spinner" /> }>
                 {move || data.get().map(|res| match res {
                     Ok(pw) => {
@@ -263,7 +263,7 @@ pub fn LearnPathPage() -> impl IntoView {
                             <h1 class="text-2xl font-semibold">{title}</h1>
                             {if empty {
                                 view! {
-                                    <p class="text-base-content/60 text-sm">
+                                    <p class="text-base-content/70 text-sm">
                                         "No lessons yet — generate the first one to begin."
                                     </p>
                                 }.into_any()
@@ -318,7 +318,7 @@ fn LessonCard(lesson: Lesson, persist: bool) -> impl IntoView {
                 <MarkdownContent html=lesson.body_html.clone() />
 
                 {(!citations.is_empty()).then(|| view! {
-                    <div class="text-xs text-base-content/60">
+                    <div class="text-xs text-base-content/70">
                         <span class="font-medium">"Sources: "</span>
                         {citations.into_iter().map(|c| {
                             let href = match &c.section_anchor {
@@ -438,7 +438,7 @@ fn QuizWidget(lesson_id: String, quiz: Vec<QuizQuestion>, persist: bool) -> impl
     view! {
         <div class="divider my-1"></div>
         <div class="space-y-4">
-            <h3 class="font-semibold text-sm uppercase tracking-wide text-base-content/60">"Check your understanding"</h3>
+            <h3 class="font-semibold text-sm uppercase tracking-wide text-base-content/70">"Check your understanding"</h3>
             {error.get().map(|e| view! { <div class="alert alert-error py-2 text-sm">{e}</div> })}
             {questions}
             {move || if graded() {

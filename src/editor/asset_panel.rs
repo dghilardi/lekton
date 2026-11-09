@@ -184,7 +184,7 @@ pub fn AssetPanel(
                         assets_resource.get().map(|result| match result {
                             Ok(assets) if assets.is_empty() => {
                                 view! {
-                                    <p class="text-sm text-base-content/60">"No assets uploaded yet."</p>
+                                    <p class="text-sm text-base-content/70">"No assets uploaded yet."</p>
                                 }.into_any()
                             }
                             Ok(assets) => {
@@ -215,7 +215,7 @@ pub fn AssetPanel(
                                                     view! {
                                                         <tr>
                                                             <td class="max-w-48 truncate" title=key.clone()>{name}</td>
-                                                            <td class="text-xs text-base-content/60">{content_type}</td>
+                                                            <td class="text-xs text-base-content/70">{content_type}</td>
                                                             <td class="text-xs">{size}</td>
                                                             <td>
                                                                 {badge.map(|(label, class)| view! {

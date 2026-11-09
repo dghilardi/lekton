@@ -230,7 +230,7 @@ pub fn NavigationOrderEditor() -> impl IntoView {
     view! {
         <div class="card bg-base-100 shadow-xl border border-base-200">
             <div class="card-body p-0">
-                <p class="px-8 pt-8 text-sm text-base-content/60">
+                <p class="px-8 pt-8 text-sm text-base-content/70">
                     "Drag items or use the arrow buttons to reorder sections. Documents within each section are sorted by their own weight or alphabetically."
                 </p>
 
@@ -286,7 +286,7 @@ pub fn NavigationOrderEditor() -> impl IntoView {
                                                 <div class="flex-1 min-w-0">
                                                     <div class="flex items-center gap-2">
                                                         <span class="font-medium text-sm truncate">{title}</span>
-                                                        <span class="badge badge-ghost badge-xs text-[10px] uppercase">{level_label}</span>
+                                                        <span class="badge badge-ghost badge-xs uppercase">{level_label}</span>
                                                     </div>
                                                     <span class="text-xs text-base-content/65 font-mono truncate block">{slug}</span>
                                                 </div>

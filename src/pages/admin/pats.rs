@@ -81,7 +81,7 @@ pub fn AdminPatManager() -> impl IntoView {
         <div class="space-y-4">
             <div class="rounded-2xl border border-base-200 bg-base-100 p-5">
                 <h3 class="text-sm font-bold text-base-content/80">"Machine token (MCP)"</h3>
-                <p class="mt-1 text-xs leading-relaxed text-base-content/60">
+                <p class="mt-1 text-xs leading-relaxed text-base-content/70">
                     "A token not tied to any user account, for machine-to-machine access to the MCP endpoint (e.g. the documentation agent). It survives the creator being removed. "
                     <span class="font-semibold text-warning">"It is full-admin"</span>
                     " — provision sparingly and store it in a secret manager."
@@ -165,8 +165,8 @@ pub fn AdminPatManager() -> impl IntoView {
                                                                 None => view! { <span class="badge badge-ghost badge-xs">"admin-pat"</span> }.into_any(),
                                                             }}
                                                         </td>
-                                                        <td class="text-sm text-base-content/60">{pat.created_at}</td>
-                                                        <td class="text-sm text-base-content/60">
+                                                        <td class="text-sm text-base-content/70">{pat.created_at}</td>
+                                                        <td class="text-sm text-base-content/70">
                                                             {pat.last_used_at.unwrap_or_else(|| "Never".to_string())}
                                                         </td>
                                                         <td>
@@ -196,7 +196,7 @@ pub fn AdminPatManager() -> impl IntoView {
                             {if total_pages > 1 {
                                 view! {
                                     <div class="flex justify-between items-center pt-2">
-                                        <span class="text-sm text-base-content/60">
+                                        <span class="text-sm text-base-content/70">
                                             {format!("{total} tokens total")}
                                         </span>
                                         <div class="join">

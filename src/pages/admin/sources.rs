@@ -197,7 +197,7 @@ pub fn SourcesAdminPanel() -> impl IntoView {
                                     <svg class="h-8 w-8" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
                                 </div>
                                 <h3 class="text-lg font-bold text-base-content/80">"No documentation sources yet"</h3>
-                                <p class="mt-1.5 max-w-md text-sm leading-relaxed text-base-content/60">
+                                <p class="mt-1.5 max-w-md text-sm leading-relaxed text-base-content/70">
                                     "Sources appear here once documents are ingested. Each one is identified by the "<code class="rounded bg-base-200 px-1 py-0.5 font-mono text-xs">"id"</code>" in its "<code class="rounded bg-base-200 px-1 py-0.5 font-mono text-xs">".lekton.yml"</code>". You can then attach a repository, branch, and maintainers."
                                 </p>
                             </div>
@@ -236,7 +236,7 @@ pub fn SourcesAdminPanel() -> impl IntoView {
                                             }
                                         });
                                         let branch_view = branch.clone().map(|b| view! {
-                                            <span class="inline-flex items-center gap-1 font-mono text-[0.7rem] text-base-content/55">
+                                            <span class="inline-flex items-center gap-1 font-mono text-[0.7rem] text-base-content/70">
                                                 <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 3v12m0 0a3 3 0 103 3M6 15a3 3 0 013-3h3a3 3 0 003-3V6m0 0a3 3 0 10-3-3 3 3 0 003 3z"/></svg>
                                                 {b}
                                             </span>
@@ -247,7 +247,7 @@ pub fn SourcesAdminPanel() -> impl IntoView {
                                                 let display = label.split('<').next().unwrap_or(&label).trim().to_string();
                                                 let display = if display.is_empty() { label.clone() } else { display };
                                                 let ini = initials(&display);
-                                                let ring = if linked { "ring-1 ring-primary/40 bg-primary/10 text-primary" } else { "bg-base-200 text-base-content/60" };
+                                                let ring = if linked { "ring-1 ring-primary/40 bg-primary/10 text-primary" } else { "bg-base-200 text-base-content/70" };
                                                 view! {
                                                     <span class="inline-flex items-center gap-1.5 rounded-full bg-base-200/60 py-0.5 pl-0.5 pr-2" title=label>
                                                         <span class=format!("grid h-5 w-5 place-items-center rounded-full text-[0.6rem] font-bold {ring}")>{ini}</span>
@@ -260,7 +260,7 @@ pub fn SourcesAdminPanel() -> impl IntoView {
 
                                         let is_empty_meta = repo_view.is_none() && branch_view.is_none() && maints.is_empty();
                                         if is_empty_meta {
-                                            view! { <span class="text-xs italic text-base-content/45">"Metadata saved, no details yet"</span> }.into_any()
+                                            view! { <span class="text-xs italic text-base-content/70">"Metadata saved, no details yet"</span> }.into_any()
                                         } else {
                                             view! {
                                                 <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5">
@@ -271,7 +271,7 @@ pub fn SourcesAdminPanel() -> impl IntoView {
                                             }.into_any()
                                         }
                                     } else {
-                                        view! { <span class="mt-1.5 inline-block text-xs italic text-base-content/45">"No repository metadata yet — add a repo, branch, and maintainers."</span> }.into_any()
+                                        view! { <span class="mt-1.5 inline-block text-xs italic text-base-content/70">"No repository metadata yet — add a repo, branch, and maintainers."</span> }.into_any()
                                     };
 
                                     view! {
@@ -341,7 +341,7 @@ pub fn SourcesAdminPanel() -> impl IntoView {
                                                             on:change=move |e| edit_review_enabled.set(event_target_checked(&e)) />
                                                         <span class="min-w-0">
                                                             <span class="block text-xs font-semibold text-base-content/80">"Automated documentation review"</span>
-                                                            <span class="block text-[0.7rem] text-base-content/55">"Let the documentation agent open change proposals for this source. Off by default."</span>
+                                                            <span class="block text-[0.7rem] text-base-content/70">"Let the documentation agent open change proposals for this source. Off by default."</span>
                                                         </span>
                                                     </label>
 
@@ -353,7 +353,7 @@ pub fn SourcesAdminPanel() -> impl IntoView {
                                                                 "Add"
                                                             </button>
                                                         </div>
-                                                        <p class="mt-0.5 text-[0.7rem] text-base-content/50">"Add an email for external contacts, or link a Lekton user."</p>
+                                                        <p class="mt-0.5 text-[0.7rem] text-base-content/70">"Add an email for external contacts, or link a Lekton user."</p>
                                                         <div class="mt-2 space-y-2">
                                                             <For
                                                                 each=move || edit_maintainers.get()
@@ -380,7 +380,7 @@ pub fn SourcesAdminPanel() -> impl IntoView {
                                                                                     view! { <option value=u.id.clone()>{label}</option> }
                                                                                 }).collect::<Vec<_>>()}
                                                                             </select>
-                                                                            <button class="btn btn-ghost btn-xs justify-self-end text-base-content/50 hover:text-error" aria-label="Remove maintainer"
+                                                                            <button class="btn btn-ghost btn-xs justify-self-end text-base-content/70 hover:text-error" aria-label="Remove maintainer"
                                                                                 on:click=move |_| edit_maintainers.update(|v| v.retain(|r2| r2.key != row.key))>
                                                                                 <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
                                                                             </button>
@@ -389,7 +389,7 @@ pub fn SourcesAdminPanel() -> impl IntoView {
                                                                 }
                                                             />
                                                             {move || edit_maintainers.get().is_empty().then(|| view! {
-                                                                <p class="rounded-xl border border-dashed border-base-300 py-3 text-center text-xs text-base-content/45">"No maintainers yet."</p>
+                                                                <p class="rounded-xl border border-dashed border-base-300 py-3 text-center text-xs text-base-content/70">"No maintainers yet."</p>
                                                             })}
                                                         </div>
                                                     </div>

@@ -116,7 +116,7 @@ pub fn AiUsageReport() -> impl IntoView {
                                                         // calls were embeddings, so a low tokens-per-call
                                                         // figure does not read as missing data.
                                                         {(embedding_calls > 0).then(|| view! {
-                                                            <div class="text-xs text-base-content/55 whitespace-nowrap">
+                                                            <div class="text-xs text-base-content/70 whitespace-nowrap">
                                                                 {format!("{} embeddings", format_count(embedding_calls))}
                                                             </div>
                                                         })}
@@ -147,7 +147,7 @@ pub fn AiUsageReport() -> impl IntoView {
                                             <td>
                                                 {format!("Total, {} callers", format_count(rows.len() as u64))}
                                                 {(hidden > 0).then(|| view! {
-                                                    <div class="text-xs font-normal text-base-content/55">
+                                                    <div class="text-xs font-normal text-base-content/70">
                                                         {format!("{hidden} smaller callers not listed")}
                                                     </div>
                                                 })}
@@ -155,7 +155,7 @@ pub fn AiUsageReport() -> impl IntoView {
                                             <td class="text-right tabular-nums">
                                                 {format_count(total_calls)}
                                                 {(total_embedding_calls > 0).then(|| view! {
-                                                    <div class="text-xs font-normal text-base-content/55 whitespace-nowrap">
+                                                    <div class="text-xs font-normal text-base-content/70 whitespace-nowrap">
                                                         {format!("{} embeddings", format_count(total_embedding_calls))}
                                                     </div>
                                                 })}

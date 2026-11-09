@@ -22,7 +22,7 @@ pub fn PromptsPage() -> impl IntoView {
         <div class="container mx-auto max-w-6xl px-4 py-8">
             <leptos_meta::Title text=crate::components::page_title(&["Prompt Library"]) />
             <h1 class="text-3xl font-bold">"Prompt Library"</h1>
-            <p class="text-base-content/60 mt-2 mb-6 max-w-3xl">
+            <p class="text-base-content/70 mt-2 mb-6 max-w-3xl">
                 "Published prompts can be added to your working context. Default primary prompts come from the shared library; favorites and hidden flags are personal preferences."
             </p>
             <PromptLibraryPanel />
@@ -200,7 +200,7 @@ fn PromptLibraryPanel() -> impl IntoView {
                 <Show
                     when=move || !visible.with(Vec::is_empty)
                     fallback=|| view! {
-                        <p class="rounded-box border border-base-300 px-4 py-8 text-center text-base-content/60">
+                        <p class="rounded-box border border-base-300 px-4 py-8 text-center text-base-content/70">
                             "No prompts match these filters."
                         </p>
                     }
@@ -251,7 +251,7 @@ fn PromptRow(
             <button
                 class=move || format!(
                     "btn btn-ghost btn-sm btn-square shrink-0 {}",
-                    if is_favorite { "text-warning" } else { "text-base-content/40" }
+                    if is_favorite { "text-warning" } else { "text-base-content/70" }
                 )
                 aria-pressed=if is_favorite { "true" } else { "false" }
                 aria-label=star_label
@@ -276,7 +276,7 @@ fn PromptRow(
                     })}
                 </div>
                 <p class="mt-0.5 text-sm text-base-content/70 line-clamp-2">{item.description.clone()}</p>
-                <div class="mt-1 flex flex-wrap items-center gap-1 text-xs text-base-content/60">
+                <div class="mt-1 flex flex-wrap items-center gap-1 text-xs text-base-content/70">
                     <span>{item.owner.clone()}</span>
                     {item.tags.iter().take(ROW_TAG_LIMIT).map(|t| view! {
                         <span class="rounded bg-base-200 px-1.5 py-0.5">{t.clone()}</span>
@@ -354,7 +354,7 @@ fn PromptDetailModal(
                         let (is_favorite, is_hidden) = (item.is_favorite, item.is_hidden);
                         view! {
                             <h2 id="prompt-detail-title" class="pr-10 text-xl font-bold">{item.name.clone()}</h2>
-                            <p class="mt-1 text-sm text-base-content/60 break-all">{item.slug.clone()}</p>
+                            <p class="mt-1 text-sm text-base-content/70 break-all">{item.slug.clone()}</p>
                             <p class="mt-3">{item.description.clone()}</p>
                             <div class="mt-3 flex flex-wrap gap-1.5 text-xs">
                                 <span class="badge badge-outline badge-sm">{format!("owner: {}", item.owner)}</span>

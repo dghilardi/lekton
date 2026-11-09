@@ -155,7 +155,7 @@ pub fn DocsSidebar() -> impl IntoView {
     use super::navigation::NavigationTree;
     view! {
         <ul class="flex flex-col gap-1 mt-6">
-            <li class="menu-title text-xs font-semibold tracking-wider text-base-content/60 uppercase mb-1">"Navigation"</li>
+            <li class="menu-title text-xs font-semibold tracking-wider text-base-content/70 uppercase mb-1">"Navigation"</li>
             <NavigationTree />
         </ul>
     }
@@ -171,7 +171,7 @@ pub fn RegistrySidebar() -> impl IntoView {
     view! {
         <Suspense fallback=|| view! { <span role="status">"Loading schemas…"</span> }>
         <ul class="flex flex-col gap-1 mt-6">
-            <li class="menu-title text-xs font-semibold tracking-wider text-base-content/60 uppercase mb-1">"Schemas"</li>
+            <li class="menu-title text-xs font-semibold tracking-wider text-base-content/70 uppercase mb-1">"Schemas"</li>
             {move || {
                 schemas_resource.try_get().flatten().map(|result| match result {
                     Ok(schemas) => {
@@ -209,7 +209,7 @@ pub fn AdminSidebar() -> impl IntoView {
 
     view! {
         <ul class="flex flex-col gap-1 mt-6">
-            <li class="menu-title text-xs font-semibold tracking-wider text-base-content/60 uppercase mb-1">"Administration"</li>
+            <li class="menu-title text-xs font-semibold tracking-wider text-base-content/70 uppercase mb-1">"Administration"</li>
             <li>
                 <a href="/admin/tokens" aria-current=move || if pathname.get() == "/admin/tokens" { Some("page") } else { None } class="gap-3 group transition-colors">
                     <svg class="w-4 h-4 opacity-70" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path></svg>
@@ -303,7 +303,7 @@ pub fn ChatSidebar() -> impl IntoView {
 
     view! {
         <ul class="flex flex-col gap-1 mt-6">
-            <li class="menu-title text-xs font-semibold tracking-wider text-base-content/60 uppercase mb-1">"AI Chat"</li>
+            <li class="menu-title text-xs font-semibold tracking-wider text-base-content/70 uppercase mb-1">"AI Chat"</li>
             {move || match context {
                 Some(ctx) => {
                     let sessions = ctx.sessions;

@@ -67,7 +67,7 @@ pub fn DocumentationFeedbackAdminPanel() -> impl IntoView {
                 <div class="p-8 pb-6">
                     <div class="grid grid-cols-1 gap-4 md:grid-cols-4 md:items-end">
                         <label class="form-control md:col-span-2">
-                            <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Search"</span>
+                            <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/70 mb-2">"Search"</span>
                             <input
                                 type="text"
                                 class="input input-bordered h-12 w-full focus:input-primary"
@@ -81,7 +81,7 @@ pub fn DocumentationFeedbackAdminPanel() -> impl IntoView {
                         </label>
 
                         <label class="form-control">
-                            <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Kind"</span>
+                            <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/70 mb-2">"Kind"</span>
                             <select
                                 class="select select-bordered h-12 w-full focus:select-primary"
                                 prop:value=move || kind_filter.get()
@@ -97,7 +97,7 @@ pub fn DocumentationFeedbackAdminPanel() -> impl IntoView {
                         </label>
 
                         <label class="form-control">
-                            <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Status"</span>
+                            <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/70 mb-2">"Status"</span>
                             <select
                                 class="select select-bordered h-12 w-full focus:select-primary"
                                 prop:value=move || status_filter.get()
@@ -198,7 +198,7 @@ fn DocumentationFeedbackList(
 
     view! {
         <div class="space-y-4">
-            <div class="flex flex-wrap items-center justify-between gap-2 text-sm text-base-content/60">
+            <div class="flex flex-wrap items-center justify-between gap-2 text-sm text-base-content/70">
                 <span>{format!("{} total item(s)", result.total)}</span>
                 <span>{format!("Page {} of {}", result.page + 1, total_pages)}</span>
             </div>
@@ -296,7 +296,7 @@ fn DocumentationFeedbackRow(
                 </div>
                 <p class="mt-0.5 text-sm text-base-content/65 line-clamp-1 break-all sm:break-normal">{item.summary.clone()}</p>
             </div>
-            <div class="hidden shrink-0 text-right text-xs leading-relaxed text-base-content/60 sm:block">
+            <div class="hidden shrink-0 text-right text-xs leading-relaxed text-base-content/70 sm:block">
                 <div class="max-w-[14rem] truncate">{item.created_by.clone()}</div>
                 <div class="whitespace-nowrap">{item.created_at.clone()}</div>
             </div>
@@ -433,7 +433,7 @@ fn DocumentationFeedbackDetail(
         <div class="space-y-5">
             <div class="space-y-1">
                 <p class="text-sm whitespace-pre-wrap break-words">{item.summary.clone()}</p>
-                <p class="text-xs text-base-content/55">
+                <p class="text-xs text-base-content/70">
                     <span class="sm:hidden">{format!("{} · {} · ", item.created_by, item.created_at)}</span>
                     <span class="font-mono break-all">{item.id.clone()}</span>
                 </p>
@@ -455,7 +455,7 @@ fn DocumentationFeedbackDetail(
                 <div class="border-t border-base-200 pt-5">
                     <div class="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
                         <label class="form-control">
-                            <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Resolution note"</span>
+                            <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/70 mb-2">"Resolution note"</span>
                             <textarea
                                 class="textarea textarea-bordered min-h-24 w-full focus:textarea-primary"
                                 placeholder="Optional note describing how the item was resolved or why it was marked duplicate."
@@ -466,7 +466,7 @@ fn DocumentationFeedbackDetail(
 
                         <div class="flex h-full flex-col gap-3">
                             <label class="form-control flex-1">
-                                <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/60 mb-2">"Duplicate of"</span>
+                                <span class="label-text font-bold text-xs uppercase tracking-wider text-base-content/70 mb-2">"Duplicate of"</span>
                                 <select
                                     class="select select-bordered w-full focus:select-primary"
                                     prop:value=move || duplicate_of.get()
@@ -614,7 +614,7 @@ fn feedback_refs_view(
                     view! {
                         <li>
                             {move || label().map(|l| view! { <span>{l}</span> })}
-                            <span class="ml-1 font-mono text-xs text-base-content/55 break-all">{id.clone()}</span>
+                            <span class="ml-1 font-mono text-xs text-base-content/70 break-all">{id.clone()}</span>
                         </li>
                     }
                 }).collect::<Vec<_>>()}

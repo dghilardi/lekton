@@ -12,11 +12,13 @@ use crate::auth::refresh_client::{with_auth_bootstrap, with_auth_retry};
 pub fn ProfilePage() -> impl IntoView {
     let user_resource = LocalResource::new(|| with_auth_bootstrap(get_current_user));
     let navigate = use_navigate();
+    // Taken now: by the time the effect re-runs, the URL may be the login page.
+    let login_href = crate::components::use_login_href().get_untracked();
 
     // Redirect to login if not authenticated
     Effect::new(move |_| {
         if let Some(Ok(None)) = user_resource.get() {
-            navigate("/login", Default::default());
+            navigate(&login_href, Default::default());
         }
     });
 

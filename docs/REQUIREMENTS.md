@@ -363,6 +363,17 @@ See `IMPLEMENTATION_ROADMAP.md` Phase 7 for the full breakdown and candidate nex
   rejected refresh redirects to sign in and returns the original error without
   repeating the protected request. SSR session errors offer a sign-in action
   while client bootstrap can restore the session.
+- Sign-in returns to the page that asked for it: links and redirects carry
+  `?next=<path>` to `/login`, which passes it to `/auth/login` for OAuth/OIDC
+  (kept in the signed flow-state cookie until the callback). Only same-origin
+  paths are accepted (no scheme, host, `//`, backslash or control character, and
+  never a sign-in or API path); anything else returns to `/`.
+- Pages that cannot show what was asked for use one state presentation: not
+  found (404; restricted documents read as not found so their existence does not
+  leak, with sign-in offered to anonymous readers), sign-in required, not
+  permitted (403), failed to load, and managed outside the portal. Messages are
+  plain text, never framework errors. Administration navigation is shown only to
+  administrators.
 - Interactive schema viewers and the editor's heavy bundle load on demand and
   share in-flight library requests. The untouched schema source is available in
   SSR and remains accessible when parsing or loading a viewer fails.

@@ -38,6 +38,9 @@ pub struct AuthFlowState {
     pub csrf_token: String,
     /// OIDC nonce (only set for OIDC providers).
     pub nonce: Option<String>,
+    /// Local page to return to after signing in (see `auth::return_to`).
+    #[serde(default)]
+    pub return_to: Option<String>,
 }
 
 impl AuthFlowState {
@@ -45,6 +48,7 @@ impl AuthFlowState {
         Self {
             csrf_token,
             nonce: None,
+            return_to: None,
         }
     }
 
@@ -52,6 +56,7 @@ impl AuthFlowState {
         Self {
             csrf_token,
             nonce: Some(nonce),
+            return_to: None,
         }
     }
 }

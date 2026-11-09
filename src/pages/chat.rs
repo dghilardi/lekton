@@ -154,17 +154,18 @@ pub fn ChatPage() -> impl IntoView {
 
     let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
     let is_logged_in = move || current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
+    let login_href = crate::components::use_login_href();
 
     view! {
         <leptos_meta::Title text=crate::components::page_title(&["Chat"]) />
-        <Show when=is_logged_in fallback=|| view! {
-            <div class="flex items-center justify-center min-h-[60vh]">
-                <div class="text-center space-y-4">
-                    <h2 class="text-2xl font-bold">"Sign in required"</h2>
-                    <p class="text-base-content/70">"Please log in to use the AI chat assistant."</p>
-                    <a href="/login" class="btn btn-primary">"Sign in"</a>
-                </div>
-            </div>
+        <Show when=is_logged_in fallback=move || view! {
+            <crate::components::StatePanel
+                kind=crate::components::PageState::SignIn
+                title="Sign in to use the assistant"
+                message="The assistant answers from the documentation your account can read. You will come back here after signing in."
+            >
+                <a href=move || login_href.get() class="btn btn-primary">"Sign in"</a>
+            </crate::components::StatePanel>
         }>
             <div class="h-full flex flex-col">
                 <ChatContent />
@@ -1131,8 +1132,11 @@ where
     match try_refresh().await {
         Ok(()) => make_req().await,
         Err(_) => {
-            if let Some(window) = web_sys::window() {
-                let _ = window.location().set_href("/login");
+            if let (Some(window), Some(href)) = (
+                web_sys::window(),
+                crate::auth::return_to::current_login_href(),
+            ) {
+                let _ = window.location().set_href(&href);
             }
             Err("Session expired".to_string())
         }

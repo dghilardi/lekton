@@ -136,7 +136,9 @@ mod helpers {
             if user.is_admin {
                 return Ok(user);
             }
-            return Err(ServerFnError::new("Admin privileges required"));
+            return Err(ServerFnError::new(
+                crate::auth::models::ADMIN_REQUIRED_MESSAGE,
+            ));
         }
 
         if state.demo_mode {
@@ -145,7 +147,9 @@ mod helpers {
                     if user.is_admin {
                         return Ok(user);
                     }
-                    return Err(ServerFnError::new("Admin privileges required"));
+                    return Err(ServerFnError::new(
+                        crate::auth::models::ADMIN_REQUIRED_MESSAGE,
+                    ));
                 }
             }
         }

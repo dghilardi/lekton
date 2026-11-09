@@ -4,19 +4,62 @@ use leptos::prelude::*;
 use serde::{de::DeserializeOwned, Serialize};
 use std::future::Future;
 
+/// A failed read inside a page region: session renewal with a way back here,
+/// or the error in plain words.
 #[component]
 pub fn ReaderErrorNotice(error: ServerFnError, context: &'static str) -> impl IntoView {
     if crate::auth::refresh_client::is_auth_error(&error) {
+        let login_href = super::use_login_href();
         view! {
             <div class="alert alert-warning" role="status">
-                <span>"Your session needs to be renewed. "<a class="link" href="/login">"Log in again"</a>" to continue."</span>
+                <span>"Your session needs to be renewed. "<a class="link" href=move || login_href.get()>"Log in again"</a>" to continue."</span>
             </div>
         }.into_any()
     } else {
         view! {
             <div class="alert alert-error" role="alert">
-                <span>{format!("{context}: {error}")}</span>
+                <span>{format!("{context}. {}", super::readable_error(&error))}</span>
             </div>
+        }
+        .into_any()
+    }
+}
+
+/// A failed read that replaces a whole page: sign-in for expired or missing
+/// sessions, otherwise the error in plain words with a way to retry.
+#[component]
+pub fn ReaderErrorState(error: ServerFnError) -> impl IntoView {
+    use super::{PageState, StatePanel};
+    if crate::auth::refresh_client::is_auth_error(&error) {
+        let login_href = super::use_login_href();
+        view! {
+            <StatePanel
+                kind=PageState::SignIn
+                title="Sign in to continue"
+                message="Your session has ended. Sign in again to come back to this page."
+            >
+                <a href=move || login_href.get() class="btn btn-primary">"Sign in"</a>
+            </StatePanel>
+        }
+        .into_any()
+    } else {
+        let location = leptos_router::hooks::use_location();
+        view! {
+            <StatePanel
+                kind=PageState::Error
+                title="This page could not be loaded"
+                message=super::readable_error(&error)
+            >
+                <a
+                    href=move || {
+                        let search = location.search.get();
+                        if search.is_empty() { location.pathname.get() } else { format!("{}?{search}", location.pathname.get()) }
+                    }
+                    rel="external"
+                    class="btn btn-primary"
+                >"Try again"</a>
+                <a href="/" class="btn btn-ghost">"Go to home"</a>
+            </StatePanel>
         }
         .into_any()
     }

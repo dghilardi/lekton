@@ -75,6 +75,7 @@ pub fn use_schemas() -> Resource<Result<Vec<SchemaListItem>, ServerFnError>> {
 pub fn SchemaListPage() -> impl IntoView {
     let schemas_resource = use_schemas();
     let current_user = expect_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
+    let login_href = crate::components::use_login_href();
 
     view! {
         <div>
@@ -100,7 +101,7 @@ pub fn SchemaListPage() -> impl IntoView {
                                     <div>
                                         <p>"No schemas available to you."</p>
                                         {move || match current_user.get() {
-                                            None => view! { <a href="/login" class="link">"Log in to see the schemas you can access."</a> }.into_any(),
+                                            None => view! { <a href=move || login_href.get() class="link">"Log in to see the schemas you can access."</a> }.into_any(),
                                             Some(user) if user.is_admin => view! { <p>"Use the ingestion API to add schemas."</p> }.into_any(),
                                             Some(_) => view! { <p>"Contact your portal administrator if you expected access."</p> }.into_any(),
                                         }}

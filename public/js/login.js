@@ -1,4 +1,19 @@
 // Login form handler for demo mode authentication.
+
+// The page to return to, checked again here like `auth::return_to`: only a
+// local path, never `//host` or a backslash variant, and never the login page.
+function returnTo(path) {
+    if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//')
+        || path.includes('\\') || /[\u0000-\u001f\u007f]/.test(path)) {
+        return '/';
+    }
+    const route = path.split(/[?#]/)[0];
+    if (route === '/login' || route.startsWith('/login/') || route.startsWith('/auth/') || route.startsWith('/api/')) {
+        return '/';
+    }
+    return path;
+}
+
 document.getElementById('login-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const username = document.getElementById('login-username').value;
@@ -16,7 +31,7 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
             body: JSON.stringify({ username, password })
         });
         if (res.ok) {
-            window.location.href = '/';
+            window.location.href = returnTo(e.target.dataset.returnTo);
         } else {
             let message = 'Unable to sign in';
             try {

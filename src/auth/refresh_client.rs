@@ -188,8 +188,11 @@ mod inner {
     /// Works from any async context (unlike Leptos `use_navigate` which
     /// requires component context).
     fn redirect_to_login() {
-        if let Some(window) = web_sys::window() {
-            let _ = window.location().set_href("/login");
+        if let (Some(window), Some(href)) = (
+            web_sys::window(),
+            crate::auth::return_to::current_login_href(),
+        ) {
+            let _ = window.location().set_href(&href);
         }
     }
 

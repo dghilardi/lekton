@@ -39,8 +39,10 @@ pub fn TopNavbarLinks() -> impl IntoView {
     // Pages with a sidebar put these links in the drawer instead (see
     // `SectionMenuItems`), so small screens get one menu, not two.
     let location = leptos_router::hooks::use_location();
-    let has_drawer = Signal::derive(move || has_context_sidebar(&location.pathname.get()));
     let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
+    let has_drawer = Signal::derive(move || {
+        has_context_sidebar(&location.pathname.get(), is_admin_user(current_user))
+    });
     let is_rag = use_context::<crate::app::IsRagEnabled>();
     let schema_enabled = crate::app::use_feature(|f| f.schema_registry);
     let learn_enabled = crate::app::use_feature(|f| f.learn);
@@ -292,11 +294,21 @@ fn sections_first(items: Vec<NavItem>) -> Vec<NavItem> {
 }
 
 /// Whether a path shows a context sidebar (and so a ☰ drawer on small screens).
-fn has_context_sidebar(path: &str) -> bool {
+/// Administration navigation is only for administrators: others get the
+/// sign-in or permission state on its own.
+fn has_context_sidebar(path: &str, is_admin: bool) -> bool {
     path.starts_with("/docs")
         || path.starts_with("/schemas")
         || path.starts_with("/chat")
-        || path.starts_with("/admin")
+        || (path.starts_with("/admin") && is_admin)
+}
+
+fn is_admin_user(
+    current_user: Option<Signal<Option<crate::auth::models::AuthenticatedUser>>>,
+) -> bool {
+    current_user
+        .and_then(|user| user.get())
+        .is_some_and(|user| user.is_admin)
 }
 
 /// Navbar groups, fetched once per page by the layout.
@@ -392,7 +404,9 @@ pub fn Layout(children: Children) -> impl IntoView {
     // Cheap URL checks stay uncached derived signals: unlike memos, they have
     // no shared value that concurrent Suspense boundaries could race on.
     let path = Signal::derive(move || location.pathname.get());
-    let has_context_sidebar = Signal::derive(move || has_context_sidebar(&path.get()));
+    let layout_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
+    let has_context_sidebar =
+        Signal::derive(move || has_context_sidebar(&path.get(), is_admin_user(layout_user)));
     provide_context(SharedNavbarGroups(Resource::new(
         || (),
         |_| get_navbar_groups(),
@@ -645,6 +659,14 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn administration_navigation_is_only_for_administrators() {
+        assert!(has_context_sidebar("/admin/users", true));
+        assert!(!has_context_sidebar("/admin/users", false));
+        assert!(has_context_sidebar("/docs/handbook", false));
+        assert!(!has_context_sidebar("/learn", true));
     }
 
     #[test]

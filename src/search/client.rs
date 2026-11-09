@@ -36,7 +36,7 @@ pub struct SearchDocument {
 }
 
 /// A search result returned to the client.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SearchHit {
     pub slug: String,
     pub title: String,
@@ -51,6 +51,43 @@ pub struct SearchHit {
     /// PDF, on this page. `None` for ordinary document hits.
     #[serde(default)]
     pub page: Option<u32>,
+    /// Character ranges (`[start, end)`) of `title` that match the query.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub title_matches: Vec<[usize; 2]>,
+    /// Character ranges (`[start, end)`) of `content_preview` that match the query.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preview_matches: Vec<[usize; 2]>,
+}
+
+/// Highlight delimiters asked of the search engine: private-use characters,
+/// so matches come back as ranges over plain text rather than as markup.
+pub const HIGHLIGHT_START: &str = "\u{E000}";
+pub const HIGHLIGHT_END: &str = "\u{E001}";
+
+/// Removes highlight delimiters from `marked`, returning the plain text and the
+/// character ranges they enclosed.
+pub fn split_highlights(marked: &str) -> (String, Vec<[usize; 2]>) {
+    let mut text = String::with_capacity(marked.len());
+    let mut ranges = Vec::new();
+    let mut open = None;
+    let mut chars = 0;
+    for c in marked.chars() {
+        match c {
+            '\u{E000}' => open = Some(chars),
+            '\u{E001}' => {
+                if let Some(start) = open.take() {
+                    if start < chars {
+                        ranges.push([start, chars]);
+                    }
+                }
+            }
+            _ => {
+                text.push(c);
+                chars += 1;
+            }
+        }
+    }
+    (text, ranges)
 }
 
 /// Trait for search operations, enabling mock testing.
@@ -176,7 +213,21 @@ impl SearchService for MeilisearchService {
 
         let index = self.index();
         let mut search_query = index.search();
-        search_query.with_query(query).with_limit(20);
+        search_query
+            .with_query(query)
+            .with_limit(20)
+            .with_attributes_to_highlight(meilisearch_sdk::search::Selectors::Some(&[
+                "title",
+                "content_preview",
+            ]))
+            .with_highlight_pre_tag(HIGHLIGHT_START)
+            .with_highlight_post_tag(HIGHLIGHT_END)
+            // A window around the first match rather than the opening words.
+            .with_attributes_to_crop(meilisearch_sdk::search::Selectors::Some(&[(
+                "content_preview",
+                Some(24),
+            )]))
+            .with_crop_marker("…");
 
         if !filter_str.is_empty() {
             search_query.with_filter(&filter_str);
@@ -190,13 +241,28 @@ impl SearchService for MeilisearchService {
         let hits = results
             .hits
             .into_iter()
-            .map(|hit| SearchHit {
-                slug: hit.result.slug,
-                title: hit.result.title,
-                tags: hit.result.tags,
-                content_preview: hit.result.content_preview,
-                attachment_key: None,
-                page: None,
+            .map(|hit| {
+                let formatted = |field: &str| {
+                    hit.formatted_result
+                        .as_ref()
+                        .and_then(|formatted| formatted.get(field))
+                        .and_then(serde_json::Value::as_str)
+                        .map(split_highlights)
+                };
+                let (title, title_matches) =
+                    formatted("title").unwrap_or_else(|| (hit.result.title.clone(), vec![]));
+                let (content_preview, preview_matches) = formatted("content_preview")
+                    .unwrap_or_else(|| (hit.result.content_preview.clone(), vec![]));
+                SearchHit {
+                    slug: hit.result.slug,
+                    title,
+                    tags: hit.result.tags,
+                    content_preview,
+                    attachment_key: None,
+                    page: None,
+                    title_matches,
+                    preview_matches,
+                }
             })
             .collect();
 
@@ -313,6 +379,24 @@ fn strip_markdown_for_preview(raw: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn highlights_become_character_ranges_over_plain_text() {
+        let (text, ranges) =
+            split_highlights("Deploy \u{E000}kafka\u{E001} to \u{E000}prod\u{E001}…");
+        assert_eq!(text, "Deploy kafka to prod…");
+        assert_eq!(ranges, vec![[7, 12], [16, 20]]);
+
+        let (text, ranges) = split_highlights("città \u{E000}è\u{E001}");
+        assert_eq!(text, "città è");
+        assert_eq!(ranges, vec![[6, 7]]);
+
+        // Unbalanced or empty markers never produce a range.
+        assert_eq!(
+            split_highlights("\u{E001}a\u{E000}\u{E001}b"),
+            ("ab".to_string(), vec![])
+        );
+    }
 
     #[test]
     fn test_strip_markdown_for_preview() {

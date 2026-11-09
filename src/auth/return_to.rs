@@ -57,7 +57,7 @@ pub fn current_login_href() -> Option<String> {
 }
 
 /// Percent-encodes everything but RFC 3986 unreserved characters and `/`.
-fn encode_component(value: &str) -> String {
+pub(crate) fn encode_component(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
     for byte in value.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~' | b'/') {

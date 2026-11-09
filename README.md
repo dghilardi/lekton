@@ -491,7 +491,7 @@ Most write endpoints are driven by the [`lekton-sync`](cli/README.md) CLI in CI/
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| `GET` | `/api/v1/search?q=...` | Public (scoped) | Search documents |
+| `GET` | `/api/v1/search?q=...` | Public (scoped) | Search documents. Previews are cropped around the match; `title_matches` / `preview_matches` give the matched character ranges `[start, end)` |
 | `GET` | `/api/v1/schemas` | Public (scoped) | List schemas |
 | `GET` | `/api/v1/schemas/{name}?version={ver}` | Public (scoped) | Schema detail (no `version`) or artifact content |
 | `GET` | `/api/v1/assets/{*key}` | Derived from referencing docs | Serve an asset |

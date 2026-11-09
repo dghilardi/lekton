@@ -59,4 +59,35 @@ test.describe('Search', () => {
     await page.keyboard.press('Escape');
     await expect(searchInput).not.toBeVisible();
   });
+
+  test('results show where a page sits and mark the matched words', async ({ page }) => {
+    await page.goto('/');
+    await openSearchModal(page);
+    await page.locator('input[placeholder*="Search"]').fill('Authentication');
+    const result = page.getByRole('option').filter({ hasText: 'Authentication API' }).first();
+    await expect(result).toBeVisible({ timeout: 15_000 });
+    await expect(result).toContainText('API Documentation');
+    await expect(result.locator('mark').first()).toHaveText(/authentication/i);
+    await expect(page.getByRole('status').filter({ hasText: /results? available/ })).toHaveText(/^(1 result|\d+ results) available$/);
+  });
+
+  test('no results explain what to try, without offering a disabled assistant', async ({ page }) => {
+    await page.goto('/');
+    await openSearchModal(page);
+    await page.locator('input[placeholder*="Search"]').fill('zzqqxxnothing');
+    await expect(page.getByText('No pages match “zzqqxxnothing”.')).toBeVisible({ timeout: 15_000 });
+    // The assistant is only offered where chat is enabled.
+    const chatEnabled = (await page.request.get('/chat')).status() !== 404;
+    await expect(page.getByRole('link', { name: 'Ask the assistant' })).toHaveCount(chatEnabled ? 1 : 0);
+  });
+
+  test('Ctrl+K opens the portal search over the OpenAPI viewer', async ({ page }) => {
+    await page.goto('/schemas/user-api');
+    await expect(page.locator('#scalar-api-reference .scalar-api-reference')).toBeVisible({ timeout: 30_000 });
+    await page.locator('main#content').click({ position: { x: 5, y: 5 } });
+    await openSearchModal(page);
+    // Only the portal's dialog opens; the viewer's own search stays closed.
+    await expect(page.locator('dialog[open]')).toHaveCount(1);
+    await expect(page.getByRole('dialog', { name: 'Search documentation' })).toBeVisible();
+  });
 });

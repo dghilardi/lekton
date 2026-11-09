@@ -446,12 +446,33 @@ pub fn Layout(children: Children) -> impl IntoView {
         if ev.key() == "Escape" && sidebar_open.get_untracked() {
             close_sidebar();
         }
-        if search_enabled.get() && (ev.ctrl_key() || ev.meta_key()) && ev.key() == "k" {
-            ev.prevent_default();
-            ev.stop_propagation();
-            set_search_modal_open.set(true);
-        }
     });
+    // Ctrl/Cmd+K is the portal's search everywhere. Embedded viewers (Scalar's
+    // OpenAPI reference) bind the same keys, so the portal claims them in the
+    // capture phase, before the event reaches them.
+    #[cfg(feature = "hydrate")]
+    {
+        use wasm_bindgen::{closure::Closure, JsCast};
+        let on_search_shortcut = Closure::<dyn Fn(leptos::web_sys::KeyboardEvent)>::new(
+            move |ev: leptos::web_sys::KeyboardEvent| {
+                if search_enabled.get_untracked()
+                    && (ev.ctrl_key() || ev.meta_key())
+                    && ev.key().eq_ignore_ascii_case("k")
+                {
+                    ev.prevent_default();
+                    ev.stop_immediate_propagation();
+                    set_search_modal_open.set(true);
+                }
+            },
+        );
+        let _ = window().add_event_listener_with_callback_and_bool(
+            "keydown",
+            on_search_shortcut.as_ref().unchecked_ref(),
+            true,
+        );
+        // The layout lives as long as the page, so the listener does too.
+        on_search_shortcut.forget();
+    }
 
     view! {
         // Runtime custom CSS injection (loaded from MongoDB settings)

@@ -1286,6 +1286,13 @@ html.lekton-play .lekton-splash {
     overflow: hidden;
 }
 .lekton-search-dialog[open] { display: flex; flex-direction: column; }
+/* Query terms in search results: a tint, so the text keeps its own colour. */
+.lekton-search-mark {
+    background-color: color-mix(in oklch, var(--color-primary) 22%, transparent);
+    color: inherit;
+    border-radius: 0.2rem;
+    box-decoration-break: clone;
+}
 .lekton-search-dialog::backdrop { background: rgb(0 0 0 / 50%); backdrop-filter: blur(4px); }
 .lekton-search-dialog > :first-child + div,
 .lekton-search-dialog > :last-child { flex-shrink: 0; }

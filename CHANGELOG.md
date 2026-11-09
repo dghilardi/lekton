@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Require resolving an offered editor draft before editing or saving, so newer changes cannot be lost behind the pending offer; include the existing page slug in the server-rendered editor title.
+
 - Bring text to WCAG AA contrast and legible sizes: outline and soft status badges and warning text on light surfaces, muted metadata and chat history, the AsyncAPI viewer's descriptions, badges and example panels in both themes; badges and uppercase labels are at least 11px, functional hints 12px, and header links 14px without negative tracking. Author-coloured Mermaid diagrams follow the dark theme with labels fitted to each fill instead of a white block.
 
 - Make the prompt detail and created-token dialogs real modal dialogs (focus moves in, stays inside and returns to the opener; Escape closes), make wide Markdown and AI-usage tables keyboard-scrollable named regions, and add a “Skip to section navigation” link on desktop, where the sidebar comes after the content in tab order.

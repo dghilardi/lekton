@@ -50,6 +50,36 @@ test.describe('Editor unsaved changes', () => {
     await expect(page.getByText('Unsaved changes', { exact: true })).toBeVisible();
   });
 
+  test('a pending draft must be resolved before editing or saving', async ({ page }) => {
+    await openEditor(page);
+    await titleInput(page).fill('Earlier draft');
+    page.once('dialog', prompt => prompt.accept());
+    await page.getByRole('link', { name: 'Lekton home' }).click();
+    await openEditor(page);
+
+    await expect(page.getByRole('button', { name: 'Restore draft' })).toBeVisible();
+    await expect(titleInput(page)).toBeDisabled();
+    await expect(page.locator('#editor-slug')).toBeDisabled();
+    for (const select of await page.getByRole('group', { name: 'Page editor' }).locator('select').all()) {
+      await expect(select).toBeDisabled();
+    }
+    await expect(page.getByRole('button', { name: 'Bold', exact: true })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Create Page' })).toBeDisabled();
+    await expect(page.locator('.tiptap')).toHaveAttribute('contenteditable', 'false');
+
+    await page.getByRole('button', { name: 'Discard draft' }).click();
+    await expect(titleInput(page)).toBeEnabled();
+    await expect(page.locator('.tiptap')).toHaveAttribute('contenteditable', 'true');
+    await titleInput(page).fill('New draft after choosing');
+    page.once('dialog', prompt => prompt.accept());
+    await page.getByRole('link', { name: 'Lekton home' }).click();
+    await openEditor(page);
+    await page.getByRole('button', { name: 'Restore draft' }).click();
+    await expect(titleInput(page)).toHaveValue('New draft after choosing');
+    await expect(titleInput(page)).toBeEnabled();
+    await expect(page.locator('.tiptap')).toHaveAttribute('contenteditable', 'true');
+  });
+
   test('reverting field edits drops the local draft', async ({ page }) => {
     await openEditor(page);
     await titleInput(page).fill('Temporary title');

@@ -12,6 +12,7 @@ const pages: [string, string][] = [
   ['/admin/tokens', 'Service Tokens · Admin · Lekton'],
   ['/edit/e2e-title-new-page', 'Create page · Editor · Lekton'],
   ['/no-such-page', 'Page not found · Lekton'],
+  ['/edit/getting-started', 'Edit getting-started · Editor · Lekton'],
 ];
 
 test.describe('page titles', () => {
@@ -28,7 +29,7 @@ test.describe('page titles', () => {
   });
 
   test('server-rendered pages carry their title before JavaScript runs', async ({ page }) => {
-    for (const [path, title] of [pages[1], pages[3], pages[8]]) {
+    for (const [path, title] of [pages[1], pages[3], pages[8], pages[9]]) {
       const html = await (await page.request.get(path)).text();
       expect(html, path).toContain(`<title>${title}</title>`);
     }

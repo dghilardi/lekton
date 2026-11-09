@@ -402,7 +402,6 @@ pub fn EditorPage() -> impl IntoView {
     let (access_level, set_access_level) = signal(String::new());
     let (parent_slug, set_parent_slug) = signal(String::new());
     let (order, set_order) = signal(0u32);
-    let (disabled, _set_disabled) = signal(false);
     let (_selection, set_selection) = signal(TiptapSelectionState::default());
     let (save_status, set_save_status) = signal(String::new());
     let (saving, set_saving) = signal(false);
@@ -430,6 +429,7 @@ pub fn EditorPage() -> impl IntoView {
     });
     // A local draft left by an earlier visit, offered until restored or discarded.
     let draft_offer = RwSignal::new(None::<EditorDraft>);
+    let disabled = Signal::derive(move || draft_offer.with(Option::is_some));
     // Bumped to recreate TipTap, which only reads its content when created.
     let editor_epoch = RwSignal::new(0u32);
 
@@ -605,6 +605,9 @@ pub fn EditorPage() -> impl IntoView {
     });
 
     let on_save = move |_| {
+        if disabled.get_untracked() {
+            return;
+        }
         let errors = form::validate(&current_fields());
         if let Some(id) = errors.first_invalid_id() {
             field_errors.set(errors);
@@ -624,7 +627,7 @@ pub fn EditorPage() -> impl IntoView {
                         view! {
                             <div class="space-y-4">
                                 <leptos_meta::Title text=move || {
-                                    let page = if is_new { "Create page".to_string() } else { format!("Edit {}", slug.get()) };
+                                    let page = if is_new { "Create page".to_string() } else { format!("Edit {}", route_slug()) };
                                     crate::components::page_title(&[&page, "Editor"])
                                 } />
                                 <h2 class="text-2xl font-bold">
@@ -633,7 +636,7 @@ pub fn EditorPage() -> impl IntoView {
 
                                 {move || draft_offer.get().map(|_| view! {
                                     <div class="alert alert-info" role="status">
-                                        <span>"This page has unsaved changes from an earlier visit, kept in this browser."</span>
+                                        <span>"This page has unsaved changes from an earlier visit, kept in this browser. Restore or discard the draft before editing."</span>
                                         <div class="flex gap-2">
                                             <button type="button" class="btn btn-sm btn-primary" on:click=restore_draft>"Restore draft"</button>
                                             <button type="button" class="btn btn-sm btn-ghost" on:click=discard_draft>"Discard draft"</button>
@@ -641,6 +644,7 @@ pub fn EditorPage() -> impl IntoView {
                                     </div>
                                 })}
 
+                                <fieldset disabled=move || disabled.get() class="min-w-0 space-y-4 border-0 p-0" aria-label="Page editor">
                                 // Slug — editable only when creating a new page.
                                 <div class="form-control">
                                     <label class="label" for=form::SLUG_ID>
@@ -905,6 +909,7 @@ pub fn EditorPage() -> impl IntoView {
 
                                 // Asset panel
                                 <AssetPanel set_msg=set_msg />
+                                </fieldset>
                             </div>
                         }.into_any()
                     }

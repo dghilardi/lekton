@@ -349,6 +349,22 @@ pub async fn delete_session_handler(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// `POST /api/v1/rag/sessions/{id}/stop` — stop the answer being generated in
+/// one of the caller's sessions (owner only). The part already generated is
+/// saved and the stream ends with a `stopped` status.
+pub async fn stop_answer_handler(
+    RequiredAuthUser(user): RequiredAuthUser,
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let chat_svc = state
+        .chat_service
+        .as_ref()
+        .ok_or_else(|| AppError::BadRequest("RAG chat is not enabled".into()))?;
+    let stopped = chat_svc.stop_answer(&user.user_id, &session_id).await?;
+    Ok(Json(serde_json::json!({ "stopped": stopped })))
+}
+
 // ── Feedback endpoints ───────────────────────────────────────────────────────
 
 #[derive(Deserialize)]

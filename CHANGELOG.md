@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.40.0] 2026-11-09
+
 ### Fixed
 
 - Require resolving an offered editor draft before editing or saving, so newer changes cannot be lost behind the pending offer; include the existing page slug in the server-rendered editor title.

@@ -1310,6 +1310,14 @@ html.lekton-play .lekton-splash {
     transition: opacity 0.2s ease-out;
 }
 
+/* In the small-screen drawer every entry is a full touch target (44px). */
+@media (width < 64rem) {
+    [data-lekton-sidebar] :is(li > a, li > button, li > summary) {
+        min-height: 2.75rem;
+        align-content: center;
+    }
+}
+
 /* Reader navigation keeps complete names inside its own column. */
 [data-lekton-sidebar] :is(a, summary) {
     min-width: 0;

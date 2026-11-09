@@ -56,7 +56,7 @@ use crate::app::BudgetStatus;
 use crate::auth::refresh_client::with_auth_retry;
 use crate::components::MarkdownContent;
 use crate::db::chat_models::{ChatMessageStatus, SourceReference};
-use crate::rendering::markdown::render_markdown;
+use crate::rendering::markdown::render_markdown_escaped as render_markdown;
 
 /// Feedback state on a single assistant message.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

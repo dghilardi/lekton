@@ -113,6 +113,35 @@ pub struct Lesson {
     pub created_at: DateTime<Utc>,
 }
 
+impl Lesson {
+    /// Drop citations and the primary source the reader cannot open. A stored
+    /// lesson keeps the sources it was generated from, while the reader's
+    /// access may have changed since.
+    pub fn retain_openable_sources(&mut self, can_open: impl Fn(&str) -> bool) {
+        self.citations
+            .retain(|citation| can_open(&citation.document_slug));
+        if self
+            .primary_source
+            .as_ref()
+            .is_some_and(|source| !can_open(&source.document_slug))
+        {
+            self.primary_source = None;
+        }
+    }
+
+    /// Every document slug the lesson links to.
+    pub fn source_slugs(&self) -> impl Iterator<Item = &str> {
+        self.citations
+            .iter()
+            .map(|citation| citation.document_slug.as_str())
+            .chain(
+                self.primary_source
+                    .iter()
+                    .map(|source| source.document_slug.as_str()),
+            )
+    }
+}
+
 /// A calibration signal recorded as the user progresses — the teaching
 /// equivalent of an architectural decision record.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -209,6 +238,37 @@ mod tests {
             decoded.citations[0].section_anchor.as_deref(),
             Some("partitions")
         );
+    }
+
+    #[test]
+    fn unopenable_sources_are_dropped() {
+        let citation = |slug: &str| LessonCitation {
+            document_slug: slug.into(),
+            section_anchor: None,
+            quote: "q".into(),
+        };
+        let mut lesson = Lesson {
+            id: "l1".into(),
+            path_id: "p1".into(),
+            user_id: "u1".into(),
+            seq: 1,
+            title: "t".into(),
+            body_html: String::new(),
+            citations: vec![citation("open"), citation("restricted")],
+            primary_source: Some(LessonSource {
+                document_slug: "restricted".into(),
+                section_anchor: None,
+            }),
+            quiz: vec![],
+            created_at: Utc::now(),
+        };
+        assert_eq!(
+            lesson.source_slugs().collect::<Vec<_>>(),
+            ["open", "restricted", "restricted"]
+        );
+        lesson.retain_openable_sources(|slug| slug == "open");
+        assert_eq!(lesson.citations, vec![citation("open")]);
+        assert_eq!(lesson.primary_source, None);
     }
 
     #[test]

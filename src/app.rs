@@ -276,14 +276,33 @@ pub fn doc_is_accessible(
     level_ok && (!is_draft || include_draft)
 }
 
+/// Load the caller's [`UserContext`](crate::auth::models::UserContext); see
+/// [`UserContext::for_user`](crate::auth::models::UserContext::for_user) for the rule.
+#[cfg(feature = "ssr")]
+pub async fn user_context_for(
+    state: &AppState,
+    user: &crate::auth::models::AuthenticatedUser,
+) -> Result<crate::auth::models::UserContext, crate::error::AppError> {
+    let user_doc = if user.is_admin {
+        None
+    } else {
+        state.user_repo.find_user_by_id(&user.user_id).await?
+    };
+    Ok(crate::auth::models::UserContext::for_user(
+        user.clone(),
+        user_doc.as_ref(),
+    ))
+}
+
 /// Resolve `(allowed_levels, include_draft)` for an optionally-authenticated user.
 ///
-/// This is the single source of truth for user visibility used by all HTTP handlers
-/// that need to filter documents, schemas, or assets by access level.
+/// Used by every handler that filters documents, schemas or assets by access
+/// level, and derived from the same [`UserContext`](crate::auth::models::UserContext)
+/// as retrieval, chat and Learn, so a cited source can always be opened.
 ///
 /// - Admin → `(None, true)` (unrestricted).
-/// - Demo user → `(["public"], false)`.
-/// - Authenticated user → effective levels + `"public"` + `"loggeduser"`, `can_read_draft`.
+/// - Authenticated user, demo sessions included → effective levels + `"public"` +
+///   `"loggeduser"`, `can_read_draft`.
 /// - Unauthenticated → `(["public"], false)`.
 #[cfg(feature = "ssr")]
 pub async fn resolve_user_visibility(
@@ -291,27 +310,7 @@ pub async fn resolve_user_visibility(
     user: Option<&crate::auth::models::AuthenticatedUser>,
 ) -> Result<(Option<Vec<String>>, bool), crate::error::AppError> {
     match user {
-        Some(u) if u.is_admin => Ok((None, true)),
-        Some(u) if state.demo_mode && u.user_id.starts_with("demo-") => {
-            Ok((Some(vec!["public".to_string()]), false))
-        }
-        Some(u) => {
-            let user_doc = state.user_repo.find_user_by_id(&u.user_id).await?;
-            let (levels, include_draft) = match user_doc {
-                Some(doc) => {
-                    let mut levels = doc.effective_access_levels;
-                    if !levels.contains(&"public".to_string()) {
-                        levels.push("public".to_string());
-                    }
-                    if !levels.contains(&"loggeduser".to_string()) {
-                        levels.push("loggeduser".to_string());
-                    }
-                    (levels, doc.can_read_draft)
-                }
-                None => (vec!["public".to_string(), "loggeduser".to_string()], false),
-            };
-            Ok((Some(levels), include_draft))
-        }
+        Some(user) => Ok(user_context_for(state, user).await?.document_visibility()),
         None => Ok((Some(vec!["public".to_string()]), false)),
     }
 }

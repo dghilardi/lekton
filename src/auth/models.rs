@@ -54,6 +54,28 @@ pub struct UserContext {
 
 #[cfg(feature = "ssr")]
 impl UserContext {
+    /// The caller's context, given their user document when one exists. This is
+    /// the one rule behind document visibility for reading, search, schemas,
+    /// assets, retrieval, chat and Learn. Demo sessions are logged-in users like
+    /// any other: without a user document they read `public` and `loggeduser`.
+    pub fn for_user(
+        auth_user: AuthenticatedUser,
+        user_doc: Option<&crate::db::auth_models::User>,
+    ) -> Self {
+        let is_admin = auth_user.is_admin;
+        match user_doc {
+            Some(user) if !is_admin => Self::from_user_doc(auth_user, user),
+            _ => Self {
+                user: auth_user,
+                effective_access_levels: vec![],
+                budget_plan: None,
+                can_write: is_admin,
+                can_read_draft: is_admin,
+                can_write_draft: is_admin,
+            },
+        }
+    }
+
     /// Build a `UserContext` from a loaded [`User`](crate::db::auth_models::User) document.
     pub fn from_user_doc(
         auth_user: AuthenticatedUser,
@@ -263,6 +285,35 @@ mod tests {
             let levels = levels.unwrap();
             assert!(levels.contains(&"internal".to_string()));
             assert!(include_draft);
+        }
+
+        fn session(user_id: &str, is_admin: bool) -> AuthenticatedUser {
+            AuthenticatedUser {
+                user_id: user_id.to_string(),
+                email: format!("{user_id}@demo.lekton.dev"),
+                name: None,
+                is_admin,
+            }
+        }
+
+        #[test]
+        fn demo_sessions_see_what_any_logged_in_user_without_a_profile_sees() {
+            let demo = UserContext::for_user(session("demo-demo", false), None);
+            let other = UserContext::for_user(session("u-without-profile", false), None);
+            assert_eq!(demo.document_visibility(), other.document_visibility());
+            let (levels, include_draft) = demo.document_visibility();
+            let levels = levels.expect("non-admin sessions are restricted");
+            assert!(levels.contains(&"public".to_string()));
+            assert!(levels.contains(&"loggeduser".to_string()));
+            assert!(!include_draft);
+            assert!(!demo.can_write);
+        }
+
+        #[test]
+        fn admin_sessions_are_unrestricted_without_a_profile() {
+            let admin = UserContext::for_user(session("demo-admin", true), None);
+            assert_eq!(admin.document_visibility(), (None, true));
+            assert!(admin.can_write && admin.can_write_draft);
         }
     }
 }

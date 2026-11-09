@@ -140,6 +140,16 @@ export default async function globalSetup() {
     { order: 3 },
   );
 
+  // Readable by any logged-in session, demo sessions included; hidden from the
+  // navigation so it does not change other specs' menus.
+  await ingestDocument(
+    'logged-in-handbook',
+    'Logged-in Handbook',
+    '# Logged-in Handbook\n\nVisible to every signed-in reader.',
+    'loggeduser',
+    { isHidden: true },
+  );
+
   await ingestDocument(
     'mermaid-test',
     'Mermaid Test',

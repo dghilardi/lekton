@@ -19,8 +19,10 @@ test.describe('Editor', () => {
     await loginAsAdmin(page);
     await page.goto('/edit/getting-started');
     await expect(
-      page.locator('text=/managed outside the editor/i'),
+      page.getByRole('heading', { level: 1, name: 'This page is published from its source' }),
     ).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('link', { name: 'Back to the page' })).toHaveAttribute('href', '/docs/getting-started');
+    await expect(page.locator('main')).not.toContainText('Bad request');
   });
 
   test('edit button hidden for non-admin', async ({ page }) => {

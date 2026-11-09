@@ -238,7 +238,10 @@ test('expired-session SSR offers sign-in recovery before JavaScript runs', async
     const reader = await context.newPage();
     for (const path of [`/docs/${doc}`, '/schemas', `/schemas/${openapi}`]) {
       await reader.goto(path);
-      await expect(reader.getByRole('link', { name: 'Log in again', exact: true })).toBeVisible();
+      // Page-level reads show the sign-in state; region reads an inline notice.
+      const signIn = reader.getByRole('link', { name: /^(Log in again|Sign in)$/ });
+      await expect(signIn).toBeVisible();
+      await expect(signIn).toHaveAttribute('href', `/login?next=${path}`);
       await expect(reader.locator('main')).not.toContainText('error running server function');
       await expect(reader.getByRole('navigation', { name: 'Section navigation' })).not.toContainText('error running server function');
     }
@@ -269,9 +272,9 @@ for (const scenario of ['recovered', 'still unauthorized', 'refresh rejected', '
     if (scenario === 'recovered') {
       await expect(page.locator('[data-lekton-markdown]')).toBeVisible();
     } else if (scenario === 'refresh rejected') {
-      await expect(page).toHaveURL(/\/login$/);
+      await expect(page).toHaveURL(new RegExp(`/login\\?next=/docs/${doc}$`));
     } else if (scenario === 'still unauthorized') {
-      await expect(page.getByRole('link', { name: 'Log in again', exact: true })).toBeVisible();
+      await expect(page.getByRole('main').getByRole('link', { name: 'Sign in', exact: true })).toBeVisible();
     } else {
       await expect(page.locator('main')).toContainText('audit unavailable');
     }

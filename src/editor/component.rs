@@ -23,6 +23,10 @@ extern "C" {
     pub fn upload_asset_js() -> js_sys::Promise;
 }
 
+/// Why a page synchronised from a source cannot be opened in the editor.
+pub const MANAGED_PAGE_MESSAGE: &str =
+    "This page is managed outside the editor and can't be edited here.";
+
 /// Metadata + rendered body returned to the editor for an existing page.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct EditorDoc {
@@ -48,7 +52,11 @@ pub async fn get_doc_content(slug: String) -> Result<Option<EditorDoc>, ServerFn
         &slug,
     )
     .await
-    .map_err(|e| ServerFnError::new(e.to_string()))
+    .map_err(|e| match e {
+        // Plain text the page can recognise, not "Bad request: …".
+        crate::error::AppError::BadRequest(message) => ServerFnError::new(message),
+        other => ServerFnError::new(other.to_string()),
+    })
 }
 
 /// Fields the editor form submits to create or update a hand-authored page.
@@ -118,9 +126,7 @@ pub async fn load_editor_page(
     // are read-only in the markdown editor: editing them here would be lost on
     // the next sync, or diverge from the upload form.
     if doc.source_id.as_deref().is_some_and(|s| !s.is_empty()) {
-        return Err(AppError::BadRequest(
-            "This page is managed outside the editor and can't be edited here.".into(),
-        ));
+        return Err(AppError::BadRequest(MANAGED_PAGE_MESSAGE.into()));
     }
 
     let Some(content_bytes) = storage.get_object(&doc.s3_key).await? else {
@@ -175,9 +181,7 @@ pub async fn save_editor_page(
     // upload-form documents from the markdown editor.
     if let Some(ref d) = old_doc {
         if d.source_id.as_deref().is_some_and(|s| !s.is_empty()) {
-            return Err(AppError::BadRequest(
-                "This page is managed outside the editor and can't be edited here.".into(),
-            ));
+            return Err(AppError::BadRequest(MANAGED_PAGE_MESSAGE.into()));
         }
     }
     let old_links = old_doc
@@ -913,17 +917,60 @@ pub fn EditorPage() -> impl IntoView {
                             </div>
                         }.into_any()
                     }
-                    Err(e) => {
-                        view! {
-                            <div class="alert alert-error">
-                                <span>{format!("Error loading document: {e}")}</span>
-                            </div>
-                        }.into_any()
-                    }
+                    Err(e) => view! { <EditorUnavailable error=e slug=route_slug() /> }.into_any(),
                 })
             }}
         </Suspense>
     }
+}
+
+/// Shown instead of the form when the page cannot be edited here.
+#[component]
+fn EditorUnavailable(error: ServerFnError, slug: String) -> impl IntoView {
+    use crate::components::{PageState, RequireRole, StatePanel};
+    let message = match &error {
+        ServerFnError::ServerError(message) => message.as_str(),
+        _ => "",
+    };
+    if crate::auth::refresh_client::is_auth_error(&error)
+        || message == crate::auth::models::ADMIN_REQUIRED_MESSAGE
+    {
+        let signed_in = !crate::auth::refresh_client::is_auth_error(&error);
+        return view! {
+            <RequireRole signed_in=Signal::derive(move || signed_in) action="Editing pages" />
+        }
+        .into_any();
+    }
+    if message == MANAGED_PAGE_MESSAGE {
+        let page_href = format!("/docs/{slug}");
+        let source = crate::components::reader_resource(
+            move || slug.clone(),
+            |slug| crate::app::get_doc_html(slug, None),
+        );
+        return view! {
+            <StatePanel
+                kind=PageState::Managed
+                title="This page is published from its source"
+                message="It is synchronized from a repository, so changes made here would be overwritten. Edit the source file instead."
+            >
+                <Suspense fallback=|| ()>
+                    {move || {
+                        let source_url = source.get().and_then(Result::ok).flatten().and_then(|page| page.source_view_url);
+                        // The source link leads when the repository is known.
+                        let back_class = if source_url.is_some() { "btn btn-ghost" } else { "btn btn-primary" };
+                        view! {
+                            {source_url.map(|url| view! {
+                                <a href=url target="_blank" rel="noopener" class="btn btn-primary">"View source"</a>
+                            })}
+                            <a href=page_href.clone() class=back_class>"Back to the page"</a>
+                        }
+                    }}
+                </Suspense>
+            </StatePanel>
+        }
+        .into_any();
+    }
+    view! { <crate::components::ReaderErrorState error=error /> }.into_any()
 }
 
 /// Wrapper so `LocalResource` gets a plain async fn for the access-level picker.

@@ -129,8 +129,9 @@ pub fn NavigationTree() -> impl IntoView {
                         }.into_any()
                     }
                     Err(e) if crate::auth::refresh_client::is_auth_error(&e) => {
+                        let login_href = crate::components::use_login_href();
                         view! {
-                            <li><a href="/login" class="text-sm">"Log in to restore navigation"</a></li>
+                            <li><a href=move || login_href.get() class="text-sm">"Log in to restore navigation"</a></li>
                         }.into_any()
                     }
                     Err(e) => {

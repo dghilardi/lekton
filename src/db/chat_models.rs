@@ -148,6 +148,8 @@ pub enum ChatMessageStatus {
     Interrupted,
     /// The token stream failed with an error partway through.
     Error,
+    /// The reader stopped the answer before the model finished it.
+    Stopped,
 }
 
 impl ChatMessageStatus {

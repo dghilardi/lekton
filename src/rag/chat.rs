@@ -114,6 +114,54 @@ pub struct ChatService {
     /// When false, attachment-sourced chunks are filtered out of retrieval
     /// (e.g. the `attachment_indexing` feature is off but old chunks linger).
     include_attachments: bool,
+    /// Answers being generated, by session, so their reader can stop them.
+    in_flight: InFlightAnswers,
+}
+
+/// Stop signals for the answers being generated, one per session.
+#[derive(Clone, Default)]
+struct InFlightAnswers(Arc<std::sync::Mutex<HashMap<String, Arc<tokio::sync::Notify>>>>);
+
+impl InFlightAnswers {
+    fn register(&self, session_id: &str) -> Arc<tokio::sync::Notify> {
+        let stop = Arc::new(tokio::sync::Notify::new());
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(session_id.to_string(), stop.clone());
+        stop
+    }
+
+    /// Removes the entry only if it is still this generation's, so a newer
+    /// answer in the same session keeps its own.
+    fn finish(&self, session_id: &str, stop: &Arc<tokio::sync::Notify>) {
+        let mut map = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if map
+            .get(session_id)
+            .is_some_and(|current| Arc::ptr_eq(current, stop))
+        {
+            map.remove(session_id);
+        }
+    }
+
+    fn stop(&self, session_id: &str) -> bool {
+        let map = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match map.get(session_id) {
+            // A stored permit: the generator sees it at its next token even
+            // if it is not waiting right now.
+            Some(stop) => {
+                stop.notify_one();
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 /// Result of a pure retrieval pass (no LLM generation, no chat persistence).
@@ -297,6 +345,7 @@ impl ChatService {
                 n => Some(n),
             },
             tera,
+            in_flight: InFlightAnswers::default(),
             system_template_name: template_name.to_string(),
             query_rewriter,
             include_attachments,
@@ -523,6 +572,21 @@ impl ChatService {
             .await
     }
 
+    /// Stops the answer being generated in one of `user_id`'s sessions. The
+    /// part already generated is saved as stopped. `false` when nothing is
+    /// being generated there.
+    pub async fn stop_answer(&self, user_id: &str, session_id: &str) -> Result<bool, AppError> {
+        let owned = self
+            .chat_repo
+            .get_session(session_id)
+            .await?
+            .is_some_and(|session| session.user_id == user_id);
+        if !owned {
+            return Err(AppError::NotFound("Chat session not found".into()));
+        }
+        Ok(self.in_flight.stop(session_id))
+    }
+
     async fn stream_turn(
         &self,
         user_ctx: &UserContext,
@@ -726,6 +790,8 @@ impl ChatService {
         let sid = session_id.clone();
         let sources = source_references.clone();
         let usage_key = user_ctx.usage_key();
+        let in_flight = self.in_flight.clone();
+        let stop = in_flight.register(&session_id);
 
         let event_stream = async_stream::stream! {
             // Held for the life of the stream, not just of this function: the
@@ -739,8 +805,21 @@ impl ChatService {
 
             let mut answer = AnswerAccumulator::default();
             let mut failed = false;
+            let mut stopped = false;
 
-            while let Some(chunk_result) = stream.next().await {
+            loop {
+                let chunk_result = tokio::select! {
+                    biased;
+                    _ = stop.notified() => {
+                        // Dropping the provider stream ends the generation.
+                        stopped = true;
+                        break;
+                    }
+                    next = stream.next() => match next {
+                        Some(chunk_result) => chunk_result,
+                        None => break,
+                    },
+                };
                 match chunk_result {
                     Ok(chunk) => {
                         for content in answer.push(&chunk) {
@@ -770,8 +849,11 @@ impl ChatService {
                 answer.content.len(),
             );
 
+            in_flight.finish(&sid, &stop);
             let status = if failed {
                 ChatMessageStatus::Error
+            } else if stopped && !answer.finished {
+                ChatMessageStatus::Stopped
             } else {
                 answer.status()
             };
@@ -1684,9 +1766,13 @@ fn take_chars(text: &str, max_chars: usize) -> String {
 
 /// Truncate a message to use as a session title.
 fn truncate_title(message: &str) -> String {
-    let first_line = message.lines().next().unwrap_or(message);
-    if first_line.len() > 80 {
-        format!("{}…", &first_line[..77])
+    let first_line = message.trim().lines().next().unwrap_or_default().trim();
+    // Counted in characters: a byte cut could split an accented letter.
+    if first_line.chars().count() > 80 {
+        format!(
+            "{}…",
+            first_line.chars().take(77).collect::<String>().trim_end()
+        )
     } else {
         first_line.to_string()
     }
@@ -1695,6 +1781,27 @@ fn truncate_title(message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn stopping_an_answer_signals_only_its_own_generation() {
+        let in_flight = InFlightAnswers::default();
+        assert!(!in_flight.stop("s1"), "nothing is generating yet");
+
+        let first = in_flight.register("s1");
+        assert!(in_flight.stop("s1"));
+        // The permit is kept until the generator next waits for it.
+        tokio::time::timeout(std::time::Duration::from_secs(1), first.notified())
+            .await
+            .expect("the generation sees the stop");
+
+        // A newer answer in the same session replaces the entry; the older
+        // one finishing must not remove it.
+        let second = in_flight.register("s1");
+        in_flight.finish("s1", &first);
+        assert!(in_flight.stop("s1"));
+        in_flight.finish("s1", &second);
+        assert!(!in_flight.stop("s1"));
+    }
     use crate::rag::vectorstore::VectorSearchResult;
 
     fn user_message(text: &str) -> Vec<ChatCompletionRequestMessage> {
@@ -1734,6 +1841,18 @@ mod tests {
         let title = truncate_title(&long);
         assert!(title.len() <= 81); // 77 + "…" (3 bytes)
         assert!(title.ends_with('…'));
+    }
+
+    #[test]
+    fn truncate_title_counts_characters_not_bytes() {
+        let accented = "è".repeat(100);
+        let title = truncate_title(&accented);
+        assert_eq!(title.chars().count(), 78);
+        assert!(title.ends_with('…'));
+        assert_eq!(
+            truncate_title("  \n  Perché il deploy fallisce?\n"),
+            "Perché il deploy fallisce?"
+        );
     }
 
     #[test]

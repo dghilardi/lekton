@@ -141,7 +141,7 @@ pub fn LearnDashboardPage() -> impl IntoView {
                         <input
                             id="learn-scope-value"
                             type="text"
-                            class="input input-bordered flex-1"
+                            class="input input-bordered w-full sm:w-auto sm:flex-1"
                             placeholder="e.g. kafka, \"how deployments work\", eng/deploy-guide"
                             prop:value=move || scope_value.get()
                             on:input=move |ev| scope_value.set(event_target_value(&ev))

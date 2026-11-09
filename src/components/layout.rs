@@ -36,13 +36,9 @@ pub fn TopNavbarLinks() -> impl IntoView {
     // Reader-facing navbar: follows the URL's release pins like the sidebar.
     let nav_resource = super::navigation::use_navigation();
     let groups_resource = use_navbar_groups();
-    // Pages with a sidebar put these links in the drawer instead (see
-    // `SectionMenuItems`), so small screens get one menu, not two.
-    let location = leptos_router::hooks::use_location();
+    // Below lg these links live in the navigation drawer (see
+    // `SectionMenuItems`), the one menu small screens have.
     let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
-    let has_drawer = Signal::derive(move || {
-        has_context_sidebar(&location.pathname.get(), is_admin_user(current_user))
-    });
     let is_rag = use_context::<crate::app::IsRagEnabled>();
     let schema_enabled = crate::app::use_feature(|f| f.schema_registry);
     let learn_enabled = crate::app::use_feature(|f| f.learn);
@@ -72,14 +68,12 @@ pub fn TopNavbarLinks() -> impl IntoView {
 
                     // Clones for each tier
                     let t2_standalone = standalone.clone();
-                    let t2_groups = groups.clone();
-                    let t3_groups = groups;
+                    let t2_groups = groups;
 
                     // Items for group filtering per tier
                     let items_t1g = items.clone();
                     let items_altro = items.clone();
-                    let items_t2 = items.clone();
-                    let items_t3 = items;
+                    let items_t2 = items;
 
                     view! {
                         // ── TIER 1: xl+ — full text, max items, "More" overflow ──────────────
@@ -256,23 +250,6 @@ pub fn TopNavbarLinks() -> impl IntoView {
                             </div>
                         </div>
 
-                        // ── TIER 3: <lg — one labelled menu (icon-only items are ambiguous on touch) ─
-                        // Hidden where the drawer (☰) already carries these links.
-                        <div class=move || if has_drawer.get() { "hidden" } else { "flex lg:hidden items-center" }>
-                            <div class="dropdown dropdown-bottom">
-                                <div tabindex="0" role="button" aria-haspopup="menu"
-                                     class="btn btn-ghost btn-sm gap-1.5 px-2.5 lekton-header-link"
-                                     aria-label="Navigation menu">
-                                    // Grid icon — distinct from the sidebar drawer's hamburger
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
-                                    <span class="text-sm font-medium">"Menu"</span>
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="opacity-60"><path d="m6 9 6 6 6-6"/></svg>
-                                </div>
-                                <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-56 border border-base-200 max-h-[70vh] flex-nowrap overflow-y-auto">
-                                    <SectionMenuItems items=items_t3.clone() groups=t3_groups.clone() />
-                                </ul>
-                            </div>
-                        </div>
                     }.into_any()
                 } else {
                     view! { <TopNavbarLinksSkeleton /> }.into_any()
@@ -321,11 +298,15 @@ fn use_navbar_groups() -> Resource<Result<Vec<NavGroup>, ServerFnError>> {
         .unwrap_or_else(|| Resource::new(|| (), |_| get_navbar_groups()))
 }
 
-/// Documentation entries and top-level sections as menu items: the "Menu"
-/// dropdown on small screens without a sidebar, and the drawer's "Browse
-/// sections" list on pages with one.
+/// The drawer's global destinations on small screens: the portal areas first,
+/// so Registry, Chat and Learn are one tap away, then the documentation entries
+/// unless the page's own sidebar already lists them.
 #[component]
-fn SectionMenuItems(items: Vec<NavItem>, groups: Vec<NavGroup>) -> impl IntoView {
+fn SectionMenuItems(
+    items: Vec<NavItem>,
+    groups: Vec<NavGroup>,
+    #[prop(default = true)] include_docs: bool,
+) -> impl IntoView {
     let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
     let is_rag = use_context::<crate::app::IsRagEnabled>();
     let schema_enabled = crate::app::use_feature(|f| f.schema_registry);
@@ -337,49 +318,52 @@ fn SectionMenuItems(items: Vec<NavItem>, groups: Vec<NavGroup>) -> impl IntoView
             .cloned()
             .collect(),
     );
+    let docs = include_docs.then(|| {
+        view! {
+            <li class="menu-title">"Documentation"</li>
+            {standalone.into_iter().map(|item| view! {
+                <li><a href=crate::components::pinned_doc_href(&format!("/docs/{}", item.slug))>{item.title}</a></li>
+            }).collect::<Vec<_>>()}
+            {groups.into_iter().flat_map(|group| {
+                let gis: Vec<_> = items.iter()
+                    .filter(|i| group.items.contains(&i.slug))
+                    .cloned()
+                    .collect();
+                let mut all = vec![
+                    view! { <li class="menu-title">{group.title}</li> }.into_any()
+                ];
+                all.extend(gis.into_iter().map(|i| view! {
+                    <li><a href=crate::components::pinned_doc_href(&format!("/docs/{}", i.slug))>{i.title}</a></li>
+                }.into_any()));
+                all
+            }).collect::<Vec<_>>()}
+        }
+    });
 
     view! {
-        <li class="menu-title">"Documentation"</li>
-        {standalone.into_iter().map(|item| view! {
-            <li><a href=crate::components::pinned_doc_href(&format!("/docs/{}", item.slug)) class="active:!bg-primary active:!text-primary-content">{item.title}</a></li>
-        }).collect::<Vec<_>>()}
-        {groups.into_iter().flat_map(|group| {
-            let gis: Vec<_> = items.iter()
-                .filter(|i| group.items.contains(&i.slug))
-                .cloned()
-                .collect();
-            let mut all = vec![
-                view! { <li class="menu-title">{group.title}</li> }.into_any()
-            ];
-            all.extend(gis.into_iter().map(|i| view! {
-                <li><a href=crate::components::pinned_doc_href(&format!("/docs/{}", i.slug)) class="active:!bg-primary active:!text-primary-content">{i.title}</a></li>
-            }.into_any()));
-            all
-        }).collect::<Vec<_>>()}
-
-        // Top-level sections
+        <li><a href="/">"Home"</a></li>
         {move || if schema_enabled.get() {
-            view! { <li><a href="/schemas" class="active:!bg-primary active:!text-primary-content">"Registry"</a></li> }.into_any()
-        } else { view! { <li class="hidden"></li> }.into_any() }}
+            view! { <li><a href="/schemas">"Registry"</a></li> }.into_any()
+        } else { ().into_any() }}
         {move || {
             let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
             let rag_enabled = is_rag.map(|sig| sig.0.get()).unwrap_or(false);
             if logged_in && rag_enabled {
-                view! { <li><a href="/chat" class="active:!bg-primary active:!text-primary-content">"Chat"</a></li> }.into_any()
-            } else { view! { <li class="hidden"></li> }.into_any() }
+                view! { <li><a href="/chat">"Chat"</a></li> }.into_any()
+            } else { ().into_any() }
         }}
         {move || {
             let logged_in = current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
             if logged_in && learn_enabled.get() {
-                view! { <li><a href="/learn" class="active:!bg-primary active:!text-primary-content">"Learn"</a></li> }.into_any()
-            } else { view! { <li class="hidden"></li> }.into_any() }
+                view! { <li><a href="/learn">"Learn"</a></li> }.into_any()
+            } else { ().into_any() }
         }}
         {move || {
-            let is_admin = current_user.and_then(|sig| sig.get()).map(|u| u.is_admin).unwrap_or(false);
-            if is_admin {
-                view! { <li><a href="/admin/tokens" class="active:!bg-primary active:!text-primary-content">"Admin"</a></li> }.into_any()
-            } else { view! { <li class="hidden"></li> }.into_any() }
+            if is_admin_user(current_user) {
+                view! { <li><a href="/admin/tokens">"Admin"</a></li> }.into_any()
+            } else { ().into_any() }
         }}
+        {docs}
     }
 }
 
@@ -493,21 +477,19 @@ pub fn Layout(children: Children) -> impl IntoView {
             <header inert=move || sidebar_open.get() data-lekton-header class="bg-base-100/80 backdrop-blur-md fixed top-0 inset-x-0 z-50 border-b border-base-200 px-4 h-16 flex items-center gap-2 shadow-sm lekton-header-enter">
                 // Left — shrinks only when space is truly exhausted
                 <div class="flex items-center gap-2 min-w-0 flex-1">
-                    <Show when=move || has_context_sidebar.get()>
-                        <button
-                            id="sidebar-trigger"
-                            type="button"
-                            aria-controls="portal-navigation"
-                            aria-expanded=move || sidebar_open.get().to_string()
-                            on:click=move |_| sidebar_open.set(true)
-                            aria-label="Open navigation menu"
-                            class="btn btn-square btn-ghost drawer-button lg:hidden"
-                        >
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="inline-block w-5 h-5 stroke-current"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
-                        </button>
-                    </Show>
+                    <button
+                        id="sidebar-trigger"
+                        type="button"
+                        aria-controls="portal-navigation"
+                        aria-expanded=move || sidebar_open.get().to_string()
+                        on:click=move |_| sidebar_open.set(true)
+                        aria-label="Open navigation menu"
+                        class="btn btn-square btn-ghost drawer-button size-11 lg:hidden"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="inline-block w-5 h-5 stroke-current"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                    </button>
                     <BrandedLogo />
-                    <div class="flex items-center gap-1 min-w-0 ml-2 pl-2 sm:ml-4 sm:pl-4 border-l border-base-300 overflow-visible lg:overflow-x-clip">
+                    <div class="hidden lg:flex items-center gap-1 min-w-0 ml-4 pl-4 border-l border-base-300 overflow-x-clip">
                         <TopNavbarLinks />
                     </div>
                 </div>
@@ -579,43 +561,44 @@ pub fn Layout(children: Children) -> impl IntoView {
                     </main>
                 </div>
 
-                // Sidebar
-                <Show when=move || has_context_sidebar.get()>
-                    // Below lg the drawer overlays the page: start it under the
-                    // fixed header, which would otherwise cover its first entries.
-                    <div class="drawer-side z-40 top-16 h-[calc(100dvh-4rem)] overflow-hidden">
-                        <button type="button" tabindex="-1" aria-label="Close navigation menu" class="drawer-overlay lg:hidden" on:click=move |_| close_sidebar()></button>
-                        // Colours come from the --lekton-sidebar-* theming tokens.
-                        <nav id="portal-navigation" tabindex="-1" aria-label="Section navigation" data-lekton-sidebar on:click=move |ev| {
-                            #[cfg(feature = "hydrate")]
-                            {
-                                use wasm_bindgen::JsCast;
-                                if ev.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()).and_then(|e| e.closest("a").ok().flatten()).is_some() {
-                                    sidebar_open.set(false);
-                                }
+                // Navigation: the section sidebar on large screens, and on small
+                // screens the one drawer with every destination, on every page.
+                <div class=move || if has_context_sidebar.get() {
+                    "drawer-side z-40 top-16 h-[calc(100dvh-4rem)] overflow-hidden"
+                } else {
+                    "drawer-side z-40 top-16 h-[calc(100dvh-4rem)] overflow-hidden lg:hidden"
+                }>
+                    <button type="button" tabindex="-1" aria-label="Close navigation menu" class="drawer-overlay lg:hidden" on:click=move |_| close_sidebar()></button>
+                    // Colours come from the --lekton-sidebar-* theming tokens.
+                    <nav id="portal-navigation" tabindex="-1" aria-label="Section navigation" data-lekton-sidebar on:click=move |ev| {
+                        #[cfg(feature = "hydrate")]
+                        {
+                            use wasm_bindgen::JsCast;
+                            if ev.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()).and_then(|e| e.closest("a").ok().flatten()).is_some() {
+                                sidebar_open.set(false);
                             }
-                            #[cfg(not(feature = "hydrate"))]
-                            let _ = ev;
-                        } class="menu bg-base-200 min-h-0 h-full w-[var(--lekton-sidebar-width)] p-4 text-base-content border-r border-base-300 pt-6 overflow-y-auto block">
-                            <button type="button" class="btn btn-ghost mb-2 lg:hidden" on:click=move |_| close_sidebar()>"Close navigation"</button>
-                            // Small screens: the top-level sections, which the navbar
-                            // has no room for, live here rather than in a second menu.
-                            <ul class="lg:hidden mb-2">
-                                <li>
-                                    <details>
-                                        <summary class="transition-colors font-medium text-sm">"Browse sections"</summary>
-                                        <ul>
-                                            <Suspense fallback=|| ()>
-                                                {move || {
-                                                    let items = use_navigation().get()?.ok()?;
-                                                    let groups = use_navbar_groups().get()?.ok()?;
-                                                    Some(view! { <SectionMenuItems items=items groups=groups /> })
-                                                }}
-                                            </Suspense>
-                                        </ul>
-                                    </details>
-                                </li>
-                            </ul>
+                        }
+                        #[cfg(not(feature = "hydrate"))]
+                        let _ = ev;
+                    } class="menu bg-base-200 min-h-0 h-full w-[var(--lekton-sidebar-width)] p-4 text-base-content border-r border-base-300 pt-6 max-lg:pt-3 overflow-y-auto block">
+                        <div class="flex items-center justify-between gap-2 mb-2 pl-3 lg:hidden">
+                            <span class="font-semibold">"Menu"</span>
+                            <button type="button" class="btn btn-square btn-ghost size-11" aria-label="Close navigation" on:click=move |_| close_sidebar()>
+                                <svg aria-hidden="true" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                            </button>
+                        </div>
+                        <ul class="lg:hidden">
+                            <Suspense fallback=|| ()>
+                                {move || {
+                                    let items = use_navigation().get()?.ok()?;
+                                    let groups = use_navbar_groups().get()?.ok()?;
+                                    let include_docs = !path.get().starts_with("/docs");
+                                    Some(view! { <SectionMenuItems items=items groups=groups include_docs=include_docs /> })
+                                }}
+                            </Suspense>
+                        </ul>
+                        <Show when=move || has_context_sidebar.get()>
+                            <div class="divider my-2 lg:hidden"></div>
                             {move || {
                                 let path = path.get();
 
@@ -631,9 +614,9 @@ pub fn Layout(children: Children) -> impl IntoView {
                                     view! { <span></span> }.into_any()
                                 }
                             }}
-                        </nav>
-                    </div>
-                </Show>
+                        </Show>
+                    </nav>
+                </div>
             </div>
         </div>
     }

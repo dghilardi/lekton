@@ -342,11 +342,11 @@ pub fn SchemaViewerPage() -> impl IntoView {
                             </div>
                         }.into_any()
                     }
-                    Err(e) => {
-                        view! {
-                            <crate::components::ReaderErrorNotice error=e context="Error loading schema" />
-                        }.into_any()
+                    // Missing and hidden schemas read alike, as documents do.
+                    Err(ServerFnError::ServerError(message)) if message.starts_with("Not found:") => {
+                        view! { <crate::pages::NotFoundState /> }.into_any()
                     }
+                    Err(e) => view! { <crate::components::ReaderErrorState error=e /> }.into_any(),
                 })
             }}
         </Suspense>

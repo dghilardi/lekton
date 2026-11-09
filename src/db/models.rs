@@ -166,40 +166,50 @@ fn default_public_access_level() -> String {
     "public".to_string()
 }
 
-/// Returns the latest non-deprecated version from a slice, using semver ordering.
+/// The version a reader gets by default, using semver ordering: the highest
+/// `stable` one, else the highest that is not `deprecated` (a beta), else the
+/// highest overall. A newer beta must not hide the version people should use.
 ///
 /// Versions are compared numerically component-by-component (semver-style), with a
-/// lexical fallback for non-numeric components. The highest version that is not
-/// `"deprecated"` is returned; if every version is deprecated the overall highest
-/// is returned instead. Returns `None` on an empty slice.
+/// lexical fallback for non-numeric components. Returns `None` on an empty slice.
 ///
 /// Accepts both `&[SchemaVersion]` and `&[&SchemaVersion]` via the two overloads below.
 pub fn latest_schema_version(versions: &[SchemaVersion]) -> Option<&SchemaVersion> {
-    if versions.is_empty() {
-        return None;
-    }
-    let mut sorted: Vec<&SchemaVersion> = versions.iter().collect();
-    sorted.sort_unstable_by(|a, b| semver_cmp_desc(&a.version, &b.version));
-    sorted
-        .iter()
-        .copied()
-        .find(|v| v.status != "deprecated")
-        .or_else(|| sorted.first().copied())
+    let refs: Vec<&SchemaVersion> = versions.iter().collect();
+    latest_schema_version_refs(&refs)
 }
 
 /// Same as [`latest_schema_version`] but accepts a slice of references, as produced by
 /// `visible_versions()` in the REST and MCP layers.
 pub fn latest_schema_version_refs<'a>(versions: &[&'a SchemaVersion]) -> Option<&'a SchemaVersion> {
-    if versions.is_empty() {
-        return None;
-    }
-    let mut sorted: Vec<&SchemaVersion> = versions.to_vec();
-    sorted.sort_unstable_by(|a, b| semver_cmp_desc(&a.version, &b.version));
-    sorted
+    preferred_version_index(
+        versions
+            .iter()
+            .map(|v| (v.version.as_str(), v.status.as_str())),
+    )
+    .map(|index| versions[index])
+}
+
+/// Index of the default version among `(version, status)` pairs; see
+/// [`latest_schema_version`]. Shared with the API response types.
+pub fn preferred_version_index<'a>(
+    versions: impl Iterator<Item = (&'a str, &'a str)>,
+) -> Option<usize> {
+    let mut indexed: Vec<(usize, &str, &str)> = versions
+        .enumerate()
+        .map(|(index, (version, status))| (index, version, status))
+        .collect();
+    indexed.sort_by(|a, b| semver_cmp_desc(a.1, b.1));
+    indexed
         .iter()
-        .copied()
-        .find(|v| v.status != "deprecated")
-        .or_else(|| sorted.first().copied())
+        .find(|(_, _, status)| *status == "stable")
+        .or_else(|| {
+            indexed
+                .iter()
+                .find(|(_, _, status)| *status != "deprecated")
+        })
+        .or_else(|| indexed.first())
+        .map(|(index, _, _)| *index)
 }
 
 /// Compare two version strings descending (highest first).
@@ -258,6 +268,19 @@ mod version_tests {
     fn latest_handles_non_semver_lexical() {
         let versions = vec![ver("beta", "stable"), ver("alpha", "stable")];
         assert_eq!(latest_schema_version(&versions).unwrap().version, "beta");
+    }
+
+    #[test]
+    fn a_newer_beta_does_not_replace_the_stable_version() {
+        let versions = vec![ver("1.1.0", "stable"), ver("2.0.0", "beta")];
+        assert_eq!(latest_schema_version(&versions).unwrap().version, "1.1.0");
+        // Without a stable version the newest beta is the default.
+        let versions = vec![
+            ver("1.0.0", "deprecated"),
+            ver("2.0.0", "beta"),
+            ver("3.0.0", "beta"),
+        ];
+        assert_eq!(latest_schema_version(&versions).unwrap().version, "3.0.0");
     }
 
     #[test]

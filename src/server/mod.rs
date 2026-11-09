@@ -17,8 +17,8 @@ pub mod users;
 
 #[cfg(feature = "ssr")]
 pub(crate) use helpers::{
-    request_document_visibility, require_admin_user, require_any_user, require_user_context,
-    resolve_release_pins,
+    bad_request, request_document_visibility, require_admin_user, require_any_user,
+    require_user_context, resolve_release_pins,
 };
 
 #[cfg(feature = "ssr")]
@@ -26,6 +26,15 @@ mod helpers {
     use crate::app::AppState;
     use crate::auth::demo_auth::resolve_demo_session_user;
     use leptos::prelude::*;
+
+    /// A validation error the caller can fix: status 400 and the bare message,
+    /// which the form shows next to the field it names.
+    pub(crate) fn bad_request(message: impl Into<String>) -> ServerFnError {
+        if let Some(response) = use_context::<leptos_axum::ResponseOptions>() {
+            response.set_status(axum::http::StatusCode::BAD_REQUEST);
+        }
+        ServerFnError::new(message.into())
+    }
 
     /// Turn the raw `v=<source>:<release>` values from the page URL into the
     /// pins a request should actually resolve with.

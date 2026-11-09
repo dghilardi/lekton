@@ -97,8 +97,8 @@ pub fn LearnDashboardPage() -> impl IntoView {
 
             <div class="flex items-center justify-between rounded-box bg-base-200 px-4 py-3">
                 <div>
-                    <p class="text-sm font-medium">"Save my progress"</p>
-                    <p class="text-xs text-base-content/60">
+                    <label for="learn-persist" class="text-sm font-medium">"Save my progress"</label>
+                    <p id="learn-persist-hint" class="text-xs text-base-content/70">
                         {move || if persist.get() {
                             "Paths, lessons and quiz results are saved so lessons adapt to you."
                         } else {
@@ -107,7 +107,10 @@ pub fn LearnDashboardPage() -> impl IntoView {
                     </p>
                 </div>
                 <input
+                    id="learn-persist"
                     type="checkbox"
+                    role="switch"
+                    aria-describedby="learn-persist-hint"
                     class="toggle toggle-primary"
                     prop:checked=move || persist.get()
                     on:change=move |_| { toggle_privacy.dispatch(!persist.get()); }
@@ -123,7 +126,9 @@ pub fn LearnDashboardPage() -> impl IntoView {
                         <div class="alert alert-error py-2 text-sm">{e}</div>
                     })}
                     <div class="flex flex-col sm:flex-row gap-2">
+                        <label for="learn-scope-kind" class="sr-only">"Scope type"</label>
                         <select
+                            id="learn-scope-kind"
                             class="select select-bordered sm:w-40"
                             prop:value=move || scope_kind.get()
                             on:change=move |ev| scope_kind.set(event_target_value(&ev))
@@ -132,7 +137,9 @@ pub fn LearnDashboardPage() -> impl IntoView {
                             <option value="topic">"Topic"</option>
                             <option value="document">"Document slug"</option>
                         </select>
+                        <label for="learn-scope-value" class="sr-only">"Tag, topic or document slug"</label>
                         <input
+                            id="learn-scope-value"
                             type="text"
                             class="input input-bordered flex-1"
                             placeholder="e.g. kafka, \"how deployments work\", eng/deploy-guide"

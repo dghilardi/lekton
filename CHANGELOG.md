@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Label the editor, document-upload and Learn form controls, name the editor body and toolbar buttons, and validate required fields in place: errors appear next to their field (`aria-invalid`, `aria-describedby`) and focus moves to the first one. Editor and upload validation failures from the server now answer 400 with a plain message instead of a 500.
+
 - Give every page its own document title (`<Page> · <Section> · Lekton`), server-rendered where the page is, instead of one shared title.
 
 - Apply one document-visibility rule to reading, search, schemas, assets, retrieval, chat and Learn. In demo mode, sessions could read only public documents while chat and Learn treated them as logged-in users, so answers cited pages the reader could not open; demo sessions now read `public` and `loggeduser` everywhere. Learn also drops citations and next-read sources the reader can no longer open from stored lessons.

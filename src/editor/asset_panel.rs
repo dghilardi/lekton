@@ -150,7 +150,7 @@ pub fn AssetPanel(
 
     view! {
         <div class="collapse collapse-arrow bg-base-200 rounded-lg">
-            <input type="checkbox" />
+            <input type="checkbox" aria-label="Show assets" />
             <div class="collapse-title font-semibold">
                 "Assets"
             </div>

@@ -88,6 +88,9 @@ pub struct UiMessage {
 pub struct SessionSummary {
     pub id: String,
     pub title: String,
+    /// RFC 3339 time of the last message, shown so similar titles can be told apart.
+    #[serde(default)]
+    pub updated_at: String,
 }
 
 #[derive(Clone, Copy)]
@@ -192,6 +195,18 @@ fn ChatContent() -> impl IntoView {
 
     let (input, set_input) = signal(String::new());
     let textarea_ref = NodeRef::<leptos::html::Textarea>::new();
+    // Keep the newest text in view while answering, unless the reader has
+    // scrolled up to read something else.
+    let messages_ref = NodeRef::<leptos::html::Div>::new();
+    let follow_answer = RwSignal::new(true);
+    let stopping = RwSignal::new(false);
+    // The answer can be stopped once the server has started writing it (its
+    // session is then known).
+    let can_stop = Signal::derive(move || {
+        is_loading.get()
+            && !streaming_content.with(String::is_empty)
+            && session_id.with(Option::is_some)
+    });
     let send_button_ref = NodeRef::<leptos::html::Button>::new();
     // Position (viewport px) and pressed state of the lmltfy fake cursor.
     let cursor_pos = RwSignal::new(None::<(f64, f64)>);
@@ -205,6 +220,35 @@ fn ChatContent() -> impl IntoView {
         let _ = is_loading.get();
         with_auth_retry(crate::app::get_my_budget)
     });
+
+    Effect::new(move || {
+        let _ = streaming_html.get();
+        let _ = messages.with(Vec::len);
+        let _ = is_loading.get();
+        #[cfg(feature = "hydrate")]
+        if let Some(el) = messages_ref
+            .get_untracked()
+            .filter(|_| follow_answer.get_untracked())
+        {
+            el.set_scroll_top(el.scroll_height());
+        }
+    });
+
+    let stop_answer = move || {
+        let Some(sid) = session_id.get_untracked() else {
+            return;
+        };
+        stopping.set(true);
+        #[cfg(feature = "hydrate")]
+        leptos::task::spawn_local(async move {
+            // The stream then ends with the part already written, saved as stopped.
+            if let Err(e) = fetch_stop_answer(&sid).await {
+                error_msg.set(Some(format!("Could not stop the answer: {e}")));
+            }
+        });
+        #[cfg(not(feature = "hydrate"))]
+        let _ = sid;
+    };
 
     Effect::new(move || {
         let content = streaming_content.get();
@@ -241,6 +285,8 @@ fn ChatContent() -> impl IntoView {
         streaming_content.set(String::new());
         streaming_sources.set(Vec::new());
         is_loading.set(true);
+        stopping.set(false);
+        follow_answer.set(true);
 
         #[cfg(feature = "hydrate")]
         {
@@ -450,7 +496,17 @@ fn ChatContent() -> impl IntoView {
             <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
 
                 // Messages
-                <div class="flex-1 overflow-y-auto px-4 py-6 md:p-8 space-y-6">
+                <div
+                    class="flex-1 overflow-y-auto px-4 py-6 md:p-8 space-y-6"
+                    node_ref=messages_ref
+                    on:scroll=move |_| {
+                        #[cfg(feature = "hydrate")]
+                        if let Some(el) = messages_ref.get_untracked() {
+                            let from_bottom = el.scroll_height() - el.scroll_top() - el.client_height();
+                            follow_answer.set(from_bottom < 80);
+                        }
+                    }
+                >
                     <Show when=move || messages.get().is_empty() fallback=|| ()>
                         <div class="flex items-center justify-center h-full">
                             <div class="text-center max-w-md space-y-6">
@@ -586,7 +642,18 @@ fn ChatContent() -> impl IntoView {
                                         {move || {
                                             let content = streaming_content.get();
                                             if content.is_empty() {
-                                                view! { <span class="loading loading-dots loading-sm opacity-50 py-1"></span> }.into_any()
+                                                // What the wait is for: retrieval, then the first words.
+                                                let phase = streaming_sources.with(|sources| match sources.len() {
+                                                    0 => "Searching the documentation…".to_string(),
+                                                    1 => "Reading 1 source…".to_string(),
+                                                    n => format!("Reading {n} sources…"),
+                                                });
+                                                view! {
+                                                    <span class="flex items-center gap-2 py-1 text-sm text-base-content/75 not-prose" role="status">
+                                                        <span class="loading loading-dots loading-sm opacity-60" aria-hidden="true"></span>
+                                                        {phase}
+                                                    </span>
+                                                }.into_any()
                                             } else {
                                                 // Use inner_html directly instead of MarkdownContent while the message is
                                                 // streaming: a partially-received mermaid block would fail the mermaid
@@ -646,28 +713,44 @@ fn ChatContent() -> impl IntoView {
                                 prop:disabled=move || is_loading.get()
                                 rows=1
                             />
-                            <button
-                                class=move || format!(
-                                    "btn btn-primary btn-square h-9 w-9 min-h-0 rounded-lg flex-shrink-0 transition-all {}",
-                                    if is_loading.get() || input.get().trim().is_empty() { "opacity-40 grayscale" } else { "shadow-md shadow-primary/20" }
-                                )
-                                aria-label=move || {
-                                    if is_loading.get() {
-                                        "Sending message"
-                                    } else {
-                                        "Send message"
-                                    }
+                            <Show
+                                when=move || can_stop.get()
+                                fallback=move || view! {
+                                    <button
+                                        class=move || format!(
+                                            "btn btn-primary btn-square h-9 w-9 min-h-0 rounded-lg flex-shrink-0 transition-all {}",
+                                            if is_loading.get() || input.get().trim().is_empty() { "opacity-40 grayscale" } else { "shadow-md shadow-primary/20" }
+                                        )
+                                        aria-label=move || {
+                                            if is_loading.get() {
+                                                "Sending message"
+                                            } else {
+                                                "Send message"
+                                            }
+                                        }
+                                        node_ref=send_button_ref
+                                        on:click=move |_| send_message()
+                                        prop:disabled=move || is_loading.get() || input.get().trim().is_empty()
+                                    >
+                                        <Show when=move || is_loading.get() fallback=|| view! {
+                                            <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+                                        }>
+                                            <span class="loading loading-spinner loading-sm"></span>
+                                        </Show>
+                                    </button>
                                 }
-                                node_ref=send_button_ref
-                                on:click=move |_| send_message()
-                                prop:disabled=move || is_loading.get() || input.get().trim().is_empty()
                             >
-                                <Show when=move || is_loading.get() fallback=|| view! {
-                                    <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
-                                }>
-                                    <span class="loading loading-spinner loading-sm"></span>
-                                </Show>
-                            </button>
+                                <button
+                                    type="button"
+                                    class="btn btn-outline btn-square h-9 w-9 min-h-0 rounded-lg flex-shrink-0"
+                                    aria-label="Stop the answer"
+                                    title="Stop the answer"
+                                    prop:disabled=move || stopping.get()
+                                    on:click=move |_| stop_answer()
+                                >
+                                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                                </button>
+                            </Show>
                         </div>
                         <div class="mt-2 flex justify-between items-center gap-3 px-2">
                             <span class="text-xs text-base-content/70 italic">"Shift + Enter for new line"</span>
@@ -756,25 +839,36 @@ fn UnfinishedAnswerNotice(
 ) -> impl IntoView {
     let (text, status_attr) = match status {
         ChatMessageStatus::Error => ("This answer failed before it was complete.", "error"),
+        ChatMessageStatus::Stopped => ("You stopped this answer.", "stopped"),
         _ => (
             "This answer was interrupted before it was complete.",
             "interrupted",
         ),
     };
 
+    // A stop the reader asked for is not a warning.
+    let stopped = status == ChatMessageStatus::Stopped;
     view! {
         <div
             role="status"
             data-lekton-chat-status=status_attr
-            class="flex flex-wrap items-center gap-2 rounded-lg border border-warning/50 bg-warning/10 px-3 py-2 text-xs text-base-content"
+            class=if stopped {
+                "flex flex-wrap items-center gap-2 rounded-lg border border-base-300 bg-base-200/60 px-3 py-2 text-xs text-base-content"
+            } else {
+                "flex flex-wrap items-center gap-2 rounded-lg border border-warning/50 bg-warning/10 px-3 py-2 text-xs text-base-content"
+            }
         >
-            <svg class="w-4 h-4 shrink-0 text-warning" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+            {if stopped {
+                view! { <svg class="w-4 h-4 shrink-0 text-base-content/70" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> }.into_any()
+            } else {
+                view! { <svg class="w-4 h-4 shrink-0 text-warning" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg> }.into_any()
+            }}
             <span class="flex-1 min-w-0">{text}</span>
             <Show when=move || is_last.get() fallback=|| ()>
                 {match message_id.clone() {
                     Some(id) => view! {
                         <button
-                            class="btn btn-xs btn-warning"
+                            class=if stopped { "btn btn-xs btn-ghost border border-base-300" } else { "btn btn-xs btn-warning" }
                             prop:disabled=move || is_loading.get()
                             on:click=move |_| on_regenerate.run(id.clone())
                         >
@@ -796,17 +890,15 @@ fn UnfinishedAnswerNotice(
     }
 }
 
+/// The pages an answer drew on, listed under it in relevance order.
 #[component]
 fn SourceReferencesBlock(sources: Vec<SourceReference>) -> impl IntoView {
-    let count = sources.len();
-
     view! {
-        <details class="rounded-xl border border-base-300/80 bg-base-100/70 overflow-hidden">
-            <summary class="cursor-pointer list-none px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-base-content/70">
-                {format!("Sources ({count})")}
-                <span class="ml-2 font-normal normal-case tracking-normal text-base-content/70">"most relevant first"</span>
-            </summary>
-            <div class="flex flex-col gap-2 border-t border-base-300/80 px-3 py-3">
+        <section class="rounded-xl border border-base-300/80 bg-base-100/70 px-3 py-2.5" aria-label="Sources">
+            <h3 class="mb-2 text-xs font-semibold text-base-content/75">
+                "Sources" <span class="font-normal text-base-content/70">" · most relevant first"</span>
+            </h3>
+            <ol class="flex flex-col gap-1.5">
                 <For
                     each=move || { sources.clone().into_iter().enumerate().collect::<Vec<_>>() }
                     key=|(idx, source)| format!(
@@ -814,7 +906,7 @@ fn SourceReferencesBlock(sources: Vec<SourceReference>) -> impl IntoView {
                         source.document_slug,
                         source.section_anchor.clone().unwrap_or_default()
                     )
-                    children=move |(_, source)| {
+                    children=move |(idx, source)| {
                         let document_slug = source.document_slug.clone();
                         let document_title = source.document_title.clone();
                         let section_title = source.section_title.clone();
@@ -822,20 +914,18 @@ fn SourceReferencesBlock(sources: Vec<SourceReference>) -> impl IntoView {
                         // The retrieval score is not shown: its scale depends on the
                         // retrieval mode (cosine, fused rank, reranker), so a bare
                         // "0.70" means nothing to a reader. The order carries it.
-                        let snippet = source.display_snippet();
-                        let snippet_for_show = snippet.clone();
+                        let snippet = source.display_snippet().filter(|s| !s.is_empty());
                         let display_title = section_title.clone().unwrap_or_else(|| document_title.clone());
-                        let show_document_title = section_title.is_some();
-                        let attachment_key = source.attachment_key.clone();
+                        let document_line = (display_title != document_title).then(|| document_title.clone());
                         // Attachments link to the raw asset (optionally at a page);
                         // documents link into the in-app docs viewer by slug.
-                        let (href, link_target, source_ref_label) = match attachment_key.as_deref() {
+                        let (href, link_target) = match source.attachment_key.as_deref() {
                             Some(key) => {
                                 let href = match source.source_page {
                                     Some(page) => format!("/api/v1/assets/{}#page={}", key, page),
                                     None => format!("/api/v1/assets/{}", key),
                                 };
-                                (href, "_blank", key.to_string())
+                                (href, "_blank")
                             }
                             None => {
                                 let href = match section_anchor.as_deref() {
@@ -844,35 +934,29 @@ fn SourceReferencesBlock(sources: Vec<SourceReference>) -> impl IntoView {
                                     }
                                     _ => format!("/docs/{}", document_slug),
                                 };
-                                (
-                                    crate::components::pinned_doc_href(&href),
-                                    "_self",
-                                    document_slug.clone(),
-                                )
+                                (crate::components::pinned_doc_href(&href), "_self")
                             }
                         };
                         view! {
-                            <a
-                                href=href
-                                target=link_target
-                                class="block rounded-lg border border-base-300/70 bg-base-100 px-3 py-2 no-underline transition-colors hover:border-primary/40 hover:bg-base-100"
-                            >
-                                <div class="min-w-0">
-                                    <div class="text-sm font-medium text-base-content">{display_title}</div>
-                                    <Show when=move || show_document_title fallback=|| ()>
-                                        <div class="text-xs text-base-content/70">{document_title.clone()}</div>
-                                    </Show>
-                                    <div class="text-xs text-base-content/65 break-all">{source_ref_label}</div>
-                                </div>
-                                <Show when=move || snippet_for_show.as_ref().map(|s| !s.is_empty()).unwrap_or(false) fallback=|| ()>
-                                    <p class="mt-2 text-xs leading-5 text-base-content/65">{snippet.clone().unwrap_or_default()}</p>
-                                </Show>
-                            </a>
+                            <li>
+                                <a
+                                    href=href
+                                    target=link_target
+                                    class="flex gap-2.5 rounded-lg px-2 py-1.5 no-underline transition-colors hover:bg-base-200"
+                                >
+                                    <span class="mt-0.5 flex h-5 min-w-5 shrink-0 items-center justify-center rounded bg-base-200 text-[0.75rem] font-semibold text-base-content/80" aria-hidden="true">{idx + 1}</span>
+                                    <span class="min-w-0">
+                                        <span class="block text-sm font-medium text-base-content">{display_title}</span>
+                                        {document_line.map(|title| view! { <span class="block text-xs text-base-content/70">{title}</span> })}
+                                        {snippet.map(|text| view! { <span class="mt-0.5 block text-xs leading-5 text-base-content/70 line-clamp-2">{text}</span> })}
+                                    </span>
+                                </a>
+                            </li>
                         }
                     }
                 />
-            </div>
-        </details>
+            </ol>
+        </section>
     }
 }
 
@@ -1245,6 +1329,36 @@ pub async fn fetch_delete_session(session_id: &str) -> Result<(), String> {
     })
     .await?;
     Ok(())
+}
+
+/// Asks the server to stop the answer being written in `session_id`.
+#[cfg(feature = "hydrate")]
+async fn fetch_stop_answer(session_id: &str) -> Result<(), String> {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::JsFuture;
+
+    let url = format!("/api/v1/rag/sessions/{session_id}/stop");
+    let resp = fetch_with_auth_retry(|| {
+        let url = url.clone();
+        async move {
+            let window = leptos::web_sys::window().ok_or_else(|| "no window".to_string())?;
+            let opts = leptos::web_sys::RequestInit::new();
+            opts.set_method("POST");
+            let request = leptos::web_sys::Request::new_with_str_and_init(&url, &opts)
+                .map_err(|e| format!("{e:?}"))?;
+            JsFuture::from(window.fetch_with_request(&request))
+                .await
+                .map_err(|e| format!("{e:?}"))?
+                .dyn_into::<leptos::web_sys::Response>()
+                .map_err(|_| "not a Response".to_string())
+        }
+    })
+    .await?;
+    if resp.ok() {
+        Ok(())
+    } else {
+        Err(format!("status {}", resp.status()))
+    }
 }
 
 #[cfg(feature = "hydrate")]

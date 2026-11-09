@@ -395,8 +395,8 @@ async fn schema_full_lifecycle() {
     let list: Vec<SchemaListItem> = server.get("/api/v1/schemas").await.json();
     let item = list.iter().find(|s| s.name == name).unwrap();
     assert_eq!(item.version_count, 2);
-    // Latest non-deprecated should be "2.0.0" (beta is not deprecated)
-    assert_eq!(item.latest_version.as_deref(), Some("2.0.0"));
+    // The newest stable version stays the default over a newer beta.
+    assert_eq!(item.latest_version.as_deref(), Some("1.0.0"));
 
     // 4. Get detail
     let detail: SchemaDetail = server

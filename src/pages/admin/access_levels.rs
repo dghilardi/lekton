@@ -119,6 +119,7 @@ pub fn AccessLevelManager() -> impl IntoView {
                                                 let name = level.name.clone();
                                                 let name_for_edit = name.clone();
                                                 let name_for_del = name.clone();
+                                                let confirm_open = RwSignal::new(false);
                                                 let name_for_memo = name.clone();
                                                 let is_editing = Memo::new(move |_| {
                                                     editing.get().as_deref() == Some(name_for_memo.as_str())
@@ -173,12 +174,18 @@ pub fn AccessLevelManager() -> impl IntoView {
                                                                     view! {
                                                                         <button
                                                                             class="btn btn-outline btn-error btn-xs"
-                                                                            on:click=move |_| {
+                                                                            on:click=move |_| confirm_open.set(true)
+                                                                        >"Delete"</button>
+                                                                        <crate::components::ConfirmDialog
+                                                                            open=confirm_open
+                                                                            id=format!("delete-level-{del_name}")
+                                                                            title=format!("Delete the \u{201c}{del_name}\u{201d} access level?")
+                                                                            message="Documents and users tagged with it are not changed. This cannot be undone."
+                                                                            confirm_label="Delete level"
+                                                                            on_cancel=Callback::new(move |_| confirm_open.set(false))
+                                                                            on_confirm=Callback::new(move |_| {
+                                                                                confirm_open.set(false);
                                                                                 let n = del_name.clone();
-                                                                                #[cfg(feature = "hydrate")]
-                                                                                if !window().confirm_with_message(&format!("Delete access level \"{n}\"? This cannot be undone.")).unwrap_or(false) {
-                                                                                    return;
-                                                                                }
                                                                                 leptos::task::spawn_local(async move {
                                                                                     match with_auth_retry(|| delete_admin_access_level(n.clone())).await {
                                                                                         Ok(_) => error_msg.set(None),
@@ -186,8 +193,8 @@ pub fn AccessLevelManager() -> impl IntoView {
                                                                                     }
                                                                                     set_refresh.update(|c| *c += 1);
                                                                                 });
-                                                                            }
-                                                                        >"Delete"</button>
+                                                                            })
+                                                                        />
                                                                     }.into_any()
                                                                 } else {
                                                                     view! { <span /> }.into_any()
@@ -196,7 +203,7 @@ pub fn AccessLevelManager() -> impl IntoView {
                                                         </div>
 
                                                         <Show when=move || is_editing.get()>
-                                                            <div class="border-t border-base-200 p-4 bg-base-50 space-y-3">
+                                                            <div class="border-t border-base-200 p-4 bg-base-200/40 space-y-3">
                                                                 <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                                                     <label class="form-control">
                                                                         <span class="label-text text-xs font-medium">"Label"</span>

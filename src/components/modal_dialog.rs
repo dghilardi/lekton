@@ -8,7 +8,7 @@ use leptos::prelude::*;
 pub fn ModalDialog(
     #[prop(into)] open: Signal<bool>,
     on_close: Callback<()>,
-    labelled_by: &'static str,
+    #[prop(into)] labelled_by: String,
     /// Extra classes for the dialog box.
     #[prop(optional)]
     class: &'static str,
@@ -57,6 +57,33 @@ pub fn ModalDialog(
                 <button type="submit" tabindex="-1">"Close"</button>
             </form>
         </dialog>
+    }
+}
+
+/// Asks before a destructive action, in place of the browser's `confirm()`:
+/// same look as the rest of the portal, Cancel focused first, Escape cancels.
+/// `id` must be unique on the page; it names the dialog after its heading.
+#[component]
+pub fn ConfirmDialog(
+    #[prop(into)] open: Signal<bool>,
+    on_cancel: Callback<()>,
+    on_confirm: Callback<()>,
+    #[prop(into)] id: String,
+    #[prop(into)] title: String,
+    #[prop(into)] message: String,
+    confirm_label: &'static str,
+) -> impl IntoView {
+    let title_id = format!("{id}-title");
+    let heading_id = title_id.clone();
+    view! {
+        <ModalDialog open=open on_close=on_cancel labelled_by=title_id>
+            <h3 id=heading_id.clone() class="font-bold text-lg">{title.clone()}</h3>
+            <p class="py-4 text-sm text-base-content/75">{message.clone()}</p>
+            <div class="modal-action">
+                <button type="button" class="btn btn-ghost" on:click=move |_| on_cancel.run(())>"Cancel"</button>
+                <button type="button" class="btn btn-error" on:click=move |_| on_confirm.run(())>{confirm_label}</button>
+            </div>
+        </ModalDialog>
     }
 }
 

@@ -132,8 +132,10 @@ fn TokenRow(
     let can_write = token.can_write;
 
     let (deactivating, set_deactivating) = signal(false);
+    let confirm_open = RwSignal::new(false);
+    let token_id = token.id.clone();
+    let token_name = token.name.clone();
 
-    #[cfg(feature = "hydrate")]
     let deactivate_action = crate::components::browser_action(move |_: &()| {
         let id = id.clone();
         async move {
@@ -148,7 +150,9 @@ fn TokenRow(
     });
 
     view! {
-        <tr class=move || if !is_active { "opacity-40 grayscale italic" } else { "hover:bg-base-200/30 transition-colors" }>
+        // Deactivated rows are told apart by their status badge and a quieter
+        // surface; fading the whole row took their text below AA contrast.
+        <tr class=move || if !is_active { "bg-base-200/40 text-base-content/75" } else { "hover:bg-base-200/30 transition-colors" }>
             <td class="font-bold text-sm min-w-[140px]">{name}</td>
             <td class="max-w-[200px]">
                 <div class="flex flex-wrap gap-1">
@@ -173,7 +177,7 @@ fn TokenRow(
                 {if is_active {
                     view! { <span class="badge badge-success badge-sm font-medium">"active"</span> }.into_any()
                 } else {
-                    view! { <span class="badge badge-ghost badge-sm text-xs font-medium">"deactivated"</span> }.into_any()
+                    view! { <span class="badge badge-outline badge-sm text-xs font-medium text-base-content/75">"deactivated"</span> }.into_any()
                 }}
             </td>
             <td class="text-xs text-base-content/70">{created_at}</td>
@@ -188,17 +192,22 @@ fn TokenRow(
                     <button
                         class="btn btn-outline btn-error btn-xs normal-case font-medium"
                         disabled=move || deactivating.get()
-                        on:click=move |_| {
-                            #[cfg(feature = "hydrate")]
-                            {
-                                if window().confirm_with_message("Are you sure you want to deactivate this token? This action cannot be undone.").unwrap_or(false) {
-                                    deactivate_action.dispatch(());
-                                }
-                            }
-                        }
+                        on:click=move |_| confirm_open.set(true)
                     >
                         {move || if deactivating.get() { "..." } else { "Deactivate" }}
                     </button>
+                    <crate::components::ConfirmDialog
+                        open=confirm_open
+                        id=format!("deactivate-token-{token_id}")
+                        title=format!("Deactivate \u{201c}{token_name}\u{201d}?")
+                        message="Requests using this token will be refused. A deactivated token cannot be turned back on."
+                        confirm_label="Deactivate"
+                        on_cancel=Callback::new(move |_| confirm_open.set(false))
+                        on_confirm=Callback::new(move |_| {
+                            confirm_open.set(false);
+                            deactivate_action.dispatch(());
+                        })
+                    />
                 </Show>
             </td>
         </tr>
@@ -212,7 +221,8 @@ fn CreateTokenForm(
 ) -> impl IntoView {
     let (name, set_name) = signal(String::new());
     let (scopes, set_scopes) = signal(String::new());
-    let (can_write, set_can_write) = signal(true);
+    // Least privilege: publishing is a choice, not the default.
+    let (can_write, set_can_write) = signal(false);
     let (error, set_error) = signal(Option::<String>::None);
     let (submitting, set_submitting) = signal(false);
 
@@ -232,7 +242,7 @@ fn CreateTokenForm(
                 Ok(token_result) => {
                     set_name.set(String::new());
                     set_scopes.set(String::new());
-                    set_can_write.set(true);
+                    set_can_write.set(false);
                     on_created(token_result);
                 }
                 Err(e) => {
@@ -258,8 +268,9 @@ fn CreateTokenForm(
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
                 <div>
-                    <label class="block font-bold text-xs uppercase tracking-wider text-base-content/70 mb-1.5">"Token Name"</label>
+                    <label for="service-token-name" class="block font-bold text-xs uppercase tracking-wider text-base-content/70 mb-1.5">"Token Name"</label>
                     <input
+                        id="service-token-name"
                         type="text"
                         placeholder="e.g. github-actions-ci"
                         class="input input-bordered w-full focus:input-primary transition-all shadow-sm"
@@ -270,7 +281,7 @@ fn CreateTokenForm(
                 </div>
 
                 <div>
-                    <label class="block font-bold text-xs uppercase tracking-wider text-base-content/70 mb-1.5">"Permissions"</label>
+                    <p class="block font-bold text-xs uppercase tracking-wider text-base-content/70 mb-1.5">"Permissions"</p>
                     <div class="bg-base-100 rounded-lg border border-base-300 px-3 shadow-sm flex items-center min-h-12">
                       <label class="cursor-pointer flex items-center gap-4 w-full">
                           <input
@@ -281,17 +292,22 @@ fn CreateTokenForm(
                           />
                           <div>
                             <span class="font-bold block mb-0.5">"Allow Write Access"</span>
-                            <span class="text-xs text-base-content/65">"Permit updates and deletions via API."</span>
+                            <span class="text-xs text-base-content/70">"Needed to publish documents, schemas and prompts (lekton-sync, ingest)."</span>
                           </div>
                       </label>
                     </div>
-                    <p class="mt-1.5 text-xs text-base-content/65 italic">"Controls write permissions for this token."</p>
+                    <p class="mt-1.5 text-xs text-base-content/70">{move || if can_write.get() {
+                        "This token can create, update and archive content in its scopes."
+                    } else {
+                        "Read only: this token cannot change content."
+                    }}</p>
                 </div>
             </div>
 
             <div>
-                <label class="block font-bold text-xs uppercase tracking-wider text-base-content/70 mb-1.5">"Allowed Scopes"</label>
+                <label for="service-token-scopes" class="block font-bold text-xs uppercase tracking-wider text-base-content/70 mb-1.5">"Allowed Scopes"</label>
                 <textarea
+                    id="service-token-scopes"
                     class="textarea textarea-bordered w-full h-32 font-mono text-sm leading-relaxed focus:textarea-primary transition-all shadow-sm"
                     placeholder={"docs/getting-started\nprojects/*\napi/v2/reference"}
                     prop:value=move || scopes.get()

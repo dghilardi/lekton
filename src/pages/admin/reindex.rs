@@ -226,7 +226,9 @@ where
                                 </div>
                             }.into_any()
                         }
-                        Err(_) => view! { <span></span> }.into_any(),
+                        Err(error) => view! {
+                            <crate::components::ReaderErrorNotice error=error context="Index status could not be loaded" />
+                        }.into_any(),
                     }
                 })
             }}

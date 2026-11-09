@@ -361,7 +361,7 @@ fn FeedbackRow(
     });
 
     view! {
-        <div class="flex items-start gap-3 p-3 rounded-xl border border-base-200 bg-base-100 hover:bg-base-50 transition-colors">
+        <div class="flex items-start gap-3 p-3 rounded-xl border border-base-200 bg-base-100 hover:bg-base-200/40 transition-colors">
             // Rating icon
             <div class=format!(
                 "flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center {}",
@@ -442,7 +442,9 @@ fn PatRow(
     });
 
     let id_del = token.id.clone();
-    #[allow(unused_variables)]
+    let confirm_id = format!("delete-pat-{}", token.id);
+    let confirm_title = format!("Delete \u{201c}{}\u{201d}?", token.name);
+    let confirm_open = RwSignal::new(false);
     let delete = crate::components::browser_action(move |_: &()| {
         let id = id_del.clone();
         async move {
@@ -480,19 +482,23 @@ fn PatRow(
                     </button>
                     <button
                         class="btn btn-xs btn-ghost text-error"
-                        on:click=move |_| {
-                            #[cfg(feature = "hydrate")]
-                            {
-                                use leptos::web_sys::window;
-                                if window().and_then(|w| w.confirm_with_message("Delete this token permanently?").ok()).unwrap_or(false) {
-                                    delete.dispatch(());
-                                }
-                            }
-                        }
+                        on:click=move |_| confirm_open.set(true)
                         title="Delete permanently"
                     >
                         "Delete"
                     </button>
+                    <crate::components::ConfirmDialog
+                        open=confirm_open
+                        id=confirm_id
+                        title=confirm_title
+                        message="Tools using this token lose access immediately. This cannot be undone."
+                        confirm_label="Delete token"
+                        on_cancel=Callback::new(move |_| confirm_open.set(false))
+                        on_confirm=Callback::new(move |_| {
+                            confirm_open.set(false);
+                            delete.dispatch(());
+                        })
+                    />
                 </div>
             </td>
         </tr>

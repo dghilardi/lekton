@@ -189,7 +189,12 @@ pub fn SourcesAdminPanel() -> impl IntoView {
                     // StoredValue is Copy, so the users list can be shared across the
                     // nested source/maintainer closures without move conflicts.
                     let users = StoredValue::new(users);
-                    let sources = sources.ok()?;
+                    let sources = match sources {
+                        Ok(sources) => sources,
+                        Err(error) => return Some(view! {
+                            <crate::components::ReaderErrorNotice error=error context="Sources could not be loaded" />
+                        }.into_any()),
+                    };
                     if sources.is_empty() {
                         return Some(view! {
                             <div class="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-base-300 bg-base-200/20 px-6 py-16 text-center">

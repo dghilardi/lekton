@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Tighten the administration screens. New service tokens are read-only unless write access is chosen, and the form says which one is being created; its fields are labelled. Deactivating a service token, deleting an access level and deleting a personal access token ask in a portal dialog (named, Escape cancels, Cancel focused first) instead of the browser's `confirm()`. The users, sources, AI usage and index status panels show why they could not load instead of staying empty. Deactivated token rows are no longer faded below AA contrast, and editing panels use an existing surface colour instead of the undefined `bg-base-50`.
+
 - Keep the OpenAPI viewer at AA contrast with operations on screen: Scalar's request examples render in its dark mode inside a light page, so their secondary text and method/syntax colours now follow the portal theme, and Scalar's "Generate SDK" upsell is hidden. The seeded test schema used to open on a beta without operations, which hid these failures.
 
 - Open schemas on their newest stable version: a newer beta was the default in the viewer, the registry card and the API/MCP `latest_version`. A version is now chosen stable first, then the newest non-deprecated, then the newest overall; the card reads "Current version". JSON Schemas get a readable outline — properties with type, required flag, description, format, allowed values, default and bounds, nested objects and array items, and local `$ref` links to their definitions — rendered on the server so the browser bundle does not grow; the source stays one click away, and the note about an interactive viewer is no longer shown where there is none.

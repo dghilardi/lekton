@@ -60,7 +60,12 @@ pub fn AiUsageReport() -> impl IntoView {
                     </div>
                 }>
                     {move || {
-                        let rows = consumers.get()?.ok()?;
+                        let rows = match consumers.get()? {
+                            Ok(rows) => rows,
+                            Err(error) => return Some(view! {
+                                <crate::components::ReaderErrorNotice error=error context="Usage could not be loaded" />
+                            }.into_any()),
+                        };
                         if rows.is_empty() {
                             return Some(view! {
                                 <div class="flex flex-col items-center justify-center py-12 px-4 text-center border-2 border-dashed border-base-300 rounded-xl bg-base-200/20">

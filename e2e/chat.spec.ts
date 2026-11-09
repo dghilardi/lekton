@@ -29,7 +29,7 @@ test.describe('Chat page', () => {
     // With features.rag disabled, /chat is intentionally routed to NotFound.
     const hasInput = await page.locator('textarea').count() > 0;
     const hasNotice = await page.locator('text=/not available|not configured|unavailable/i').count() > 0;
-    const hasNotFound = await page.locator('text=The page you are looking for does not exist.').count() > 0;
+    const hasNotFound = await page.getByRole('heading', { level: 1, name: 'Page not found' }).count() > 0;
 
     expect(
       hasInput || hasNotice || hasNotFound,
@@ -67,4 +67,52 @@ test.describe('Chat page', () => {
       .toBeVisible({ timeout: 20_000 });
     await expect(page.locator('textarea')).toHaveValue('');
   });
+});
+
+test('an answer lists its sources openly and the session shows when it was used', async ({ page }) => {
+  test.setTimeout(90_000);
+  await loginAsDemo(page);
+  await page.goto('/chat');
+  await page.waitForLoadState('networkidle');
+  test.skip(await page.locator('textarea').count() === 0, 'chat UI not available');
+
+  const input = page.locator('[data-lekton-chat-input]');
+  await input.fill('How do I get started?');
+  await input.press('Enter');
+  const sources = page.getByRole('region', { name: 'Sources' }).last();
+  await expect(sources).toBeVisible({ timeout: 30_000 });
+  // Visible links, not a collapsed disclosure.
+  await expect(sources.getByRole('link').first()).toBeVisible();
+  await expect(page.locator('[data-lekton-chat-session]').first()).toContainText(/\d{1,2}:\d{2}/);
+});
+
+test('stopping is limited to the owner and reports whether an answer was running', async ({ page, request }) => {
+  await loginAsDemo(page);
+  const sessions = await page.request.get('/api/v1/rag/sessions');
+  test.skip(!sessions.ok(), 'chat not enabled');
+  // Someone else's (or no) session reads as missing.
+  expect((await request.post('/api/v1/rag/sessions/not-a-session/stop')).status()).toBe(401);
+  expect((await page.request.post('/api/v1/rag/sessions/not-a-session/stop')).status()).toBe(404);
+  const own = (await sessions.json())[0];
+  test.skip(!own, 'no chat session yet');
+  expect(await (await page.request.post(`/api/v1/rag/sessions/${own.id}/stop`)).json()).toEqual({ stopped: false });
+});
+
+// Needs a model that streams slowly: the e2e stub answers "#long" that way.
+test('the stop button ends a long answer and keeps what was written', async ({ page }) => {
+  test.skip(!process.env.LEKTON_SLOW_LLM, 'needs the slow streaming stub (LEKTON_SLOW_LLM=1)');
+  test.setTimeout(90_000);
+  await loginAsDemo(page);
+  await page.goto('/chat');
+  const input = page.locator('[data-lekton-chat-input]');
+  await expect(input).toBeEnabled({ timeout: 30_000 });
+  await input.fill('Explain incidents #long');
+  await input.press('Enter');
+  await page.getByRole('button', { name: 'Stop the answer' }).click({ timeout: 30_000 });
+  await expect(page.getByText('You stopped this answer.')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Regenerate' })).toBeVisible();
+  // The server saved the partial answer as stopped.
+  const [latest] = await (await page.request.get('/api/v1/rag/sessions')).json();
+  await page.goto(`/chat?session=${latest.id}`);
+  await expect(page.getByText('You stopped this answer.')).toBeVisible({ timeout: 30_000 });
 });

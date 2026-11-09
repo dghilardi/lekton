@@ -35,6 +35,7 @@ pub async fn search_docs(query: String) -> Result<Vec<SearchHit>, ServerFnError>
                 content_preview: h.content_preview,
                 attachment_key: Some(h.attachment_key),
                 page: h.page,
+                ..SearchHit::default()
             })),
             Err(e) => tracing::warn!("Attachment search failed: {e}"),
         }

@@ -30,6 +30,76 @@ fn search_result_id(index: usize) -> String {
     format!("global-search-result-{index}")
 }
 
+/// `text` cut into runs, each flagged when it lies inside one of `matches`
+/// (character ranges from the search engine).
+fn highlight_segments(text: &str, matches: &[[usize; 2]]) -> Vec<(String, bool)> {
+    let mut segments: Vec<(String, bool)> = Vec::new();
+    for (index, c) in text.chars().enumerate() {
+        let marked = matches
+            .iter()
+            .any(|[start, end]| (*start..*end).contains(&index));
+        match segments.last_mut() {
+            Some((run, run_marked)) if *run_marked == marked => run.push(c),
+            _ => segments.push((c.to_string(), marked)),
+        }
+    }
+    segments
+}
+
+fn highlighted(text: &str, matches: &[[usize; 2]]) -> impl IntoView {
+    highlight_segments(text, matches)
+        .into_iter()
+        .map(|(run, marked)| {
+            if marked {
+                view! { <mark class="lekton-search-mark">{run}</mark> }.into_any()
+            } else {
+                run.into_any()
+            }
+        })
+        .collect::<Vec<_>>()
+}
+
+/// Where a page sits: the titles of the sections above it, from the
+/// navigation when it lists them, else from the slug.
+fn hit_path(slug: &str, titles: &std::collections::HashMap<String, String>) -> Vec<String> {
+    let segments: Vec<&str> = slug.split('/').collect();
+    (1..segments.len())
+        .map(|depth| {
+            let ancestor = segments[..depth].join("/");
+            titles.get(&ancestor).cloned().unwrap_or_else(|| {
+                segments[depth - 1]
+                    .split('-')
+                    .map(|word| {
+                        let mut c = word.chars();
+                        c.next()
+                            .map(|first| first.to_uppercase().collect::<String>() + c.as_str())
+                            .unwrap_or_default()
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+        })
+        .collect()
+}
+
+fn nav_titles(
+    items: &[crate::app::NavItem],
+    titles: &mut std::collections::HashMap<String, String>,
+) {
+    for item in items {
+        titles.insert(item.slug.clone(), item.title.clone());
+        nav_titles(&item.children, titles);
+    }
+}
+
+fn results_announcement(count: usize) -> String {
+    match count {
+        0 => String::new(),
+        1 => "1 result available".to_string(),
+        n => format!("{n} results available"),
+    }
+}
+
 fn schedule_debounced_query(
     value: String,
     debounce_version: RwSignal<u64>,
@@ -78,6 +148,17 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
     let search_hits = Signal::derive(move || match search_resource.get() {
         Some(Ok(hits)) => hits,
         _ => vec![],
+    });
+    let navigation = crate::components::use_navigation();
+    let section_titles = Signal::derive(move || {
+        let mut titles = std::collections::HashMap::new();
+        if let Some(Ok(items)) = navigation.get() {
+            nav_titles(&items, &mut titles);
+        }
+        titles
+    });
+    let assistant_enabled = Signal::derive(move || {
+        use_context::<crate::app::IsRagEnabled>().is_some_and(|rag| rag.0.get())
     });
 
     let on_keydown = move |ev: leptos::web_sys::KeyboardEvent| match ev.key().as_str() {
@@ -274,9 +355,20 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
 
                                 search_resource.get().map(|result| match result {
                                     Ok(hits) if hits.is_empty() => {
+                                        let ask_href = format!(
+                                            "/chat?lmltfy={}",
+                                            crate::auth::return_to::encode_component(q.trim()),
+                                        );
                                         view! {
-                                            <div role="status" class="p-8 text-center text-base-content/65">
-                                                "No results found for \"" {q.clone()} "\""
+                                            <div class="p-8 text-center">
+                                                <p role="status" class="text-base-content/80">"No pages match \u{201c}" {q.clone()} "\u{201d}."</p>
+                                                <Show
+                                                    when=move || assistant_enabled.get()
+                                                    fallback=|| view! { <p class="mt-1 text-sm text-base-content/70">"Try fewer or different words."</p> }
+                                                >
+                                                    <p class="mt-1 text-sm text-base-content/70">"Try different words, or ask the assistant, which also reads the pages' full text."</p>
+                                                    <a href=ask_href.clone() class="btn btn-primary btn-sm mt-4" on:click=move |_| set_is_open.set(false)>"Ask the assistant"</a>
+                                                </Show>
                                             </div>
                                         }.into_any()
                                     }
@@ -289,8 +381,11 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                                         &crate::components::active_release_pin_values(),
                                                     );
                                                     let target = search_hit_target(&hit);
-                                                    let title = hit.title.clone();
-                                                    let preview = hit.content_preview.clone();
+                                                    let title = highlighted(&hit.title, &hit.title_matches);
+                                                    let preview = highlighted(&hit.content_preview, &hit.preview_matches);
+                                                    let path = hit_path(&hit.slug, &section_titles.get_untracked());
+                                                    let has_path = !path.is_empty();
+                                                    let path = path.join(" \u{203a} ");
                                                     let tags = hit.tags.clone();
                                                     let has_tags = !tags.is_empty();
                                                     let has_page = hit.page.is_some();
@@ -316,6 +411,9 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                                             on:click=move |_| set_is_open.set(false)
                                                             on:mouseenter=move |_| set_active_index.set(Some(idx))
                                                         >
+                                                            <Show when=move || has_path>
+                                                                <div class="mb-0.5 truncate text-xs text-base-content/70">{path.clone()}</div>
+                                                            </Show>
                                                             <div class="flex items-center gap-2 mb-1">
                                                                 <div class="font-semibold text-lg">{title}</div>
                                                                 <Show when=move || has_page>
@@ -358,10 +456,7 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                         </Suspense>
                     </div>
 
-                    <p class="sr-only" role="status">{move || {
-                        let count = search_hits.get().len();
-                        if count > 0 { format!("{count} results available") } else { String::new() }
-                    }}</p>
+                    <p class="sr-only" role="status">{move || results_announcement(search_hits.get().len())}</p>
                     // Footer with keyboard hints
                     <div class="p-3 border-t border-base-300 bg-base-200/50 rounded-b-lg">
                         <div class="lekton-search-hints flex flex-wrap items-center gap-4 text-xs text-base-content/65">
@@ -516,6 +611,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn matched_ranges_become_marked_runs() {
+        assert_eq!(
+            highlight_segments("Deploy kafka now", &[[7, 12]]),
+            vec![
+                ("Deploy ".to_string(), false),
+                ("kafka".to_string(), true),
+                (" now".to_string(), false),
+            ]
+        );
+        assert_eq!(
+            highlight_segments("abc", &[]),
+            vec![("abc".to_string(), false)]
+        );
+    }
+
+    #[test]
+    fn a_hit_path_uses_navigation_titles_then_the_slug() {
+        let titles = std::collections::HashMap::from([(
+            "handbook".to_string(),
+            "Platform Handbook".to_string(),
+        )]);
+        assert_eq!(
+            hit_path("handbook/on-call/rota", &titles),
+            vec!["Platform Handbook".to_string(), "On Call".to_string()]
+        );
+        assert!(hit_path("top-level", &titles).is_empty());
+    }
+
+    #[test]
+    fn the_result_count_is_announced_in_words_that_agree() {
+        assert_eq!(results_announcement(0), "");
+        assert_eq!(results_announcement(1), "1 result available");
+        assert_eq!(results_announcement(3), "3 results available");
+    }
+
+    #[test]
     fn search_hit_href_points_pdf_hits_to_asset_page() {
         let hit = SearchHit {
             slug: "manual".into(),
@@ -524,6 +655,7 @@ mod tests {
             content_preview: "preview".into(),
             attachment_key: Some("files/manual.pdf".into()),
             page: Some(7),
+            ..SearchHit::default()
         };
 
         assert_eq!(
@@ -542,6 +674,7 @@ mod tests {
             content_preview: "preview".into(),
             attachment_key: None,
             page: None,
+            ..SearchHit::default()
         };
 
         assert_eq!(search_hit_href(&hit, &[]), "/docs/manual");

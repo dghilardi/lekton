@@ -186,7 +186,10 @@ pub fn RegistrySidebar() -> impl IntoView {
                             }.into_any()
                         }
                     }
-                    Err(e) if crate::auth::refresh_client::is_auth_error(&e) => view! { <li><a href="/login" class="text-sm">"Log in to restore navigation"</a></li> }.into_any(),
+                    Err(e) if crate::auth::refresh_client::is_auth_error(&e) => {
+                        let login_href = crate::components::use_login_href();
+                        view! { <li><a href=move || login_href.get() class="text-sm">"Log in to restore navigation"</a></li> }.into_any()
+                    }
                     Err(_) => view! { <li class="text-error italic text-xs px-3 py-2">"Error loading schemas"</li> }.into_any(),
                 })
                 .unwrap_or_else(|| view! { <li><span class="loading loading-spinner loading-sm"></span></li> }.into_any())
@@ -369,7 +372,7 @@ pub fn ChatSidebar() -> impl IntoView {
                                             data-lekton-chat-session
                                             aria-current=move || is_active.get().then_some("true")
                                             class=move || format!(
-                                                "w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs transition-colors text-left pr-7 {}",
+                                                "w-full flex items-start gap-2 px-2 py-1.5 rounded-lg text-xs transition-colors text-left pr-8 {}",
                                                 if is_active.get() { "font-medium" } else { "" }
                                             )
                                             on:click={
@@ -393,12 +396,19 @@ pub fn ChatSidebar() -> impl IntoView {
                                                 }
                                             }
                                         >
-                                            <svg class="w-3.5 h-3.5 flex-shrink-0 opacity-50" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                                            <span class="truncate min-w-0 flex-1">{session.title.clone()}</span>
+                                            <svg class="mt-0.5 w-3.5 h-3.5 flex-shrink-0 opacity-50" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                            // Two lines and the time of the last message, so
+                                            // questions that start alike can be told apart.
+                                            <span class="min-w-0 flex-1">
+                                                <span class="block line-clamp-2 break-words">{session.title.clone()}</span>
+                                                {session_time(&session.updated_at).map(|time| view! {
+                                                    <span class="block text-[0.75rem] opacity-80">{time}</span>
+                                                })}
+                                            </span>
                                         </button>
                                         <button
-                                            class="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover/session:opacity-100 hover:text-error hover:bg-error/10 transition-all"
-                                            aria-label="Delete chat session"
+                                            class="absolute right-1 top-1.5 p-1 rounded opacity-0 group-hover/session:opacity-100 focus-visible:opacity-100 hover:text-error hover:bg-error/10 transition-all"
+                                            aria-label=format!("Delete chat session: {}", session.title)
                                             on:click={
                                                 let sid = sid_delete.clone();
                                                 move |_| delete_session(sid.clone())
@@ -415,5 +425,34 @@ pub fn ChatSidebar() -> impl IntoView {
                 None => view! { <li class="px-3 py-2 text-xs italic opacity-50">"No chat session active"</li> }.into_any(),
             }}
         </ul>
+    }
+}
+
+/// When a chat session last changed, in the reader's locale and time zone.
+fn session_time(updated_at: &str) -> Option<String> {
+    #[cfg(feature = "hydrate")]
+    {
+        if updated_at.is_empty() {
+            return None;
+        }
+        let date = js_sys::Date::new(&wasm_bindgen::JsValue::from_str(updated_at));
+        if date.get_time().is_nan() {
+            return None;
+        }
+        let options = js_sys::Object::new();
+        for (key, value) in [
+            ("day", "numeric"),
+            ("month", "short"),
+            ("hour", "2-digit"),
+            ("minute", "2-digit"),
+        ] {
+            let _ = js_sys::Reflect::set(&options, &key.into(), &value.into());
+        }
+        date.to_locale_string("default", &options).as_string()
+    }
+    #[cfg(not(feature = "hydrate"))]
+    {
+        let _ = updated_at;
+        None
     }
 }

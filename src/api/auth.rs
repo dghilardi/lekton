@@ -43,6 +43,12 @@ pub struct RefreshResponse {
 // ── Callback query params ─────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
+pub struct LoginParams {
+    /// Local page to return to after signing in (see `auth::return_to`).
+    pub next: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct CallbackParams {
     pub code: String,
     pub state: String,
@@ -141,6 +147,7 @@ pub fn new_token_family() -> String {
 /// OIDC nonce when applicable) for verification in `/auth/callback`.
 pub async fn login_handler(
     axum::extract::State(state): axum::extract::State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<LoginParams>,
     jar: CookieJar,
 ) -> Result<(CookieJar, axum::response::Redirect), AppError> {
     let provider = state
@@ -148,7 +155,8 @@ pub async fn login_handler(
         .as_ref()
         .ok_or_else(|| AppError::Auth("Auth provider not configured".into()))?;
 
-    let (url, flow_state) = provider.login_url()?;
+    let (url, mut flow_state) = provider.login_url()?;
+    flow_state.return_to = crate::auth::return_to::safe_return_path(params.next.as_deref());
 
     // Sign the flow state so the cookie carrying the CSRF token / nonce across
     // the redirect cannot be forged or tampered with by the browser.
@@ -162,7 +170,8 @@ pub async fn login_handler(
 /// `GET /auth/callback?code=...&state=...` — Exchange the authorization code.
 ///
 /// Verifies the CSRF state, exchanges the code for user identity, upserts the
-/// user record, issues JWT + refresh token, and redirects to the portal root.
+/// user record, issues JWT + refresh token, and redirects to the page the
+/// sign-in started from (`?next=` on `/auth/login`), or the portal root.
 pub async fn callback_handler(
     axum::extract::State(app_state): axum::extract::State<AppState>,
     axum::extract::Query(params): axum::extract::Query<CallbackParams>,
@@ -217,7 +226,8 @@ pub async fn callback_handler(
         .add(refresh_token_cookie(refresh_token, ttl_days, secure))
         .add(logged_in_cookie(ttl_days, secure));
 
-    Ok((jar, axum::response::Redirect::temporary("/")))
+    let return_to = flow_state.return_to.as_deref().unwrap_or("/");
+    Ok((jar, axum::response::Redirect::temporary(return_to)))
 }
 
 /// `POST /auth/refresh` — Rotate the refresh token and issue a new JWT.

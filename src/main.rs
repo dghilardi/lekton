@@ -274,6 +274,10 @@ where
                 axum::routing::get(api::rag::get_session_messages_handler),
             )
             .route(
+                "/api/v1/rag/sessions/{id}/stop",
+                axum::routing::post(api::rag::stop_answer_handler),
+            )
+            .route(
                 "/api/v1/rag/messages/{id}/feedback",
                 axum::routing::post(api::rag::submit_feedback_handler)
                     .delete(api::rag::delete_feedback_handler),

@@ -11,6 +11,7 @@ pub fn UserMenu() -> impl IntoView {
     let is_demo_mode = use_context::<IsDemoMode>()
         .expect("UserMenu must be inside App")
         .0;
+    let login_href = crate::components::use_login_href();
     let prompt_library_enabled = crate::app::use_feature(|f| f.prompt_library);
 
     let logout_action = crate::components::browser_action(move |_: &()| async move {
@@ -95,7 +96,12 @@ pub fn UserMenu() -> impl IntoView {
                     // In demo mode, link to the in-app login form.
                     // In OAuth mode, link directly to the auth redirect endpoint.
                     let is_demo = is_demo_mode.get();
-                    let href = if is_demo { "/login" } else { "/auth/login" };
+                    // Back to this page afterwards; OAuth goes straight to the provider.
+                    let href = if is_demo {
+                        login_href.get()
+                    } else {
+                        login_href.get().replacen("/login", "/auth/login", 1)
+                    };
                     let rel = if is_demo { "" } else { "external" };
                     view! {
                         <a

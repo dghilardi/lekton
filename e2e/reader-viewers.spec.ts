@@ -69,9 +69,9 @@ test('OpenAPI fits narrow screens, follows theme and reuses its library across r
   // Switch version and theme only after hydration, which would otherwise
   // restore the stored theme over an attribute set too early.
   await establishHydration(page);
-  // The seeded user-api's latest version is a beta without operations, and
-  // Scalar marks themed content only on operations: use the stable version.
-  if (openapi === 'user-api') await page.getByRole('combobox', { name: 'Version:', exact: true }).selectOption('1.0.0');
+  // The seeded user-api opens on its stable 1.0.0 rather than the newer beta,
+  // which has no operations (Scalar marks themed content only on operations).
+  if (openapi === 'user-api') await expect(page.getByRole('combobox', { name: 'Version:', exact: true })).toHaveValue('1.0.0');
   await selectTheme(page, 'dark');
   await expect(page.locator('#scalar-api-reference .dark-mode').first()).toBeVisible();
   const operation = page.locator('#scalar-api-reference a.endpoint').first();
@@ -103,10 +103,15 @@ test('changing a schema version fetches only that source and keeps one themed vi
   const response = page.waitForResponse(r => r.url().includes('/api/get_schema_content') && r.ok());
   await selector.selectOption(next);
   const content = await (await response).json();
-  await expect(page.getByLabel('Schema source', { exact: true })).toHaveText(content);
+  await expect(page.getByLabel('Schema source', { exact: true })).toHaveText(content.source);
+  // Back to the default (stable) version: Scalar marks themed content only on
+  // operations, which the seeded beta lacks.
+  const back = page.waitForResponse(r => r.url().includes('/api/get_schema_content') && r.ok());
+  await selector.selectOption(initial);
+  await back;
   await expect(page.locator('#scalar-api-reference .dark-mode').first()).toBeVisible();
   await expect(page.locator('#scalar-api-reference .scalar-api-reference')).toHaveCount(1);
-  expect(reads).toHaveLength(1);
+  expect(reads).toHaveLength(2);
   expect(loads).toHaveLength(1);
 });
 
@@ -163,7 +168,8 @@ test('JSON Schema keeps its heading and formats minified JSON without changing i
     await route.fulfill({ response, json: detail });
   });
   const fixture = { title: 'Formatted fixture', type: 'object', properties: { id: { type: 'string' } } };
-  await page.route('**/api/get_schema_content*', route => route.fulfill({ json: JSON.stringify(fixture) }));
+  // No outline: the source is then the schema's only view.
+  await page.route('**/api/get_schema_content*', route => route.fulfill({ json: { source: JSON.stringify(fixture), outline_html: null } }));
   await page.locator(`main a[href="/schemas/${openapi}"]`).click();
   await expect(page.getByRole('heading', { name: 'JSON Schema', exact: true })).toBeVisible();
   const source = page.getByLabel('Schema source', { exact: true });
@@ -191,7 +197,7 @@ test('valid AsyncAPI fixture has navigable channels in both themes without fetch
   await page.goto('/schemas');
   // Exercise a browser navigation with a fixture response; never modify the
   // stored specification or suppress its validation errors in the product.
-  await page.route('**/api/get_schema_content*', route => route.fulfill({ json: JSON.stringify(fixture) }));
+  await page.route('**/api/get_schema_content*', route => route.fulfill({ json: { source: JSON.stringify(fixture), outline_html: null } }));
   await page.locator(`main a[href="/schemas/${asyncapi}"]`).click();
   const viewer = page.locator('#asyncapi-viewer');
   await expect(viewer).toContainText('Illustrative events', { timeout: 20_000 });
@@ -238,7 +244,10 @@ test('expired-session SSR offers sign-in recovery before JavaScript runs', async
     const reader = await context.newPage();
     for (const path of [`/docs/${doc}`, '/schemas', `/schemas/${openapi}`]) {
       await reader.goto(path);
-      await expect(reader.getByRole('link', { name: 'Log in again', exact: true })).toBeVisible();
+      // Page-level reads show the sign-in state; region reads an inline notice.
+      const signIn = reader.getByRole('link', { name: /^(Log in again|Sign in)$/ });
+      await expect(signIn).toBeVisible();
+      await expect(signIn).toHaveAttribute('href', `/login?next=${path}`);
       await expect(reader.locator('main')).not.toContainText('error running server function');
       await expect(reader.getByRole('navigation', { name: 'Section navigation' })).not.toContainText('error running server function');
     }
@@ -269,9 +278,9 @@ for (const scenario of ['recovered', 'still unauthorized', 'refresh rejected', '
     if (scenario === 'recovered') {
       await expect(page.locator('[data-lekton-markdown]')).toBeVisible();
     } else if (scenario === 'refresh rejected') {
-      await expect(page).toHaveURL(/\/login$/);
+      await expect(page).toHaveURL(new RegExp(`/login\\?next=/docs/${doc}$`));
     } else if (scenario === 'still unauthorized') {
-      await expect(page.getByRole('link', { name: 'Log in again', exact: true })).toBeVisible();
+      await expect(page.getByRole('main').getByRole('link', { name: 'Sign in', exact: true })).toBeVisible();
     } else {
       await expect(page.locator('main')).toContainText('audit unavailable');
     }

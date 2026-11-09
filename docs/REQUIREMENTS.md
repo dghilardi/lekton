@@ -363,6 +363,26 @@ See `IMPLEMENTATION_ROADMAP.md` Phase 7 for the full breakdown and candidate nex
   rejected refresh redirects to sign in and returns the original error without
   repeating the protected request. SSR session errors offer a sign-in action
   while client bootstrap can restore the session.
+- Sign-in returns to the page that asked for it: links and redirects carry
+  `?next=<path>` to `/login`, which passes it to `/auth/login` for OAuth/OIDC
+  (kept in the signed flow-state cookie until the callback). Only same-origin
+  paths are accepted (no scheme, host, `//`, backslash or control character, and
+  never a sign-in or API path); anything else returns to `/`.
+- Pages that cannot show what was asked for use one state presentation: not
+  found (404; restricted documents read as not found so their existence does not
+  leak, with sign-in offered to anonymous readers), sign-in required, not
+  permitted (403), failed to load, and managed outside the portal. Messages are
+  plain text, never framework errors. Administration navigation is shown only to
+  administrators.
+- A schema opens on its newest stable version (else the newest non-deprecated
+  one). JSON Schemas are outlined on the server (properties, types, required,
+  constraints, local `$ref` links) above their collapsed source.
 - Interactive schema viewers and the editor's heavy bundle load on demand and
   share in-flight library requests. The untouched schema source is available in
   SSR and remains accessible when parsing or loading a viewer fails.
+- The browser bundle stays light for readers: it carries no HTML sanitizer
+  (chat Markdown uses an escaping renderer: raw HTML is shown as text and only
+  web, mail and in-page link targets survive; the server keeps the sanitizer for
+  documents and lessons), and component views are type-erased in release builds
+  (`always-erase-components`). New browser-side code should not pull in heavy
+  parsers; CI fails above its WASM size threshold.

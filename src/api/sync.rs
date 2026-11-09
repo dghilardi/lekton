@@ -103,9 +103,18 @@ pub async fn process_sync(
     storage: Option<&dyn crate::storage::client::StorageClient>,
     attachment_search: Option<&dyn crate::search::attachment_search::AttachmentSearchService>,
     legacy_token: Option<&str>,
-    request: SyncRequest,
+    mut request: SyncRequest,
 ) -> Result<SyncResponse, AppError> {
     use std::collections::HashMap;
+
+    // Match the slugs ingest will store (see `normalize_document_slug`).
+    for entry in &mut request.documents {
+        entry.slug = crate::api::ingest::normalize_document_slug(&entry.slug);
+        entry.legacy_slug = entry
+            .legacy_slug
+            .as_deref()
+            .map(crate::api::ingest::normalize_document_slug);
+    }
 
     // (content_hash, metadata_hash, source_path, is_latest, needs_reindex)
     type ServerDocInfo = (Option<String>, Option<String>, Option<String>, bool, bool);

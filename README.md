@@ -491,7 +491,7 @@ Most write endpoints are driven by the [`lekton-sync`](cli/README.md) CLI in CI/
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| `GET` | `/api/v1/search?q=...` | Public (scoped) | Search documents |
+| `GET` | `/api/v1/search?q=...` | Public (scoped) | Search documents. Previews are cropped around the match; `title_matches` / `preview_matches` give the matched character ranges `[start, end)` |
 | `GET` | `/api/v1/schemas` | Public (scoped) | List schemas |
 | `GET` | `/api/v1/schemas/{name}?version={ver}` | Public (scoped) | Schema detail (no `version`) or artifact content |
 | `GET` | `/api/v1/assets/{*key}` | Derived from referencing docs | Serve an asset |
@@ -500,10 +500,11 @@ Most write endpoints are driven by the [`lekton-sync`](cli/README.md) CLI in CI/
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/v1/rag/chat` | Streamed chat completion (SSE) over the corpus. `regenerate_message_id` (with `session_id`) replaces the session's last unfinished answer; the final `done` event carries the answer's `status` (`complete`, `interrupted`, `error`) |
+| `POST` | `/api/v1/rag/chat` | Streamed chat completion (SSE) over the corpus. `regenerate_message_id` (with `session_id`) replaces the session's last unfinished answer; the final `done` event carries the answer's `status` (`complete`, `interrupted`, `error`, `stopped`) |
 | `GET` | `/api/v1/rag/sessions` | List the user's chat sessions |
 | `DELETE` | `/api/v1/rag/sessions/{id}` | Delete a session |
 | `GET` | `/api/v1/rag/sessions/{id}/messages` | Load a session's messages (each with its `status`) |
+| `POST` | `/api/v1/rag/sessions/{id}/stop` | Stop the answer being generated in the session; the part already written is saved as `stopped`. Returns `{"stopped": bool}` |
 | `POST`/`DELETE` | `/api/v1/rag/messages/{id}/feedback` | Submit / clear feedback on an answer |
 
 ### Personal Access Tokens (authenticated user)

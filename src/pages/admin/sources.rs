@@ -189,7 +189,12 @@ pub fn SourcesAdminPanel() -> impl IntoView {
                     // StoredValue is Copy, so the users list can be shared across the
                     // nested source/maintainer closures without move conflicts.
                     let users = StoredValue::new(users);
-                    let sources = sources.ok()?;
+                    let sources = match sources {
+                        Ok(sources) => sources,
+                        Err(error) => return Some(view! {
+                            <crate::components::ReaderErrorNotice error=error context="Sources could not be loaded" />
+                        }.into_any()),
+                    };
                     if sources.is_empty() {
                         return Some(view! {
                             <div class="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-base-300 bg-base-200/20 px-6 py-16 text-center">
@@ -216,6 +221,9 @@ pub fn SourcesAdminPanel() -> impl IntoView {
                                     });
                                     let source_edit = source.clone();
                                     let users_vec = users.get_value();
+                                    // Names the row's toggle, which otherwise reads the same on every row.
+                                    let source_name = source.display_name.clone().unwrap_or_else(|| source.id.clone());
+                                    let panel_id = format!("source-settings-{}", source.id);
 
                                     // ── Metadata summary line (read view) ──
                                     let repo = source.repo_url.clone();
@@ -296,18 +304,22 @@ pub fn SourcesAdminPanel() -> impl IntoView {
                                                     {meta_line}
                                                 </div>
                                                 <button
+                                                    type="button"
                                                     class="btn btn-ghost btn-sm shrink-0 gap-1.5"
+                                                    aria-label=move || format!("{} {source_name}", if is_editing.get() { "Close" } else if has_meta { "Edit" } else { "Set up" })
+                                                    aria-expanded=move || is_editing.get().to_string()
+                                                    aria-controls=panel_id.clone()
                                                     on:click=move |_| {
                                                         if is_editing.get() { editing.set(None); } else { start_edit(&source_edit); }
                                                     }
                                                 >
-                                                    <span class="hidden sm:inline">{move || if is_editing.get() { "Close" } else if has_meta { "Edit" } else { "Set up" }}</span>
-                                                    <svg class=move || format!("h-4 w-4 transition-transform duration-200 motion-reduce:transition-none {}", if is_editing.get() { "rotate-180" } else { "" }) fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+                                                    <span>{move || if is_editing.get() { "Close" } else if has_meta { "Edit" } else { "Set up" }}</span>
+                                                    <svg aria-hidden="true" class=move || format!("h-4 w-4 transition-transform duration-200 motion-reduce:transition-none {}", if is_editing.get() { "rotate-180" } else { "" }) fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
                                                 </button>
                                             </div>
 
                                             <Show when=move || is_editing.get()>
-                                                <div class="animate-in fade-in slide-in-from-top-1 border-t border-base-200 bg-base-200/30 p-5 duration-200 motion-reduce:animate-none">
+                                                <div id=panel_id.clone() class="animate-in fade-in slide-in-from-top-1 border-t border-base-200 bg-base-200/30 p-5 duration-200 motion-reduce:animate-none">
                                                     <div class="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
                                                         <div>
                                                             <label class="mb-1 block text-xs font-semibold text-base-content/70">"Display name"</label>

@@ -41,9 +41,20 @@ pub async fn get_schema_detail(name: String) -> Result<SchemaDetail, ServerFnErr
     .map_err(|e| ServerFnError::new(e.to_string()))
 }
 
+/// A schema version's source, plus the readable outline for JSON Schemas.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SchemaContent {
+    pub source: String,
+    /// Server-rendered, escaped HTML (see `json_outline`); `None` for other kinds.
+    pub outline_html: Option<String>,
+}
+
 /// Server function to get raw schema content for a specific version.
 #[server(GetSchemaContent, "/api")]
-pub async fn get_schema_content(name: String, version: String) -> Result<String, ServerFnError> {
+pub async fn get_schema_content(
+    name: String,
+    version: String,
+) -> Result<SchemaContent, ServerFnError> {
     // A resource fetcher can outlive an aborted response's owner, so a
     // missing context is an error here, not a panic.
     let state = use_context::<crate::app::AppState>()
@@ -57,6 +68,10 @@ pub async fn get_schema_content(name: String, version: String) -> Result<String,
         allowed_levels.as_deref(),
     )
     .await
+    .map(|source| SchemaContent {
+        outline_html: crate::schema::json_outline::json_schema_outline(&source),
+        source,
+    })
     .map_err(|e| ServerFnError::new(e.to_string()))
 }
 
@@ -75,6 +90,7 @@ pub fn use_schemas() -> Resource<Result<Vec<SchemaListItem>, ServerFnError>> {
 pub fn SchemaListPage() -> impl IntoView {
     let schemas_resource = use_schemas();
     let current_user = expect_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
+    let login_href = crate::components::use_login_href();
 
     view! {
         <div>
@@ -100,7 +116,7 @@ pub fn SchemaListPage() -> impl IntoView {
                                     <div>
                                         <p>"No schemas available to you."</p>
                                         {move || match current_user.get() {
-                                            None => view! { <a href="/login" class="link">"Log in to see the schemas you can access."</a> }.into_any(),
+                                            None => view! { <a href=move || login_href.get() class="link">"Log in to see the schemas you can access."</a> }.into_any(),
                                             Some(user) if user.is_admin => view! { <p>"Use the ingestion API to add schemas."</p> }.into_any(),
                                             Some(_) => view! { <p>"Contact your portal administrator if you expected access."</p> }.into_any(),
                                         }}
@@ -162,7 +178,7 @@ fn SchemaCard(schema: SchemaListItem) -> impl IntoView {
                     </span>
                 </div>
                 <div class="mt-4 pt-4 border-t border-base-200 flex items-center justify-between text-sm">
-                    <span class="text-base-content/70">"Latest version"</span>
+                    <span class="text-base-content/70">"Current version"</span>
                     <span class="font-mono bg-base-200 px-2 py-1 rounded text-xs text-base-content/80 font-medium">{version_text.to_string()}</span>
                 </div>
             </div>
@@ -301,7 +317,8 @@ pub fn SchemaViewerPage() -> impl IntoView {
                                                     let st = schema_type.clone();
                                                     view! {
                                                         <SpecViewer
-                                                            content=content
+                                                            content=content.source
+                                                            outline_html=content.outline_html
                                                             schema_type=st
                                                         />
                                                     }.into_any()
@@ -325,11 +342,11 @@ pub fn SchemaViewerPage() -> impl IntoView {
                             </div>
                         }.into_any()
                     }
-                    Err(e) => {
-                        view! {
-                            <crate::components::ReaderErrorNotice error=e context="Error loading schema" />
-                        }.into_any()
+                    // Missing and hidden schemas read alike, as documents do.
+                    Err(ServerFnError::ServerError(message)) if message.starts_with("Not found:") => {
+                        view! { <crate::pages::NotFoundState /> }.into_any()
                     }
+                    Err(e) => view! { <crate::components::ReaderErrorState error=e /> }.into_any(),
                 })
             }}
         </Suspense>
@@ -400,7 +417,7 @@ fn VersionStatusBar(versions: Vec<SchemaVersionInfo>) -> impl IntoView {
 
 /// Interactive viewers progressively enhance an SSR-readable schema source.
 #[component]
-fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
+fn SpecViewer(content: String, outline_html: Option<String>, schema_type: String) -> impl IntoView {
     let id = if schema_type == "openapi" {
         "scalar-api-reference"
     } else {
@@ -436,6 +453,7 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
         });
     }
     let is_json_schema = schema_type == "jsonschema";
+    let has_outline = outline_html.is_some();
     let display_content = if !interactive && content.trim_start().starts_with('{') {
         serde_json::from_str::<serde_json::Value>(&content)
             .and_then(|value| serde_json::to_string_pretty(&value))
@@ -450,12 +468,16 @@ fn SpecViewer(content: String, schema_type: String) -> impl IntoView {
                     <p role="status" class="p-4 text-base-content/70">"The interactive viewer requires JavaScript. You can read the original schema source below."</p>
                 </div>
             </Show>
-            <Show when=move || is_json_schema>
+            <Show when=move || is_json_schema && !has_outline>
                 <h2 class="mt-4 text-sm font-semibold">"JSON Schema"</h2>
             </Show>
-            <details class="mt-4 border border-base-300 rounded-box" open=!interactive>
+            {outline_html.map(|html| view! { <div inner_html=html></div> })}
+            // Open when it is the only view of the schema.
+            <details class="mt-4 border border-base-300 rounded-box" open=!interactive && !has_outline>
                 <summary class="cursor-pointer p-3 font-medium">"Schema source"</summary>
-                <p class="px-4 text-sm text-base-content/70">"The original specification remains available if the interactive viewer cannot render it."</p>
+                <Show when=move || interactive>
+                    <p class="px-4 text-sm text-base-content/70">"The original specification remains available if the interactive viewer cannot render it."</p>
+                </Show>
                 <pre class="p-4 overflow-auto max-h-[70vh] text-sm" tabindex="0" aria-label="Schema source"><code>{display_content}</code></pre>
             </details>
         </div>

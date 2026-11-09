@@ -144,7 +144,12 @@ pub fn UserManager() -> impl IntoView {
                             let users = users_resource.get()?;
                             let levels = levels_resource.get()?.unwrap_or_default();
                             let plans = plans_resource.get()?.unwrap_or_default();
-                            let users = users.ok()?;
+                            let users = match users {
+                                Ok(users) => users,
+                                Err(error) => return Some(view! {
+                                    <crate::components::ReaderErrorNotice error=error context="Users could not be loaded" />
+                                }.into_any()),
+                            };
                             if users.is_empty() {
                                 return Some(view! {
                                     <div class="flex flex-col items-center justify-center py-12 px-4 text-center border-2 border-dashed border-base-300 rounded-xl bg-base-200/20">
@@ -244,7 +249,7 @@ pub fn UserManager() -> impl IntoView {
                                                     </div>
 
                                                     <Show when=move || is_editing.get()>
-                                                        <div class="border-t border-base-200 p-4 bg-base-50 space-y-3">
+                                                        <div class="border-t border-base-200 p-4 bg-base-200/40 space-y-3">
                                                             <div>
                                                                 <span class="label-text text-xs font-medium">"Assigned access levels"</span>
                                                                 <div class="flex gap-3 flex-wrap mt-2">

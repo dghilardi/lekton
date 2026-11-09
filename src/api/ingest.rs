@@ -118,10 +118,12 @@ pub async fn process_ingest(
 #[cfg(feature = "ssr")]
 pub(crate) async fn process_authorized_ingest(
     ctx: &IngestContext<'_>,
-    request: IngestRequest,
+    mut request: IngestRequest,
     actor: &str,
 ) -> Result<ProcessIngestOutcome, AppError> {
     // 2. Validate the slug
+    let normalized_slug = normalize_document_slug(&request.slug);
+    let sent_slug = std::mem::replace(&mut request.slug, normalized_slug);
     if request.slug.is_empty() {
         return Err(AppError::BadRequest("Slug cannot be empty".into()));
     }
@@ -131,11 +133,20 @@ pub(crate) async fn process_authorized_ingest(
     if request.slug.starts_with('/') {
         return Err(AppError::BadRequest("Slug must not start with '/'".into()));
     }
-    let normalized_parent_slug = normalize_parent_slug(request.parent_slug.as_deref())?;
+    let mut normalized_parent_slug = normalize_parent_slug(request.parent_slug.as_deref())?;
     if normalized_parent_slug.as_deref() == Some(request.slug.as_str()) {
-        return Err(AppError::BadRequest(
-            "Parent slug must not equal document slug".into(),
-        ));
+        if request.parent_slug.as_deref().map(str::trim) == Some(sent_slug.trim()) {
+            return Err(AppError::BadRequest(
+                "Parent slug must not equal document slug".into(),
+            ));
+        }
+        // Older lekton-sync releases sent a prefixed root index as
+        // `prefix/` with the prefix as its parent; once normalized the page
+        // is the prefix itself, so it hangs off the prefix's parent.
+        normalized_parent_slug = request
+            .slug
+            .rsplit_once('/')
+            .map(|(parent, _)| parent.to_string());
     }
     let summary = normalize_summary(request.summary.as_deref());
     warn_about_summary(&request.slug, summary.as_deref());
@@ -566,6 +577,14 @@ fn normalize_summary(summary: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|summary| !summary.is_empty())
         .map(ToOwned::to_owned)
+}
+
+#[cfg(feature = "ssr")]
+/// A document slug as stored and served: trailing slashes removed. Older
+/// lekton-sync releases sent a prefixed root `index.md` as `prefix/`, which
+/// no reader URL matched.
+pub(crate) fn normalize_document_slug(slug: &str) -> String {
+    slug.trim().trim_end_matches('/').to_string()
 }
 
 #[cfg(feature = "ssr")]
@@ -1920,6 +1939,38 @@ mod tests {
         process_ingest(&ctx, request).await.unwrap();
 
         let doc = repo.find_by_slug("docs/hello").await.unwrap().unwrap();
+        assert_eq!(doc.parent_slug, None);
+    }
+
+    #[tokio::test]
+    async fn a_trailing_slash_slug_is_stored_without_it_under_its_parent() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+
+        // What older lekton-sync releases sent for `team/handbook/index.md`.
+        let mut request = make_request("valid-token", "team/handbook/");
+        request.parent_slug = Some("team/handbook".to_string());
+        process_ingest(&ctx, request).await.unwrap();
+
+        let doc = repo.find_by_slug("team/handbook").await.unwrap().unwrap();
+        assert_eq!(doc.parent_slug.as_deref(), Some("team"));
+        assert!(repo.find_by_slug("team/handbook/").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_top_level_trailing_slash_slug_becomes_a_root_page() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+
+        let mut request = make_request("valid-token", "handbook/");
+        request.parent_slug = Some("handbook".to_string());
+        process_ingest(&ctx, request).await.unwrap();
+
+        let doc = repo.find_by_slug("handbook").await.unwrap().unwrap();
         assert_eq!(doc.parent_slug, None);
     }
 

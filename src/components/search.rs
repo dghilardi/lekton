@@ -319,7 +319,7 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                                             <div class="flex items-center gap-2 mb-1">
                                                                 <div class="font-semibold text-lg">{title}</div>
                                                                 <Show when=move || has_page>
-                                                                    <span class="badge badge-sm badge-ghost text-base-content/60">
+                                                                    <span class="badge badge-sm badge-ghost text-base-content/70">
                                                                         {page_badge.clone()}
                                                                     </span>
                                                                 </Show>
@@ -349,7 +349,7 @@ pub fn SearchModal(is_open: ReadSignal<bool>, set_is_open: WriteSignal<bool>) ->
                                         view! {
                                             <div role="status" class="p-8 text-center">
                                                 <p class="font-medium text-base-content/80">"Search is temporarily unavailable"</p>
-                                                <p class="mt-1 text-sm text-base-content/60">"Please try again in a moment."</p>
+                                                <p class="mt-1 text-sm text-base-content/70">"Please try again in a moment."</p>
                                             </div>
                                         }.into_any()
                                     }
@@ -499,7 +499,7 @@ pub fn SearchBar() -> impl IntoView {
                                 }
                                 Err(_) => {
                                     view! {
-                                        <li class="text-base-content/60 p-2">"Search unavailable"</li>
+                                        <li class="text-base-content/70 p-2">"Search unavailable"</li>
                                     }.into_any()
                                 }
                             })

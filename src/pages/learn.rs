@@ -31,7 +31,7 @@ pub fn LearnDashboardPage() -> impl IntoView {
             .or_else(|| persist_res.get().and_then(|r| r.ok()))
             .unwrap_or(true)
     });
-    let toggle_privacy = Action::new_local(move |new: &bool| {
+    let toggle_privacy = crate::components::browser_action(move |new: &bool| {
         let new = *new;
         async move {
             persist_override.set(Some(new));
@@ -46,7 +46,7 @@ pub fn LearnDashboardPage() -> impl IntoView {
     let ephemeral = RwSignal::new(None::<Lesson>);
     let navigate = use_navigate();
 
-    let start = Action::new_local(move |_: &()| {
+    let start = crate::components::browser_action(move |_: &()| {
         let navigate = navigate.clone();
         let kind = scope_kind.get();
         let value = scope_value.get().trim().to_string();
@@ -79,7 +79,7 @@ pub fn LearnDashboardPage() -> impl IntoView {
     });
 
     let confirm_delete = RwSignal::new(false);
-    let delete = Action::new_local(move |_: &()| async move {
+    let delete = crate::components::browser_action(move |_: &()| async move {
         let _ = with_auth_retry(delete_my_learning_data).await;
         confirm_delete.set(false);
         refresh.update(|n| *n += 1);
@@ -88,6 +88,7 @@ pub fn LearnDashboardPage() -> impl IntoView {
     view! {
         <div class="max-w-3xl mx-auto px-4 py-8 space-y-8">
             <div>
+                <leptos_meta::Title text=crate::components::page_title(&["Learn"]) />
                 <h1 class="text-2xl font-semibold">"Learn"</h1>
                 <p class="text-base-content/70 mt-1">
                     "Short, guided lessons drawn from the documentation you can access."
@@ -96,8 +97,8 @@ pub fn LearnDashboardPage() -> impl IntoView {
 
             <div class="flex items-center justify-between rounded-box bg-base-200 px-4 py-3">
                 <div>
-                    <p class="text-sm font-medium">"Save my progress"</p>
-                    <p class="text-xs text-base-content/60">
+                    <label for="learn-persist" class="text-sm font-medium">"Save my progress"</label>
+                    <p id="learn-persist-hint" class="text-xs text-base-content/70">
                         {move || if persist.get() {
                             "Paths, lessons and quiz results are saved so lessons adapt to you."
                         } else {
@@ -106,7 +107,10 @@ pub fn LearnDashboardPage() -> impl IntoView {
                     </p>
                 </div>
                 <input
+                    id="learn-persist"
                     type="checkbox"
+                    role="switch"
+                    aria-describedby="learn-persist-hint"
                     class="toggle toggle-primary"
                     prop:checked=move || persist.get()
                     on:change=move |_| { toggle_privacy.dispatch(!persist.get()); }
@@ -122,7 +126,9 @@ pub fn LearnDashboardPage() -> impl IntoView {
                         <div class="alert alert-error py-2 text-sm">{e}</div>
                     })}
                     <div class="flex flex-col sm:flex-row gap-2">
+                        <label for="learn-scope-kind" class="sr-only">"Scope type"</label>
                         <select
+                            id="learn-scope-kind"
                             class="select select-bordered sm:w-40"
                             prop:value=move || scope_kind.get()
                             on:change=move |ev| scope_kind.set(event_target_value(&ev))
@@ -131,7 +137,9 @@ pub fn LearnDashboardPage() -> impl IntoView {
                             <option value="topic">"Topic"</option>
                             <option value="document">"Document slug"</option>
                         </select>
+                        <label for="learn-scope-value" class="sr-only">"Tag, topic or document slug"</label>
                         <input
+                            id="learn-scope-value"
                             type="text"
                             class="input input-bordered flex-1"
                             placeholder="e.g. kafka, \"how deployments work\", eng/deploy-guide"
@@ -162,7 +170,7 @@ pub fn LearnDashboardPage() -> impl IntoView {
 
             {move || ephemeral.get().map(|l| view! {
                 <div class="space-y-2">
-                    <p class="text-xs text-base-content/60">"This lesson is not saved."</p>
+                    <p class="text-xs text-base-content/70">"This lesson is not saved."</p>
                     <LessonCard lesson=l persist=false />
                 </div>
             })}
@@ -172,7 +180,7 @@ pub fn LearnDashboardPage() -> impl IntoView {
                 <Suspense fallback=move || view! { <span class="loading loading-spinner" /> }>
                     {move || paths.get().map(|res| match res {
                         Ok(list) if list.is_empty() => view! {
-                            <p class="text-base-content/60 text-sm">"No learning paths yet."</p>
+                            <p class="text-base-content/70 text-sm">"No learning paths yet."</p>
                         }.into_any(),
                         Ok(list) => view! {
                             <ul class="menu bg-base-100 rounded-box border border-base-200">
@@ -229,7 +237,7 @@ pub fn LearnPathPage() -> impl IntoView {
 
     let generating = RwSignal::new(false);
     let gen_error = RwSignal::new(None::<String>);
-    let generate = Action::new_local(move |_: &()| {
+    let generate = crate::components::browser_action(move |_: &()| {
         let id = path_id();
         async move {
             generating.set(true);
@@ -244,17 +252,18 @@ pub fn LearnPathPage() -> impl IntoView {
 
     view! {
         <div class="max-w-3xl mx-auto px-4 py-8 space-y-6">
-            <a href="/learn" class="link link-hover text-sm text-base-content/60">"← All paths"</a>
+            <a href="/learn" class="link link-hover text-sm text-base-content/70">"← All paths"</a>
             <Suspense fallback=move || view! { <span class="loading loading-spinner" /> }>
                 {move || data.get().map(|res| match res {
                     Ok(pw) => {
                         let title = pw.path.title.clone();
                         let empty = pw.lessons.is_empty();
                         view! {
+                            <leptos_meta::Title text=crate::components::page_title(&[&title, "Learn"]) />
                             <h1 class="text-2xl font-semibold">{title}</h1>
                             {if empty {
                                 view! {
-                                    <p class="text-base-content/60 text-sm">
+                                    <p class="text-base-content/70 text-sm">
                                         "No lessons yet — generate the first one to begin."
                                     </p>
                                 }.into_any()
@@ -309,7 +318,7 @@ fn LessonCard(lesson: Lesson, persist: bool) -> impl IntoView {
                 <MarkdownContent html=lesson.body_html.clone() />
 
                 {(!citations.is_empty()).then(|| view! {
-                    <div class="text-xs text-base-content/60">
+                    <div class="text-xs text-base-content/70">
                         <span class="font-medium">"Sources: "</span>
                         {citations.into_iter().map(|c| {
                             let href = match &c.section_anchor {
@@ -346,7 +355,7 @@ fn QuizWidget(lesson_id: String, quiz: Vec<QuizQuestion>, persist: bool) -> impl
     // Correct answers, kept for client-side grading in ephemeral mode.
     let correct: Vec<usize> = quiz.iter().map(|q| q.correct_index).collect();
 
-    let submit = Action::new_local(move |_: &()| {
+    let submit = crate::components::browser_action(move |_: &()| {
         let lesson_id = lesson_id.clone();
         let correct = correct.clone();
         let selected: Vec<Option<usize>> = answers.get();
@@ -429,7 +438,7 @@ fn QuizWidget(lesson_id: String, quiz: Vec<QuizQuestion>, persist: bool) -> impl
     view! {
         <div class="divider my-1"></div>
         <div class="space-y-4">
-            <h3 class="font-semibold text-sm uppercase tracking-wide text-base-content/60">"Check your understanding"</h3>
+            <h3 class="font-semibold text-sm uppercase tracking-wide text-base-content/70">"Check your understanding"</h3>
             {error.get().map(|e| view! { <div class="alert alert-error py-2 text-sm">{e}</div> })}
             {questions}
             {move || if graded() {

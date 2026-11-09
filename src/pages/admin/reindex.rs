@@ -57,7 +57,7 @@ where
     let (is_polling, set_is_polling) = signal(false);
 
     let has_retry = retry_trigger.is_some();
-    let retry_action = Action::new_local(move |_: &()| {
+    let retry_action = crate::components::browser_action(move |_: &()| {
         let trigger = retry_trigger.clone();
         async move {
             let Some(trigger) = trigger else {
@@ -75,7 +75,7 @@ where
         fetch_status()
     });
 
-    let trigger_action = Action::new_local(move |_: &()| {
+    let trigger_action = crate::components::browser_action(move |_: &()| {
         let fut = trigger();
         async move {
             let result = fut.await;
@@ -149,7 +149,7 @@ where
                                                 {icon.run()}
                                                 <h2 class="text-2xl font-bold">{title}</h2>
                                             </div>
-                                            <p class="text-base-content/60">{description}</p>
+                                            <p class="text-base-content/70">{description}</p>
                                         </div>
                                         <div class="px-8 pb-8">
                                             <div class="space-y-4">
@@ -170,7 +170,7 @@ where
                                                     <div class="space-y-2">
                                                         <div class="flex items-center justify-between">
                                                             <span class="text-sm font-medium">"Re-indexing in progress..."</span>
-                                                            <span class="text-sm text-base-content/60">{move || format!("{}%", progress.get())}</span>
+                                                            <span class="text-sm text-base-content/70">{move || format!("{}%", progress.get())}</span>
                                                         </div>
                                                         <progress
                                                             class=progress_class

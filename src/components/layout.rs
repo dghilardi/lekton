@@ -452,6 +452,15 @@ pub fn Layout(children: Children) -> impl IntoView {
                 #[cfg(feature = "hydrate")]
                 let _ = js_sys::eval("document.getElementById('content')?.focus(); document.getElementById('content')?.scrollIntoView()");
             }>"Skip to content"</a>
+            // Desktop sidebars come after the content in the DOM (and in tab
+            // order); on small screens the navigation lives in the drawer.
+            <Show when=move || has_context_sidebar.get()>
+                <a href="#portal-navigation" class="lekton-skip-link max-lg:hidden" inert=move || sidebar_open.get() on:click=move |ev| {
+                    ev.prevent_default();
+                    #[cfg(feature = "hydrate")]
+                    let _ = js_sys::eval("document.getElementById('portal-navigation')?.focus()");
+                }>"Skip to section navigation"</a>
+            </Show>
             // Navbar
             // Colours come from the --lekton-header-* theming tokens (see style/tailwind.css).
             <header inert=move || sidebar_open.get() data-lekton-header class="bg-base-100/80 backdrop-blur-md fixed top-0 inset-x-0 z-50 border-b border-base-200 px-4 h-16 flex items-center gap-2 shadow-sm lekton-header-enter">
@@ -550,7 +559,7 @@ pub fn Layout(children: Children) -> impl IntoView {
                     <div class="drawer-side z-40 top-16 h-[calc(100dvh-4rem)] overflow-hidden">
                         <button type="button" tabindex="-1" aria-label="Close navigation menu" class="drawer-overlay lg:hidden" on:click=move |_| close_sidebar()></button>
                         // Colours come from the --lekton-sidebar-* theming tokens.
-                        <nav id="portal-navigation" aria-label="Section navigation" data-lekton-sidebar on:click=move |ev| {
+                        <nav id="portal-navigation" tabindex="-1" aria-label="Section navigation" data-lekton-sidebar on:click=move |ev| {
                             #[cfg(feature = "hydrate")]
                             {
                                 use wasm_bindgen::JsCast;

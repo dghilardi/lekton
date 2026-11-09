@@ -6,6 +6,24 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Require resolving an offered editor draft before editing or saving, so newer changes cannot be lost behind the pending offer; include the existing page slug in the server-rendered editor title.
+
+- Bring text to WCAG AA contrast and legible sizes: outline and soft status badges and warning text on light surfaces, muted metadata and chat history, the AsyncAPI viewer's descriptions, badges and example panels in both themes; badges and uppercase labels are at least 11px, functional hints 12px, and header links 14px without negative tracking. Author-coloured Mermaid diagrams follow the dark theme with labels fitted to each fill instead of a white block.
+
+- Make the prompt detail and created-token dialogs real modal dialogs (focus moves in, stays inside and returns to the opener; Escape closes), make wide Markdown and AI-usage tables keyboard-scrollable named regions, and add a “Skip to section navigation” link on desktop, where the sidebar comes after the content in tab order.
+
+- Label the editor, document-upload and Learn form controls, name the editor body and toolbar buttons, and validate required fields in place: errors appear next to their field (`aria-invalid`, `aria-describedby`) and focus moves to the first one. Editor and upload validation failures from the server now answer 400 with a plain message instead of a 500.
+
+- Give every page its own document title (`<Page> · <Section> · Lekton`), server-rendered where the page is, instead of one shared title.
+
+- Apply one document-visibility rule to reading, search, schemas, assets, retrieval, chat and Learn. In demo mode, sessions could read only public documents while chat and Learn treated them as logged-in users, so answers cited pages the reader could not open; demo sessions now read `public` and `loggeduser` everywhere. Learn also drops citations and next-read sources the reader can no longer open from stored lessons.
+
+- Protect unsaved editor changes: the editor tracks them, asks before following an in-app link or unloading the page, and keeps a local draft that it offers to restore on the next visit. Editor, asset panel and document-upload server calls now go through the shared session-refresh retry.
+
+- Serve the not-found page with status 404 for unknown paths instead of an empty body; missing static assets remain bare 404 responses.
+
+- Stop direct loads of Learn, the RAG admin and other pages with browser-only actions from crashing the server: `Action::new_local` created during SSR was dropped from another worker thread at the end of the response, truncating the HTML and, on a second panic, aborting the process. Such actions are now inert on the server (`browser_action`).
+
 - Load schema content deterministically: the content resource awaits the schema detail in its fetcher instead of deriving its source from the schema resource, so SSR waits for it within the response and it no longer re-runs, against disposed router state, after the schema resolves.
 
 - Prevent intermittent SSR panics that aborted page loads: memos shared by Suspense boundaries, which resolve concurrently on server worker threads, are computed before the first boundary renders; cheap URL checks are uncached derived signals; and the schema tree no longer looks up the router context when it renders late.

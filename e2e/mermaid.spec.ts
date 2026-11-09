@@ -64,18 +64,28 @@ test.describe('Mermaid diagrams', () => {
     expect(await colourLuminance(page, 'pre.mermaid')).toBeGreaterThan(0.8);
   });
 
-  test('author-coloured diagrams render light in the dark theme', async ({ page }) => {
+  test('author-coloured diagrams follow the dark theme with readable labels', async ({ page }) => {
     await openMermaidPage(page, 'dark');
-    const plain = 'pre.mermaid:not([data-mermaid-surface])';
-    const styled = 'pre.mermaid[data-mermaid-surface="light"]';
-    await expect(page.locator(plain)).toHaveCount(1);
-    await expect(page.locator(styled)).toHaveCount(1);
-
-    // Plain diagrams follow the site theme; author-coloured ones get the light
-    // theme's dark labels on a light surface, readable on their pale fills.
-    expect(await colourLuminance(page, plain)).toBeLessThan(0.05);
-    expect(await colourLuminance(page, styled)).toBeGreaterThan(0.8);
-    expect(await colourLuminance(page, `${styled} .nodeLabel`, 'color')).toBeLessThan(0.1);
+    const diagrams = page.locator('pre.mermaid');
+    await expect(diagrams).toHaveCount(2);
+    await expect(page.locator('pre.mermaid[data-mermaid-surface]')).toHaveCount(0);
+    // No light block in the dark page: both diagrams sit on the page surface.
+    expect(await colourLuminance(page, 'pre.mermaid >> nth=0')).toBeLessThan(0.05);
+    expect(await colourLuminance(page, 'pre.mermaid >> nth=1')).toBeLessThan(0.05);
+    // The pale classDef fill gets a dark label (WCAG AA against the fill).
+    const contrast = await page.locator('pre.mermaid g.node', { hasText: 'Pod' }).evaluate(group => {
+      const lum = (c: string) => {
+        const [r, g, b] = c.match(/\d+(\.\d+)?/g)!.slice(0, 3).map(v => {
+          const x = Number(v) / 255;
+          return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const fill = lum(getComputedStyle(group.querySelector('[style*="fill"]')!).fill);
+      const label = lum(getComputedStyle(group.querySelector('.nodeLabel')!).color);
+      return (Math.max(fill, label) + 0.05) / (Math.min(fill, label) + 0.05);
+    });
+    expect(contrast).toBeGreaterThanOrEqual(4.5);
   });
 
   test('renders mermaid code block as SVG', async ({ page }) => {

@@ -13,7 +13,7 @@ fn main() {
 
     std::fs::File::create(js_dir.join("tiptap.js"))
         .unwrap()
-        .write_all(leptos_tiptap_build::TIPTAP_JS.as_bytes())
+        .write_all(patch_tiptap_js(leptos_tiptap_build::TIPTAP_JS).as_bytes())
         .unwrap();
 
     // Mermaid assets are only required when the `mermaid` feature is active.
@@ -130,4 +130,33 @@ fn copy_mermaid(root: &std::path::Path, js_dir: &std::path::Path) {
         }
         std::fs::copy(entry.path(), chunks_dst.join(&name)).expect("failed to copy mermaid chunk");
     }
+}
+
+/// Adjust the generated TipTap bridge. This file is regenerated on every build
+/// script run, so edits must live here; each one fails the build if the
+/// upstream bridge changes shape.
+fn patch_tiptap_js(source: &str) -> String {
+    let patches = [
+        (
+            // Name the editable region; it is otherwise an unnamed textbox.
+            "    injectCSS: false,\n    content: content,",
+            "    injectCSS: false,\n    // Name the editable region; it is otherwise an unnamed textbox.\n    editorProps: {\n      attributes: { role: 'textbox', 'aria-multiline': 'true', 'aria-label': 'Page content' },\n    },\n    content: content,",
+        ),
+        (
+            // Changing editability is not a content change: emitting `update`
+            // would mark a freshly opened editor as having unsaved changes.
+            "  editor.setEditable(editable);",
+            "  // Not a content change: emitting `update` here would mark a freshly\n  // opened editor as having unsaved changes.\n  editor.setEditable(editable, false);",
+        ),
+    ];
+    let mut patched = source.to_string();
+    for (from, to) in patches {
+        assert_eq!(
+            patched.matches(from).count(),
+            1,
+            "leptos-tiptap-build changed its tiptap.js; update patch_tiptap_js in build.rs"
+        );
+        patched = patched.replacen(from, to, 1);
+    }
+    patched
 }

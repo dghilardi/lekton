@@ -17,6 +17,48 @@ pub struct PathWithLessons {
     pub lessons: Vec<Lesson>,
 }
 
+/// Keep only the lesson sources the caller can open now, under the same rule
+/// as reading the documents themselves.
+#[cfg(feature = "ssr")]
+async fn with_openable_sources(
+    state: &AppState,
+    user_ctx: &crate::auth::models::UserContext,
+    mut lessons: Vec<Lesson>,
+) -> Result<Vec<Lesson>, ServerFnError> {
+    let slugs: Vec<String> = lessons
+        .iter()
+        .flat_map(Lesson::source_slugs)
+        .map(str::to_string)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if slugs.is_empty() {
+        return Ok(lessons);
+    }
+    let (allowed_levels, include_draft) = user_ctx.document_visibility();
+    let openable: std::collections::HashSet<String> = state
+        .document_repo
+        .find_by_slugs(&slugs)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+        .into_iter()
+        .filter(|doc| {
+            !doc.is_archived
+                && crate::app::doc_is_accessible(
+                    &doc.access_level,
+                    doc.is_draft,
+                    allowed_levels.as_deref(),
+                    include_draft,
+                )
+        })
+        .map(|doc| doc.slug)
+        .collect();
+    for lesson in &mut lessons {
+        lesson.retain_openable_sources(|slug| openable.contains(slug));
+    }
+    Ok(lessons)
+}
+
 /// Resolve the Learn-mode service or fail with an actionable error.
 #[cfg(feature = "ssr")]
 fn learn_service(
@@ -46,10 +88,13 @@ pub async fn generate_next_lesson(path_id: String) -> Result<Lesson, ServerFnErr
     let state = expect_context::<AppState>();
     let user_ctx = require_user_context(&state).await?;
     let service = learn_service(&state)?;
-    service
+    let lesson = service
         .generate_next(&user_ctx, &path_id)
         .await
-        .map_err(|e| ServerFnError::new(e.to_string()))
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(with_openable_sources(&state, &user_ctx, vec![lesson])
+        .await?
+        .remove(0))
 }
 
 /// Grade a quiz submission for a lesson and record the result.
@@ -77,6 +122,7 @@ pub async fn get_learning_path(path_id: String) -> Result<PathWithLessons, Serve
         .get_path_with_lessons(&user_ctx, &path_id)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let lessons = with_openable_sources(&state, &user_ctx, lessons).await?;
     Ok(PathWithLessons { path, lessons })
 }
 
@@ -134,8 +180,11 @@ pub async fn generate_ephemeral_lesson(scope: LearningScope) -> Result<Lesson, S
     let state = expect_context::<AppState>();
     let user_ctx = require_user_context(&state).await?;
     let service = learn_service(&state)?;
-    service
+    let lesson = service
         .generate_ephemeral(&user_ctx, &scope)
         .await
-        .map_err(|e| ServerFnError::new(e.to_string()))
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(with_openable_sources(&state, &user_ctx, vec![lesson])
+        .await?
+        .remove(0))
 }

@@ -17,6 +17,9 @@ pub struct TocHeading {
 
 /// Class of the scroll container wrapped around every Markdown table.
 pub const TABLE_SCROLL_CLASS: &str = "lekton-table-scroll";
+/// Name of that container: a named, focusable region so keyboard users can
+/// scroll a wide table.
+pub const TABLE_SCROLL_LABEL: &str = "Scrollable table";
 
 /// Render a raw Markdown string to sanitized HTML with heading anchor IDs.
 ///
@@ -68,7 +71,12 @@ pub fn render_markdown(raw: &str) -> String {
                 // Wide tables scroll inside their own box instead of
                 // widening the whole page on narrow screens.
                 Event::Start(Tag::Table(alignments)) => vec![
-                    Event::Html(format!("<div class=\"{TABLE_SCROLL_CLASS}\">").into()),
+                    Event::Html(
+                        format!(
+                            "<div class=\"{TABLE_SCROLL_CLASS}\" tabindex=\"0\" role=\"region\" aria-label=\"{TABLE_SCROLL_LABEL}\">"
+                        )
+                        .into(),
+                    ),
                     Event::Start(Tag::Table(alignments)),
                 ],
                 Event::End(TagEnd::Table) => {
@@ -118,6 +126,9 @@ pub fn sanitize_html(html: &str) -> String {
         .add_tag_attributes("blockquote", &["class"])
         .add_tag_attributes("p", &["class"])
         .add_allowed_classes("div", &[TABLE_SCROLL_CLASS])
+        .add_tag_attribute_values("div", "tabindex", &["0"])
+        .add_tag_attribute_values("div", "role", &["region"])
+        .add_tag_attribute_values("div", "aria-label", &[TABLE_SCROLL_LABEL])
         .clean(html)
         .to_string()
 }
@@ -510,7 +521,7 @@ mod tests {
         let input = "Intro\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\nAfter";
         let result = render_markdown(input);
         let open = result
-            .find("<div class=\"lekton-table-scroll\"><table>")
+            .find("<div class=\"lekton-table-scroll\" tabindex=\"0\" role=\"region\" aria-label=\"Scrollable table\"><table>")
             .expect("table wrapped in the scroll container");
         let close = result
             .find("</table>\n</div>")
@@ -527,6 +538,16 @@ mod tests {
         assert!(result.contains("<div class=\"lekton-table-scroll\">a</div>"));
         assert!(!result.contains("fixed"));
         assert!(!result.contains("hero"));
+    }
+
+    #[test]
+    fn sanitizer_keeps_only_the_table_region_attribute_values() {
+        let result = sanitize_html(
+            "<div class=\"lekton-table-scroll\" tabindex=\"0\" role=\"region\" aria-label=\"Scrollable table\">a</div>\
+             <div tabindex=\"-1\" role=\"dialog\" aria-label=\"Other\">b</div>",
+        );
+        assert!(result.contains("tabindex=\"0\" role=\"region\" aria-label=\"Scrollable table\""));
+        assert!(!result.contains("dialog") && !result.contains("-1") && !result.contains("Other"));
     }
 
     #[test]

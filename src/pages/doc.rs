@@ -183,7 +183,7 @@ fn PdfDocContent(
                 </div>
                 <div class="flex-1 min-w-0">
                     <div class="font-semibold leading-tight">"PDF document"</div>
-                    <div class="text-sm text-base-content/60">"View the full source file"</div>
+                    <div class="text-sm text-base-content/70">"View the full source file"</div>
                 </div>
                 <div class="flex gap-2 flex-shrink-0">
                     <a href=asset_url target="_blank" rel="noopener"
@@ -252,6 +252,11 @@ pub fn DocPage() -> impl IntoView {
                 <span class="loading loading-spinner loading-lg"></span>
             </div>
         }>
+            {move || {
+                doc_resource.get().and_then(Result::ok).flatten().map(|data| view! {
+                    <leptos_meta::Title text=crate::components::page_title(&[&data.title, "Docs"]) />
+                })
+            }}
             {move || {
                 doc_resource.get().map(|result| match result {
                     Ok(Some(data)) => {
@@ -343,7 +348,7 @@ pub fn DocPage() -> impl IntoView {
                                         <Show when=can_edit>
                                             <a
                                                 href=edit_href.clone()
-                                                class="btn btn-ghost btn-sm flex-shrink-0 gap-1.5 text-base-content/60 hover:text-primary"
+                                                class="btn btn-ghost btn-sm flex-shrink-0 gap-1.5 text-base-content/70 hover:text-primary"
                                             >
                                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -356,7 +361,7 @@ pub fn DocPage() -> impl IntoView {
                                         <Show when=can_edit_upload>
                                             <a
                                                 href=upload_edit_href.clone()
-                                                class="btn btn-ghost btn-sm flex-shrink-0 gap-1.5 text-base-content/60 hover:text-primary"
+                                                class="btn btn-ghost btn-sm flex-shrink-0 gap-1.5 text-base-content/70 hover:text-primary"
                                             >
                                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -370,7 +375,7 @@ pub fn DocPage() -> impl IntoView {
                                             <button
                                                 type="button"
                                                 on:click=move |_| show_archive_confirm.set(true)
-                                                class="btn btn-ghost btn-sm flex-shrink-0 gap-1.5 text-base-content/60 hover:text-error"
+                                                class="btn btn-ghost btn-sm flex-shrink-0 gap-1.5 text-base-content/70 hover:text-error"
                                             >
                                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -388,7 +393,7 @@ pub fn DocPage() -> impl IntoView {
                                                 href=source_view_url.clone().unwrap_or_default()
                                                 target="_blank"
                                                 rel="noopener"
-                                                class="btn btn-ghost btn-sm flex-shrink-0 gap-1.5 text-base-content/60 hover:text-primary"
+                                                class="btn btn-ghost btn-sm flex-shrink-0 gap-1.5 text-base-content/70 hover:text-primary"
                                             >
                                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"

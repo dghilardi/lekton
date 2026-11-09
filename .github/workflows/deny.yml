@@ -18,4 +18,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      # cargo-deny-action downloads its binary while building a Docker image,
+      # without retries, so a transient GitHub release error failed the audit.
+      # install-action retries downloads; the command matches the action's
+      # defaults and its pinned cargo-deny version.
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-deny@0.20.2
+
+      - name: Check dependencies
+        run: cargo deny --log-level warn --manifest-path ./Cargo.toml --all-features check

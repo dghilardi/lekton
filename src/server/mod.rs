@@ -17,8 +17,8 @@ pub mod users;
 
 #[cfg(feature = "ssr")]
 pub(crate) use helpers::{
-    request_document_visibility, require_admin_user, require_any_user, require_user_context,
-    resolve_release_pins,
+    bad_request, request_document_visibility, require_admin_user, require_any_user,
+    require_user_context, resolve_release_pins,
 };
 
 #[cfg(feature = "ssr")]
@@ -26,6 +26,15 @@ mod helpers {
     use crate::app::AppState;
     use crate::auth::demo_auth::resolve_demo_session_user;
     use leptos::prelude::*;
+
+    /// A validation error the caller can fix: status 400 and the bare message,
+    /// which the form shows next to the field it names.
+    pub(crate) fn bad_request(message: impl Into<String>) -> ServerFnError {
+        if let Some(response) = use_context::<leptos_axum::ResponseOptions>() {
+            response.set_status(axum::http::StatusCode::BAD_REQUEST);
+        }
+        ServerFnError::new(message.into())
+    }
 
     /// Turn the raw `v=<source>:<release>` values from the page URL into the
     /// pins a request should actually resolve with.
@@ -79,7 +88,6 @@ mod helpers {
         state: &AppState,
     ) -> Result<(Option<Vec<String>>, bool), ServerFnError> {
         use crate::auth::extractor::{ACCESS_TOKEN_COOKIE, LOGGED_IN_COOKIE};
-        use crate::auth::models::UserContext;
         use crate::auth::token_service::TokenService;
         use axum_extra::extract::CookieJar;
 
@@ -90,39 +98,16 @@ mod helpers {
             .and_then(|c| state.token_service.validate_access_token(c.value()).ok())
             .map(|claims| TokenService::claims_to_user(&claims));
 
-        if let Some(auth_user) = maybe_user {
-            if auth_user.is_admin {
-                return Ok((None, true));
-            }
-            let user_doc = state
-                .user_repo
-                .find_user_by_id(&auth_user.user_id)
+        let demo_user = state
+            .demo_mode
+            .then(|| jar.get("lekton_demo_user"))
+            .flatten()
+            .and_then(|cookie| resolve_demo_session_user(cookie.value()));
+        if let Some(user) = maybe_user.or(demo_user) {
+            return Ok(crate::app::user_context_for(state, &user)
                 .await
-                .map_err(|e| ServerFnError::new(e.to_string()))?;
-            let ctx = match user_doc {
-                Some(u) => UserContext::from_user_doc(auth_user, &u),
-                None => UserContext {
-                    user: auth_user,
-                    effective_access_levels: vec![],
-                    budget_plan: None,
-                    can_write: false,
-                    can_read_draft: false,
-                    can_write_draft: false,
-                },
-            };
-            return Ok(ctx.document_visibility());
-        }
-
-        if state.demo_mode {
-            if let Some(cookie) = jar.get("lekton_demo_user") {
-                if let Some(demo_user) = resolve_demo_session_user(cookie.value()) {
-                    if demo_user.is_admin {
-                        return Ok((None, true));
-                    } else {
-                        return Ok((Some(vec!["public".to_string()]), false));
-                    }
-                }
-            }
+                .map_err(|e| ServerFnError::new(e.to_string()))?
+                .document_visibility());
         }
 
         if jar.get(LOGGED_IN_COOKIE).is_some() {
@@ -207,60 +192,24 @@ mod helpers {
         state: &AppState,
     ) -> Result<crate::auth::models::UserContext, ServerFnError> {
         use crate::auth::extractor::{ACCESS_TOKEN_COOKIE, LOGGED_IN_COOKIE};
-        use crate::auth::models::UserContext;
         use crate::auth::token_service::TokenService;
         use axum_extra::extract::CookieJar;
 
         let jar: CookieJar = leptos_axum::extract().await?;
 
-        if let Some(auth_user) = jar
+        let token_user = jar
             .get(ACCESS_TOKEN_COOKIE)
             .and_then(|c| state.token_service.validate_access_token(c.value()).ok())
-            .map(|claims| TokenService::claims_to_user(&claims))
-        {
-            // Admins short-circuit every access check inside UserContext, so a
-            // minimal context is sufficient without loading the user document.
-            if auth_user.is_admin {
-                return Ok(UserContext {
-                    user: auth_user,
-                    effective_access_levels: vec![],
-                    budget_plan: None,
-                    can_write: true,
-                    can_read_draft: true,
-                    can_write_draft: true,
-                });
-            }
-            let user_doc = state
-                .user_repo
-                .find_user_by_id(&auth_user.user_id)
+            .map(|claims| TokenService::claims_to_user(&claims));
+        let demo_user = state
+            .demo_mode
+            .then(|| jar.get("lekton_demo_user"))
+            .flatten()
+            .and_then(|cookie| resolve_demo_session_user(cookie.value()));
+        if let Some(user) = token_user.or(demo_user) {
+            return crate::app::user_context_for(state, &user)
                 .await
-                .map_err(|e| ServerFnError::new(e.to_string()))?;
-            return Ok(match user_doc {
-                Some(u) => UserContext::from_user_doc(auth_user, &u),
-                None => UserContext {
-                    user: auth_user,
-                    effective_access_levels: vec![],
-                    budget_plan: None,
-                    can_write: false,
-                    can_read_draft: false,
-                    can_write_draft: false,
-                },
-            });
-        }
-
-        if state.demo_mode {
-            if let Some(cookie) = jar.get("lekton_demo_user") {
-                if let Some(demo_user) = resolve_demo_session_user(cookie.value()) {
-                    return Ok(UserContext {
-                        user: demo_user,
-                        effective_access_levels: vec![],
-                        budget_plan: None,
-                        can_write: false,
-                        can_read_draft: false,
-                        can_write_draft: false,
-                    });
-                }
-            }
+                .map_err(|e| ServerFnError::new(e.to_string()));
         }
 
         if jar.get(LOGGED_IN_COOKIE).is_some() {

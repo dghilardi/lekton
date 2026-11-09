@@ -105,10 +105,10 @@ pub async fn save_document_with_attachment(
 
     let title = form.title.trim();
     if title.is_empty() {
-        return Err(ServerFnError::new("Title is required"));
+        return Err(crate::server::bad_request("Title is required"));
     }
     if form.access_level.trim().is_empty() {
-        return Err(ServerFnError::new("Access level is required"));
+        return Err(crate::server::bad_request("Access level is required"));
     }
 
     let asset = state
@@ -118,7 +118,9 @@ pub async fn save_document_with_attachment(
         .map_err(|e| ServerFnError::new(e.to_string()))?
         .ok_or_else(|| ServerFnError::new("Asset not found"))?;
     if !asset.content_type.starts_with("application/pdf") {
-        return Err(ServerFnError::new("Only PDF attachments are supported"));
+        return Err(crate::server::bad_request(
+            "Only PDF attachments are supported",
+        ));
     }
 
     let is_edit = form.slug.is_some();

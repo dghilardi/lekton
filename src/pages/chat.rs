@@ -156,11 +156,12 @@ pub fn ChatPage() -> impl IntoView {
     let is_logged_in = move || current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
 
     view! {
+        <leptos_meta::Title text=crate::components::page_title(&["Chat"]) />
         <Show when=is_logged_in fallback=|| view! {
             <div class="flex items-center justify-center min-h-[60vh]">
                 <div class="text-center space-y-4">
                     <h2 class="text-2xl font-bold">"Sign in required"</h2>
-                    <p class="text-base-content/60">"Please log in to use the AI chat assistant."</p>
+                    <p class="text-base-content/70">"Please log in to use the AI chat assistant."</p>
                     <a href="/login" class="btn btn-primary">"Sign in"</a>
                 </div>
             </div>
@@ -523,7 +524,7 @@ fn ChatContent() -> impl IntoView {
                                                 {if is_user {
                                                     view! { <div class="whitespace-pre-wrap">{msg.content.clone()}</div> }.into_any()
                                                 } else if msg.content.is_empty() {
-                                                    view! { <p class="italic text-base-content/60">"No answer was received."</p> }.into_any()
+                                                    view! { <p class="italic text-base-content/70">"No answer was received."</p> }.into_any()
                                                 } else {
                                                     view! { <MarkdownContent html=render_markdown(&msg.content) /> }.into_any()
                                                 }}
@@ -668,10 +669,10 @@ fn ChatContent() -> impl IntoView {
                             </button>
                         </div>
                         <div class="mt-2 flex justify-between items-center gap-3 px-2">
-                            <span class="text-[10px] text-base-content/30 italic">"Shift + Enter for new line"</span>
+                            <span class="text-xs text-base-content/70 italic">"Shift + Enter for new line"</span>
                             <div class="flex items-center gap-3">
                                 <BudgetIndicator budget=budget />
-                                <span class="text-[10px] text-base-content/30">"AI responses may be inaccurate"</span>
+                                <span class="text-xs text-base-content/70">"AI responses may be inaccurate"</span>
                             </div>
                         </div>
                     </div>
@@ -718,7 +719,7 @@ fn BudgetIndicator(
             Some(if status.thrifty || status.headroom < THRIFTY_BELOW {
                 view! {
                     <span
-                        class="text-[10px] text-warning font-medium"
+                        class="text-xs text-warning font-medium"
                         title="Your AI budget is nearly used up. Answers are being generated with a lighter pipeline to stretch what is left."
                     >
                         {format!("AI budget {percent}% — saving credits")}
@@ -727,7 +728,7 @@ fn BudgetIndicator(
             } else {
                 view! {
                     <span
-                        class="text-[10px] text-base-content/40"
+                        class="text-xs text-base-content/70"
                         title="Share of your AI budget still available. It refills over time."
                     >
                         {format!("AI budget {percent}%")}
@@ -800,9 +801,9 @@ fn SourceReferencesBlock(sources: Vec<SourceReference>) -> impl IntoView {
 
     view! {
         <details class="rounded-xl border border-base-300/80 bg-base-100/70 overflow-hidden">
-            <summary class="cursor-pointer list-none px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-base-content/60">
+            <summary class="cursor-pointer list-none px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-base-content/70">
                 {format!("Sources ({count})")}
-                <span class="ml-2 font-normal normal-case tracking-normal text-base-content/50">"most relevant first"</span>
+                <span class="ml-2 font-normal normal-case tracking-normal text-base-content/70">"most relevant first"</span>
             </summary>
             <div class="flex flex-col gap-2 border-t border-base-300/80 px-3 py-3">
                 <For
@@ -858,7 +859,7 @@ fn SourceReferencesBlock(sources: Vec<SourceReference>) -> impl IntoView {
                                 <div class="min-w-0">
                                     <div class="text-sm font-medium text-base-content">{display_title}</div>
                                     <Show when=move || show_document_title fallback=|| ()>
-                                        <div class="text-xs text-base-content/60">{document_title.clone()}</div>
+                                        <div class="text-xs text-base-content/70">{document_title.clone()}</div>
                                     </Show>
                                     <div class="text-xs text-base-content/65 break-all">{source_ref_label}</div>
                                 </div>
@@ -1062,7 +1063,7 @@ fn MessageFeedbackBar(
             // Negative comment box (shown when thumbs-down clicked and no feedback set yet)
             <Show when=move || show_comment_box.get() fallback=|| ()>
                 <div class="flex flex-col gap-2 p-2 bg-base-200/50 rounded-lg border border-base-300 max-w-sm">
-                    <p class="text-[11px] text-base-content/60">"What was wrong? (optional)"</p>
+                    <p class="text-[11px] text-base-content/70">"What was wrong? (optional)"</p>
                     <textarea
                         class="textarea textarea-sm textarea-bordered text-xs resize-none bg-base-100 min-h-[52px]"
                         placeholder="Tell us what could be improved..."

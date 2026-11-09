@@ -62,7 +62,9 @@ RUN apt-get update && \
 # Pinned and checksummed for reproducible builds; bump both values together.
 ARG PDFIUM_RELEASE=8076
 ARG PDFIUM_SHA256=d9d67bc40af03aef4fe28a60b19b1086f28ace019c8c9caf19cb7fe3d14ceca3
-RUN curl -fsSL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F${PDFIUM_RELEASE}/pdfium-linux-x64.tgz" \
+# Retries back off exponentially (1, 2, 4, 8, 16 s): GitHub release downloads
+# fail transiently (e.g. 504).
+RUN curl -fsSL --retry 5 --retry-all-errors "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F${PDFIUM_RELEASE}/pdfium-linux-x64.tgz" \
         -o /tmp/pdfium.tgz && \
     echo "${PDFIUM_SHA256}  /tmp/pdfium.tgz" | sha256sum -c - && \
     tar -xzf /tmp/pdfium.tgz -C /tmp lib/libpdfium.so && \

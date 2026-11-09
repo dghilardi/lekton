@@ -92,7 +92,7 @@ pub fn ReleaseSelector(
                 tabindex="0"
                 class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-56 border border-base-200"
             >
-                <li class="menu-title text-[10px] uppercase tracking-wider">"Release"</li>
+                <li class="menu-title uppercase tracking-wider">"Release"</li>
                 {releases.into_iter().map(|release| {
                     let source_id = source_id.clone();
                     let latest = latest_release.clone();

@@ -1,6 +1,13 @@
 use leptos::prelude::*;
 use leptos_tiptap::*;
 
+use super::form::{self, FieldErrors};
+#[cfg(feature = "hydrate")]
+use super::unsaved::{self, draft_key};
+use super::unsaved::{EditorDraft, EditorFields};
+use crate::auth::refresh_client::with_auth_retry;
+use crate::components::{described_by, focus_element, FieldError};
+
 use super::asset_panel::AssetPanel;
 
 #[cfg(feature = "hydrate")]
@@ -85,7 +92,10 @@ pub async fn save_doc_content(
         },
     )
     .await
-    .map_err(|e| ServerFnError::new(e.to_string()))
+    .map_err(|e| match e {
+        crate::error::AppError::BadRequest(message) => crate::server::bad_request(message),
+        other => ServerFnError::new(other.to_string()),
+    })
 }
 
 /// Load a page's rendered body and editable metadata, or `None` when it does
@@ -392,7 +402,6 @@ pub fn EditorPage() -> impl IntoView {
     let (access_level, set_access_level) = signal(String::new());
     let (parent_slug, set_parent_slug) = signal(String::new());
     let (order, set_order) = signal(0u32);
-    let (disabled, _set_disabled) = signal(false);
     let (_selection, set_selection) = signal(TiptapSelectionState::default());
     let (save_status, set_save_status) = signal(String::new());
     let (saving, set_saving) = signal(false);
@@ -401,28 +410,139 @@ pub fn EditorPage() -> impl IntoView {
     // in-progress edits are never clobbered by a resource refetch for the same doc.
     let (loaded_slug, set_loaded_slug) = signal(Option::<String>::None);
 
+    // Unsaved changes are measured against what was last loaded or saved. The
+    // body counts as edited once TipTap reports a change, since it normalises
+    // the loaded HTML; the other fields compare by value.
+    let baseline = RwSignal::new(EditorFields::default());
+    let baseline_content = RwSignal::new(String::new());
+    let content_edited = RwSignal::new(false);
+    let current_fields = move || EditorFields {
+        slug: slug.get(),
+        title: title.get(),
+        access_level: access_level.get(),
+        parent_slug: parent_slug.get(),
+        order: order.get(),
+    };
+    let dirty = Signal::derive(move || {
+        loaded_slug.with(Option::is_some)
+            && (content_edited.get() || current_fields() != baseline.get())
+    });
+    // A local draft left by an earlier visit, offered until restored or discarded.
+    let draft_offer = RwSignal::new(None::<EditorDraft>);
+    let disabled = Signal::derive(move || draft_offer.with(Option::is_some));
+    // Bumped to recreate TipTap, which only reads its content when created.
+    let editor_epoch = RwSignal::new(0u32);
+
     Effect::new(move || {
         let current_slug = route_slug();
         if let Some(Ok(maybe)) = doc_resource.get() {
             if loaded_slug.get_untracked().as_deref() != Some(current_slug.as_str()) {
-                set_loaded_slug.set(Some(current_slug.clone()));
-                match maybe {
-                    Some(doc) => {
-                        set_slug.set(current_slug);
-                        set_title.set(doc.title);
-                        set_value.set(doc.html);
-                        set_access_level.set(doc.access_level);
-                        set_parent_slug.set(doc.parent_slug.unwrap_or_default());
-                        set_order.set(doc.order);
-                    }
+                let (fields, content) = match maybe {
+                    Some(doc) => (
+                        EditorFields {
+                            slug: current_slug.clone(),
+                            title: doc.title,
+                            access_level: doc.access_level,
+                            parent_slug: doc.parent_slug.unwrap_or_default(),
+                            order: doc.order,
+                        },
+                        doc.html,
+                    ),
                     // Creation mode: seed the (editable) slug from the route, if any.
-                    None => set_slug.set(current_slug),
+                    None => (
+                        EditorFields {
+                            slug: current_slug.clone(),
+                            ..Default::default()
+                        },
+                        String::new(),
+                    ),
+                };
+                set_slug.set(fields.slug.clone());
+                set_title.set(fields.title.clone());
+                set_value.set(content.clone());
+                set_access_level.set(fields.access_level.clone());
+                set_parent_slug.set(fields.parent_slug.clone());
+                set_order.set(fields.order);
+                content_edited.set(false);
+                #[cfg(feature = "hydrate")]
+                {
+                    let key = draft_key(&current_slug);
+                    match unsaved::browser::load_draft(&key) {
+                        Some(draft) if draft.differs_from(&fields, &content) => {
+                            draft_offer.set(Some(draft))
+                        }
+                        Some(_) => unsaved::browser::remove_draft(&key),
+                        None => {}
+                    }
                 }
+                baseline.set(fields);
+                baseline_content.set(content);
+                set_loaded_slug.set(Some(current_slug));
             }
         }
     });
 
-    let save_action = Action::new(move |_: &()| {
+    // Keep a local draft while there are unsaved changes, and drop it once
+    // they are saved or reverted; an offered draft is left untouched.
+    #[cfg(feature = "hydrate")]
+    Effect::new(move || {
+        let Some(route) = loaded_slug.get() else {
+            return;
+        };
+        if draft_offer.with(Option::is_some) {
+            return;
+        }
+        let key = draft_key(&route);
+        if dirty.get() {
+            let draft = EditorDraft {
+                fields: current_fields(),
+                content: value.get(),
+                saved_at: unsaved::browser::now(),
+            };
+            unsaved::browser::store_draft(&key, &draft);
+        } else {
+            unsaved::browser::remove_draft(&key);
+        }
+    });
+    #[cfg(feature = "hydrate")]
+    unsaved::browser::install_leave_guard(dirty);
+
+    let restore_draft = move |_| {
+        if let Some(draft) = draft_offer.get_untracked() {
+            set_slug.set(draft.fields.slug);
+            set_title.set(draft.fields.title);
+            set_access_level.set(draft.fields.access_level);
+            set_parent_slug.set(draft.fields.parent_slug);
+            set_order.set(draft.fields.order);
+            content_edited.set(draft.content != baseline_content.get_untracked());
+            set_value.set(draft.content);
+            editor_epoch.update(|epoch| *epoch += 1);
+            draft_offer.set(None);
+        }
+    };
+    let discard_draft = move |_| {
+        #[cfg(feature = "hydrate")]
+        if let Some(route) = loaded_slug.get_untracked() {
+            unsaved::browser::remove_draft(&draft_key(&route));
+        }
+        draft_offer.set(None);
+    };
+
+    // Per-field validation messages, shown next to their field.
+    let field_errors = RwSignal::new(FieldErrors::default());
+    let field_error = move |pick: fn(&FieldErrors) -> &Option<String>| {
+        Signal::derive(move || field_errors.with(|errors| pick(errors).clone()))
+    };
+    let slug_error = field_error(|e| &e.slug);
+    let title_error = field_error(|e| &e.title);
+    let access_error = field_error(|e| &e.access_level);
+    let invalid =
+        |error: Signal<Option<String>>| move || error.with(Option::is_some).then_some("true");
+    let describe = |error: Signal<Option<String>>, error_id: &'static str| {
+        move || described_by(None, error_id, error.with(Option::is_some))
+    };
+
+    let save_action = crate::components::browser_action(move |_: &()| {
         let current_slug = slug.get();
         let current_title = title.get();
         let current_content = value.get();
@@ -436,25 +556,67 @@ pub fn EditorPage() -> impl IntoView {
             }
         };
         let current_order = order.get();
+        let saved_fields = EditorFields {
+            slug: current_slug.clone(),
+            title: current_title.clone(),
+            access_level: current_access_level.clone(),
+            parent_slug: current_parent.clone().unwrap_or_default(),
+            order: current_order,
+        };
         async move {
             set_saving.set(true);
             set_save_status.set(String::new());
-            match save_doc_content(
-                current_slug,
-                current_title,
-                current_content,
-                current_access_level,
-                current_parent,
-                current_order,
-            )
+            let saved_content = current_content.clone();
+            match with_auth_retry(move || {
+                save_doc_content(
+                    current_slug.clone(),
+                    current_title.clone(),
+                    current_content.clone(),
+                    current_access_level.clone(),
+                    current_parent.clone(),
+                    current_order,
+                )
+            })
             .await
             {
-                Ok(msg) => set_save_status.set(msg),
-                Err(e) => set_save_status.set(format!("Error: {e}")),
+                Ok(msg) => {
+                    // Edits made while saving stay unsaved.
+                    content_edited.set(value.get_untracked() != saved_content);
+                    baseline_content.set(saved_content);
+                    baseline.set(saved_fields);
+                    set_save_status.set(msg);
+                }
+                Err(e) => {
+                    let message = e.to_string();
+                    match form::field_errors_from_server(&message) {
+                        Some(errors) => {
+                            if let Some(id) = errors.first_invalid_id() {
+                                focus_element(id);
+                            }
+                            field_errors.set(errors);
+                        }
+                        None => set_save_status
+                            .set(format!("Error: {}", form::server_message(&message))),
+                    }
+                }
             }
             set_saving.set(false);
         }
     });
+
+    let on_save = move |_| {
+        if disabled.get_untracked() {
+            return;
+        }
+        let errors = form::validate(&current_fields());
+        if let Some(id) = errors.first_invalid_id() {
+            field_errors.set(errors);
+            focus_element(id);
+            return;
+        }
+        field_errors.set(FieldErrors::default());
+        save_action.dispatch(());
+    };
 
     view! {
         <Suspense fallback=move || view! { <div class="loading loading-spinner loading-lg"></div> }>
@@ -464,50 +626,79 @@ pub fn EditorPage() -> impl IntoView {
                         let is_new = existing.is_none();
                         view! {
                             <div class="space-y-4">
+                                <leptos_meta::Title text=move || {
+                                    let page = if is_new { "Create page".to_string() } else { format!("Edit {}", route_slug()) };
+                                    crate::components::page_title(&[&page, "Editor"])
+                                } />
                                 <h2 class="text-2xl font-bold">
                                     {if is_new { "Create Page" } else { "Edit Page" }}
                                 </h2>
 
+                                {move || draft_offer.get().map(|_| view! {
+                                    <div class="alert alert-info" role="status">
+                                        <span>"This page has unsaved changes from an earlier visit, kept in this browser. Restore or discard the draft before editing."</span>
+                                        <div class="flex gap-2">
+                                            <button type="button" class="btn btn-sm btn-primary" on:click=restore_draft>"Restore draft"</button>
+                                            <button type="button" class="btn btn-sm btn-ghost" on:click=discard_draft>"Discard draft"</button>
+                                        </div>
+                                    </div>
+                                })}
+
+                                <fieldset disabled=move || disabled.get() class="min-w-0 space-y-4 border-0 p-0" aria-label="Page editor">
                                 // Slug — editable only when creating a new page.
                                 <div class="form-control">
-                                    <label class="label">
+                                    <label class="label" for=form::SLUG_ID>
                                         <span class="label-text font-semibold">"Slug (page path)"</span>
                                     </label>
                                     {if is_new {
                                         view! {
                                             <input
+                                                id=form::SLUG_ID
                                                 type="text"
                                                 class="input input-bordered w-full"
                                                 placeholder="e.g. guides/getting-started"
+                                                required=true
+                                                aria-invalid=invalid(slug_error)
+                                                aria-describedby=describe(slug_error, "editor-slug-error")
                                                 prop:value=slug
-                                                on:input=move |ev| set_slug.set(event_target_value(&ev))
+                                                on:input=move |ev| {
+                                                    field_errors.update(|e| e.slug = None);
+                                                    set_slug.set(event_target_value(&ev));
+                                                }
                                             />
                                         }.into_any()
                                     } else {
                                         view! {
-                                            <input type="text" class="input input-bordered w-full" prop:value=slug disabled=true />
+                                            <input id=form::SLUG_ID type="text" class="input input-bordered w-full" prop:value=slug disabled=true />
                                         }.into_any()
                                     }}
+                                    <FieldError id="editor-slug-error" error=slug_error />
                                 </div>
 
                                 // Title input
                                 <div class="form-control">
-                                    <label class="label">
+                                    <label class="label" for=form::TITLE_ID>
                                         <span class="label-text font-semibold">"Document Title"</span>
                                     </label>
                                     <input
+                                        id=form::TITLE_ID
                                         type="text"
                                         class="input input-bordered w-full"
+                                        required=true
+                                        aria-invalid=invalid(title_error)
+                                        aria-describedby=describe(title_error, "editor-title-error")
                                         prop:value=title
                                         on:input=move |ev| {
+                                            field_errors.update(|e| e.title = None);
                                             set_title.set(event_target_value(&ev));
                                         }
                                     />
+                                    <FieldError id="editor-title-error" error=title_error />
                                 </div>
 
                                 // Access level
                                 <div class="form-control">
-                                    <label class="label">
+                                    <label class="label" for=form::ACCESS_LEVEL_ID>
                                         <span class="label-text font-semibold">"Access level"</span>
                                     </label>
                                     <Suspense fallback=move || view! { <span class="loading loading-spinner loading-sm"></span> }>
@@ -515,9 +706,16 @@ pub fn EditorPage() -> impl IntoView {
                                             let levels = levels_resource.get().and_then(|r| r.ok()).unwrap_or_default();
                                             view! {
                                                 <select
+                                                    id=form::ACCESS_LEVEL_ID
                                                     class="select select-bordered w-full"
+                                                    required=true
+                                                    aria-invalid=invalid(access_error)
+                                                    aria-describedby=describe(access_error, "editor-access-level-error")
                                                     prop:value=move || access_level.get()
-                                                    on:change=move |e| set_access_level.set(event_target_value(&e))
+                                                    on:change=move |e| {
+                                                        field_errors.update(|e| e.access_level = None);
+                                                        set_access_level.set(event_target_value(&e));
+                                                    }
                                                 >
                                                     <option value="" disabled selected=move || access_level.get().is_empty()>
                                                         "Select an access level…"
@@ -536,12 +734,13 @@ pub fn EditorPage() -> impl IntoView {
                                             }
                                         }}
                                     </Suspense>
+                                    <FieldError id="editor-access-level-error" error=access_error />
                                 </div>
 
                                 // Parent + order
                                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
                                     <div class="form-control sm:col-span-2">
-                                        <label class="label"><span class="label-text font-semibold">"Parent (optional)"</span></label>
+                                        <label class="label" for=form::PARENT_ID><span class="label-text font-semibold">"Parent (optional)"</span></label>
                                         <Suspense fallback=move || view! { <span class="loading loading-spinner loading-sm"></span> }>
                                             {move || {
                                                 let nav = nav_resource.get().and_then(|r| r.ok()).unwrap_or_default();
@@ -549,6 +748,7 @@ pub fn EditorPage() -> impl IntoView {
                                                 flatten_nav(&nav, 0, &mut flat);
                                                 view! {
                                                     <select
+                                                        id=form::PARENT_ID
                                                         class="select select-bordered w-full"
                                                         prop:value=move || parent_slug.get()
                                                         on:change=move |e| set_parent_slug.set(event_target_value(&e))
@@ -568,8 +768,9 @@ pub fn EditorPage() -> impl IntoView {
                                         </Suspense>
                                     </div>
                                     <div class="form-control">
-                                        <label class="label"><span class="label-text font-semibold">"Order"</span></label>
+                                        <label class="label" for=form::ORDER_ID><span class="label-text font-semibold">"Order"</span></label>
                                         <input
+                                            id=form::ORDER_ID
                                             type="number"
                                             min="0"
                                             class="input input-bordered w-full"
@@ -584,51 +785,51 @@ pub fn EditorPage() -> impl IntoView {
                                 </div>
 
                                 // Toolbar
-                                <div class="flex flex-wrap gap-1 p-2 bg-base-200 rounded-lg">
-                                    <button class="btn btn-sm btn-ghost" title="Bold"
+                                <div class="flex flex-wrap gap-1 p-2 bg-base-200 rounded-lg" role="toolbar" aria-label="Formatting" aria-controls="lekton-editor">
+                                    <button type="button" class="btn btn-sm btn-ghost" aria-label="Bold" title="Bold"
                                         on:click=move |_| set_msg.set(TiptapInstanceMsg::Bold)>
-                                        <strong>"B"</strong>
+                                        <strong aria-hidden="true">"B"</strong>
                                     </button>
-                                    <button class="btn btn-sm btn-ghost" title="Italic"
+                                    <button type="button" class="btn btn-sm btn-ghost" aria-label="Italic" title="Italic"
                                         on:click=move |_| set_msg.set(TiptapInstanceMsg::Italic)>
-                                        <em>"I"</em>
+                                        <em aria-hidden="true">"I"</em>
                                     </button>
-                                    <button class="btn btn-sm btn-ghost" title="Strikethrough"
+                                    <button type="button" class="btn btn-sm btn-ghost" aria-label="Strikethrough" title="Strikethrough"
                                         on:click=move |_| set_msg.set(TiptapInstanceMsg::Strike)>
-                                        <s>"S"</s>
+                                        <s aria-hidden="true">"S"</s>
                                     </button>
-                                    <div class="divider divider-horizontal mx-0"></div>
-                                    <button class="btn btn-sm btn-ghost" title="Heading 1"
+                                    <div class="divider divider-horizontal mx-0" aria-hidden="true"></div>
+                                    <button type="button" class="btn btn-sm btn-ghost" aria-label="Heading 1 (H1)" title="Heading 1"
                                         on:click=move |_| set_msg.set(TiptapInstanceMsg::H1)>
                                         "H1"
                                     </button>
-                                    <button class="btn btn-sm btn-ghost" title="Heading 2"
+                                    <button type="button" class="btn btn-sm btn-ghost" aria-label="Heading 2 (H2)" title="Heading 2"
                                         on:click=move |_| set_msg.set(TiptapInstanceMsg::H2)>
                                         "H2"
                                     </button>
-                                    <button class="btn btn-sm btn-ghost" title="Heading 3"
+                                    <button type="button" class="btn btn-sm btn-ghost" aria-label="Heading 3 (H3)" title="Heading 3"
                                         on:click=move |_| set_msg.set(TiptapInstanceMsg::H3)>
                                         "H3"
                                     </button>
-                                    <div class="divider divider-horizontal mx-0"></div>
-                                    <button class="btn btn-sm btn-ghost" title="Bullet List"
+                                    <div class="divider divider-horizontal mx-0" aria-hidden="true"></div>
+                                    <button type="button" class="btn btn-sm btn-ghost"
                                         on:click=move |_| set_msg.set(TiptapInstanceMsg::BulletList)>
-                                        "List"
+                                        "Bulleted list"
                                     </button>
-                                    <button class="btn btn-sm btn-ghost" title="Ordered List"
+                                    <button type="button" class="btn btn-sm btn-ghost"
                                         on:click=move |_| set_msg.set(TiptapInstanceMsg::OrderedList)>
-                                        "1. List"
+                                        "Numbered list"
                                     </button>
-                                    <button class="btn btn-sm btn-ghost" title="Blockquote"
+                                    <button type="button" class="btn btn-sm btn-ghost"
                                         on:click=move |_| set_msg.set(TiptapInstanceMsg::Blockquote)>
                                         "Quote"
                                     </button>
-                                    <button class="btn btn-sm btn-ghost" title="Highlight"
+                                    <button type="button" class="btn btn-sm btn-ghost"
                                         on:click=move |_| set_msg.set(TiptapInstanceMsg::Highlight)>
-                                        "HL"
+                                        "Highlight"
                                     </button>
-                                    <div class="divider divider-horizontal mx-0"></div>
-                                    <button class="btn btn-sm btn-ghost" title="Insert Image"
+                                    <div class="divider divider-horizontal mx-0" aria-hidden="true"></div>
+                                    <button type="button" class="btn btn-sm btn-ghost"
                                         on:click=move |_| {
                                             #[cfg(feature = "hydrate")]
                                             leptos::task::spawn_local(async {
@@ -637,7 +838,7 @@ pub fn EditorPage() -> impl IntoView {
                                                 ).await;
                                             });
                                         }>
-                                        "Img"
+                                        "Insert image"
                                     </button>
                                 </div>
 
@@ -646,21 +847,27 @@ pub fn EditorPage() -> impl IntoView {
                                     <Show when=move || editor_ready.get() fallback=move || view! {
                                         <p role="status">{move || if editor_error.get() { "The editor could not load. Reload the page to try again." } else { "Loading editor…" }}</p>
                                     }>
-                                    <TiptapInstance
-                                        id=Signal::derive(|| "lekton-editor".to_string())
-                                        msg=msg
-                                        disabled=disabled
-                                        value=value
-                                        set_value=Callback::new(move |(v,): (TiptapContent,)| {
-                                            set_value.set(match v {
-                                                TiptapContent::Html(content) => content,
-                                                TiptapContent::Json(content) => content,
-                                            });
-                                        })
-                                        on_selection_change=Callback::new(move |(state,): (TiptapSelectionState,)| {
-                                            set_selection.set(state);
-                                        })
-                                    />
+                                    {move || {
+                                        editor_epoch.track();
+                                        view! {
+                                            <TiptapInstance
+                                                id=Signal::derive(|| "lekton-editor".to_string())
+                                                msg=msg
+                                                disabled=disabled
+                                                value=value
+                                                set_value=Callback::new(move |(v,): (TiptapContent,)| {
+                                                    content_edited.set(true);
+                                                    set_value.set(match v {
+                                                        TiptapContent::Html(content) => content,
+                                                        TiptapContent::Json(content) => content,
+                                                    });
+                                                })
+                                                on_selection_change=Callback::new(move |(state,): (TiptapSelectionState,)| {
+                                                    set_selection.set(state);
+                                                })
+                                            />
+                                        }
+                                    }}
                                     </Show>
                                 </div>
 
@@ -669,7 +876,7 @@ pub fn EditorPage() -> impl IntoView {
                                     <button
                                         class="btn btn-primary"
                                         prop:disabled=saving
-                                        on:click=move |_| { save_action.dispatch(()); }
+                                        on:click=on_save
                                     >
                                         {move || if saving.get() {
                                             "Saving...".to_string()
@@ -691,17 +898,18 @@ pub fn EditorPage() -> impl IntoView {
                                     {move || {
                                         let status = save_status.get();
                                         if status.is_empty() {
-                                            view! { <span></span> }.into_any()
+                                            view! { <span class="text-sm text-base-content/70" role="status">{move || if dirty.get() { "Unsaved changes" } else { "" }}</span> }.into_any()
                                         } else if status.starts_with("Error") {
-                                            view! { <span class="text-error">{status}</span> }.into_any()
+                                            view! { <span class="text-error" role="alert">{status}</span> }.into_any()
                                         } else {
-                                            view! { <span class="text-success">{status}</span> }.into_any()
+                                            view! { <span class="text-success" role="status">{status}</span> }.into_any()
                                         }
                                     }}
                                 </div>
 
                                 // Asset panel
                                 <AssetPanel set_msg=set_msg />
+                                </fieldset>
                             </div>
                         }.into_any()
                     }

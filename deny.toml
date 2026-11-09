@@ -11,6 +11,7 @@ feature-depth = 1
 # Security advisories (RustSec)
 [advisories]
 ignore = [
+    { id = "RUSTSEC-2026-0462", reason = "rmcp: only the MCP server transport is enabled; affected transport-streamable-http-client-reqwest and transport-streamable-http-client-unix-socket features are absent even with Lekton --all-features. Reassess before adding any MCP client transport; remove when upgrading to rmcp >=3.9.0" },
     { id = "RUSTSEC-2024-0436", reason = "paste is a transitive dependency; upstream migration to pastey pending" },
     { id = "RUSTSEC-2025-0012", reason = "backoff: transitive via async-openai, unmaintained, no alternative" },
     { id = "RUSTSEC-2024-0384", reason = "instant: transitive via async-openai's backoff, unmaintained, no alternative" },

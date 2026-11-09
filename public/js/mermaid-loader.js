@@ -41,6 +41,7 @@
 
       return mermaid.run({ nodes: nodes }).then(function () {
         removeSpinners();
+        nodes.forEach(fitLabelsToFills);
         addExpandButtons(nodes);
       }).catch(function (err) {
         console.error('[mermaid] render failed:', err);
@@ -180,14 +181,45 @@
     };
   }
 
-  // Diagrams that set their own colours (classDef, style, linkStyle or theme
-  // variables) are written for a light page: their fills rarely set a text
-  // colour, so the dark theme's light text becomes unreadable on them. Such
-  // diagrams always render with the light theme on a light surface (see the
-  // data-mermaid-surface rule in tailwind.css).
-  function isAuthorStyled(source) {
-    return /^\s*(?:classDef|style|linkStyle)\s/m.test(source) ||
+  // Diagrams that pick their own theme, theme variables or link colours are
+  // written for a light page as a whole, so they keep the light theme on a
+  // light surface (see the data-mermaid-surface rule in tailwind.css). Node
+  // fills from classDef or style follow the site theme instead; their labels
+  // are fitted to each fill below.
+  function pinsLightTheme(source) {
+    return /^\s*linkStyle\s/m.test(source) ||
       /themeVariables|["']?theme["']?\s*:/.test(source);
+  }
+
+  // Relative luminance of a computed CSS colour, or null when unparsable.
+  function luminance(colour) {
+    var parts = (colour || '').match(/\d+(?:\.\d+)?/g);
+    if (!parts || parts.length < 3) return null;
+    var c = parts.slice(0, 3).map(function (v) {
+      v = Number(v) / 255;
+      return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  }
+
+  // Mermaid keeps the theme's label colour on nodes an author filled, which
+  // is unreadable on a pale fill in the dark theme (or a dark fill in the
+  // light one). Give each such label whichever of a dark or light ink
+  // contrasts more with its fill.
+  var DARK_INK = '#1c1f2b', LIGHT_INK = '#f8f6f3';
+  function fitLabelsToFills(diagram) {
+    diagram.querySelectorAll('g.node').forEach(function (group) {
+      var shape = group.querySelector('[style*="fill"]');
+      var fill = shape && luminance(getComputedStyle(shape).fill);
+      if (fill === null || fill === undefined) return;
+      var onDark = (fill + 0.05) / (luminance('rgb(28,31,43)') + 0.05);
+      var onLight = (luminance('rgb(248,246,243)') + 0.05) / (fill + 0.05);
+      var ink = onDark >= onLight ? DARK_INK : LIGHT_INK;
+      group.querySelectorAll('.nodeLabel, .nodeLabel *, text, tspan').forEach(function (label) {
+        label.style.setProperty('color', ink, 'important');
+        label.style.setProperty('fill', ink, 'important');
+      });
+    });
   }
 
   // Prepend a light-theme directive, after any YAML frontmatter (which must
@@ -250,7 +282,7 @@
       if (!node.hasAttribute('data-mermaid-source')) {
         node.setAttribute('data-mermaid-source', node.textContent || '');
       }
-      if (isAuthorStyled(node.getAttribute('data-mermaid-source'))) {
+      if (pinsLightTheme(node.getAttribute('data-mermaid-source'))) {
         node.setAttribute('data-mermaid-surface', 'light');
       }
       node.setAttribute('data-mermaid-queued', '');

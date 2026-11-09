@@ -13,7 +13,7 @@ pub fn UserMenu() -> impl IntoView {
         .0;
     let prompt_library_enabled = crate::app::use_feature(|f| f.prompt_library);
 
-    let logout_action = Action::new_local(move |_: &()| async move {
+    let logout_action = crate::components::browser_action(move |_: &()| async move {
         #[cfg(feature = "hydrate")]
         {
             use gloo_net::http::Request;

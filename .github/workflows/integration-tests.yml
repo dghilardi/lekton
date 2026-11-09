@@ -47,9 +47,18 @@ jobs:
         env:
           PDFIUM_RELEASE: "8076"
           PDFIUM_SHA256: d9d67bc40af03aef4fe28a60b19b1086f28ace019c8c9caf19cb7fe3d14ceca3
+          # gh fetches the asset through the authenticated release-asset API.
+          # The anonymous download URL has failed with 504 for every attempt
+          # while that API kept serving the same file.
+          GH_TOKEN: ${{ github.token }}
         run: |
-          curl -fsSL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F${PDFIUM_RELEASE}/pdfium-linux-x64.tgz" \
-            -o "$RUNNER_TEMP/pdfium.tgz"
+          # Five attempts with exponential backoff (1, 2, 4, 8 s between them).
+          for attempt in 1 2 3 4 5; do
+            gh release download "chromium/${PDFIUM_RELEASE}" --repo bblanchon/pdfium-binaries \
+              --pattern pdfium-linux-x64.tgz --output "$RUNNER_TEMP/pdfium.tgz" --clobber && break
+            [ "$attempt" -eq 5 ] && exit 1
+            sleep $((2 ** (attempt - 1)))
+          done
           echo "${PDFIUM_SHA256}  $RUNNER_TEMP/pdfium.tgz" | sha256sum -c -
           mkdir -p "$RUNNER_TEMP/pdfium"
           tar -xzf "$RUNNER_TEMP/pdfium.tgz" -C "$RUNNER_TEMP/pdfium" lib/libpdfium.so

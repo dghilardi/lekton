@@ -57,7 +57,7 @@
     /* currentColor: the derived shades below follow whatever colour the
      * sidebar ends up with, including one set by older custom CSS. */
     --lekton-sidebar-text:       currentColor;
-    --lekton-sidebar-text-muted: color-mix(in oklab, var(--lekton-sidebar-text) 70%, transparent);
+    --lekton-sidebar-text-muted: color-mix(in oklab, var(--lekton-sidebar-text) 80%, transparent);
     --lekton-sidebar-heading:    color-mix(in oklch, var(--lekton-sidebar-text) 65%, transparent);
     --lekton-sidebar-accent:     var(--color-primary);
     --lekton-sidebar-hover-bg:   color-mix(in oklab, var(--color-base-300) 60%, transparent);
@@ -225,7 +225,7 @@ code, pre, kbd, samp, .font-mono {
  * Sidebar / Menu
  * ════════════════════════════════════════════════════════════════ */
 .menu-title {
-    font-size:      0.64rem !important;
+    font-size:      0.6875rem !important;
     font-weight:    700     !important;
     letter-spacing: 0.09em  !important;
     text-transform: uppercase !important;
@@ -265,6 +265,13 @@ code, pre, kbd, samp, .font-mono {
     color: color-mix(in oklab, var(--lekton-header-text) 80%, transparent);
 }
 
+/* Page titles run together at the ghost button's tight tracking and 12.8px
+ * (`.btn-ghost.btn-sm`, which this selector outranks). */
+[data-lekton-header] .lekton-header-link.btn {
+    font-size:      0.875rem;
+    letter-spacing: 0;
+}
+
 [data-lekton-header] .lekton-header-link:hover,
 [data-lekton-header] .lekton-header-link:focus-visible {
     color:            var(--lekton-header-text);
@@ -291,7 +298,7 @@ code, pre, kbd, samp, .font-mono {
 
 /* Chat history entries are buttons, not links: same tokens apply. */
 [data-lekton-sidebar] [data-lekton-chat-session] {
-    color: color-mix(in oklab, var(--lekton-sidebar-text) 60%, transparent);
+    color: var(--lekton-sidebar-text-muted);
 }
 
 [data-lekton-sidebar] summary:hover,
@@ -375,7 +382,7 @@ label > span:first-child {
  * Badges
  * ════════════════════════════════════════════════════════════════ */
 .badge {
-    font-size:      0.62rem;
+    font-size:      0.6875rem;  /* 11px: the floor for uppercase labels */
     font-weight:    700;
     letter-spacing: 0.05em;
     text-transform: uppercase;
@@ -951,6 +958,11 @@ html[data-theme] .prose pre.mermaid:has(.mermaid-expand-btn) {
     margin-bottom: 1.8em;
 }
 
+.prose .lekton-table-scroll:focus-visible {
+    outline:        2px solid var(--color-primary);
+    outline-offset: 2px;
+}
+
 .prose .lekton-table-scroll > table {
     margin-top:    0;
     margin-bottom: 0;
@@ -1035,6 +1047,9 @@ html[data-theme] .prose pre.mermaid:has(.mermaid-expand-btn) {
     background-color:  color-mix(in oklch, var(--color-warning) 8%, transparent);
 }
 .prose .markdown-alert-warning .callout-title { color: var(--color-warning); }
+:root:not([data-theme="dark"]) .prose .markdown-alert-warning .callout-title {
+    color: color-mix(in oklch, var(--color-warning) 45%, var(--color-base-content));
+}
 .prose .markdown-alert-caution {
     border-left-color: var(--color-error);
     background-color:  color-mix(in oklch, var(--color-error) 8%, transparent);
@@ -1109,12 +1124,29 @@ header:not(header.fixed):not([class*="fixed"]) {
     margin-bottom: 1.5rem;
 }
 
+/* Status colours are tuned as fills. Used as text on the light surfaces
+ * (outline and soft badges, text-warning) they need more depth for AA
+ * contrast: mix in the text colour rather than introducing new hues. */
+:root:not([data-theme="dark"]) :is(.badge-outline, .badge-soft, .badge-dash).badge-warning,
+:root:not([data-theme="dark"]) .text-warning {
+    color: color-mix(in oklch, var(--color-warning) 45%, var(--color-base-content)) !important;
+}
+:root:not([data-theme="dark"]) :is(.badge-outline, .badge-soft, .badge-dash).badge-success {
+    color: color-mix(in oklch, var(--color-success) 75%, var(--color-base-content));
+}
+:root:not([data-theme="dark"]) :is(.badge-outline, .badge-soft, .badge-dash).badge-info {
+    color: color-mix(in oklch, var(--color-info) 75%, var(--color-base-content));
+}
+:root:not([data-theme="dark"]) :is(.badge-outline, .badge-soft, .badge-dash).badge-error {
+    color: color-mix(in oklch, var(--color-error) 75%, var(--color-base-content));
+}
+
 /* ════════════════════════════════════════════════════════════════
  * Status badge adjustments
  * ════════════════════════════════════════════════════════════════ */
 .badge-success {
     font-weight: 700;
-    font-size:   0.6rem;
+    font-size:   0.6875rem;
     letter-spacing: 0.05em;
     text-transform: uppercase;
 }
@@ -1318,6 +1350,28 @@ html.lekton-play .lekton-splash {
 #asyncapi-viewer :is(.bg-gray-800, .bg-gray-900, pre) { background: var(--color-base-300) !important; color: var(--color-base-content) !important; }
 #asyncapi-viewer :is(.text-gray-900, .text-gray-800, .text-gray-700, .text-gray-600, .text-gray-500, .text-gray-400) { color: var(--color-base-content) !important; }
 #asyncapi-viewer :is(.border, .border-gray-200, .border-gray-300) { border-color: var(--color-base-300) !important; }
+/* AsyncAPI ships its own palette. Keep its accents, at AA contrast on the
+ * portal surfaces: descriptions and the example panels read in the page text
+ * colour, white-on-colour badges get deeper fills, and coloured text gets a
+ * deeper shade on light surfaces and a lighter one on dark surfaces. */
+#asyncapi-viewer .prose,
+#asyncapi-viewer .prose :is(p, li, strong, em, td, th, h1, h2, h3, h4) { color: var(--color-base-content) !important; }
+#asyncapi-viewer :is(.bg-gray-800, .bg-gray-900) :is(h1, h2, h3, h4, h5, h6, .text-white, .text-gray-100, .text-gray-200, .text-gray-300) { color: var(--color-base-content) !important; }
+#asyncapi-viewer .bg-green-600 { background-color: #276749 !important; }
+#asyncapi-viewer .bg-orange-600 { background-color: #9c4221 !important; }
+#asyncapi-viewer :is(.bg-blue-400, .bg-blue-500, .bg-blue-600) { background-color: #2b6cb0 !important; }
+#asyncapi-viewer .bg-red-600 { background-color: #c53030 !important; }
+#asyncapi-viewer .bg-teal-500 { background-color: #285e61 !important; }
+#asyncapi-viewer .bg-yellow-600 { background-color: #975a16 !important; }
+#asyncapi-viewer .bg-indigo-400 { background-color: #4c51bf !important; }
+:root:not([data-theme="dark"]) #asyncapi-viewer .text-teal-500 { color: #285e61 !important; }
+:root:not([data-theme="dark"]) #asyncapi-viewer :is(.text-orange-500, .text-orange-600, .text-orange-700) { color: #9c4221 !important; }
+:root:not([data-theme="dark"]) #asyncapi-viewer .text-blue-500 { color: #2b6cb0 !important; }
+:root:not([data-theme="dark"]) #asyncapi-viewer :is(.text-purple-500, .text-purple-700) { color: #6b46c1 !important; }
+:root:not([data-theme="dark"]) #asyncapi-viewer :is(.text-red-600, .text-red-700) { color: #c53030 !important; }
+[data-theme="dark"] #asyncapi-viewer :is(.text-orange-600, .text-orange-700) { color: #f6ad55 !important; }
+[data-theme="dark"] #asyncapi-viewer .text-purple-700 { color: #b794f4 !important; }
+[data-theme="dark"] #asyncapi-viewer :is(.text-red-600, .text-red-700) { color: #fc8181 !important; }
 
 /* Scalar's document/version badges must wrap inside the reader column. */
 #scalar-api-reference .flex:has(> .badge) { flex-wrap: wrap; }

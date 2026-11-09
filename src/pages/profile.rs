@@ -22,6 +22,7 @@ pub fn ProfilePage() -> impl IntoView {
 
     view! {
         <div class="container mx-auto max-w-3xl px-4 py-8">
+            <leptos_meta::Title text=crate::components::page_title(&["Profile"]) />
             <h1 class="text-2xl font-bold mb-6">"Profile"</h1>
 
             // User info card
@@ -48,7 +49,7 @@ pub fn ProfilePage() -> impl IntoView {
                                         </p>
                                         // Without a name the email is already the heading above.
                                         {user.name.is_some().then(|| view! {
-                                            <p class="text-sm text-base-content/60 break-all">{user.email.clone()}</p>
+                                            <p class="text-sm text-base-content/70 break-all">{user.email.clone()}</p>
                                         })}
                                     </div>
                                     {if user.is_admin {
@@ -81,7 +82,7 @@ fn PatSection() -> impl IntoView {
     let new_token = RwSignal::new(None::<CreatePatResult>);
 
     // Load PATs on mount
-    let load_pats = Action::new_local(move |_: &()| async move {
+    let load_pats = crate::components::browser_action(move |_: &()| async move {
         match with_auth_retry(list_user_pats).await {
             Ok(tokens) => pats.set(tokens),
             Err(e) => tracing::error!("Failed to load PATs: {e}"),
@@ -100,7 +101,7 @@ fn PatSection() -> impl IntoView {
     view! {
         <div>
             <h2 class="text-xl font-semibold mb-4">"Personal Access Tokens"</h2>
-            <p class="text-base-content/60 text-sm mb-6">
+            <p class="text-base-content/70 text-sm mb-6">
                 "PATs allow IDE agents (Claude Code, Cursor, RooCode) to access documentation
                  on your behalf via the MCP server. Each token inherits your permissions."
             </p>
@@ -185,7 +186,7 @@ fn CreatePatForm(
     let error = RwSignal::new(None::<String>);
     let loading = RwSignal::new(false);
 
-    let submit = Action::new_local(move |n: &String| {
+    let submit = crate::components::browser_action(move |n: &String| {
         let n = n.clone();
         async move {
             loading.set(true);
@@ -247,7 +248,7 @@ fn FeedbackSection() -> impl IntoView {
     let feedback: RwSignal<Option<FeedbackListResult>> = RwSignal::new(None);
     let loading = RwSignal::new(false);
 
-    let load = Action::new_local(move |p: &u64| {
+    let load = crate::components::browser_action(move |p: &u64| {
         let p = *p;
         async move {
             loading.set(true);
@@ -266,7 +267,7 @@ fn FeedbackSection() -> impl IntoView {
     view! {
         <div>
             <h2 class="text-xl font-semibold mb-2">"AI Feedback History"</h2>
-            <p class="text-base-content/60 text-sm mb-6">
+            <p class="text-base-content/70 text-sm mb-6">
                 "Feedback you gave on AI responses. You can review and delete any item."
             </p>
 
@@ -343,7 +344,7 @@ fn FeedbackRow(
     let msg_id = fb.message_id.clone();
     let is_positive = fb.rating == "positive";
 
-    let delete = Action::new_local(move |_: &()| {
+    let delete = crate::components::browser_action(move |_: &()| {
         let mid = msg_id.clone();
         async move {
             if with_auth_retry(|| delete_user_feedback(mid.clone()))
@@ -425,7 +426,7 @@ fn PatRow(
     let id = token.id.clone();
     let is_active = token.is_active;
 
-    let toggle = Action::new_local(move |active: &bool| {
+    let toggle = crate::components::browser_action(move |active: &bool| {
         let active = *active;
         let id = id.clone();
         async move {
@@ -440,7 +441,7 @@ fn PatRow(
 
     let id_del = token.id.clone();
     #[allow(unused_variables)]
-    let delete = Action::new_local(move |_: &()| {
+    let delete = crate::components::browser_action(move |_: &()| {
         let id = id_del.clone();
         async move {
             if with_auth_retry(|| delete_user_pat(id.clone()))
@@ -455,8 +456,8 @@ fn PatRow(
     view! {
         <tr class=("opacity-40", !is_active)>
             <td class="font-mono text-sm">{token.name}</td>
-            <td class="text-sm text-base-content/60">{token.created_at}</td>
-            <td class="text-sm text-base-content/60">
+            <td class="text-sm text-base-content/70">{token.created_at}</td>
+            <td class="text-sm text-base-content/70">
                 {token.last_used_at.unwrap_or_else(|| "Never".to_string())}
             </td>
             <td>

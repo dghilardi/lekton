@@ -124,16 +124,21 @@ pub fn AssetPanel(
 ) -> impl IntoView {
     let (refresh_counter, set_refresh_counter) = signal(0u32);
 
-    let assets_resource = Resource::new(move || refresh_counter.get(), |_| list_all_assets());
+    let assets_resource =
+        crate::components::reader_resource(move || refresh_counter.get(), |_| list_all_assets());
 
     let refresh = move || set_refresh_counter.update(|c| *c += 1);
     // Suppress warning on SSR where refresh is only used in hydrate cfg blocks
     let _ = &refresh;
 
-    let delete_action = Action::new(move |key: &String| {
+    let delete_action = crate::components::browser_action(move |key: &String| {
         let key = key.clone();
         async move {
-            match delete_asset_by_key(key).await {
+            match crate::auth::refresh_client::with_auth_retry(move || {
+                delete_asset_by_key(key.clone())
+            })
+            .await
+            {
                 Ok(()) => {}
                 Err(e) => {
                     leptos::logging::error!("Failed to delete asset: {}", e);
@@ -145,7 +150,7 @@ pub fn AssetPanel(
 
     view! {
         <div class="collapse collapse-arrow bg-base-200 rounded-lg">
-            <input type="checkbox" />
+            <input type="checkbox" aria-label="Show assets" />
             <div class="collapse-title font-semibold">
                 "Assets"
             </div>
@@ -179,7 +184,7 @@ pub fn AssetPanel(
                         assets_resource.get().map(|result| match result {
                             Ok(assets) if assets.is_empty() => {
                                 view! {
-                                    <p class="text-sm text-base-content/60">"No assets uploaded yet."</p>
+                                    <p class="text-sm text-base-content/70">"No assets uploaded yet."</p>
                                 }.into_any()
                             }
                             Ok(assets) => {
@@ -210,7 +215,7 @@ pub fn AssetPanel(
                                                     view! {
                                                         <tr>
                                                             <td class="max-w-48 truncate" title=key.clone()>{name}</td>
-                                                            <td class="text-xs text-base-content/60">{content_type}</td>
+                                                            <td class="text-xs text-base-content/70">{content_type}</td>
                                                             <td class="text-xs">{size}</td>
                                                             <td>
                                                                 {badge.map(|(label, class)| view! {

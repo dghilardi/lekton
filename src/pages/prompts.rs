@@ -1,4 +1,3 @@
-use leptos::portal::Portal;
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
 
@@ -21,8 +20,9 @@ pub fn PromptsPage() -> impl IntoView {
 
     view! {
         <div class="container mx-auto max-w-6xl px-4 py-8">
+            <leptos_meta::Title text=crate::components::page_title(&["Prompt Library"]) />
             <h1 class="text-3xl font-bold">"Prompt Library"</h1>
-            <p class="text-base-content/60 mt-2 mb-6 max-w-3xl">
+            <p class="text-base-content/70 mt-2 mb-6 max-w-3xl">
                 "Published prompts can be added to your working context. Default primary prompts come from the shared library; favorites and hidden flags are personal preferences."
             </p>
             <PromptLibraryPanel />
@@ -48,7 +48,7 @@ fn PromptLibraryPanel() -> impl IntoView {
     let saving_slug = RwSignal::new(None::<String>);
     let open_slug = RwSignal::new(None::<String>);
 
-    let load = Action::new_local(move |_: &()| async move {
+    let load = crate::components::browser_action(move |_: &()| async move {
         match with_auth_retry(get_prompt_library_state).await {
             Ok(value) => state.set(Some(value)),
             Err(err) => tracing::error!("Failed to load prompt library: {err}"),
@@ -61,7 +61,7 @@ fn PromptLibraryPanel() -> impl IntoView {
 
     // One action for every favorite/hidden toggle; the server answers with
     // the refreshed library.
-    let save = Action::new_local(
+    let save = crate::components::browser_action(
         move |(slug, is_favorite, is_hidden): &(String, bool, bool)| {
             let (slug, is_favorite, is_hidden) = (slug.clone(), *is_favorite, *is_hidden);
             async move {
@@ -200,7 +200,7 @@ fn PromptLibraryPanel() -> impl IntoView {
                 <Show
                     when=move || !visible.with(Vec::is_empty)
                     fallback=|| view! {
-                        <p class="rounded-box border border-base-300 px-4 py-8 text-center text-base-content/60">
+                        <p class="rounded-box border border-base-300 px-4 py-8 text-center text-base-content/70">
                             "No prompts match these filters."
                         </p>
                     }
@@ -251,7 +251,7 @@ fn PromptRow(
             <button
                 class=move || format!(
                     "btn btn-ghost btn-sm btn-square shrink-0 {}",
-                    if is_favorite { "text-warning" } else { "text-base-content/40" }
+                    if is_favorite { "text-warning" } else { "text-base-content/70" }
                 )
                 aria-pressed=if is_favorite { "true" } else { "false" }
                 aria-label=star_label
@@ -276,7 +276,7 @@ fn PromptRow(
                     })}
                 </div>
                 <p class="mt-0.5 text-sm text-base-content/70 line-clamp-2">{item.description.clone()}</p>
-                <div class="mt-1 flex flex-wrap items-center gap-1 text-xs text-base-content/60">
+                <div class="mt-1 flex flex-wrap items-center gap-1 text-xs text-base-content/70">
                     <span>{item.owner.clone()}</span>
                     {item.tags.iter().take(ROW_TAG_LIMIT).map(|t| view! {
                         <span class="rounded bg-base-200 px-1.5 py-0.5">{t.clone()}</span>
@@ -336,24 +336,16 @@ fn PromptDetailModal(
         copied.set(false);
     };
 
-    // Portalled to <body>: the page content is animated with a transform,
-    // which would otherwise become the containing block of the fixed modal.
+    // A native modal dialog renders in the top layer, so the transformed page
+    // content cannot become its containing block.
     view! {
-        <Show when=move || open_slug.get().is_some() fallback=|| ()>
-          <Portal>
-            <div
-                class="modal modal-open"
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="prompt-detail-title"
-                on:keydown=move |ev: leptos::ev::KeyboardEvent| {
-                    if ev.key() == "Escape" {
-                        close();
-                    }
-                }
-            >
-                <div class="modal-box max-w-3xl">
-                    <button class="btn btn-sm btn-circle btn-ghost absolute right-3 top-3" aria-label="Close" on:click=move |_| close()>
+        <crate::components::ModalDialog
+            open=Signal::derive(move || open_slug.get().is_some())
+            on_close=Callback::new(move |_| close())
+            labelled_by="prompt-detail-title"
+            class="max-w-3xl"
+        >
+                    <button type="button" class="btn btn-sm btn-circle btn-ghost absolute right-3 top-3" aria-label="Close" on:click=move |_| close()>
                         "✕"
                     </button>
                     {move || item.get().map(|item| {
@@ -362,7 +354,7 @@ fn PromptDetailModal(
                         let (is_favorite, is_hidden) = (item.is_favorite, item.is_hidden);
                         view! {
                             <h2 id="prompt-detail-title" class="pr-10 text-xl font-bold">{item.name.clone()}</h2>
-                            <p class="mt-1 text-sm text-base-content/60 break-all">{item.slug.clone()}</p>
+                            <p class="mt-1 text-sm text-base-content/70 break-all">{item.slug.clone()}</p>
                             <p class="mt-3">{item.description.clone()}</p>
                             <div class="mt-3 flex flex-wrap gap-1.5 text-xs">
                                 <span class="badge badge-outline badge-sm">{format!("owner: {}", item.owner)}</span>
@@ -441,10 +433,6 @@ fn PromptDetailModal(
                             }.into_any(),
                         })}
                     </Suspense>
-                </div>
-                <div class="modal-backdrop" on:click=move |_| close()></div>
-            </div>
-          </Portal>
-        </Show>
+        </crate::components::ModalDialog>
     }
 }

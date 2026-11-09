@@ -1,6 +1,12 @@
 //! Admin guided document-upload form: upload a PDF, assign metadata, optionally
 //! generate an AI summary, and create (or edit) a document that links to it.
 
+use crate::auth::refresh_client::with_auth_retry;
+use crate::components::{described_by, focus_element, FieldError};
+
+const PDF_ID: &str = "upload-pdf";
+const TITLE_ID: &str = "upload-title";
+const ACCESS_LEVEL_ID: &str = "upload-access-level";
 use leptos::prelude::*;
 
 use crate::server::document_upload::{
@@ -47,13 +53,14 @@ pub fn DocumentUploadManager() -> impl IntoView {
     let query = leptos_router::hooks::use_query_map();
     let edit_slug = Memo::new(move |_| query.read().get("edit").filter(|s| !s.is_empty()));
 
-    let levels_resource = LocalResource::new(list_levels);
-    let nav_resource = LocalResource::new(|| crate::server::nav::get_navigation(None));
+    let levels_resource = LocalResource::new(|| with_auth_retry(list_levels));
+    let nav_resource =
+        LocalResource::new(|| with_auth_retry(|| crate::server::nav::get_navigation(None)));
     let edit_resource = LocalResource::new(move || {
         let slug = edit_slug.get();
         async move {
             match slug {
-                Some(s) => Some(get_document_for_edit(s).await),
+                Some(s) => Some(with_auth_retry(move || get_document_for_edit(s.clone())).await),
                 None => None,
             }
         }
@@ -134,7 +141,14 @@ pub fn DocumentUploadManager() -> impl IntoView {
     #[cfg(not(feature = "hydrate"))]
     let _ = set_generating;
 
-    let save = Action::new(move |_: &()| {
+    // Per-field validation messages, shown next to their field.
+    let title_error = RwSignal::new(None::<String>);
+    let access_error = RwSignal::new(None::<String>);
+    let file_error = RwSignal::new(None::<String>);
+    let invalid =
+        |error: RwSignal<Option<String>>| move || error.with(Option::is_some).then_some("true");
+
+    let save = crate::components::browser_action(move |_: &()| {
         let form = DocumentUploadForm {
             slug: edit_slug.get_untracked(),
             title: title.get_untracked(),
@@ -154,23 +168,26 @@ pub fn DocumentUploadManager() -> impl IntoView {
         async move {
             set_error_msg.set(None);
             set_success_msg.set(None);
-            if form.title.trim().is_empty() {
-                set_error_msg.set(Some("Title is required".into()));
-                return;
-            }
-            if form.access_level.trim().is_empty() {
-                set_error_msg.set(Some("Select an access level".into()));
-                return;
-            }
-            if form.asset_key.is_empty() {
-                set_error_msg.set(Some("Upload a PDF first".into()));
-                return;
-            }
-            match save_document_with_attachment(form).await {
+            match with_auth_retry(move || save_document_with_attachment(form.clone())).await {
                 Ok(slug) => {
                     set_success_msg.set(Some(slug));
                 }
-                Err(e) => set_error_msg.set(Some(clean_err(&e.to_string()))),
+                Err(e) => {
+                    let message = clean_err(&e.to_string());
+                    let field = match message.as_str() {
+                        "Title is required" => Some((TITLE_ID, title_error)),
+                        "Access level is required" => Some((ACCESS_LEVEL_ID, access_error)),
+                        "Only PDF attachments are supported" => Some((PDF_ID, file_error)),
+                        _ => None,
+                    };
+                    match field {
+                        Some((id, error)) => {
+                            error.set(Some(message));
+                            focus_element(id);
+                        }
+                        None => set_error_msg.set(Some(message)),
+                    }
+                }
             }
         }
     });
@@ -221,7 +238,7 @@ pub fn DocumentUploadManager() -> impl IntoView {
                 </Show>
 
                 {move || error_msg.get().map(|e| view! {
-                    <div class="alert alert-error text-sm">
+                    <div class="alert alert-error text-sm" role="alert">
                         <span>{e}</span>
                         <button class="btn btn-ghost btn-xs" on:click=move |_| set_error_msg.set(None)>"✕"</button>
                     </div>
@@ -238,13 +255,20 @@ pub fn DocumentUploadManager() -> impl IntoView {
                 })}
 
                 // ── PDF upload ───────────────────────────────────────────────
-                <div class="form-control">
-                    <label class="label"><span class="label-text font-medium">"PDF file"</span></label>
+                <div class="form-control" role="group" aria-labelledby="upload-pdf-label">
+                    <span id="upload-pdf-label" class="label"><span class="label-text font-medium">"PDF file"</span></span>
                     <div class="flex items-center gap-3">
                         <button
+                            id=PDF_ID
+                            type="button"
                             class="btn btn-outline btn-sm"
+                            aria-invalid=invalid(file_error)
+                            aria-describedby=move || described_by(Some("upload-file-name"), "upload-pdf-error", file_error.with(Option::is_some))
                             prop:disabled=move || uploading.get()
-                            on:click=on_upload
+                            on:click=move |ev| {
+                                file_error.set(None);
+                                on_upload(ev);
+                            }
                         >
                             {move || if uploading.get() {
                                 view! { <span class="loading loading-spinner loading-xs"></span> }.into_any()
@@ -252,31 +276,40 @@ pub fn DocumentUploadManager() -> impl IntoView {
                                 view! { <span>"Choose PDF…"</span> }.into_any()
                             }}
                         </button>
-                        <span class="text-sm text-base-content/70">
+                        <span id="upload-file-name" class="text-sm text-base-content/70">
                             {move || {
                                 let f = file_name.get();
                                 if f.is_empty() { "No file selected".to_string() } else { f }
                             }}
                         </span>
                     </div>
+                    <FieldError id="upload-pdf-error" error=file_error />
                 </div>
 
                 // ── Title ────────────────────────────────────────────────────
                 <div class="form-control">
-                    <label class="label"><span class="label-text font-medium">"Title"</span></label>
+                    <label class="label" for=TITLE_ID><span class="label-text font-medium">"Title"</span></label>
                     <input
+                        id=TITLE_ID
                         type="text"
                         class="input input-bordered w-full"
                         placeholder="e.g. Employee Handbook 2026"
+                        required=true
+                        aria-invalid=invalid(title_error)
+                        aria-describedby=move || described_by(None, "upload-title-error", title_error.with(Option::is_some))
                         prop:value=move || title.get()
-                        on:input=move |e| set_title.set(event_target_value(&e))
+                        on:input=move |e| {
+                            title_error.set(None);
+                            set_title.set(event_target_value(&e));
+                        }
                     />
+                    <FieldError id="upload-title-error" error=title_error />
                 </div>
 
                 // ── Description / summary ────────────────────────────────────
                 <div class="form-control">
                     <div class="flex items-center justify-between">
-                        <label class="label"><span class="label-text font-medium">"Description"</span></label>
+                        <label class="label" for="upload-description"><span class="label-text font-medium">"Description"</span></label>
                         <Show when=move || rag_enabled.get()>
                             <button
                                 class="btn btn-ghost btn-xs gap-1 text-primary hover:bg-primary/10"
@@ -292,6 +325,7 @@ pub fn DocumentUploadManager() -> impl IntoView {
                         </Show>
                     </div>
                     <textarea
+                        id="upload-description"
                         class="textarea textarea-bordered w-full min-h-24"
                         placeholder="A short description of what this document covers."
                         prop:value=move || summary.get()
@@ -301,15 +335,22 @@ pub fn DocumentUploadManager() -> impl IntoView {
 
                 // ── Access level ─────────────────────────────────────────────
                 <div class="form-control">
-                    <label class="label"><span class="label-text font-medium">"Access level"</span></label>
+                    <label class="label" for=ACCESS_LEVEL_ID><span class="label-text font-medium">"Access level"</span></label>
                     <Suspense fallback=move || view! { <span class="loading loading-spinner loading-sm"></span> }>
                         {move || {
                             let levels = levels_resource.get().and_then(|r| r.ok()).unwrap_or_default();
                             view! {
                                 <select
+                                    id=ACCESS_LEVEL_ID
                                     class="select select-bordered w-full"
+                                    required=true
+                                    aria-invalid=invalid(access_error)
+                                    aria-describedby=move || described_by(None, "upload-access-level-error", access_error.with(Option::is_some))
                                     prop:value=move || access_level.get()
-                                    on:change=move |e| set_access_level.set(event_target_value(&e))
+                                    on:change=move |e| {
+                                        access_error.set(None);
+                                        set_access_level.set(event_target_value(&e));
+                                    }
                                 >
                                     <option value="" disabled selected=move || access_level.get().is_empty()>
                                         "Select an access level…"
@@ -328,12 +369,13 @@ pub fn DocumentUploadManager() -> impl IntoView {
                             }
                         }}
                     </Suspense>
+                    <FieldError id="upload-access-level-error" error=access_error />
                 </div>
 
                 // ── Parent + order ───────────────────────────────────────────
                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div class="form-control sm:col-span-2">
-                        <label class="label"><span class="label-text font-medium">"Parent (optional)"</span></label>
+                        <label class="label" for="upload-parent"><span class="label-text font-medium">"Parent (optional)"</span></label>
                         <Suspense fallback=move || view! { <span class="loading loading-spinner loading-sm"></span> }>
                             {move || {
                                 let nav = nav_resource.get().and_then(|r| r.ok()).unwrap_or_default();
@@ -341,6 +383,7 @@ pub fn DocumentUploadManager() -> impl IntoView {
                                 flatten_nav(&nav, 0, &mut flat);
                                 view! {
                                     <select
+                                        id="upload-parent"
                                         class="select select-bordered w-full"
                                         prop:value=move || parent_slug.get()
                                         on:change=move |e| set_parent_slug.set(event_target_value(&e))
@@ -360,8 +403,9 @@ pub fn DocumentUploadManager() -> impl IntoView {
                         </Suspense>
                     </div>
                     <div class="form-control">
-                        <label class="label"><span class="label-text font-medium">"Order"</span></label>
+                        <label class="label" for="upload-order"><span class="label-text font-medium">"Order"</span></label>
                         <input
+                            id="upload-order"
                             type="number"
                             min="0"
                             class="input input-bordered w-full"
@@ -380,7 +424,24 @@ pub fn DocumentUploadManager() -> impl IntoView {
                     <button
                         class="btn btn-primary"
                         prop:disabled=move || saving.get()
-                        on:click=move |_| { save.dispatch(()); }
+                        on:click=move |_| {
+                            let checks = [
+                                (PDF_ID, file_error, asset_key.get_untracked().is_empty(), "Choose the PDF to attach."),
+                                (TITLE_ID, title_error, title.get_untracked().trim().is_empty(), "Enter a title."),
+                                (ACCESS_LEVEL_ID, access_error, access_level.get_untracked().trim().is_empty(), "Choose who can read this document."),
+                            ];
+                            let mut first_invalid = None;
+                            for (id, error, failed, message) in checks {
+                                error.set(failed.then(|| message.to_string()));
+                                if failed && first_invalid.is_none() {
+                                    first_invalid = Some(id);
+                                }
+                            }
+                            match first_invalid {
+                                Some(id) => focus_element(id),
+                                None => { save.dispatch(()); }
+                            }
+                        }
                     >
                         {move || if saving.get() {
                             view! { <span class="loading loading-spinner loading-sm"></span> }.into_any()

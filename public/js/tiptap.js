@@ -37,6 +37,10 @@ export function create(id, content, editable, onChange, onSelection) {
       window.TipTapYoutube.Youtube
     ],
     injectCSS: false,
+    // Name the editable region; it is otherwise an unnamed textbox.
+    editorProps: {
+      attributes: { role: 'textbox', 'aria-multiline': 'true', 'aria-label': 'Page content' },
+    },
     content: content,
     onUpdate: ({ editor }) => {
       const html = editor.getHTML();
@@ -70,7 +74,9 @@ export function isEditable(id) {
 
 export function setEditable(id, editable) {
   const { editor, _onSelection } = _getEditor(id);
-  editor.setEditable(editable);
+  // Not a content change: emitting `update` here would mark a freshly
+  // opened editor as having unsaved changes.
+  editor.setEditable(editable, false);
 }
 
 export function toggleHeading(id, level) {

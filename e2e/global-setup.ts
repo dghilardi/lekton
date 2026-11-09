@@ -95,6 +95,27 @@ async function ingestSchema(
   }
 }
 
+async function ingestPrompt(slug: string, name: string, description: string) {
+  const response = await fetch(`${BASE_URL}/api/v1/prompts/ingest`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      service_token: SERVICE_TOKEN,
+      slug,
+      name,
+      description,
+      prompt_body: `You are helping with: ${description}`,
+      access_level: 'public',
+      status: 'active',
+      owner: 'e2e-tests',
+      tags: ['e2e'],
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to ingest prompt ${slug}: ${response.status} ${await response.text()}`);
+  }
+}
+
 export default async function globalSetup() {
   console.log('Seeding test data...');
 
@@ -131,6 +152,17 @@ export default async function globalSetup() {
     'public',
     { parentSlug: 'api-docs', order: 0 },
   );
+
+  await ingestDocument(
+    'e2e-wide-table',
+    'Wide Table',
+    '# Wide Table\n\n| Service | Owner | Region | Runtime | Database | Queue | Cache | Notes |\n|---|---|---|---|---|---|---|---|\n| billing-gateway-service | payments-platform-team | eu-west-1 | kubernetes-1.31 | postgresql-16 | kafka-3.7 | redis-7 | handles every outbound card payment |',
+    'public',
+    { isHidden: true },
+  );
+
+  await ingestPrompt('e2e-incident-review', 'Incident Review', 'Draft an incident review.');
+  await ingestPrompt('e2e-release-notes', 'Release Notes', 'Summarise a release.');
 
   await ingestDocument(
     'internal-processes',

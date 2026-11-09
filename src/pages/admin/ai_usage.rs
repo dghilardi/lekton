@@ -83,7 +83,7 @@ pub fn AiUsageReport() -> impl IntoView {
                         let total_tokens: u64 = rows.iter().map(|r| r.prompt_tokens + r.completion_tokens).sum();
                         let total_credits: f64 = rows.iter().map(|r| r.credits).sum();
                         Some(view! {
-                            <div class="overflow-x-auto">
+                            <div class="overflow-x-auto" tabindex="0" role="region" aria-label="AI usage by caller">
                                 <table class="table table-sm">
                                     <thead>
                                         <tr>

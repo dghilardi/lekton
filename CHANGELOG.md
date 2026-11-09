@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Make the prompt detail and created-token dialogs real modal dialogs (focus moves in, stays inside and returns to the opener; Escape closes), make wide Markdown and AI-usage tables keyboard-scrollable named regions, and add a “Skip to section navigation” link on desktop, where the sidebar comes after the content in tab order.
+
 - Label the editor, document-upload and Learn form controls, name the editor body and toolbar buttons, and validate required fields in place: errors appear next to their field (`aria-invalid`, `aria-describedby`) and focus moves to the first one. Editor and upload validation failures from the server now answer 400 with a plain message instead of a 500.
 
 - Give every page its own document title (`<Page> · <Section> · Lekton`), server-rendered where the page is, instead of one shared title.

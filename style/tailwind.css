@@ -951,6 +951,11 @@ html[data-theme] .prose pre.mermaid:has(.mermaid-expand-btn) {
     margin-bottom: 1.8em;
 }
 
+.prose .lekton-table-scroll:focus-visible {
+    outline:        2px solid var(--color-primary);
+    outline-offset: 2px;
+}
+
 .prose .lekton-table-scroll > table {
     margin-top:    0;
     margin-bottom: 0;

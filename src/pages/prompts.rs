@@ -1,4 +1,3 @@
-use leptos::portal::Portal;
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
 
@@ -337,24 +336,16 @@ fn PromptDetailModal(
         copied.set(false);
     };
 
-    // Portalled to <body>: the page content is animated with a transform,
-    // which would otherwise become the containing block of the fixed modal.
+    // A native modal dialog renders in the top layer, so the transformed page
+    // content cannot become its containing block.
     view! {
-        <Show when=move || open_slug.get().is_some() fallback=|| ()>
-          <Portal>
-            <div
-                class="modal modal-open"
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="prompt-detail-title"
-                on:keydown=move |ev: leptos::ev::KeyboardEvent| {
-                    if ev.key() == "Escape" {
-                        close();
-                    }
-                }
-            >
-                <div class="modal-box max-w-3xl">
-                    <button class="btn btn-sm btn-circle btn-ghost absolute right-3 top-3" aria-label="Close" on:click=move |_| close()>
+        <crate::components::ModalDialog
+            open=Signal::derive(move || open_slug.get().is_some())
+            on_close=Callback::new(move |_| close())
+            labelled_by="prompt-detail-title"
+            class="max-w-3xl"
+        >
+                    <button type="button" class="btn btn-sm btn-circle btn-ghost absolute right-3 top-3" aria-label="Close" on:click=move |_| close()>
                         "✕"
                     </button>
                     {move || item.get().map(|item| {
@@ -442,10 +433,6 @@ fn PromptDetailModal(
                             }.into_any(),
                         })}
                     </Suspense>
-                </div>
-                <div class="modal-backdrop" on:click=move |_| close()></div>
-            </div>
-          </Portal>
-        </Show>
+        </crate::components::ModalDialog>
     }
 }

@@ -262,9 +262,15 @@ fn CreatedTokenModal(
     let (copied, set_copied) = signal(false);
 
     view! {
-        <Show when=move || token.get().is_some()>
-            <div class="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
-                <div class="bg-base-100 rounded-3xl shadow-2xl w-full max-w-xl mx-4 p-10 relative overflow-hidden animate-in zoom-in-95 duration-300">
+        <crate::components::ModalDialog
+            open=Signal::derive(move || token.get().is_some())
+            on_close=Callback::new(move |_| {
+                set_token.set(None);
+                set_copied.set(false);
+            })
+            labelled_by="token-created-title"
+            class="rounded-3xl w-full max-w-xl p-10 overflow-hidden"
+        >
                     <div class="absolute top-0 inset-x-0 h-2 bg-warning"></div>
 
                     <div class="mb-8 flex items-center gap-4">
@@ -274,7 +280,7 @@ fn CreatedTokenModal(
                           </svg>
                         </div>
                         <div>
-                          <h3 class="font-black text-3xl tracking-tight">"Token Created"</h3>
+                          <h3 id="token-created-title" class="font-black text-3xl tracking-tight">"Token Created"</h3>
                           <p class="text-base-content/60 font-medium">"This is your only chance to copy it."</p>
                         </div>
                     </div>
@@ -353,8 +359,6 @@ fn CreatedTokenModal(
                             "I have saved the token"
                         </button>
                     </div>
-                </div>
-            </div>
-        </Show>
+        </crate::components::ModalDialog>
     }
 }

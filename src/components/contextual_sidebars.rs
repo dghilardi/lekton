@@ -186,7 +186,10 @@ pub fn RegistrySidebar() -> impl IntoView {
                             }.into_any()
                         }
                     }
-                    Err(e) if crate::auth::refresh_client::is_auth_error(&e) => view! { <li><a href="/login" class="text-sm">"Log in to restore navigation"</a></li> }.into_any(),
+                    Err(e) if crate::auth::refresh_client::is_auth_error(&e) => {
+                        let login_href = crate::components::use_login_href();
+                        view! { <li><a href=move || login_href.get() class="text-sm">"Log in to restore navigation"</a></li> }.into_any()
+                    }
                     Err(_) => view! { <li class="text-error italic text-xs px-3 py-2">"Error loading schemas"</li> }.into_any(),
                 })
                 .unwrap_or_else(|| view! { <li><span class="loading loading-spinner loading-sm"></span></li> }.into_any())

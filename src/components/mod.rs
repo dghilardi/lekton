@@ -12,6 +12,7 @@ mod reader_resource;
 mod release_pin_strip;
 mod release_selector;
 mod search;
+mod state_panel;
 mod theme;
 mod user_menu;
 
@@ -28,6 +29,7 @@ pub use reader_resource::*;
 pub use release_pin_strip::*;
 pub use release_selector::*;
 pub use search::*;
+pub use state_panel::*;
 pub use theme::*;
 pub use user_menu::*;
 

@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 /// between the server helpers that emit it and the client code that detects it.
 pub const UNAUTHORIZED_SENTINEL: &str = "unauthorized";
 
+/// Error text when a signed-in user lacks administrator rights.
+pub const ADMIN_REQUIRED_MESSAGE: &str = "Admin privileges required";
+
 /// Minimal user identity carried in the JWT and returned to clients.
 ///
 /// Does **not** include permissions — those are loaded from the database on

@@ -7,16 +7,16 @@ test.describe('unknown routes', () => {
     expect(response.headers()['content-type']).toContain('text/html');
     const html = await response.text();
     expect(html).toMatch(/<html[^>]* lang="/);
-    expect(html).toContain('The page you are looking for does not exist.');
+    expect(html).toContain('There is nothing at this address');
     expect(html).toContain('href="/"');
   });
 
   test('the not-found page is navigable in the browser', async ({ page }) => {
     const response = await page.goto('/definitely-not-a-page');
     expect(response?.status()).toBe(404);
-    await expect(page.getByRole('heading', { level: 1, name: '404' })).toBeVisible();
-    await expect(page.getByRole('main').getByRole('link', { name: 'Back to Home' })).toBeVisible();
-    await page.getByRole('main').getByRole('link', { name: 'Back to Home' }).click();
+    await expect(page.getByRole('heading', { level: 1, name: 'Page not found' })).toBeVisible();
+    await expect(page.getByRole('main').getByRole('link', { name: 'Go to home' })).toBeVisible();
+    await page.getByRole('main').getByRole('link', { name: 'Go to home' }).click();
     await expect(page).toHaveURL(/\/$/);
   });
 

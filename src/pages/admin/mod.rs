@@ -106,15 +106,12 @@ pub fn AdminSettingsPage() -> impl IntoView {
     view! {
         <Show
             when=is_admin
-            fallback=|| view! {
-                <div class="flex items-center justify-center min-h-[50vh]">
-                    <div class="alert alert-error max-w-md shadow-lg border-none bg-error/10 text-error">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 shrink-0 stroke-current text-error" fill="none" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        <span class="font-medium">"Access denied. Admin privileges required."</span>
-                    </div>
-                </div>
+            fallback=move || view! {
+                <leptos_meta::Title text=crate::components::page_title(&["Administration"]) />
+                <crate::components::RequireRole
+                    signed_in=Signal::derive(move || current_user.is_some_and(|user| user.get().is_some()))
+                    action="Administration"
+                />
             }
         >
             <div class="animate-in fade-in slide-in-from-bottom-4 duration-500">

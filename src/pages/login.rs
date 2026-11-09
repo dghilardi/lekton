@@ -12,14 +12,25 @@ pub fn LoginPage() -> impl IntoView {
     let is_demo_mode = use_context::<IsDemoMode>()
         .expect("LoginPage must be inside App")
         .0;
+    let query = leptos_router::hooks::use_query_map();
+    // Where to go once signed in: a checked local path, else home.
+    let return_to = Signal::derive(move || {
+        crate::auth::return_to::safe_return_path(
+            query
+                .read()
+                .get(crate::auth::return_to::NEXT_PARAM)
+                .as_deref(),
+        )
+        .unwrap_or_else(|| "/".to_string())
+    });
 
     view! {
         <leptos_meta::Title text=crate::components::page_title(&["Sign in"]) />
         {move || {
             if is_demo_mode.get() {
-                view! { <DemoLoginForm /> }.into_any()
+                view! { <DemoLoginForm return_to=return_to /> }.into_any()
             } else {
-                view! { <OAuthRedirect /> }.into_any()
+                view! { <OAuthRedirect return_to=return_to /> }.into_any()
             }
         }}
     }
@@ -28,13 +39,16 @@ pub fn LoginPage() -> impl IntoView {
 /// Redirects to `/auth/login` to start the OAuth2/OIDC flow.
 /// Shows a brief loading state while the redirect is set up.
 #[component]
-fn OAuthRedirect() -> impl IntoView {
-    Effect::new(|_| {
+fn OAuthRedirect(return_to: Signal<String>) -> impl IntoView {
+    let provider_href =
+        Signal::derive(move || crate::auth::return_to::login_href("/auth/login", &return_to.get()));
+    Effect::new(move |_| {
+        let _href = provider_href.get();
         #[cfg(feature = "hydrate")]
         {
             use leptos::web_sys::window;
             if let Some(w) = window() {
-                let _ = w.location().replace("/auth/login");
+                let _ = w.location().replace(&_href);
             }
         }
     });
@@ -47,7 +61,7 @@ fn OAuthRedirect() -> impl IntoView {
                     <p class="mt-4 text-base-content/70">"Redirecting to sign in..."</p>
                     <p class="text-sm mt-4">
                         "If you are not redirected automatically, "
-                        <a href="/auth/login" rel="external" class="link link-primary">"click here"</a>.
+                        <a href=move || provider_href.get() rel="external" class="link link-primary">"click here"</a>.
                     </p>
                 </div>
             </div>
@@ -57,7 +71,7 @@ fn OAuthRedirect() -> impl IntoView {
 
 /// Demo mode login form with hardcoded test credentials.
 #[component]
-fn DemoLoginForm() -> impl IntoView {
+fn DemoLoginForm(return_to: Signal<String>) -> impl IntoView {
     view! {
         <div class="hero min-h-[60vh]">
             <div class="hero-content">
@@ -68,7 +82,8 @@ fn DemoLoginForm() -> impl IntoView {
                             "Sign in with demo credentials to explore Lekton."
                         </p>
 
-                        <form id="login-form" class="mt-4">
+                        // login.js returns here after signing in.
+                        <form id="login-form" class="mt-4" data-return-to=move || return_to.get()>
                             <div class="form-control">
                                 <label class="label">
                                     <span class="label-text">"Username"</span>

@@ -6,6 +6,10 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Show missing, restricted and failed pages in one way: a heading, one plain sentence and the next step, in place of five different alerts and raw framework text such as "error running server function: unauthorized". Missing and restricted documents answer 404 with a neutral message, offering sign-in to anonymous readers; the editor and administration ask anonymous readers to sign in and tell signed-in non-admins plainly that the page is limited to administrators (403); synchronized pages opened in the editor explain where they are edited and link to their source when it is registered. The administration sidebar is no longer shown to non-admins.
+
+- Return to the requested page after signing in. Sign-in links and redirects carry `?next=`, the demo form and the OAuth/OIDC flow (through the signed flow-state cookie) go back there, and only same-origin paths are accepted.
+
 - Give documentation sections real landing pages. `lekton-sync` stored a prefixed root `index.md` as `prefix/`, so `/docs/<prefix>` showed a generated placeholder instead of the index page and its release selector; the CLI now uses the prefix itself, the server normalizes trailing slashes on ingest and sync (accepting the old parent from earlier CLI releases), and reading falls back to `prefix/` until a source is re-synced. Generated section listings get a heading and no longer claim today's date as "Last updated". "Get Started" opens an onboarding page (getting started, quick start) when one exists, otherwise the first section, instead of whichever document comes first; the header lists sections before single pages so they are not pushed into "More".
 
 - Require resolving an offered editor draft before editing or saving, so newer changes cannot be lost behind the pending offer; include the existing page slug in the server-rendered editor title.

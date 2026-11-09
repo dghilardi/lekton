@@ -41,6 +41,8 @@ struct FlowStateClaims {
     csrf_token: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     nonce: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    return_to: Option<String>,
     exp: u64,
 }
 
@@ -187,6 +189,7 @@ impl TokenService {
             aud: FLOW_STATE_MARKER.to_string(),
             csrf_token: state.csrf_token.clone(),
             nonce: state.nonce.clone(),
+            return_to: state.return_to.clone(),
             exp: now + FLOW_STATE_TTL_SECS,
         };
         jsonwebtoken::encode(
@@ -217,6 +220,8 @@ impl TokenService {
         Ok(crate::auth::provider::AuthFlowState {
             csrf_token: claims.csrf_token,
             nonce: claims.nonce,
+            // Re-checked: the token is ours, but the path came from the browser.
+            return_to: crate::auth::return_to::safe_return_path(claims.return_to.as_deref()),
         })
     }
 
@@ -349,6 +354,29 @@ mod tests {
         let out = svc.verify_flow_state(&token).unwrap();
         assert_eq!(out.csrf_token, "csrf-1");
         assert_eq!(out.nonce.as_deref(), Some("nonce-1"));
+        assert_eq!(out.return_to, None);
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn flow_state_carries_only_a_local_return_path() {
+        use crate::auth::provider::AuthFlowState;
+        let svc = make_service();
+        let mut state = AuthFlowState::new_oauth2("csrf-1".into());
+        state.return_to = Some("/docs/handbook?pin=orders@1.0.0".into());
+        let out = svc
+            .verify_flow_state(&svc.sign_flow_state(&state).unwrap())
+            .unwrap();
+        assert_eq!(
+            out.return_to.as_deref(),
+            Some("/docs/handbook?pin=orders@1.0.0")
+        );
+
+        state.return_to = Some("//evil.example/".into());
+        let out = svc
+            .verify_flow_state(&svc.sign_flow_state(&state).unwrap())
+            .unwrap();
+        assert_eq!(out.return_to, None);
     }
 
     #[cfg(feature = "ssr")]

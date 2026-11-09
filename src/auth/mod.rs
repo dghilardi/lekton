@@ -2,6 +2,7 @@ pub mod config;
 pub mod middleware;
 pub mod models;
 pub mod refresh_client;
+pub mod return_to;
 
 #[cfg(feature = "ssr")]
 pub mod demo_auth;

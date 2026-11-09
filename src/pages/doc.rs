@@ -425,16 +425,10 @@ pub fn DocPage() -> impl IntoView {
                             </div>
                         }.into_any()
                     }
-                    Ok(None) => {
-                        view! {
-                            <div class="alert alert-warning">
-                                <span>{format!("Document '{}' not found.", slug())}</span>
-                            </div>
-                        }.into_any()
-                    }
+                    Ok(None) => view! { <crate::pages::NotFoundState /> }.into_any(),
                     Err(e) => {
                         view! {
-                            <crate::components::ReaderErrorNotice error=e context="Error loading document" />
+                            <crate::components::ReaderErrorState error=e />
                         }.into_any()
                     }
                 })

@@ -36,13 +36,16 @@ test.describe('page titles', () => {
 
   test('an existing editor page has its title in SSR and after hydration', async ({ page }, info) => {
     // Ingested fixtures are managed pages and intentionally cannot be edited.
-    // Save through the editor API to create a hand-authored page instead.
+    // Create a hand-authored page through the UI (server-function URLs are hashed).
     const slug = `e2e-editor-title-${Date.now()}-${info.retry}`;
-    const saved = await page.request.post('/api/save_doc_content', {
-      form: { slug, title: 'Editor title fixture', html_content: '<p>Title test</p>', access_level: 'public', order: '0' },
-    });
-    expect(saved.ok(), await saved.text()).toBeTruthy();
     const path = `/edit/${slug}`;
+    await page.goto(path);
+    await expect(page.locator('.tiptap')).toBeVisible({ timeout: 30_000 });
+    await page.getByLabel('Document Title', { exact: true }).fill('Editor title fixture');
+    await page.getByLabel('Access level', { exact: true }).selectOption({ index: 1 });
+    await page.locator('.tiptap').fill('Title test');
+    await page.getByRole('button', { name: 'Create Page' }).click();
+    await expect(page.getByText(/saved successfully/)).toBeVisible({ timeout: 30_000 });
     const title = `Edit ${slug} · Editor · Lekton`;
     const response = await page.request.get(path);
     expect(response.ok()).toBeTruthy();

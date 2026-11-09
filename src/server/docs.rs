@@ -16,14 +16,21 @@ pub async fn get_doc_html(
 
     // Resolves to the pinned release when one is active, otherwise `latest`.
     let pins = crate::server::resolve_release_pins(&state, &pins.unwrap_or_default()).await?;
-    let doc = crate::db::repository::resolve_by_release(
-        state
+    let mut versions = state
+        .document_repo
+        .find_all_by_slug(&slug)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    if versions.is_empty() {
+        // Older lekton-sync releases stored a prefixed root `index.md` as
+        // `prefix/`; serve it at the section URL until it is re-synced.
+        versions = state
             .document_repo
-            .find_all_by_slug(&slug)
+            .find_all_by_slug(&format!("{slug}/"))
             .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?,
-        &pins,
-    );
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+    }
+    let doc = crate::db::repository::resolve_by_release(versions, &pins);
 
     let Some(doc) = doc else {
         let (allowed_levels, include_draft) = request_document_visibility(&state).await?;
@@ -36,168 +43,7 @@ pub async fn get_doc_html(
             )
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-        let mut children: Vec<_> = all_docs
-            .iter()
-            .filter(|d| d.parent_slug.as_deref() == Some(slug.as_str()))
-            .cloned()
-            .collect();
-
-        if children.is_empty() {
-            let prefix = format!("{}/", slug);
-            let mut seen = std::collections::HashSet::new();
-            let mut virtual_children: Vec<(String, String)> = Vec::new();
-            for doc in &all_docs {
-                if let Some(relative) = doc.slug.strip_prefix(&prefix) {
-                    let first_segment = relative.split('/').next().unwrap_or_default();
-                    if first_segment.is_empty() {
-                        continue;
-                    }
-                    let child_slug = format!("{}/{}", slug, first_segment);
-                    if seen.insert(child_slug.clone()) {
-                        let title = all_docs
-                            .iter()
-                            .find(|d| d.slug == child_slug)
-                            .map(|d| d.title.clone())
-                            .unwrap_or_else(|| {
-                                first_segment
-                                    .split('-')
-                                    .map(|word| {
-                                        let mut c = word.chars();
-                                        match c.next() {
-                                            None => String::new(),
-                                            Some(f) => {
-                                                f.to_uppercase().collect::<String>() + c.as_str()
-                                            }
-                                        }
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join(" ")
-                            });
-                        virtual_children.push((child_slug, title));
-                    }
-                }
-            }
-
-            if virtual_children.is_empty() {
-                return Ok(None);
-            }
-
-            virtual_children.sort_by(|a, b| a.0.cmp(&b.0));
-
-            let title_part = slug.split('/').next_back().unwrap_or("Section");
-            let title = title_part
-                .split('-')
-                .map(|word| {
-                    let mut c = word.chars();
-                    match c.next() {
-                        None => String::new(),
-                        Some(first) => first.to_uppercase().collect::<String>() + c.as_str(),
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(" ");
-
-            let mut html = String::from(
-                "<div class=\"not-prose space-y-6\">\
-                    <div class=\"flex items-start justify-between gap-4 border-b border-base-200 pb-4\">\
-                        <p class=\"max-w-2xl text-sm leading-6 text-base-content/70\">Select a document from this section to read.</p>\
-                    </div>\
-                    <div class=\"grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3\">",
-            );
-            for (child_slug, child_title) in virtual_children {
-                html.push_str(&format!(
-                    "<a href=\"/docs/{child_slug}\" class=\"group card bg-base-100 shadow-sm border border-base-200 no-underline hover:-translate-y-0.5 hover:shadow-lg hover:border-primary/30\">\
-                        <div class=\"card-body gap-3 p-5\">\
-                            <div class=\"flex items-start gap-3\">\
-                                <div class=\"mt-0.5 rounded-lg bg-primary/10 p-2 text-primary\">\
-                                    <svg class=\"h-5 w-5\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M3 7a2 2 0 012-2h4l2 2h6a2 2 0 012 2v7a2 2 0 01-2 2H5a2 2 0 01-2-2V7z\"></path></svg>\
-                                </div>\
-                                <div class=\"min-w-0\">\
-                                    <p class=\"text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-base-content/70\">Section</p>\
-                                    <h2 class=\"mt-1 text-lg font-semibold leading-snug text-base-content transition-colors group-hover:text-primary\">{child_title}</h2>\
-                                </div>\
-                            </div>\
-                        </div>\
-                    </a>",
-                ));
-            }
-            html.push_str("</div></div>");
-
-            return Ok(Some(crate::pages::DocPageData {
-                title,
-                html,
-                headings: vec![],
-                last_updated: chrono::Utc::now().format("%B %d, %Y").to_string(),
-                tags: vec![],
-                is_upload_doc: false,
-                is_sync_doc: false,
-                pdf_asset_key: None,
-                source_view_url: None,
-                source_id: None,
-                current_release: None,
-                releases: vec![],
-                latest_release: None,
-            }));
-        }
-
-        children.sort_by_key(|d| d.order);
-
-        let title_part = slug.split('/').next_back().unwrap_or("Section");
-        let title = title_part
-            .split('-')
-            .map(|word| {
-                let mut c = word.chars();
-                match c.next() {
-                    None => String::new(),
-                    Some(first) => first.to_uppercase().collect::<String>() + c.as_str(),
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-
-        let mut html = String::from(
-            "<div class=\"not-prose space-y-6\">\
-                <div class=\"flex items-start justify-between gap-4 border-b border-base-200 pb-4\">\
-                    <p class=\"max-w-2xl text-sm leading-6 text-base-content/70\">Select a document from this section to read.</p>\
-                </div>\
-                <div class=\"grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3\">",
-        );
-        for child in children {
-            html.push_str(&format!(
-                "<a href=\"/docs/{}\" class=\"group card bg-base-100 shadow-sm border border-base-200 no-underline hover:-translate-y-0.5 hover:shadow-lg hover:border-primary/30\">\
-                    <div class=\"card-body gap-3 p-5\">\
-                        <div class=\"flex items-start gap-3\">\
-                            <div class=\"mt-0.5 rounded-lg bg-primary/10 p-2 text-primary\">\
-                                <svg class=\"h-5 w-5\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\"></path></svg>\
-                            </div>\
-                            <div class=\"min-w-0\">\
-                                <p class=\"text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-base-content/70\">Document</p>\
-                                <h2 class=\"mt-1 text-lg font-semibold leading-snug text-base-content transition-colors group-hover:text-primary\">{}</h2>\
-                            </div>\
-                        </div>\
-                    </div>\
-                </a>",
-                child.slug, child.title
-            ));
-        }
-        html.push_str("</div></div>");
-
-        return Ok(Some(crate::pages::DocPageData {
-            title,
-            html,
-            headings: vec![],
-            last_updated: chrono::Utc::now().format("%B %d, %Y").to_string(),
-            tags: vec![],
-            is_upload_doc: false,
-            is_sync_doc: false,
-            pdf_asset_key: None,
-            source_view_url: None,
-            source_id: None,
-            current_release: None,
-            releases: vec![],
-            latest_release: None,
-        }));
+        return Ok(section_page(&slug, &all_docs));
     };
 
     let (allowed_levels, include_draft) = request_document_visibility(&state).await?;
@@ -336,4 +182,214 @@ pub async fn get_doc_html(
         releases,
         latest_release,
     }))
+}
+
+/// One entry on a section landing page.
+#[cfg(feature = "ssr")]
+struct SectionEntry {
+    slug: String,
+    title: String,
+    is_section: bool,
+}
+
+/// Turns a slug segment such as `getting-started` into `Getting Started`.
+#[cfg(feature = "ssr")]
+fn title_from_segment(segment: &str) -> String {
+    segment
+        .split('-')
+        .map(|word| {
+            let mut c = word.chars();
+            match c.next() {
+                None => String::new(),
+                Some(first) => first.to_uppercase().collect::<String>() + c.as_str(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The landing page for a slug that has no document of its own but has pages
+/// beneath it: its direct children by `parent_slug`, or else the next path
+/// segment of every page under `slug/`. `None` when nothing lives there.
+#[cfg(feature = "ssr")]
+fn section_page(
+    slug: &str,
+    visible_docs: &[crate::db::models::Document],
+) -> Option<crate::pages::DocPageData> {
+    let mut children: Vec<_> = visible_docs
+        .iter()
+        .filter(|d| d.parent_slug.as_deref() == Some(slug))
+        .collect();
+    let entries: Vec<SectionEntry> = if !children.is_empty() {
+        children.sort_by_key(|d| d.order);
+        children
+            .into_iter()
+            .map(|d| SectionEntry {
+                slug: d.slug.clone(),
+                title: d.title.clone(),
+                is_section: false,
+            })
+            .collect()
+    } else {
+        let prefix = format!("{slug}/");
+        let mut seen = std::collections::HashSet::new();
+        let mut entries = Vec::new();
+        for doc in visible_docs {
+            let Some(relative) = doc.slug.strip_prefix(&prefix) else {
+                continue;
+            };
+            let first_segment = relative.split('/').next().unwrap_or_default();
+            if first_segment.is_empty() {
+                continue;
+            }
+            let child_slug = format!("{prefix}{first_segment}");
+            if seen.insert(child_slug.clone()) {
+                let title = visible_docs
+                    .iter()
+                    .find(|d| d.slug == child_slug)
+                    .map(|d| d.title.clone())
+                    .unwrap_or_else(|| title_from_segment(first_segment));
+                entries.push(SectionEntry {
+                    slug: child_slug,
+                    title,
+                    is_section: true,
+                });
+            }
+        }
+        entries.sort_by(|a, b| a.slug.cmp(&b.slug));
+        entries
+    };
+    if entries.is_empty() {
+        return None;
+    }
+
+    use crate::rendering::markdown::escape_html;
+    let title = title_from_segment(slug.rsplit('/').next().unwrap_or("Section"));
+    let count = entries.len();
+    let mut html = format!(
+        "<div class=\"not-prose space-y-6\">\
+            <header class=\"border-b border-base-200 pb-4\">\
+                <h1 class=\"text-3xl font-bold mb-2 break-words\">{}</h1>\
+                <p class=\"max-w-2xl text-sm leading-6 text-base-content/70\">{count} {} in this section.</p>\
+            </header>\
+            <ul class=\"grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3\" role=\"list\">",
+        escape_html(&title),
+        if count == 1 { "page" } else { "pages" },
+    );
+    for entry in entries {
+        let (kind, icon) = if entry.is_section {
+            (
+                "Section",
+                "M3 7a2 2 0 012-2h4l2 2h6a2 2 0 012 2v7a2 2 0 01-2 2H5a2 2 0 01-2-2V7z",
+            )
+        } else {
+            ("Document", "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z")
+        };
+        html.push_str(&format!(
+            "<li><a href=\"/docs/{}\" class=\"group card h-full bg-base-100 shadow-sm border border-base-200 no-underline hover:-translate-y-0.5 hover:shadow-lg hover:border-primary/30\">\
+                <div class=\"card-body gap-3 p-5\">\
+                    <div class=\"flex items-start gap-3\">\
+                        <div class=\"mt-0.5 rounded-lg bg-primary/10 p-2 text-primary\" aria-hidden=\"true\">\
+                            <svg class=\"h-5 w-5\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"{icon}\"></path></svg>\
+                        </div>\
+                        <div class=\"min-w-0\">\
+                            <p class=\"text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-base-content/70\">{kind}</p>\
+                            <h2 class=\"mt-1 text-lg font-semibold leading-snug text-base-content transition-colors group-hover:text-primary\">{}</h2>\
+                        </div>\
+                    </div>\
+                </div>\
+            </a></li>",
+            escape_html(&entry.slug),
+            escape_html(&entry.title),
+        ));
+    }
+    html.push_str("</ul></div>");
+
+    Some(crate::pages::DocPageData {
+        title,
+        html,
+        headings: vec![],
+        // A generated listing has no edit date of its own.
+        last_updated: String::new(),
+        tags: vec![],
+        is_upload_doc: false,
+        is_sync_doc: false,
+        pdf_asset_key: None,
+        source_view_url: None,
+        source_id: None,
+        current_release: None,
+        releases: vec![],
+        latest_release: None,
+    })
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod tests {
+    use super::*;
+    use crate::db::models::Document;
+
+    fn doc(slug: &str, title: &str) -> Document {
+        Document {
+            slug: slug.to_string(),
+            title: title.to_string(),
+            summary: None,
+            s3_key: format!("docs/{slug}.md"),
+            access_level: "public".to_string(),
+            is_draft: false,
+            service_owner: "test".to_string(),
+            last_updated: chrono::Utc::now(),
+            tags: vec![],
+            links_out: vec![],
+            backlinks: vec![],
+            parent_slug: None,
+            order: 0,
+            is_hidden: false,
+            content_hash: None,
+            metadata_hash: None,
+            is_archived: false,
+            source_path: None,
+            source_id: None,
+            release: None,
+            is_latest: true,
+            needs_reindex: false,
+            skip_rag: false,
+        }
+    }
+
+    #[test]
+    fn a_section_landing_has_a_heading_and_no_edit_date() {
+        let docs = vec![
+            doc("guides/deploy/kubernetes", "Kubernetes"),
+            doc("guides/<script>", "A <b>bold</b> title"),
+        ];
+        let page = section_page("guides", &docs).unwrap();
+        assert_eq!(page.title, "Guides");
+        assert!(page
+            .html
+            .contains(r#"<h1 class="text-3xl font-bold mb-2 break-words">Guides</h1>"#));
+        assert!(page.html.contains("2 pages in this section."));
+        assert!(page.html.contains("Deploy"));
+        assert!(page.html.contains("A &lt;b&gt;bold&lt;/b&gt; title"));
+        assert!(!page.html.contains("<script>"));
+        assert!(page.last_updated.is_empty());
+    }
+
+    #[test]
+    fn a_section_landing_lists_direct_children_in_order() {
+        let mut second = doc("team/b", "Second");
+        second.parent_slug = Some("team".into());
+        second.order = 2;
+        let mut first = doc("team/a", "First");
+        first.parent_slug = Some("team".into());
+        first.order = 1;
+        let page = section_page("team", &[second, first]).unwrap();
+        let first_at = page.html.find("First").unwrap();
+        assert!(first_at < page.html.find("Second").unwrap());
+        assert!(page.html.contains("2 pages in this section."));
+    }
+
+    #[test]
+    fn an_empty_slug_has_no_section_landing() {
+        assert!(section_page("missing", &[doc("other/page", "Other")]).is_none());
+    }
 }

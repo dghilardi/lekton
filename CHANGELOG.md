@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Give documentation sections real landing pages. `lekton-sync` stored a prefixed root `index.md` as `prefix/`, so `/docs/<prefix>` showed a generated placeholder instead of the index page and its release selector; the CLI now uses the prefix itself, the server normalizes trailing slashes on ingest and sync (accepting the old parent from earlier CLI releases), and reading falls back to `prefix/` until a source is re-synced. Generated section listings get a heading and no longer claim today's date as "Last updated". "Get Started" opens an onboarding page (getting started, quick start) when one exists, otherwise the first section, instead of whichever document comes first; the header lists sections before single pages so they are not pushed into "More".
+
 - Require resolving an offered editor draft before editing or saving, so newer changes cannot be lost behind the pending offer; include the existing page slug in the server-rendered editor title.
 
 - Bring text to WCAG AA contrast and legible sizes: outline and soft status badges and warning text on light surfaces, muted metadata and chat history, the AsyncAPI viewer's descriptions, badges and example panels in both themes; badges and uppercase labels are at least 11px, functional hints 12px, and header links 14px without negative tracking. Author-coloured Mermaid diagrams follow the dark theme with labels fitted to each fill instead of a white block.

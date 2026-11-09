@@ -143,7 +143,7 @@ fn callout_meta(kind: BlockQuoteKind) -> (&'static str, &'static str) {
     }
 }
 
-fn escape_html(s: &str) -> String {
+pub(crate) fn escape_html(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")

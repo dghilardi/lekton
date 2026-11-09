@@ -173,7 +173,7 @@ archive_missing: false
 | `url` | Base URL of the Lekton server (overridden by `LEKTON_URL`) |
 | `default_access_level` | Fallback access level when not set in front matter |
 | `default_service_owner` | Fallback service owner when not set in front matter |
-| `slug_prefix` | Prefix prepended to every document slug |
+| `slug_prefix` | Prefix prepended to every document slug; a root `index.md` takes the prefix itself (`protocols/my-service`), making it the section's landing page |
 | `prompts_dir` | Directory containing prompt YAML files, relative to `ROOT` |
 | `prompt_slug_prefix` | Prefix prepended to every prompt slug |
 | `archive_missing` | Archive documents not found locally (overridden by `--archive-missing`) |

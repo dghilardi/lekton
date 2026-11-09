@@ -52,10 +52,10 @@ pub fn TopNavbarLinks() -> impl IntoView {
                 let groups_res = groups_resource.get();
 
                 if let (Some(Ok(items)), Some(Ok(groups))) = (nav_res, groups_res) {
-                    let standalone: Vec<_> = items.iter()
+                    let standalone = sections_first(items.iter()
                         .filter(|item| !groups.iter().any(|g| g.items.contains(&item.slug)))
                         .cloned()
-                        .collect();
+                        .collect());
 
                     // Tier 1 max-items logic
                     let n_s = standalone.len();
@@ -280,6 +280,17 @@ pub fn TopNavbarLinks() -> impl IntoView {
     }
 }
 
+/// Top-level entries with pages beneath them come before single documents,
+/// each keeping the navigation order, so the header's limited slots go to
+/// sections instead of burying them under "More".
+fn sections_first(items: Vec<NavItem>) -> Vec<NavItem> {
+    let (mut sections, leaves): (Vec<_>, Vec<_>) = items
+        .into_iter()
+        .partition(|item| !item.children.is_empty());
+    sections.extend(leaves);
+    sections
+}
+
 /// Whether a path shows a context sidebar (and so a ☰ drawer on small screens).
 fn has_context_sidebar(path: &str) -> bool {
     path.starts_with("/docs")
@@ -307,11 +318,13 @@ fn SectionMenuItems(items: Vec<NavItem>, groups: Vec<NavGroup>) -> impl IntoView
     let is_rag = use_context::<crate::app::IsRagEnabled>();
     let schema_enabled = crate::app::use_feature(|f| f.schema_registry);
     let learn_enabled = crate::app::use_feature(|f| f.learn);
-    let standalone: Vec<NavItem> = items
-        .iter()
-        .filter(|item| !groups.iter().any(|g| g.items.contains(&item.slug)))
-        .cloned()
-        .collect();
+    let standalone = sections_first(
+        items
+            .iter()
+            .filter(|item| !groups.iter().any(|g| g.items.contains(&item.slug)))
+            .cloned()
+            .collect(),
+    );
 
     view! {
         <li class="menu-title">"Documentation"</li>
@@ -609,5 +622,40 @@ pub fn Layout(children: Children) -> impl IntoView {
                 </Show>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(slug: &str, children: usize) -> NavItem {
+        NavItem {
+            slug: slug.into(),
+            title: slug.into(),
+            parent_slug: None,
+            order: 0,
+            children: (0..children)
+                .map(|i| NavItem {
+                    slug: format!("{slug}/{i}"),
+                    title: format!("{i}"),
+                    parent_slug: Some(slug.into()),
+                    order: 0,
+                    children: vec![],
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn sections_come_before_single_documents_in_navigation_order() {
+        let ordered = sections_first(vec![
+            item("policy", 0),
+            item("handbook", 2),
+            item("faq", 0),
+            item("orders", 1),
+        ]);
+        let slugs: Vec<_> = ordered.iter().map(|i| i.slug.as_str()).collect();
+        assert_eq!(slugs, ["handbook", "orders", "policy", "faq"]);
     }
 }

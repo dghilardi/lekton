@@ -16,6 +16,17 @@ use crate::slug::{
     slug_from_path, slug_from_title, source_path_from_file, warn_about_summary,
 };
 
+/// Prefix a document slug. A root `index.md`/`README.md` has an empty slug and
+/// becomes the prefix itself (`handbook`), not `handbook/`, which no reader
+/// URL matches.
+fn join_prefix(prefix: Option<&str>, raw_slug: &str) -> String {
+    match prefix.filter(|p| !p.is_empty()) {
+        Some(prefix) if raw_slug.is_empty() => prefix.to_string(),
+        Some(prefix) => format!("{prefix}/{raw_slug}"),
+        None => raw_slug.to_string(),
+    }
+}
+
 pub fn scan_documents(
     root: &Path,
     path_root: &Path,
@@ -77,15 +88,8 @@ pub fn scan_documents(
             None
         };
 
-        let slug = match &config.slug_prefix {
-            Some(prefix) if !prefix.is_empty() => format!("{prefix}/{slug_raw}"),
-            _ => slug_raw.clone(),
-        };
-
-        let legacy_slug_full = match &config.slug_prefix {
-            Some(prefix) if !prefix.is_empty() => format!("{prefix}/{legacy_slug_raw}"),
-            _ => legacy_slug_raw.clone(),
-        };
+        let slug = join_prefix(config.slug_prefix.as_deref(), &slug_raw);
+        let legacy_slug_full = join_prefix(config.slug_prefix.as_deref(), &legacy_slug_raw);
         let legacy_slug = if legacy_slug_full != slug {
             Some(legacy_slug_full)
         } else {
@@ -93,6 +97,11 @@ pub fn scan_documents(
         };
 
         let parent_slug = match &config.slug_prefix {
+            // The root index *is* the prefix page: its parent is the prefix's
+            // own parent, never itself.
+            Some(prefix) if !prefix.is_empty() && slug_raw.is_empty() => prefix
+                .rsplit_once('/')
+                .map(|(parent, _)| parent.to_string()),
             Some(prefix) if !prefix.is_empty() => match parsed_parent {
                 Some(ref p) => Some(format!("{prefix}/{p}")),
                 None => Some(prefix.clone()),
@@ -464,6 +473,44 @@ pub fn scan_schemas(root: &Path, config: &LektonConfig) -> Result<HashMap<String
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn a_prefixed_root_index_takes_the_prefix_slug_without_a_trailing_slash() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("guides")).unwrap();
+        for (file, title) in [
+            ("index.md", "Handbook"),
+            ("guides/index.md", "Guides"),
+            ("guides/intro.md", "Intro"),
+        ] {
+            std::fs::File::create(dir.path().join(file))
+                .unwrap()
+                .write_all(
+                    format!("---\nlekton-import: true\ntitle: {title}\n---\n# {title}\n")
+                        .as_bytes(),
+                )
+                .unwrap();
+        }
+        let config = LektonConfig {
+            slug_prefix: Some("team/handbook".into()),
+            ..Default::default()
+        };
+        let docs = scan_documents(dir.path(), dir.path(), &config, false).unwrap();
+        let by_slug: std::collections::HashMap<_, _> = docs
+            .values()
+            .map(|d| (d.slug.as_str(), d.parent_slug.as_deref()))
+            .collect();
+        assert_eq!(by_slug.get("team/handbook"), Some(&Some("team")));
+        assert_eq!(
+            by_slug.get("team/handbook/guides"),
+            Some(&Some("team/handbook"))
+        );
+        assert_eq!(
+            by_slug.get("team/handbook/guides/intro"),
+            Some(&Some("team/handbook/guides"))
+        );
+        assert!(docs.values().all(|d| !d.slug.ends_with('/')));
+    }
 
     #[test]
     fn scan_document_accepts_camel_case_front_matter_fields() {

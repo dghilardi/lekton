@@ -108,19 +108,15 @@ pub struct SchemaVersionInfo {
     pub s3_key: String,
 }
 
-/// Returns the latest non-deprecated `SchemaVersionInfo` from a slice using semver ordering.
-/// Mirrors [`crate::db::models::latest_schema_version`] for API response types.
+/// The default version of a schema for API response types: the latest stable
+/// one (see [`crate::db::models::latest_schema_version`]).
 pub fn latest_version_info(versions: &[SchemaVersionInfo]) -> Option<&SchemaVersionInfo> {
-    if versions.is_empty() {
-        return None;
-    }
-    let mut sorted: Vec<&SchemaVersionInfo> = versions.iter().collect();
-    sorted.sort_unstable_by(|a, b| crate::db::models::semver_cmp_desc(&a.version, &b.version));
-    sorted
-        .iter()
-        .copied()
-        .find(|v| v.status != "deprecated")
-        .or_else(|| sorted.first().copied())
+    crate::db::models::preferred_version_index(
+        versions
+            .iter()
+            .map(|v| (v.version.as_str(), v.status.as_str())),
+    )
+    .map(|index| &versions[index])
 }
 
 #[cfg(feature = "ssr")]

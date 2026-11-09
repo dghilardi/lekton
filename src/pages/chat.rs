@@ -156,6 +156,7 @@ pub fn ChatPage() -> impl IntoView {
     let is_logged_in = move || current_user.map(|sig| sig.get().is_some()).unwrap_or(false);
 
     view! {
+        <leptos_meta::Title text=crate::components::page_title(&["Chat"]) />
         <Show when=is_logged_in fallback=|| view! {
             <div class="flex items-center justify-center min-h-[60vh]">
                 <div class="text-center space-y-4">

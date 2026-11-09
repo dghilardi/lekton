@@ -253,6 +253,11 @@ pub fn DocPage() -> impl IntoView {
             </div>
         }>
             {move || {
+                doc_resource.get().and_then(Result::ok).flatten().map(|data| view! {
+                    <leptos_meta::Title text=crate::components::page_title(&[&data.title, "Docs"]) />
+                })
+            }}
+            {move || {
                 doc_resource.get().map(|result| match result {
                     Ok(Some(data)) => {
                         let current_slug = slug();

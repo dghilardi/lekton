@@ -21,6 +21,7 @@ pub fn PromptsPage() -> impl IntoView {
 
     view! {
         <div class="container mx-auto max-w-6xl px-4 py-8">
+            <leptos_meta::Title text=crate::components::page_title(&["Prompt Library"]) />
             <h1 class="text-3xl font-bold">"Prompt Library"</h1>
             <p class="text-base-content/60 mt-2 mb-6 max-w-3xl">
                 "Published prompts can be added to your working context. Default primary prompts come from the shared library; favorites and hidden flags are personal preferences."

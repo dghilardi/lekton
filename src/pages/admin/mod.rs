@@ -65,6 +65,24 @@ fn section_icon_path(section: &str) -> &'static str {
 }
 
 /// Admin settings page with service token management and theming.
+/// The heading and document title of an admin section.
+fn section_title(section: &str) -> &'static str {
+    match section {
+        "tokens" => "Service Tokens",
+        "pats" => "Personal Access Tokens",
+        "documentation-feedback" => "Documentation Feedback",
+        "navigation" => "Navigation Setup",
+        "css" => "Visual Customization",
+        "rag" => "Index Management",
+        "access-levels" => "Access Levels",
+        "users" => "User Management",
+        "ai-usage" => "AI Usage",
+        "upload" => "Upload Document",
+        "sources" => "Documentation Sources",
+        _ => "Administration",
+    }
+}
+
 #[component]
 pub fn AdminSettingsPage() -> impl IntoView {
     let current_user = use_context::<Signal<Option<crate::auth::models::AuthenticatedUser>>>();
@@ -115,9 +133,11 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
     let section = std::sync::Arc::new(section);
     let section2 = section.clone();
     let section3 = section.clone();
+    let section4 = section.clone();
 
     view! {
         <div class="max-w-5xl mx-auto space-y-8 pb-20">
+            <leptos_meta::Title text=move || crate::components::page_title(&[section_title(&section4()), "Admin"]) />
             <header class="flex flex-col items-start gap-4 border-b border-base-200 pb-8 sm:flex-row sm:items-center">
                 <div class="p-3 bg-primary/10 rounded-2xl text-primary">
                     <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -127,20 +147,7 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
                 <div>
                    {move || {
                        let current_section = section();
-                       let title = match current_section.as_str() {
-                           "tokens" => "Service Tokens",
-                           "pats" => "Personal Access Tokens",
-                           "documentation-feedback" => "Documentation Feedback",
-                           "navigation" => "Navigation Setup",
-                           "css" => "Visual Customization",
-                           "rag" => "Index Management",
-                           "access-levels" => "Access Levels",
-                           "users" => "User Management",
-                           "ai-usage" => "AI Usage",
-                           "upload" => "Upload Document",
-                           "sources" => "Documentation Sources",
-                           _ => "Administration",
-                       };
+                       let title = section_title(&current_section);
                        let subtitle = match current_section.as_str() {
                            "tokens" => "Long-lived, scoped tokens for CI/CD pipelines and external service integrations.",
                            "pats" => "Personal tokens scoped to your own access, for scripts and local tooling.",

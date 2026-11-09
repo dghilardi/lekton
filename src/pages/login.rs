@@ -14,6 +14,7 @@ pub fn LoginPage() -> impl IntoView {
         .0;
 
     view! {
+        <leptos_meta::Title text=crate::components::page_title(&["Sign in"]) />
         {move || {
             if is_demo_mode.get() {
                 view! { <DemoLoginForm /> }.into_any()

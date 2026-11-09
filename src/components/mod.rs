@@ -36,6 +36,18 @@ pub use user_menu::*;
 #[derive(Clone, Copy)]
 pub struct ActiveReleasePins(pub leptos::prelude::Memo<Vec<String>>);
 
+/// A document `<title>`: the page's own name first, then its section, then the
+/// product, e.g. `Getting Started · Docs · Lekton`. Empty parts are skipped.
+pub fn page_title(parts: &[&str]) -> String {
+    parts
+        .iter()
+        .copied()
+        .filter(|part| !part.trim().is_empty())
+        .chain(["Lekton"])
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
 /// Add the active URL release pins to an internal documentation link.
 pub fn active_release_pin_values() -> Vec<String> {
     use leptos::prelude::*;
@@ -48,4 +60,19 @@ pub fn active_release_pin_values() -> Vec<String> {
 /// Add the active URL release pins to an internal documentation link.
 pub fn pinned_doc_href(url: &str) -> String {
     crate::versioning::with_release_pins(url, &active_release_pin_values())
+}
+
+#[cfg(test)]
+mod page_title_tests {
+    use super::page_title;
+
+    #[test]
+    fn titles_read_from_page_to_product() {
+        assert_eq!(
+            page_title(&["Getting Started", "Docs"]),
+            "Getting Started · Docs · Lekton"
+        );
+        assert_eq!(page_title(&["Chat"]), "Chat · Lekton");
+        assert_eq!(page_title(&["", "Docs"]), "Docs · Lekton");
+    }
 }

@@ -8,6 +8,7 @@ pub fn NotFound() -> impl IntoView {
         response.set_status(axum::http::StatusCode::NOT_FOUND);
     }
     view! {
+        <leptos_meta::Title text=crate::components::page_title(&["Page not found"]) />
         <div class="hero min-h-[60vh]">
             <div class="hero-content text-center">
                 <div class="max-w-md">

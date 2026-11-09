@@ -78,6 +78,7 @@ pub fn SchemaListPage() -> impl IntoView {
 
     view! {
         <div>
+            <leptos_meta::Title text=crate::components::page_title(&["Schema Registry"]) />
             <h1 class="text-3xl font-bold mb-6">"Schema Registry"</h1>
             <p class="text-base-content/70 mb-8">
                 "Browse and explore API schemas. Supports OpenAPI, AsyncAPI, and JSON Schema specifications."
@@ -271,6 +272,7 @@ pub fn SchemaViewerPage() -> impl IntoView {
                                 // Header with version selector
                                 <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
                                     <div class="flex flex-wrap min-w-0 items-center gap-3">
+                                        <leptos_meta::Title text=crate::components::page_title(&[&schema_name, "Schemas"]) />
                                         <h1 class="text-3xl font-bold break-all">{schema_name.clone()}</h1>
                                         <span class=format!("badge {}", badge_class)>{type_label.to_string()}</span>
                                     </div>

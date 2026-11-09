@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Give every page its own document title (`<Page> · <Section> · Lekton`), server-rendered where the page is, instead of one shared title.
+
 - Apply one document-visibility rule to reading, search, schemas, assets, retrieval, chat and Learn. In demo mode, sessions could read only public documents while chat and Learn treated them as logged-in users, so answers cited pages the reader could not open; demo sessions now read `public` and `loggeduser` everywhere. Learn also drops citations and next-read sources the reader can no longer open from stored lessons.
 
 - Protect unsaved editor changes: the editor tracks them, asks before following an in-app link or unloading the page, and keeps a local draft that it offers to restore on the next visit. Editor, asset panel and document-upload server calls now go through the shared session-refresh retry.

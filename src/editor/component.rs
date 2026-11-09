@@ -581,6 +581,10 @@ pub fn EditorPage() -> impl IntoView {
                         let is_new = existing.is_none();
                         view! {
                             <div class="space-y-4">
+                                <leptos_meta::Title text=move || {
+                                    let page = if is_new { "Create page".to_string() } else { format!("Edit {}", slug.get()) };
+                                    crate::components::page_title(&[&page, "Editor"])
+                                } />
                                 <h2 class="text-2xl font-bold">
                                     {if is_new { "Create Page" } else { "Edit Page" }}
                                 </h2>

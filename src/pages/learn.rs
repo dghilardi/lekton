@@ -88,6 +88,7 @@ pub fn LearnDashboardPage() -> impl IntoView {
     view! {
         <div class="max-w-3xl mx-auto px-4 py-8 space-y-8">
             <div>
+                <leptos_meta::Title text=crate::components::page_title(&["Learn"]) />
                 <h1 class="text-2xl font-semibold">"Learn"</h1>
                 <p class="text-base-content/70 mt-1">
                     "Short, guided lessons drawn from the documentation you can access."
@@ -251,6 +252,7 @@ pub fn LearnPathPage() -> impl IntoView {
                         let title = pw.path.title.clone();
                         let empty = pw.lessons.is_empty();
                         view! {
+                            <leptos_meta::Title text=crate::components::page_title(&[&title, "Learn"]) />
                             <h1 class="text-2xl font-semibold">{title}</h1>
                             {if empty {
                                 view! {

@@ -22,6 +22,7 @@ pub fn ProfilePage() -> impl IntoView {
 
     view! {
         <div class="container mx-auto max-w-3xl px-4 py-8">
+            <leptos_meta::Title text=crate::components::page_title(&["Profile"]) />
             <h1 class="text-2xl font-bold mb-6">"Profile"</h1>
 
             // User info card

@@ -305,3 +305,8 @@ lib-default-features = false
 
 # The profile to use for the lib target when compiling for release
 lib-profile-release = "wasm-release"
+
+# Type-erase component views in release builds too (debug builds always do).
+# Far less monomorphized view code: the release WASM drops from ~4.9 MB to
+# ~3.1 MB, for a little dynamic dispatch when views are built.
+always-erase-components = true

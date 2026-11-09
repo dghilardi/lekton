@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Cut the browser bundle a reader downloads by 43%: the release WASM goes from 5,488,834 bytes on `main` (5,656,054 with the other changes in this release) to 3,154,501 bytes. Chat answers are rendered with an escaping Markdown renderer (raw HTML shown as text, link and image targets limited to web, mail and in-page addresses, heading attributes dropped), so the HTML sanitizer and its parser are no longer compiled for the browser (−632 KB); and release builds type-erase component views like debug builds already do (`always-erase-components`, −1.87 MB), at the cost of a little dynamic dispatch when views are built.
+
 - Tighten the administration screens. New service tokens are read-only unless write access is chosen, and the form says which one is being created; its fields are labelled. Deactivating a service token, deleting an access level and deleting a personal access token ask in a portal dialog (named, Escape cancels, Cancel focused first) instead of the browser's `confirm()`. The users, sources, AI usage and index status panels show why they could not load instead of staying empty. Deactivated token rows are no longer faded below AA contrast, and editing panels use an existing surface colour instead of the undefined `bg-base-50`.
 
 - Keep the OpenAPI viewer at AA contrast with operations on screen: Scalar's request examples render in its dark mode inside a light page, so their secondary text and method/syntax colours now follow the portal theme, and Scalar's "Generate SDK" upsell is hidden. The seeded test schema used to open on a beta without operations, which hid these failures.

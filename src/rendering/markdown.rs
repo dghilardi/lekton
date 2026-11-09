@@ -27,16 +27,96 @@ pub const TABLE_SCROLL_LABEL: &str = "Scrollable table";
 /// footnotes, strikethrough, task lists, and smart punctuation.
 /// Automatically adds IDs to h2-h6 headings for anchor navigation.
 pub fn render_markdown(raw: &str) -> String {
-    let options = Options::ENABLE_TABLES
-        | Options::ENABLE_FOOTNOTES
-        | Options::ENABLE_STRIKETHROUGH
-        | Options::ENABLE_TASKLISTS
-        | Options::ENABLE_SMART_PUNCTUATION
-        | Options::ENABLE_HEADING_ATTRIBUTES
-        | Options::ENABLE_GFM;
+    let html_output = render_events(Parser::new_ext(raw, MARKDOWN_OPTIONS));
 
-    let parser = Parser::new_ext(raw, options);
+    #[cfg(feature = "ssr")]
+    let html_output = apply_syntax_highlighting(&html_output);
 
+    // Post-process to add IDs to headings, then sanitize to strip any raw HTML from the source
+    sanitize_html(&add_heading_ids_simple(&html_output))
+}
+
+/// Render Markdown to HTML that is safe by construction, for the browser
+/// (chat answers): raw HTML in the source is shown as text, link and image
+/// targets are limited to web, mail and in-page addresses, and heading
+/// attributes are dropped. It needs no HTML sanitizer, which keeps one (and
+/// its HTML parser) out of the WASM bundle; the server keeps
+/// [`render_markdown`], whose sanitizer also governs documents and lessons.
+pub fn render_markdown_escaped(raw: &str) -> String {
+    let events = Parser::new_ext(raw, MARKDOWN_OPTIONS).map(neutralize_event);
+    add_heading_ids_simple(&render_events(events))
+}
+
+const MARKDOWN_OPTIONS: Options = Options::ENABLE_TABLES
+    .union(Options::ENABLE_FOOTNOTES)
+    .union(Options::ENABLE_STRIKETHROUGH)
+    .union(Options::ENABLE_TASKLISTS)
+    .union(Options::ENABLE_SMART_PUNCTUATION)
+    .union(Options::ENABLE_HEADING_ATTRIBUTES)
+    .union(Options::ENABLE_GFM);
+
+/// Makes one source event harmless without a sanitizer (see
+/// [`render_markdown_escaped`]).
+fn neutralize_event(event: Event<'_>) -> Event<'_> {
+    match event {
+        Event::Html(html) | Event::InlineHtml(html) => Event::Text(html),
+        Event::Start(Tag::Link {
+            link_type,
+            dest_url,
+            title,
+            id,
+        }) => Event::Start(Tag::Link {
+            link_type,
+            dest_url: safe_url(dest_url),
+            title,
+            id,
+        }),
+        Event::Start(Tag::Image {
+            link_type,
+            dest_url,
+            title,
+            id,
+        }) => Event::Start(Tag::Image {
+            link_type,
+            dest_url: safe_url(dest_url),
+            title,
+            id,
+        }),
+        // `{onclick=…}` would otherwise become an attribute.
+        Event::Start(Tag::Heading { level, .. }) => Event::Start(Tag::Heading {
+            level,
+            id: None,
+            classes: vec![],
+            attrs: vec![],
+        }),
+        other => other,
+    }
+}
+
+/// Keeps relative, in-page and web/mail URLs; anything with another scheme
+/// (`javascript:`, `data:`, …) becomes `#`. Browsers ignore whitespace and
+/// control characters inside a scheme, so those are dropped before reading it.
+fn safe_url(url: pulldown_cmark::CowStr<'_>) -> pulldown_cmark::CowStr<'_> {
+    let compact: String = url
+        .chars()
+        .filter(|c| !c.is_ascii_whitespace() && !c.is_control())
+        .collect();
+    let scheme_end = compact.find(':');
+    let path_start = compact.find(['/', '?', '#']);
+    let scheme = match (scheme_end, path_start) {
+        (Some(colon), Some(path)) if colon > path => None,
+        (Some(colon), _) => Some(compact[..colon].to_ascii_lowercase()),
+        (None, _) => None,
+    };
+    match scheme.as_deref() {
+        None | Some("http" | "https" | "mailto" | "tel") => url,
+        Some(_) => "#".into(),
+    }
+}
+
+/// The portal's Markdown events to HTML: Mermaid blocks, callouts and
+/// scrollable tables.
+fn render_events<'a>(parser: impl Iterator<Item = Event<'a>>) -> String {
     let mut in_mermaid = false;
     let transformed = parser.flat_map(|event| -> Vec<Event<'_>> {
         if in_mermaid {
@@ -89,12 +169,7 @@ pub fn render_markdown(raw: &str) -> String {
 
     let mut html_output = String::new();
     html::push_html(&mut html_output, transformed);
-
-    #[cfg(feature = "ssr")]
-    let html_output = apply_syntax_highlighting(&html_output);
-
-    // Post-process to add IDs to headings, then sanitize to strip any raw HTML from the source
-    sanitize_html(&add_heading_ids_simple(&html_output))
+    html_output
 }
 
 /// Sanitize HTML to prevent XSS, while preserving safe GFM-generated attributes.
@@ -418,6 +493,89 @@ fn find_syntax<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const HOSTILE: &[&str] = &[
+        "<script>alert(1)</script>",
+        "Hi <img src=x onerror=alert(1)> there",
+        "<iframe src=\"https://evil.example\"></iframe>",
+        "[click](javascript:alert(1))",
+        "[click](JaVa\tScRiPt:alert(1))",
+        "[click]( javascript:alert(1))",
+        "![x](data:text/html;base64,PHNjcmlwdD4=)",
+        "[ref]\n\n[ref]: javascript:alert(1)",
+        "# Title {onclick=alert(1) .x #y}",
+        "<a href=\"javascript:alert(1)\">x</a>",
+        "<div onmouseover=\"alert(1)\">hover</div>",
+    ];
+
+    /// The markup of every real tag in `html` (escaped text has no `<`).
+    fn tags(html: &str) -> Vec<String> {
+        html.split('<')
+            .skip(1)
+            .map(|rest| {
+                rest.split('>')
+                    .next()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn escaped_rendering_neutralises_hostile_markdown() {
+        for source in HOSTILE {
+            let html = render_markdown_escaped(source);
+            for tag in tags(&html) {
+                let name = tag
+                    .split([' ', '/'])
+                    .find(|part| !part.is_empty())
+                    .unwrap_or_default();
+                assert!(
+                    !["script", "iframe", "object", "embed", "style", "div"].contains(&name),
+                    "{source:?} produced <{tag}>"
+                );
+                assert!(
+                    !tag.contains("javascript:") && !tag.contains("data:"),
+                    "{source:?} produced <{tag}>"
+                );
+                assert!(
+                    !tag.split_whitespace()
+                        .skip(1)
+                        .any(|attribute| attribute.starts_with("on")),
+                    "{source:?} produced <{tag}>"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn escaped_rendering_keeps_markdown_and_safe_links() {
+        let html = render_markdown_escaped(
+            "## Setup\n\nSee [the guide](/docs/guide#install), [site](https://example.com) or [mail](mailto:a@b.c).\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```mermaid\ngraph TD; A-->B\n```\n\n> [!NOTE]\n> Careful\n\n- [x] done",
+        );
+        assert!(html.contains("<h2 id=\"setup\">Setup</h2>"));
+        assert!(html.contains("href=\"/docs/guide#install\""));
+        assert!(html.contains("href=\"https://example.com\""));
+        assert!(html.contains("href=\"mailto:a@b.c\""));
+        assert!(html.contains(TABLE_SCROLL_CLASS));
+        assert!(html.contains("<pre class=\"mermaid\">graph TD; A--&gt;B"));
+        assert!(html.contains("markdown-alert-note"));
+        assert!(html.contains("checkbox"));
+        // Raw HTML is shown, not interpreted.
+        assert!(render_markdown_escaped("a <b>bold</b> word").contains("&lt;b&gt;bold&lt;/b&gt;"));
+    }
+
+    #[test]
+    fn escaped_rendering_agrees_with_the_sanitised_rendering_on_ordinary_markdown() {
+        let source = "# Answer\n\nUse **bold**, `code` and a [link](/docs/a).\n\n1. one\n2. two";
+        // The sanitizer only adds `rel` to links, which matters for new
+        // windows; these links open in place.
+        assert_eq!(
+            sanitize_html(&render_markdown_escaped(source))
+                .replace(" rel=\"noopener noreferrer\"", ""),
+            render_markdown_escaped(source)
+        );
+    }
 
     #[test]
     fn test_basic_paragraph() {

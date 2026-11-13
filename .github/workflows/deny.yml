@@ -22,7 +22,7 @@ jobs:
       # without retries, so a transient GitHub release error failed the audit.
       # install-action retries downloads; the command matches the action's
       # defaults and its pinned cargo-deny version.
-      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-deny@0.20.2
 

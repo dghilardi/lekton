@@ -343,7 +343,7 @@ backlog for search/RAG reconciliation.
 ### Phase 4: Future Tech (AI) — ✅ Delivered & Extended
 
 * ✅ Vector database (Qdrant) with token-aware chunking and access-scoped retrieval.
-* ✅ "Ask the Docs" streamed chat, with optional hybrid search, HyDE, query rewriting, and cross-encoder reranking.
+* ✅ "Ask the Docs" streamed chat, with optional hybrid search, HyDE, query rewriting, and cross-encoder reranking. Google Ranking API reranking can opt in with existing service account/ADC authentication; provider failures preserve retrieval order (see [setup and IAM](google-reranking.md)).
 * ✅ MCP server exposing docs/schemas/prompts as tools; versioned Prompt Library; documentation feedback loop.
 
 See `IMPLEMENTATION_ROADMAP.md` Phase 7 for the full breakdown and candidate next steps.

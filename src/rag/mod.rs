@@ -47,3 +47,6 @@ pub mod client;
 pub use client::build_oai_client;
 #[cfg(feature = "ssr")]
 pub use provider::LlmProvider;
+
+#[cfg(feature = "ssr")]
+mod vertex_reranker;

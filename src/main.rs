@@ -891,11 +891,15 @@ async fn main() {
                     ));
 
                     let chat_svc = if let Some(ref chat_repo) = chat_repo {
-                        let reranker: Option<Arc<dyn lekton::rag::reranker::Reranker>> =
-                            lekton::rag::reranker::CrossEncoderReranker::from_rag_config(
-                                &config.rag,
-                            )
-                            .map(|r| Arc::new(r) as Arc<dyn lekton::rag::reranker::Reranker>);
+                        let reranker = match lekton::rag::reranker::build_reranker(&config.rag)
+                            .await
+                        {
+                            Ok(reranker) => reranker,
+                            Err(error) => {
+                                tracing::warn!(%error, "reranker initialization failed; using retrieval order");
+                                None
+                            }
+                        };
 
                         match lekton::rag::chat::ChatService::from_rag_config(
                             &config.rag,

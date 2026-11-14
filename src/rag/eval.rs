@@ -20,7 +20,7 @@ use crate::db::chat_repository::ChatRepository;
 use crate::error::AppError;
 use crate::rag::chat::ChatService;
 use crate::rag::embedding::{build_embedding_service, EmbeddingService};
-use crate::rag::reranker::{CrossEncoderReranker, Reranker};
+use crate::rag::reranker::build_reranker;
 use crate::rag::vectorstore::{QdrantVectorStore, VectorSearchResult, VectorStore};
 use crate::search::client::{MeilisearchService, SearchService};
 
@@ -293,8 +293,7 @@ impl RagEvalContext {
                 }
             });
 
-        let reranker: Option<Arc<dyn Reranker>> =
-            CrossEncoderReranker::from_rag_config(rag).map(|r| Arc::new(r) as Arc<dyn Reranker>);
+        let reranker = build_reranker(rag).await?;
 
         let chat_repo: Arc<dyn ChatRepository> = Arc::new(NoopChatRepository);
 

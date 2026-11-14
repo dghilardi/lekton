@@ -681,15 +681,20 @@ pub struct RagConfig {
     #[serde(default)]
     pub hybrid_search_enabled: bool,
     /// Cross-encoder reranker endpoint (Jina/Infinity/Cohere-compatible `/rerank` API).
-    /// Empty string disables reranking.
+    /// Empty string disables reranking unless `reranker_vertex_project_id` is set.
     pub reranker_url: String,
     /// Model name passed to the reranker endpoint. Optional for self-hosted servers.
+    /// Google defaults to `semantic-ranker-default@latest` when empty.
     pub reranker_model: String,
     /// API key for the reranker endpoint. Optional.
     pub reranker_api_key: String,
     /// Extra HTTP headers for reranker requests. Same normalisation rules as LLM headers.
     #[serde(default)]
     pub reranker_headers: HashMap<String, String>,
+    /// Google Ranking API project. When set, selects Google instead of the URL provider.
+    /// Uses existing service account/ADC credentials; always uses the global ranking endpoint.
+    #[serde(default)]
+    pub reranker_vertex_project_id: String,
 
     /// Default LLM configuration shared by all pipeline steps.
     pub llm: LlmConfig,

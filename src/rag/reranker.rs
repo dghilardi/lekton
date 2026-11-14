@@ -19,6 +19,35 @@ pub trait Reranker: Send + Sync {
     ) -> Result<Vec<VectorSearchResult>, AppError>;
 }
 
+/// Select Google only when explicitly configured; legacy URL configuration is unchanged.
+pub async fn build_reranker(
+    config: &RagConfig,
+) -> Result<Option<std::sync::Arc<dyn Reranker>>, AppError> {
+    if !config.reranker_vertex_project_id.trim().is_empty() {
+        return Ok(Some(std::sync::Arc::new(
+            super::vertex_reranker::VertexReranker::from_rag_config(config).await?,
+        )));
+    }
+    Ok(CrossEncoderReranker::from_rag_config(config)
+        .map(|r| std::sync::Arc::new(r) as std::sync::Arc<dyn Reranker>))
+}
+
+/// Preserve the retrieval order on any provider failure.
+pub(crate) async fn rerank_or_fallback(
+    reranker: &dyn Reranker,
+    query: &str,
+    chunks: &[VectorSearchResult],
+    top_n: usize,
+) -> Vec<VectorSearchResult> {
+    match reranker.rerank(query, chunks.to_vec(), top_n).await {
+        Ok(results) => results,
+        Err(error) => {
+            tracing::warn!(%error, "reranker failed, falling back to retrieval order");
+            chunks.iter().take(top_n).cloned().collect()
+        }
+    }
+}
+
 // ── Jina / Infinity / Cohere-compatible cross-encoder reranker ────────────────
 //
 // Request format:
@@ -175,6 +204,7 @@ mod tests {
             chunk_overlap_tokens: 64,
             expand_to_parent: false,
             hybrid_search_enabled: false,
+            reranker_vertex_project_id: String::new(),
             reranker_url: url.to_string(),
             reranker_model: String::new(),
             reranker_api_key: String::new(),
@@ -203,6 +233,86 @@ mod tests {
             vlm: None,
             attachment_page_text_threshold: 100,
         }
+    }
+
+    #[tokio::test]
+    async fn factory_preserves_disabled_and_url_configuration() {
+        assert!(build_reranker(&make_config("")).await.unwrap().is_none());
+        assert!(build_reranker(&make_config("http://localhost:7997/rerank"))
+            .await
+            .unwrap()
+            .is_some());
+        let mut config = make_config("http://localhost:7997/rerank");
+        config.reranker_vertex_project_id = "invalid/project".into();
+        // Google takes precedence: reject invalid project before any ADC lookup.
+        assert!(build_reranker(&config)
+            .await
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("project ID"));
+    }
+
+    #[tokio::test]
+    async fn legacy_http_provider_keeps_auth_headers_and_wire_format() {
+        use axum::{http::HeaderMap, routing::post, Json, Router};
+        use serde_json::{json, Value};
+        let app = Router::new().route("/rerank", post(|headers: HeaderMap, Json(body): Json<Value>| async move {
+            assert_eq!(headers["authorization"], "Bearer legacy-key");
+            assert_eq!(headers["x-custom"], "legacy-header");
+            assert_eq!(body, json!({"query":"q","documents":["first","second"],"model":"legacy-model","top_n":1}));
+            Json(json!({"results":[{"index":1,"relevance_score":0.9}]}))
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut config = make_config(&format!("http://{}/rerank", listener.local_addr().unwrap()));
+        config.reranker_api_key = "legacy-key".into();
+        config.reranker_model = "legacy-model".into();
+        config
+            .reranker_headers
+            .insert("x-custom".into(), "legacy-header".into());
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let reranker = build_reranker(&config).await.unwrap().unwrap();
+        let result = reranker
+            .rerank(
+                "q",
+                vec![
+                    VectorSearchResult {
+                        chunk_text: "first".into(),
+                        ..Default::default()
+                    },
+                    VectorSearchResult {
+                        chunk_text: "second".into(),
+                        ..Default::default()
+                    },
+                ],
+                1,
+            )
+            .await;
+        task.abort();
+        assert_eq!(result.unwrap()[0].chunk_text, "second");
+    }
+
+    #[test]
+    fn old_config_deserializes_without_google_field() {
+        let config = config::Config::builder()
+            .add_source(config::File::from_str(
+                include_str!("../../config/default.toml"),
+                config::FileFormat::Toml,
+            ))
+            .set_override("rag.reranker_url", "http://legacy/rerank")
+            .unwrap()
+            .build()
+            .unwrap();
+        let mut json: serde_json::Value = config.try_deserialize().unwrap();
+        json["rag"]
+            .as_object_mut()
+            .unwrap()
+            .remove("reranker_vertex_project_id");
+        let parsed: crate::config::AppConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.rag.reranker_url, "http://legacy/rerank");
+        assert!(parsed.rag.reranker_vertex_project_id.is_empty());
     }
 
     #[test]

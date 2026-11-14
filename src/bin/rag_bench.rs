@@ -157,9 +157,11 @@ mod ssr {
         #[serde(default)]
         meilisearch_api_key: String,
 
-        // Reranker (disabled when reranker_url is empty)
+        // Reranker (disabled when both URL and Google project are empty)
         #[serde(default)]
         reranker_url: String,
+        #[serde(default)]
+        reranker_vertex_project_id: String,
         #[serde(default)]
         reranker_model: String,
         #[serde(default)]
@@ -249,6 +251,7 @@ mod ssr {
                 chunk_overlap_tokens: self.chunk_overlap_tokens,
                 expand_to_parent: self.expand_to_parent,
                 hybrid_search_enabled: self.hybrid_search_enabled,
+                reranker_vertex_project_id: self.reranker_vertex_project_id.clone(),
                 reranker_url: self.reranker_url.clone(),
                 reranker_model: self.reranker_model.clone(),
                 reranker_api_key: self.reranker_api_key.clone(),

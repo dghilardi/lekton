@@ -93,7 +93,7 @@ pub struct ChatService {
     /// hybrid search is disabled or Meilisearch is not configured.
     search_service: Option<Arc<dyn SearchService>>,
     /// Optional cross-encoder reranker applied after retrieval. `None` when
-    /// `reranker_url` is empty.
+    /// both URL and Google project are empty.
     reranker: Option<Arc<dyn Reranker>>,
     /// Optional query analyzer for complexity classification and decomposition.
     /// `None` when `analyzer_model` is empty.
@@ -1196,26 +1196,13 @@ impl ChatService {
                     candidates = pre_rerank.len(),
                     "RAG: reranking chunks"
                 );
-                // Keep a truncated fallback in case the reranker call fails.
-                let fallback: Vec<_> = pre_rerank
-                    .iter()
-                    .take(MAX_CONTEXT_CHUNKS)
-                    .cloned()
-                    .collect();
-                match reranker
-                    .rerank(&retrieval_query, pre_rerank.clone(), MAX_CONTEXT_CHUNKS)
-                    .await
-                {
-                    Ok(reranked) => reranked,
-                    Err(e) => {
-                        tracing::warn!(
-                            session_id = %session_id,
-                            error = %e,
-                            "reranker failed, falling back to retrieval order"
-                        );
-                        fallback
-                    }
-                }
+                super::reranker::rerank_or_fallback(
+                    reranker.as_ref(),
+                    &retrieval_query,
+                    &pre_rerank,
+                    MAX_CONTEXT_CHUNKS,
+                )
+                .await
             } else {
                 pre_rerank.clone()
             };

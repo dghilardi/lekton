@@ -109,6 +109,7 @@ The development setup can also enable the new RAG retrieval features introduced 
 
 **Available options**
 - Hybrid search: fuse Qdrant vector results with Meilisearch BM25 via RRF by setting `LKN__RAG__HYBRID_SEARCH_ENABLED=true`
+- Google Ranking API: set `LKN__RAG__RERANKER_VERTEX_PROJECT_ID` to opt in using existing service account/ADC authentication (see [setup and IAM](docs/google-reranking.md)).
 - Cross-encoder reranker: start `infinity` and set `LKN__RAG__RERANKER_URL=http://localhost:7997/rerank`
 - Query decomposition: pull a lightweight local model and set `LKN__RAG__ANALYZER_MODEL=phi3:mini`
 - HyDE: pull a lightweight local model and set `LKN__RAG__HYDE_MODEL=phi3:mini`

@@ -298,6 +298,10 @@ impl TestEnv {
                 get(lekton::api::assets::list_assets_handler),
             )
             .route(
+                "/api/v1/assets/check-hashes",
+                post(lekton::api::assets::check_hashes_handler),
+            )
+            .route(
                 "/api/v1/assets/{*key}",
                 axum::routing::put(lekton::api::assets::upload_asset_handler)
                     .get(lekton::api::assets::serve_asset_handler)

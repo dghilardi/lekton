@@ -439,3 +439,122 @@ async fn editor_upload_missing_file_field() {
 
     response.assert_status_bad_request();
 }
+
+#[tokio::test]
+async fn upload_asset_records_token_name_not_raw_token() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+    let token = env
+        .create_service_token("ci-docs", vec!["docs/*".into()], true)
+        .await;
+
+    upload_asset(
+        &server,
+        "attachments/docs/guide/spec.pdf",
+        b"%PDF",
+        "application/pdf",
+        &token,
+    )
+    .await
+    .assert_status_ok();
+
+    let asset = env
+        .asset_repo
+        .find_by_key("attachments/docs/guide/spec.pdf")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(asset.uploaded_by, "service-token:ci-docs");
+    assert!(!asset.uploaded_by.contains(&token));
+}
+
+#[tokio::test]
+async fn asset_writes_require_write_permission() {
+    let env = common::TestEnv::start().await;
+    let server = env.server_permissive();
+    let read_only = env
+        .create_service_token("reader", vec!["docs/*".into()], false)
+        .await;
+
+    upload_asset(
+        &server,
+        "attachments/docs/a.txt",
+        b"x",
+        "text/plain",
+        &read_only,
+    )
+    .await
+    .assert_status_forbidden();
+    server
+        .delete("/api/v1/assets/attachments/docs/a.txt")
+        .json(&serde_json::json!({"service_token": read_only}))
+        .await
+        .assert_status_forbidden();
+    server
+        .post("/api/v1/assets/check-hashes")
+        .json(&serde_json::json!({
+            "service_token": read_only,
+            "entries": [{"key": "attachments/docs/a.txt", "content_hash": "sha256:x"}]
+        }))
+        .await
+        .assert_status_forbidden();
+}
+
+#[tokio::test]
+async fn asset_writes_are_limited_to_the_token_scope() {
+    let env = common::TestEnv::start().await;
+    let server = env.server_permissive();
+    let token = env
+        .create_service_token("docs-only", vec!["docs/*".into()], true)
+        .await;
+
+    // The CLI namespaces attachments under the owning document's slug.
+    upload_asset(
+        &server,
+        "attachments/docs/guide/in.txt",
+        b"x",
+        "text/plain",
+        &token,
+    )
+    .await
+    .assert_status_ok();
+    upload_asset(
+        &server,
+        "attachments/other/out.txt",
+        b"x",
+        "text/plain",
+        &token,
+    )
+    .await
+    .assert_status_forbidden();
+
+    // A key owned by another scope cannot be deleted or probed.
+    upload_asset(
+        &server,
+        "attachments/other/out.txt",
+        b"x",
+        "text/plain",
+        "test-token",
+    )
+    .await
+    .assert_status_ok();
+    server
+        .delete("/api/v1/assets/attachments/other/out.txt")
+        .json(&serde_json::json!({"service_token": token}))
+        .await
+        .assert_status_forbidden();
+    assert!(env
+        .asset_repo
+        .find_by_key("attachments/other/out.txt")
+        .await
+        .unwrap()
+        .is_some());
+    server
+        .post("/api/v1/assets/check-hashes")
+        .json(&serde_json::json!({
+            "service_token": token,
+            "entries": [{"key": "attachments/other/out.txt", "content_hash": "sha256:x"}]
+        }))
+        .await
+        .assert_status_forbidden();
+}

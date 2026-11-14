@@ -325,3 +325,51 @@ async fn migration_015_is_safe_with_no_history_at_all() {
         "found: {indexes:?}"
     );
 }
+
+#[tokio::test]
+async fn migration_021_replaces_raw_service_tokens_in_asset_uploaders() {
+    let env = common::TestEnv::start().await;
+    let assets = env.db.collection::<mongodb::bson::Document>("assets");
+    let tokens = env
+        .db
+        .collection::<mongodb::bson::Document>("service_tokens");
+
+    tokens
+        .insert_one(doc! {
+            "id": "st-1",
+            "name": "ci-docs",
+            "token_hash": lekton::auth::token_service::TokenService::hash_token("raw-known-secret"),
+        })
+        .await
+        .unwrap();
+    for (key, uploader) in [
+        ("a/known.pdf", "raw-known-secret"),
+        ("a/legacy.pdf", "abcd"),
+        ("a/editor.png", "editor@example.com"),
+    ] {
+        assets
+            .insert_one(doc! { "key": key, "uploaded_by": uploader })
+            .await
+            .unwrap();
+    }
+
+    run_plan(&env.db).await;
+
+    let uploader = |key: &'static str| {
+        let assets = assets.clone();
+        async move {
+            assets
+                .find_one(doc! { "key": key })
+                .await
+                .unwrap()
+                .unwrap()
+                .get_str("uploaded_by")
+                .unwrap()
+                .to_string()
+        }
+    };
+    assert_eq!(uploader("a/known.pdf").await, "service-token:ci-docs");
+    // The env-configured legacy token has no stored hash to match.
+    assert_eq!(uploader("a/legacy.pdf").await, "service-token:unknown");
+    assert_eq!(uploader("a/editor.png").await, "editor@example.com");
+}

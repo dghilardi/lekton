@@ -109,7 +109,7 @@ pub async fn process_ingest(
     ctx: &IngestContext<'_>,
     request: IngestRequest,
 ) -> Result<ProcessIngestOutcome, AppError> {
-    validate_token(ctx, &request.service_token, &request.slug).await?;
+    validate_token(ctx, &request.service_token, &request.slug, &request.content).await?;
     let actor = resolve_token_name(ctx, &request.service_token).await;
     process_authorized_ingest(ctx, request, &actor).await
 }
@@ -621,11 +621,16 @@ fn warn_about_summary(slug: &str, summary: Option<&str>) {
 }
 
 /// Validate the service token — either legacy global token or scoped token.
+///
+/// `content` is the document body: every asset it links must also be inside
+/// the token's scopes, because a document's references grant its readers
+/// access to those assets. Pass `""` when only re-authenticating a caller.
 #[cfg(feature = "ssr")]
 pub(crate) async fn validate_token(
     ctx: &IngestContext<'_>,
     raw_token: &str,
     slug: &str,
+    content: &str,
 ) -> Result<(), AppError> {
     let resolved = crate::api::token_validation::resolve_service_token(
         ctx.service_token_repo,
@@ -644,6 +649,15 @@ pub(crate) async fn validate_token(
         return Err(AppError::Forbidden(
             "Token does not have access to this document scope".into(),
         ));
+    }
+
+    if let Some(key) = extract_asset_keys(content)
+        .into_iter()
+        .find(|key| !crate::api::assets::asset_key_in_scopes(key, &resolved.scopes))
+    {
+        return Err(AppError::Forbidden(format!(
+            "Token does not have access to linked asset '{key}'"
+        )));
     }
 
     Ok(())
@@ -1953,6 +1967,30 @@ mod tests {
             AppError::Forbidden(msg) => assert!(msg.contains("scope")),
             other => panic!("Expected Forbidden error, got: {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn test_ingest_rejects_links_to_assets_outside_the_token_scope() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let scoped = make_scoped_token("scoped-secret", vec!["docs/*"]);
+        let token_repo = MockServiceTokenRepo::with_token(scoped);
+        let ctx = make_ctx(&repo, &storage, &token_repo, Some("legacy-token"));
+
+        // Referencing an asset grants its readers access, so a document may only
+        // link assets its token could have uploaded.
+        let mut request = make_request("scoped-secret", "docs/hello");
+        request.content =
+            "[report](/api/v1/assets/attachments/private/payroll/report.pdf)".to_string();
+        match process_ingest(&ctx, request).await {
+            Err(AppError::Forbidden(msg)) => assert!(msg.contains("attachments/private")),
+            other => panic!("Expected Forbidden error, got: {:?}", other.map(|_| ())),
+        }
+        assert!(repo.find_by_slug("docs/hello").await.unwrap().is_none());
+
+        let mut request = make_request("scoped-secret", "docs/hello");
+        request.content = "![diagram](/api/v1/assets/attachments/docs/hello/a.png)".to_string();
+        assert!(process_ingest(&ctx, request).await.is_ok());
     }
 
     #[tokio::test]

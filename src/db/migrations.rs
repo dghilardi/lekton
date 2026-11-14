@@ -110,6 +110,61 @@ mod inner {
                 "davide.ghilardi@comelit.it",
                 add_ingest_queue,
             )
+            .register(
+                "021_scrub_raw_tokens_from_asset_uploaders",
+                "davide.ghilardi@comelit.it",
+                scrub_raw_tokens_from_asset_uploaders,
+            )
+    }
+
+    /// The service-token asset API used to store the raw token as `uploaded_by`.
+    /// Editor and admin uploads store the user's email and always use keys under
+    /// `editor/`, so every other asset's uploader is a raw token: replace it with
+    /// the token's name when its hash is known, or with `service-token:unknown`
+    /// (env legacy token, deleted tokens). Values already rewritten are skipped,
+    /// so re-running after a failure keeps the names.
+    async fn scrub_raw_tokens_from_asset_uploaders(
+        db: Database,
+    ) -> Result<(), mongodb::error::Error> {
+        let names: std::collections::HashMap<String, String> = db
+            .collection::<bson::Document>("service_tokens")
+            .find(bson::doc! {})
+            .await?
+            .try_collect::<Vec<_>>()
+            .await?
+            .into_iter()
+            .filter_map(|t| {
+                Some((
+                    t.get_str("token_hash").ok()?.to_string(),
+                    t.get_str("name").ok()?.to_string(),
+                ))
+            })
+            .collect();
+
+        let assets = db.collection::<bson::Document>("assets");
+        let service_uploads = bson::doc! {
+            "key": { "$not": { "$regex": "^editor/" } },
+            "uploaded_by": { "$type": "string", "$not": { "$regex": "^service-token:" } },
+        };
+        let uploaders: Vec<bson::Bson> = assets
+            .distinct("uploaded_by", service_uploads.clone())
+            .await?;
+        for uploader in uploaders {
+            let bson::Bson::String(raw) = uploader else {
+                continue;
+            };
+            let hash = crate::auth::token_service::TokenService::hash_token(&raw);
+            let name = names.get(&hash).map(String::as_str).unwrap_or("unknown");
+            let mut filter = service_uploads.clone();
+            filter.insert("uploaded_by", &raw);
+            assets
+                .update_many(
+                    filter,
+                    bson::doc! { "$set": { "uploaded_by": format!("service-token:{name}") } },
+                )
+                .await?;
+        }
+        Ok(())
     }
 
     async fn add_ingest_queue(db: mongodb::Database) -> Result<(), mongodb::error::Error> {

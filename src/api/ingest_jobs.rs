@@ -38,7 +38,13 @@ pub async fn submit(
             "documentation versioning is disabled on this instance".into(),
         ));
     }
-    super::ingest::validate_token(&context(&state), &request.service_token, &request.slug).await?;
+    super::ingest::validate_token(
+        &context(&state),
+        &request.service_token,
+        &request.slug,
+        &request.content,
+    )
+    .await?;
     // Reject invalid identities and access levels before accepting durable work.
     if request.slug.is_empty() || request.slug.starts_with('/') || request.slug.contains("..") {
         return Err(AppError::BadRequest("Invalid document slug".into()));
@@ -100,8 +106,14 @@ pub async fn poll_handler(
         .get(&id)
         .await?
         .ok_or_else(|| AppError::NotFound("Import job not found".into()))?;
-    super::ingest::validate_token(&context(&state), &request.service_token, &job.request.slug)
-        .await?;
+    // Polling only re-authenticates the caller; the content was checked on submit.
+    super::ingest::validate_token(
+        &context(&state),
+        &request.service_token,
+        &job.request.slug,
+        "",
+    )
+    .await?;
     let job = queue.wait(job).await?;
     Ok(job_response(job, true, false))
 }

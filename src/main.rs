@@ -712,7 +712,10 @@ async fn main() {
         tracing::warn!("Failed to seed default access levels: {e}");
     }
 
-    tracing::info!("Connected to MongoDB at {}", mongo_uri);
+    tracing::info!(
+        "Connected to MongoDB at {}",
+        lekton::config::redact_uri_credentials(&mongo_uri)
+    );
 
     // Connect to S3
     let storage_client: Arc<dyn lekton::storage::client::StorageClient> = Arc::new(

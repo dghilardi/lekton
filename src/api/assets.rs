@@ -93,6 +93,53 @@ pub const DEFAULT_MAX_ATTACHMENT_SIZE: u64 = 25 * 1024 * 1024;
 /// client cannot force an unbounded batch of lookups.
 pub const MAX_CHECK_HASHES_ENTRIES: usize = 1000;
 
+/// Whether an asset key falls inside a service token's document scopes.
+///
+/// The CLI stores a document's attachments as `attachments/{slug}/{filename}`,
+/// so such a key is matched by its owning slug (an exact `docs/guide` scope
+/// covers `attachments/docs/guide/spec.pdf`). Any other key is matched whole.
+#[cfg(feature = "ssr")]
+pub(crate) fn asset_key_in_scopes(key: &str, scopes: &[String]) -> bool {
+    let scoped_path = match key.strip_prefix("attachments/") {
+        Some(rest) => rest.rsplit_once('/').map_or(rest, |(slug, _)| slug),
+        None => key,
+    };
+    crate::api::sync::scope_matches_any(scoped_path, scopes)
+}
+
+/// Authorize a service token to write (upload, delete, probe) the given asset keys:
+/// the token must have `can_write`, and every key must fall inside its scopes.
+#[cfg(feature = "ssr")]
+async fn authorize_asset_write(
+    service_token_repo: &dyn crate::db::service_token_repository::ServiceTokenRepository,
+    legacy_token: Option<&str>,
+    service_token: &str,
+    keys: &[&str],
+) -> Result<crate::api::token_validation::ResolvedServiceToken, AppError> {
+    let resolved = crate::api::token_validation::resolve_service_token(
+        service_token_repo,
+        legacy_token,
+        service_token,
+    )
+    .await?;
+
+    if !resolved.can_write {
+        return Err(AppError::Forbidden(
+            "Token does not have write permission".into(),
+        ));
+    }
+
+    for key in keys {
+        if !asset_key_in_scopes(key, &resolved.scopes) {
+            return Err(AppError::Forbidden(format!(
+                "Token does not have access to asset '{key}'"
+            )));
+        }
+    }
+
+    Ok(resolved)
+}
+
 /// Core upload logic — separated from HTTP layer for testability.
 #[cfg(feature = "ssr")]
 #[allow(clippy::too_many_arguments)]
@@ -102,19 +149,15 @@ pub async fn process_upload_asset(
     key: &str,
     content_type: &str,
     data: Vec<u8>,
-    uploaded_by: &str,
     service_token_repo: &dyn crate::db::service_token_repository::ServiceTokenRepository,
     legacy_token: Option<&str>,
     service_token: &str,
     max_size: u64,
 ) -> Result<AssetUploadResponse, AppError> {
-    // Validate token (legacy or DB-backed)
-    crate::api::token_validation::validate_service_token(
-        service_token_repo,
-        legacy_token,
-        service_token,
-    )
-    .await?;
+    let resolved =
+        authorize_asset_write(service_token_repo, legacy_token, service_token, &[key]).await?;
+    // Record which token uploaded the asset — never the secret itself.
+    let uploaded_by = format!("service-token:{}", resolved.name);
 
     // Validate key
     if key.is_empty() {
@@ -157,7 +200,7 @@ pub async fn process_upload_asset(
         size_bytes,
         s3_key: s3_key.clone(),
         uploaded_at: Utc::now(),
-        uploaded_by: uploaded_by.to_string(),
+        uploaded_by,
         referenced_by,
         content_hash,
         extraction_status: crate::db::models::ExtractionStatus::Pending,
@@ -284,12 +327,7 @@ pub async fn process_delete_asset(
     legacy_token: Option<&str>,
     service_token: &str,
 ) -> Result<(), AppError> {
-    crate::api::token_validation::validate_service_token(
-        service_token_repo,
-        legacy_token,
-        service_token,
-    )
-    .await?;
+    authorize_asset_write(service_token_repo, legacy_token, service_token, &[key]).await?;
 
     let asset = asset_repo.find_by_key(key).await?;
 
@@ -332,19 +370,16 @@ pub async fn process_check_hashes(
     legacy_token: Option<&str>,
     service_token: &str,
 ) -> Result<CheckHashesResponse, AppError> {
-    crate::api::token_validation::validate_service_token(
-        service_token_repo,
-        legacy_token,
-        service_token,
-    )
-    .await?;
-
     if entries.len() > MAX_CHECK_HASHES_ENTRIES {
         return Err(AppError::BadRequest(format!(
             "check-hashes accepts at most {MAX_CHECK_HASHES_ENTRIES} entries per request; got {}",
             entries.len()
         )));
     }
+
+    // check-hashes is the first step of an upload, so it needs the same grant.
+    let entry_keys: Vec<&str> = entries.iter().map(|e| e.key.as_str()).collect();
+    authorize_asset_write(service_token_repo, legacy_token, service_token, &entry_keys).await?;
 
     // Batch the lookup with a single `$in` query instead of one per entry.
     let keys: Vec<String> = entries.iter().map(|e| e.key.clone()).collect();
@@ -507,7 +542,6 @@ pub async fn upload_asset_handler(
         &key,
         &content_type,
         data,
-        &service_token, // use token as uploader identity for now
         state.service_token_repo.as_ref(),
         Some(&state.service_token),
         &service_token,
@@ -744,6 +778,34 @@ mod tests {
     use crate::db::service_token_models::ServiceToken;
     use crate::db::service_token_repository::ServiceTokenRepository;
     use crate::test_utils::MockStorage;
+
+    #[test]
+    fn asset_key_in_scopes_matches_attachments_by_owning_slug() {
+        let scopes = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        // Exact document scope covers that document's attachments only.
+        let exact = scopes(&["docs/guide"]);
+        assert!(asset_key_in_scopes(
+            "attachments/docs/guide/spec.pdf",
+            &exact
+        ));
+        assert!(!asset_key_in_scopes(
+            "attachments/docs/guide-x/a.pdf",
+            &exact
+        ));
+        assert!(!asset_key_in_scopes(
+            "attachments/docs/guide/sub/a.pdf",
+            &exact
+        ));
+        // Wildcard scope covers attachments of every document below it.
+        let wildcard = scopes(&["docs/*"]);
+        assert!(asset_key_in_scopes("attachments/docs/a.png", &wildcard));
+        assert!(asset_key_in_scopes("attachments/docs/x/y/a.png", &wildcard));
+        assert!(!asset_key_in_scopes("attachments/other/a.png", &wildcard));
+        // Keys outside the attachments layout are matched whole.
+        assert!(asset_key_in_scopes("docs/raw.txt", &wildcard));
+        assert!(!asset_key_in_scopes("editor/123_a.pdf", &wildcard));
+        assert!(asset_key_in_scopes("editor/123_a.pdf", &scopes(&["*"])));
+    }
 
     struct MockServiceTokenRepo;
 
@@ -1011,7 +1073,6 @@ mod tests {
             "project/file.txt",
             "text/plain",
             data,
-            "ci-bot",
             &MockServiceTokenRepo,
             Some("valid-token"),
             "valid-token",
@@ -1049,7 +1110,6 @@ mod tests {
             "project/orphan.txt",
             "text/plain",
             b"data".to_vec(),
-            "ci-bot",
             &MockServiceTokenRepo,
             Some("valid-token"),
             "valid-token",
@@ -1077,7 +1137,6 @@ mod tests {
             "project/existing.txt",
             "text/plain",
             b"v1".to_vec(),
-            "ci-bot",
             &MockServiceTokenRepo,
             Some("valid-token"),
             "valid-token",
@@ -1094,7 +1153,6 @@ mod tests {
             "project/existing.txt",
             "text/plain",
             b"v2".to_vec(),
-            "ci-bot",
             &MockServiceTokenRepo,
             Some("valid-token"),
             "valid-token",
@@ -1148,7 +1206,6 @@ mod tests {
             "file.txt",
             "text/plain",
             vec![1, 2, 3],
-            "ci-bot",
             &MockServiceTokenRepo,
             Some("valid-token"),
             "wrong-token",
@@ -1174,7 +1231,6 @@ mod tests {
             "",
             "text/plain",
             vec![1],
-            "ci-bot",
             &MockServiceTokenRepo,
             Some("valid-token"),
             "valid-token",
@@ -1200,7 +1256,6 @@ mod tests {
             "project/../secret/file.txt",
             "text/plain",
             vec![1],
-            "ci-bot",
             &MockServiceTokenRepo,
             Some("valid-token"),
             "valid-token",
@@ -1226,7 +1281,6 @@ mod tests {
             "/absolute/path.txt",
             "text/plain",
             vec![1],
-            "ci-bot",
             &MockServiceTokenRepo,
             Some("valid-token"),
             "valid-token",
@@ -1253,7 +1307,6 @@ mod tests {
             "logo.png",
             "image/png",
             vec![1, 2, 3],
-            "ci-bot",
             &MockServiceTokenRepo,
             Some("valid-token"),
             "valid-token",
@@ -1275,7 +1328,6 @@ mod tests {
             "logo.png",
             "image/png",
             vec![4, 5, 6, 7],
-            "ci-bot",
             &MockServiceTokenRepo,
             Some("valid-token"),
             "valid-token",
@@ -1302,7 +1354,6 @@ mod tests {
             "docs/manual.pdf",
             "application/pdf",
             content.clone(),
-            "ci-bot",
             &MockServiceTokenRepo,
             Some("valid-token"),
             "valid-token",
@@ -1460,7 +1511,6 @@ mod tests {
                 name,
                 "text/plain",
                 vec![1],
-                "ci-bot",
                 &MockServiceTokenRepo,
                 Some("valid-token"),
                 "valid-token",
@@ -1490,7 +1540,6 @@ mod tests {
                 name,
                 "text/plain",
                 vec![1],
-                "ci-bot",
                 &MockServiceTokenRepo,
                 Some("valid-token"),
                 "valid-token",
@@ -1517,7 +1566,6 @@ mod tests {
             "temp/file.txt",
             "text/plain",
             vec![1, 2, 3],
-            "ci-bot",
             &MockServiceTokenRepo,
             Some("valid-token"),
             "valid-token",
@@ -1579,7 +1627,6 @@ mod tests {
             "file.txt",
             "text/plain",
             vec![1],
-            "ci-bot",
             &MockServiceTokenRepo,
             Some("valid-token"),
             "valid-token",
@@ -1670,7 +1717,6 @@ mod tests {
             "existing.txt",
             "text/plain",
             b"hello".to_vec(),
-            "ci-bot",
             &MockServiceTokenRepo,
             Some("valid-token"),
             "valid-token",
@@ -1734,7 +1780,6 @@ mod tests {
             "doc.txt",
             "text/plain",
             b"v1".to_vec(),
-            "ci-bot",
             &MockServiceTokenRepo,
             Some("valid-token"),
             "valid-token",
@@ -1816,7 +1861,6 @@ mod tests {
             "file.txt",
             "text/plain",
             b"version1".to_vec(),
-            "ci-bot",
             &MockServiceTokenRepo,
             Some("valid-token"),
             "valid-token",

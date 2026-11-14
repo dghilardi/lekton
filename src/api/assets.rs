@@ -93,11 +93,22 @@ pub const DEFAULT_MAX_ATTACHMENT_SIZE: u64 = 25 * 1024 * 1024;
 /// client cannot force an unbounded batch of lookups.
 pub const MAX_CHECK_HASHES_ENTRIES: usize = 1000;
 
-/// Authorize a service token to write (upload, delete, probe) the given asset keys.
+/// Whether an asset key falls inside a service token's document scopes.
 ///
-/// The token must have `can_write`, and every key must fall inside its scopes.
-/// The CLI stores a document's attachments under `attachments/{slug}/…`, so the
-/// scope is matched against the key with that prefix removed.
+/// The CLI stores a document's attachments as `attachments/{slug}/{filename}`,
+/// so such a key is matched by its owning slug (an exact `docs/guide` scope
+/// covers `attachments/docs/guide/spec.pdf`). Any other key is matched whole.
+#[cfg(feature = "ssr")]
+pub(crate) fn asset_key_in_scopes(key: &str, scopes: &[String]) -> bool {
+    let scoped_path = match key.strip_prefix("attachments/") {
+        Some(rest) => rest.rsplit_once('/').map_or(rest, |(slug, _)| slug),
+        None => key,
+    };
+    crate::api::sync::scope_matches_any(scoped_path, scopes)
+}
+
+/// Authorize a service token to write (upload, delete, probe) the given asset keys:
+/// the token must have `can_write`, and every key must fall inside its scopes.
 #[cfg(feature = "ssr")]
 async fn authorize_asset_write(
     service_token_repo: &dyn crate::db::service_token_repository::ServiceTokenRepository,
@@ -119,8 +130,7 @@ async fn authorize_asset_write(
     }
 
     for key in keys {
-        let scoped_path = key.strip_prefix("attachments/").unwrap_or(key);
-        if !crate::api::sync::scope_matches_any(scoped_path, &resolved.scopes) {
+        if !asset_key_in_scopes(key, &resolved.scopes) {
             return Err(AppError::Forbidden(format!(
                 "Token does not have access to asset '{key}'"
             )));
@@ -768,6 +778,34 @@ mod tests {
     use crate::db::service_token_models::ServiceToken;
     use crate::db::service_token_repository::ServiceTokenRepository;
     use crate::test_utils::MockStorage;
+
+    #[test]
+    fn asset_key_in_scopes_matches_attachments_by_owning_slug() {
+        let scopes = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        // Exact document scope covers that document's attachments only.
+        let exact = scopes(&["docs/guide"]);
+        assert!(asset_key_in_scopes(
+            "attachments/docs/guide/spec.pdf",
+            &exact
+        ));
+        assert!(!asset_key_in_scopes(
+            "attachments/docs/guide-x/a.pdf",
+            &exact
+        ));
+        assert!(!asset_key_in_scopes(
+            "attachments/docs/guide/sub/a.pdf",
+            &exact
+        ));
+        // Wildcard scope covers attachments of every document below it.
+        let wildcard = scopes(&["docs/*"]);
+        assert!(asset_key_in_scopes("attachments/docs/a.png", &wildcard));
+        assert!(asset_key_in_scopes("attachments/docs/x/y/a.png", &wildcard));
+        assert!(!asset_key_in_scopes("attachments/other/a.png", &wildcard));
+        // Keys outside the attachments layout are matched whole.
+        assert!(asset_key_in_scopes("docs/raw.txt", &wildcard));
+        assert!(!asset_key_in_scopes("editor/123_a.pdf", &wildcard));
+        assert!(asset_key_in_scopes("editor/123_a.pdf", &scopes(&["*"])));
+    }
 
     struct MockServiceTokenRepo;
 

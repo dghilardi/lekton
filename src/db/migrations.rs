@@ -118,9 +118,11 @@ mod inner {
     }
 
     /// The service-token asset API used to store the raw token as `uploaded_by`.
-    /// Editor and admin uploads store the user's email, so any value without an
-    /// `@` is a token: replace it with the token's name when its hash is known,
-    /// or with `service-token:unknown` (env legacy token, deleted tokens).
+    /// Editor and admin uploads store the user's email and always use keys under
+    /// `editor/`, so every other asset's uploader is a raw token: replace it with
+    /// the token's name when its hash is known, or with `service-token:unknown`
+    /// (env legacy token, deleted tokens). Values already rewritten are skipped,
+    /// so re-running after a failure keeps the names.
     async fn scrub_raw_tokens_from_asset_uploaders(
         db: Database,
     ) -> Result<(), mongodb::error::Error> {
@@ -140,11 +142,12 @@ mod inner {
             .collect();
 
         let assets = db.collection::<bson::Document>("assets");
+        let service_uploads = bson::doc! {
+            "key": { "$not": { "$regex": "^editor/" } },
+            "uploaded_by": { "$type": "string", "$not": { "$regex": "^service-token:" } },
+        };
         let uploaders: Vec<bson::Bson> = assets
-            .distinct(
-                "uploaded_by",
-                bson::doc! { "uploaded_by": { "$not": { "$regex": "@|^service-token:" } } },
-            )
+            .distinct("uploaded_by", service_uploads.clone())
             .await?;
         for uploader in uploaders {
             let bson::Bson::String(raw) = uploader else {
@@ -152,9 +155,11 @@ mod inner {
             };
             let hash = crate::auth::token_service::TokenService::hash_token(&raw);
             let name = names.get(&hash).map(String::as_str).unwrap_or("unknown");
+            let mut filter = service_uploads.clone();
+            filter.insert("uploaded_by", &raw);
             assets
                 .update_many(
-                    bson::doc! { "uploaded_by": &raw },
+                    filter,
                     bson::doc! { "$set": { "uploaded_by": format!("service-token:{name}") } },
                 )
                 .await?;

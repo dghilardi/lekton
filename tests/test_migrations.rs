@@ -343,9 +343,14 @@ async fn migration_021_replaces_raw_service_tokens_in_asset_uploaders() {
         .await
         .unwrap();
     for (key, uploader) in [
-        ("a/known.pdf", "raw-known-secret"),
-        ("a/legacy.pdf", "abcd"),
-        ("a/editor.png", "editor@example.com"),
+        ("attachments/a/known.pdf", "raw-known-secret"),
+        ("attachments/a/legacy.pdf", "abcd"),
+        // Legacy env tokens are arbitrary strings and may look like an email.
+        ("attachments/a/legacy-at.pdf", "ci@secret"),
+        // Already rewritten by an earlier, interrupted run: keep the name.
+        ("attachments/a/done.pdf", "service-token:ci-docs"),
+        // Editor and admin uploads record the user's email under editor/.
+        ("editor/1_a.png", "editor@example.com"),
     ] {
         assets
             .insert_one(doc! { "key": key, "uploaded_by": uploader })
@@ -368,8 +373,22 @@ async fn migration_021_replaces_raw_service_tokens_in_asset_uploaders() {
                 .to_string()
         }
     };
-    assert_eq!(uploader("a/known.pdf").await, "service-token:ci-docs");
+    assert_eq!(
+        uploader("attachments/a/known.pdf").await,
+        "service-token:ci-docs"
+    );
     // The env-configured legacy token has no stored hash to match.
-    assert_eq!(uploader("a/legacy.pdf").await, "service-token:unknown");
-    assert_eq!(uploader("a/editor.png").await, "editor@example.com");
+    assert_eq!(
+        uploader("attachments/a/legacy.pdf").await,
+        "service-token:unknown"
+    );
+    assert_eq!(
+        uploader("attachments/a/legacy-at.pdf").await,
+        "service-token:unknown"
+    );
+    assert_eq!(
+        uploader("attachments/a/done.pdf").await,
+        "service-token:ci-docs"
+    );
+    assert_eq!(uploader("editor/1_a.png").await, "editor@example.com");
 }

@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Security
 
+- Stop logging the MongoDB password: the startup log masks the credentials injected into the connection URI.
+
 - Record which service token uploaded an asset (`service-token:<name>`) instead of the raw token. Migration `021` replaces the raw tokens already stored in `assets.uploaded_by`; tokens without a stored hash (the env legacy token, deleted tokens) become `service-token:unknown`. Rotate service tokens that were used to upload assets.
 
 - Require write permission and a matching scope for asset uploads, deletions and hash checks through the service-token API. Scopes match the key without its `attachments/` prefix, so a token scoped to `docs/*` can write `attachments/docs/…`.

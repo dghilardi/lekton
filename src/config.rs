@@ -290,6 +290,21 @@ pub struct DatabaseConfig {
     pub password: Option<String>,
 }
 
+/// Mask the password of a connection URI so it can be logged.
+///
+/// An unparseable URI is replaced entirely: it may still embed credentials.
+pub fn redact_uri_credentials(uri: &str) -> String {
+    match url::Url::parse(uri) {
+        Ok(mut parsed) => {
+            if parsed.password().is_some() {
+                let _ = parsed.set_password(Some("***"));
+            }
+            parsed.to_string()
+        }
+        Err(_) => "<unparseable uri>".to_string(),
+    }
+}
+
 fn default_database_app_name() -> String {
     "lekton".to_string()
 }
@@ -989,6 +1004,20 @@ impl AppConfig {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn redact_uri_credentials_masks_only_the_password() {
+        use super::redact_uri_credentials;
+        assert_eq!(
+            redact_uri_credentials("mongodb+srv://app:s3cr%40t@db.example.net/?retryWrites=true"),
+            "mongodb+srv://app:***@db.example.net/?retryWrites=true"
+        );
+        assert_eq!(
+            redact_uri_credentials("mongodb://localhost:27017"),
+            "mongodb://localhost:27017"
+        );
+        assert_eq!(redact_uri_credentials("not a uri"), "<unparseable uri>");
+    }
+
     #[test]
     #[cfg(feature = "ssr")]
     fn test_config_env() {

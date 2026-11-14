@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- Restrict the editor asset panel's list and delete server functions to admins; they were callable without a session.
+
 ## [0.40.0] 2026-11-09
 
 ### Fixed

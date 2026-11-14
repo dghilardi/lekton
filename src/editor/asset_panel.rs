@@ -26,10 +26,11 @@ fn extraction_status_label(status: crate::db::models::ExtractionStatus) -> &'sta
     }
 }
 
-/// Server function: list all assets.
+/// Server function: list all assets. Admin only.
 #[server(ListAllAssets, "/api")]
 pub async fn list_all_assets() -> Result<Vec<AssetInfo>, ServerFnError> {
     let state = expect_context::<crate::app::AppState>();
+    crate::server::require_admin_user(&state).await?;
     let assets = state
         .asset_repo
         .list_all()
@@ -49,10 +50,11 @@ pub async fn list_all_assets() -> Result<Vec<AssetInfo>, ServerFnError> {
         .collect())
 }
 
-/// Server function: delete an asset by key.
+/// Server function: delete an asset by key. Admin only.
 #[server(DeleteAssetByKey, "/api")]
 pub async fn delete_asset_by_key(key: String) -> Result<(), ServerFnError> {
     let state = expect_context::<crate::app::AppState>();
+    crate::server::require_admin_user(&state).await?;
 
     let asset = state
         .asset_repo

@@ -205,6 +205,7 @@ mod tests {
             expand_to_parent: false,
             hybrid_search_enabled: false,
             reranker_vertex_project_id: String::new(),
+            reranker_vertex_model: String::new(),
             reranker_url: url.to_string(),
             reranker_model: String::new(),
             reranker_api_key: String::new(),
@@ -310,9 +311,14 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("reranker_vertex_project_id");
+        json["rag"]
+            .as_object_mut()
+            .unwrap()
+            .remove("reranker_vertex_model");
         let parsed: crate::config::AppConfig = serde_json::from_value(json).unwrap();
         assert_eq!(parsed.rag.reranker_url, "http://legacy/rerank");
         assert!(parsed.rag.reranker_vertex_project_id.is_empty());
+        assert!(parsed.rag.reranker_vertex_model.is_empty());
     }
 
     #[test]

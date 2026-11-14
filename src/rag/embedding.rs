@@ -397,6 +397,7 @@ mod tests {
             expand_to_parent: false,
             hybrid_search_enabled: false,
             reranker_vertex_project_id: String::new(),
+            reranker_vertex_model: String::new(),
             reranker_url: String::new(),
             reranker_model: String::new(),
             reranker_api_key: String::new(),

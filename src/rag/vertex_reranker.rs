@@ -45,10 +45,12 @@ impl VertexReranker {
             .map_err(|_| {
                 AppError::Internal("failed to initialize Google reranker ADC authentication".into())
             })?;
-        Self::new(project, &config.reranker_model, auth)
+        Self::new(config, auth)
     }
 
-    fn new(project: &str, model: &str, auth: Arc<dyn TokenProvider>) -> Result<Self, AppError> {
+    fn new(config: &RagConfig, auth: Arc<dyn TokenProvider>) -> Result<Self, AppError> {
+        let project = config.reranker_vertex_project_id.trim();
+        let model = config.reranker_vertex_model.trim();
         Ok(Self {
             auth,
             client: crate::net::http_client_builder()
@@ -295,7 +297,7 @@ mod tests {
     }
 
     fn reranker(server: &Server, auth: Arc<FakeAuth>) -> VertexReranker {
-        let mut reranker = VertexReranker::new("test-project", DEFAULT_MODEL, auth).unwrap();
+        let mut reranker = VertexReranker::new(&make_config("test-project"), auth).unwrap();
         reranker.endpoint = server.endpoint.clone();
         reranker
     }
@@ -315,15 +317,31 @@ mod tests {
             .collect()
     }
 
+    fn make_config(project: &str) -> RagConfig {
+        let config = config::Config::builder()
+            .add_source(config::File::from_str(
+                include_str!("../../config/default.toml"),
+                config::FileFormat::Toml,
+            ))
+            .build()
+            .unwrap();
+        let mut config: crate::config::AppConfig = config.try_deserialize().unwrap();
+        config.rag.reranker_vertex_project_id = project.into();
+        config.rag
+    }
+
     #[test]
-    fn global_endpoint_and_ranking_model_are_independent_of_vertex_chat() {
+    fn google_model_is_independent_of_legacy_url_model() {
         let auth = Arc::new(FakeAuth::default());
-        let default = VertexReranker::new("project-123", "", auth.clone()).unwrap();
+        let mut config = make_config("project-123");
+        config.reranker_model = "BAAI/bge-reranker-v2-m3".into();
+        let default = VertexReranker::new(&config, auth.clone()).unwrap();
         assert_eq!(default.endpoint, "https://discoveryengine.googleapis.com/v1/projects/project-123/locations/global/rankingConfigs/default_ranking_config:rank");
         assert_eq!(default.model, DEFAULT_MODEL);
-        let pinned =
-            VertexReranker::new("project-123", " semantic-ranker-default-004 ", auth).unwrap();
+        config.reranker_vertex_model = " semantic-ranker-default-004 ".into();
+        let pinned = VertexReranker::new(&config, auth).unwrap();
         assert_eq!(pinned.model, "semantic-ranker-default-004");
+        assert_eq!(config.reranker_model, "BAAI/bge-reranker-v2-m3");
     }
 
     #[tokio::test]

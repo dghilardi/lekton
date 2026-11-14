@@ -208,6 +208,7 @@ reranker_api_key = ""
 # Optional Google Ranking API: takes precedence over URL/key/headers above.
 # Uses service account/ADC; empty model selects semantic-ranker-default@latest.
 reranker_vertex_project_id = ""
+reranker_vertex_model = ""
 
 # Extra HTTP headers for embedding requests. Keys normalised: _ → - at request time.
 # Via env: LKN__RAG__EMBEDDING_HEADERS__X_PRODUCER=LEKTON  →  x-producer: LEKTON

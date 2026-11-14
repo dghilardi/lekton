@@ -684,7 +684,6 @@ pub struct RagConfig {
     /// Empty string disables reranking unless `reranker_vertex_project_id` is set.
     pub reranker_url: String,
     /// Model name passed to the reranker endpoint. Optional for self-hosted servers.
-    /// Google defaults to `semantic-ranker-default@latest` when empty.
     pub reranker_model: String,
     /// API key for the reranker endpoint. Optional.
     pub reranker_api_key: String,
@@ -695,6 +694,10 @@ pub struct RagConfig {
     /// Uses existing service account/ADC credentials; always uses the global ranking endpoint.
     #[serde(default)]
     pub reranker_vertex_project_id: String,
+    /// Google ranking model, independent of the URL provider's `reranker_model`.
+    /// Empty selects `semantic-ranker-default@latest`.
+    #[serde(default)]
+    pub reranker_vertex_model: String,
 
     /// Default LLM configuration shared by all pipeline steps.
     pub llm: LlmConfig,

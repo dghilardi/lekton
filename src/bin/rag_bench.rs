@@ -163,6 +163,8 @@ mod ssr {
         #[serde(default)]
         reranker_vertex_project_id: String,
         #[serde(default)]
+        reranker_vertex_model: String,
+        #[serde(default)]
         reranker_model: String,
         #[serde(default)]
         reranker_api_key: String,
@@ -252,6 +254,7 @@ mod ssr {
                 expand_to_parent: self.expand_to_parent,
                 hybrid_search_enabled: self.hybrid_search_enabled,
                 reranker_vertex_project_id: self.reranker_vertex_project_id.clone(),
+                reranker_vertex_model: self.reranker_vertex_model.clone(),
                 reranker_url: self.reranker_url.clone(),
                 reranker_model: self.reranker_model.clone(),
                 reranker_api_key: self.reranker_api_key.clone(),

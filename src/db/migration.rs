@@ -227,6 +227,20 @@ mod inner {
         }
     }
 
+    /// Drop a retired collection; MongoDB NamespaceNotFound is success.
+    pub async fn drop_collection_if_exists(
+        db: Database,
+        name: &str,
+    ) -> Result<(), mongodb::error::Error> {
+        match db.collection::<bson::Document>(name).drop().await {
+            Ok(()) => Ok(()),
+            Err(e) if matches!(e.kind.as_ref(), mongodb::error::ErrorKind::Command(c) if c.code == 26) => {
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     async fn ensure_changelog_indexes(db: &Database) -> Result<(), MigrationError> {
         db.collection::<MigrationEntry>(CHANGELOG)
             .create_index(
@@ -267,4 +281,4 @@ mod inner {
 }
 
 #[cfg(feature = "ssr")]
-pub use inner::{MigrationError, MigrationPlan};
+pub use inner::{drop_collection_if_exists, MigrationError, MigrationPlan};

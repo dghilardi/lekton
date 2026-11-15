@@ -120,6 +120,11 @@ mod inner {
                 "davide.ghilardi@comelit.it",
                 add_assets_refresh_tokens_learn_indexes,
             )
+            .register(
+                "023_drop_unused_user_permissions",
+                "ghilardi.davide@gmail.com",
+                |db| crate::db::migration::drop_collection_if_exists(db, "user_permissions"),
+            )
     }
 
     /// Indexes for the collections still answered by collection scans, each

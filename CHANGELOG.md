@@ -5,14 +5,22 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+
 - Configurable revision retention (last 10 by default) and an admin preview and prune action for existing history.
 - Read-only admin consistency report for MongoDB, S3 and search indexes, with paginated storage listing.
-
-- Add a Data Maintenance admin page. Its embedding-cache section lists the cache namespaces (model, dimensions, endpoint) with entry counts and approximate size, marks the ones the current configuration uses, and deletes selected unused ones after a confirmation; namespaces in use cannot be deleted, also server-side. Counting reads only an index, never the stored vectors.
+- Admin embedding-cache inventory and confirmed purge of unused namespaces, with server-side protection for active models.
 
 ### Changed
 
-- Index the collections still answered by collection scans (migration `022`): assets by `key` (unique; the migration stops and names any duplicate key), by referencing document and by extraction status; refresh tokens by `id` (unique), user and family; and the Learn collections by the keys their queries use.
+- Migration `022` adds missing asset, refresh-token and Learn indexes, with duplicate checks before unique indexes.
+
+### Fixed
+
+- Corrected Qdrant collection defaults and documented Meilisearch 1.17 upgrades.
+
+### Removed
+
+- Retired tenant-token helper and unused user permissions collection.
 
 ## [0.41.0] 2026-11-15
 

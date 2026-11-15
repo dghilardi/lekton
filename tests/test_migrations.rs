@@ -535,3 +535,38 @@ async fn migration_022_refuses_duplicate_asset_keys() {
         "the changelog must name the duplicate key, got: {entry:?}"
     );
 }
+
+#[tokio::test]
+async fn migration_drops_unused_permissions_and_handles_absent_collection() {
+    let env = common::TestEnv::start().await;
+    env.db
+        .collection::<mongodb::bson::Document>("user_permissions")
+        .insert_one(doc! { "user_id": "unused" })
+        .await
+        .unwrap();
+    lekton::db::migrations::build_plan()
+        .run(env.db.clone())
+        .await
+        .unwrap();
+    assert!(!env
+        .db
+        .list_collection_names()
+        .await
+        .unwrap()
+        .contains(&"user_permissions".to_string()));
+    lekton::db::migrations::build_plan()
+        .run(env.db.clone())
+        .await
+        .unwrap();
+    // Re-run the drop migration with no collection, simulating an installation
+    // that never used it.
+    env.db
+        .collection::<mongodb::bson::Document>("__migrations")
+        .delete_one(doc! { "change_id": "023_drop_unused_user_permissions" })
+        .await
+        .unwrap();
+    lekton::db::migrations::build_plan()
+        .run(env.db.clone())
+        .await
+        .unwrap();
+}

@@ -218,7 +218,7 @@ rclone sync garage:lekton-bucket-backup garage:lekton-bucket \
 
 ## Qdrant
 
-Vector embeddings are stored in the collection configured via `LKN__RAG__QDRANT_COLLECTION` (default: `lekton`).
+Vector embeddings are stored in the collection configured via `LKN__RAG__QDRANT_COLLECTION` (default: `docs_collection`).
 
 ### Snapshot (backup)
 
@@ -278,10 +278,21 @@ Startup applies the index settings in the background; a search re-index applies 
 
 ### Upgrading
 
-Lekton is tested against Meilisearch 1.54. A Meilisearch database only opens with the version that created it, so a new image needs one of:
+Lekton is tested against Meilisearch 1.54.3. A Meilisearch database only opens with the version that created it, so a new image needs one of:
 
 - **In-place upgrade**: take a snapshot (`POST /snapshots`), then start the new version with `MEILI_UPGRADE_DB=true` (`docker-compose.yml` sets it). Works for databases created by Meilisearch 1.12 or later; the upgrade is not atomic, so keep the snapshot until it succeeds.
-- **Fresh index**: start the new version on an empty data directory and run a full re-index. Use this for databases older than 1.12 or if the in-place upgrade fails.
+- **Dump/import**: on the old server, `POST /dumps`, wait for its task to succeed, then copy the resulting `.dump` file. Stop the old server and start 1.54.3 with an empty data directory and `--import-dump /path/to/file.dump`. Keep the old directory for rollback. A snapshot is a backup for the same version, not a cross-version import.
+- **Fresh index**: start the new version on an empty data directory and run a full search re-index if MongoDB/S3 can reconstruct every index you need.
+
+For a server on **1.17**, first back up and verify the snapshot task completed,
+then stop it and start **1.54.3** with `MEILI_UPGRADE_DB=true`; monitor the
+`UpgradeDatabase` task until it succeeds before resuming writes. The target
+version uses `--upgrade-db` (stabilized in 1.51); earlier targets used
+`--experimental-dumpless-upgrade`. If startup rejects the database, use the
+old binary to export a dump and follow dump/import above. See the
+[official upgrade procedure](https://www.meilisearch.com/docs/resources/migration/updating)
+and review version-specific warnings before the upgrade. No operational
+upgrade is performed by Lekton's Mongo migrations.
 
 ---
 

@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.41.0] 2026-11-15
+
 ### Security
 
 - Stop logging the MongoDB password: the startup log masks the credentials injected into the connection URI.

@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Recompute effective access levels for users assigned a level that inherits from a changed one, not only for users assigned the changed level directly.
+
 - Index every chunk when a batch repeats a text: the embedding cache returned an empty vector for the second copy, so that chunk was skipped. Repeated texts are now also embedded only once.
 
 - Index extracted attachment pages into keyword search even before a document links the file, and point them at the document once it does. Extraction used to skip keyword search when the upload was processed before its document was ingested, and nothing added the pages later.

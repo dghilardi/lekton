@@ -39,7 +39,7 @@ pub async fn index_everywhere(
             .index_document(&build_search_document(doc, content))
             .await
         {
-            failures.push(format!("search: {e}"));
+            failures.push(format!("search indexing failed: {e}"));
         }
     }
 
@@ -60,7 +60,7 @@ pub async fn index_everywhere(
             .await
         };
         if let Err(e) = result {
-            failures.push(format!("rag: {e}"));
+            failures.push(format!("rag indexing failed: {e}"));
         }
     }
 
@@ -73,12 +73,12 @@ pub async fn remove_everywhere(targets: IndexTargets<'_>, slug: &str) -> Vec<Str
     let mut failures = Vec::new();
     if let Some(search) = targets.search {
         if let Err(e) = search.delete_document(slug).await {
-            failures.push(format!("search: {e}"));
+            failures.push(format!("search removal failed: {e}"));
         }
     }
     if let Some(rag) = targets.rag {
         if let Err(e) = rag.delete_document(slug).await {
-            failures.push(format!("rag: {e}"));
+            failures.push(format!("rag removal failed: {e}"));
         }
     }
     failures

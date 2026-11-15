@@ -222,7 +222,7 @@ pub async fn save_editor_page(
 
 /// Build the `Document` to persist. Metadata the form owns (title, access level,
 /// parent, order) comes from the input; fields it does not (draft state, tags,
-/// backlinks, visibility, service owner) are preserved from the existing page on
+/// backlinks, visibility, RAG opt-out, service owner) are preserved from the existing page on
 /// edit and defaulted on creation. A hand-authored page never carries a
 /// `source_id`, so it stays editable here.
 #[cfg(feature = "ssr")]
@@ -237,15 +237,23 @@ fn build_editor_document(
 ) -> crate::db::models::Document {
     use chrono::Utc;
 
-    let (is_draft, service_owner, tags, backlinks, is_hidden) = match &old_doc {
+    let (is_draft, service_owner, tags, backlinks, is_hidden, skip_rag) = match &old_doc {
         Some(d) => (
             d.is_draft,
             d.service_owner.clone(),
             d.tags.clone(),
             d.backlinks.clone(),
             d.is_hidden,
+            d.skip_rag,
         ),
-        None => (false, "web-editor".to_string(), vec![], vec![], false),
+        None => (
+            false,
+            "web-editor".to_string(),
+            vec![],
+            vec![],
+            false,
+            false,
+        ),
     };
 
     crate::db::models::Document {
@@ -271,18 +279,18 @@ fn build_editor_document(
         release: None,
         is_latest: true,
         needs_reindex: false,
-        skip_rag: false,
+        skip_rag,
     }
 }
 
-/// Index the document into search, persist it, reconcile backlinks and asset
-/// references, and report the outcome.
+/// Index the document into search and RAG, persist it, reconcile backlinks and
+/// asset references, and report the outcome.
 ///
 /// Indexing runs *before* the metadata upsert so the stored document records
-/// whether it is in sync: a search-indexing failure leaves a durable
-/// `needs_reindex` flag (mirroring the ingest API) instead of silently
-/// reporting success. Any sink failure (search or asset reconcile) is surfaced
-/// in the returned message rather than swallowed.
+/// whether it is in sync: an indexing failure leaves a durable `needs_reindex`
+/// flag (mirroring the ingest API) instead of silently reporting success. Any
+/// sink failure (search, RAG or asset reconcile) is surfaced in the returned
+/// message rather than swallowed.
 #[cfg(feature = "ssr")]
 #[allow(clippy::too_many_arguments)]
 async fn finalize_document_save(
@@ -299,25 +307,22 @@ async fn finalize_document_save(
     let slug = doc.slug.clone();
     let links_out = doc.links_out.clone();
 
-    // Index into search before persisting so `needs_reindex` records whether
-    // the stored document is in sync with the index. A hidden page must not be
-    // in search or RAG at all, so it is removed from both instead.
-    let mut warnings = Vec::new();
-    if doc.is_hidden {
-        let targets = crate::indexing::IndexTargets {
-            search: search_service,
-            rag: rag_service,
-        };
-        for failure in crate::indexing::remove_everywhere(targets, &slug).await {
-            tracing::warn!(slug = %slug, "Failed to remove hidden document: {failure}");
-            warnings.push(format!("index removal failed: {failure}"));
-        }
-    } else if let Some(svc) = search_service {
-        let sdoc = crate::search::client::build_search_document(&doc, html_content);
-        if let Err(e) = svc.index_document(&sdoc).await {
-            tracing::warn!(slug = %slug, "Failed to index document in search: {e}");
-            warnings.push(format!("search indexing failed: {e}"));
-        }
+    // Index into every enabled index before persisting so `needs_reindex`
+    // records whether the stored document is in sync with all of them. RAG
+    // too: its chunks carry the access level, so a page moved from public to
+    // internal would otherwise stay retrievable by everyone. A hidden page
+    // must not be in search or RAG at all, so it is removed from both instead.
+    let targets = crate::indexing::IndexTargets {
+        search: search_service,
+        rag: rag_service,
+    };
+    let mut warnings = if doc.is_hidden {
+        crate::indexing::remove_everywhere(targets, &slug).await
+    } else {
+        crate::indexing::index_everywhere(targets, &doc, html_content).await
+    };
+    for warning in &warnings {
+        tracing::warn!(slug = %slug, "Failed to reconcile document indexes: {warning}");
     }
     doc.needs_reindex = !warnings.is_empty();
 
@@ -1276,6 +1281,118 @@ mod tests {
         assert_eq!(rag.deleted(), vec!["guide"]);
         let saved = doc_repo.saved.lock().unwrap().clone().unwrap();
         assert!(!saved.needs_reindex);
+    }
+
+    #[tokio::test]
+    async fn save_of_a_visible_page_reindexes_it_in_search_and_rag() {
+        let doc_repo = CapturingDocumentRepo::default();
+        let asset_repo = StubAssetRepo::default();
+        let search = crate::test_utils::RecordingSearch::default();
+        let rag = crate::test_utils::RecordingRag::default();
+        let storage = MockStorage::new();
+
+        finalize_document_save(
+            &doc_repo,
+            &asset_repo,
+            Some(&search),
+            Some(&rag),
+            None,
+            &storage,
+            make_doc(),
+            "<p>body</p>",
+            &[],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(search.indexed(), vec!["guide"]);
+        // A changed access level must reach the RAG chunks too.
+        assert_eq!(rag.indexed(), vec!["guide"]);
+        assert!(
+            !doc_repo
+                .saved
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap()
+                .needs_reindex
+        );
+    }
+
+    #[tokio::test]
+    async fn save_flags_needs_reindex_when_rag_indexing_fails() {
+        let doc_repo = CapturingDocumentRepo::default();
+        let asset_repo = StubAssetRepo::default();
+        let search = crate::test_utils::RecordingSearch::default();
+        let rag = crate::test_utils::RecordingRag::default();
+        rag.fail_index
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let storage = MockStorage::new();
+
+        let msg = finalize_document_save(
+            &doc_repo,
+            &asset_repo,
+            Some(&search),
+            Some(&rag),
+            None,
+            &storage,
+            make_doc(),
+            "<p>body</p>",
+            &[],
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            doc_repo
+                .saved
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap()
+                .needs_reindex
+        );
+        assert!(msg.contains("rag indexing failed"), "got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn save_of_a_skip_rag_page_keeps_it_out_of_rag() {
+        let mut existing = make_doc();
+        existing.skip_rag = true;
+        let doc = build_editor_document(
+            "guide",
+            "Guide".to_string(),
+            "public".to_string(),
+            None,
+            0,
+            vec![],
+            Some(existing),
+        );
+        assert!(
+            doc.skip_rag,
+            "skip_rag is not a form field and must be kept"
+        );
+
+        let doc_repo = CapturingDocumentRepo::default();
+        let search = crate::test_utils::RecordingSearch::default();
+        let rag = crate::test_utils::RecordingRag::default();
+        finalize_document_save(
+            &doc_repo,
+            &StubAssetRepo::default(),
+            Some(&search),
+            Some(&rag),
+            None,
+            &MockStorage::new(),
+            doc,
+            "<p>body</p>",
+            &[],
+        )
+        .await
+        .unwrap();
+
+        assert!(rag.indexed().is_empty());
+        assert_eq!(rag.deleted(), vec!["guide"]);
+        assert_eq!(search.indexed(), vec!["guide"]);
     }
 
     #[test]

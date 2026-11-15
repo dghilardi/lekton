@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Remove a renamed document's old slug from search, RAG and its assets' references; they kept serving it and granting its readers access to the assets.
+
 ### Security
 
 - Stop logging the MongoDB password: the startup log masks the credentials injected into the connection URI.

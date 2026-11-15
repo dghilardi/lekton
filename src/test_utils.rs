@@ -236,3 +236,123 @@ impl UserRepository for MockUserRepository {
         Ok(())
     }
 }
+
+// ── RecordingSearch / RecordingRag ─────────────────────────────────────────
+
+/// Records which slugs a [`SearchService`](crate::search::client::SearchService)
+/// was asked to index or delete. `fail_index` makes every index call fail.
+#[cfg(feature = "ssr")]
+#[derive(Default)]
+pub struct RecordingSearch {
+    pub indexed: Mutex<Vec<String>>,
+    pub deleted: Mutex<Vec<String>>,
+    pub fail_index: std::sync::atomic::AtomicBool,
+}
+
+#[cfg(feature = "ssr")]
+impl RecordingSearch {
+    pub fn indexed(&self) -> Vec<String> {
+        self.indexed.lock().unwrap().clone()
+    }
+    pub fn deleted(&self) -> Vec<String> {
+        self.deleted.lock().unwrap().clone()
+    }
+}
+
+#[cfg(feature = "ssr")]
+#[async_trait]
+impl crate::search::client::SearchService for RecordingSearch {
+    async fn index_document(
+        &self,
+        doc: &crate::search::client::SearchDocument,
+    ) -> Result<(), AppError> {
+        if self.fail_index.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(AppError::Internal("search index rejected".into()));
+        }
+        self.indexed.lock().unwrap().push(doc.slug.clone());
+        Ok(())
+    }
+    async fn delete_document(&self, slug: &str) -> Result<(), AppError> {
+        self.deleted.lock().unwrap().push(slug.to_string());
+        Ok(())
+    }
+    async fn search(
+        &self,
+        _: &str,
+        _: Option<&[String]>,
+        _: bool,
+    ) -> Result<Vec<crate::search::client::SearchHit>, AppError> {
+        Ok(vec![])
+    }
+    async fn configure_index(&self) -> Result<(), AppError> {
+        Ok(())
+    }
+    async fn health_check(&self) -> Result<(), AppError> {
+        Ok(())
+    }
+}
+
+/// Records which document slugs a [`RagService`](crate::rag::service::RagService)
+/// was asked to index or delete. `fail_index` makes every document index call fail.
+#[cfg(feature = "ssr")]
+#[derive(Default)]
+pub struct RecordingRag {
+    pub indexed: Mutex<Vec<String>>,
+    pub deleted: Mutex<Vec<String>>,
+    pub fail_index: std::sync::atomic::AtomicBool,
+}
+
+#[cfg(feature = "ssr")]
+impl RecordingRag {
+    pub fn indexed(&self) -> Vec<String> {
+        self.indexed.lock().unwrap().clone()
+    }
+    pub fn deleted(&self) -> Vec<String> {
+        self.deleted.lock().unwrap().clone()
+    }
+}
+
+#[cfg(feature = "ssr")]
+#[async_trait]
+impl crate::rag::service::RagService for RecordingRag {
+    async fn index_document(
+        &self,
+        slug: &str,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: bool,
+        _: &[String],
+        _: Option<&str>,
+        _: Option<&str>,
+    ) -> Result<(), AppError> {
+        if self.fail_index.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(AppError::Internal("rag index rejected".into()));
+        }
+        self.indexed.lock().unwrap().push(slug.to_string());
+        Ok(())
+    }
+    async fn delete_document(&self, slug: &str) -> Result<(), AppError> {
+        self.deleted.lock().unwrap().push(slug.to_string());
+        Ok(())
+    }
+    async fn index_attachment(
+        &self,
+        _: &str,
+        _: &str,
+        _: &[crate::rag::service::AttachmentPage],
+        _: &[String],
+        _: &[String],
+    ) -> Result<usize, AppError> {
+        Ok(0)
+    }
+    async fn delete_attachment(&self, _: &str) -> Result<(), AppError> {
+        Ok(())
+    }
+    async fn update_attachment_access_levels(&self, _: &str, _: &[String]) -> Result<(), AppError> {
+        Ok(())
+    }
+    async fn health_check(&self) -> Result<(), AppError> {
+        Ok(())
+    }
+}

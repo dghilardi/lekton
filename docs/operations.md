@@ -146,6 +146,21 @@ Built-in demo accounts resolve to their demo email only while demo mode is enabl
 The admin-only `ListTopConsumers` server function includes an optional
 `actor_email` alongside `actor_id`; usage events continue to store IDs.
 
+### Embedding cache
+
+`embedding_cache` stores one vector per chunk text and *namespace*
+(`model|dimensions|endpoint-hash`, in the `model` field). Changing the embedding
+model, dimensions, URL or Vertex project starts a new namespace; the old one is
+never read again but stays on disk, and it is usually most of the database.
+
+*Admin → Data Maintenance → Embedding cache* lists the namespaces with their
+entry count and an approximate size, marks the ones the running configuration
+uses, and deletes the selected unused ones after a confirmation. Namespaces in
+use cannot be deleted (the server refuses the whole request). Counting reads
+only the `(hash, model)` index; deleting fetches only the entries it removes.
+MongoDB reuses the freed space for new data but does not shrink its files; run
+`compact` on the collection to return it to the operating system.
+
 ### Backup
 
 ```bash

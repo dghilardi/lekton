@@ -5,6 +5,7 @@ pub mod docs;
 pub mod document_upload;
 pub mod feedback;
 pub mod learn;
+pub mod maintenance;
 pub mod nav;
 pub mod pats;
 pub mod prompts;

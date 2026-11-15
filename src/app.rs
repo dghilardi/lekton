@@ -18,6 +18,7 @@ pub use crate::server::custom_css::*;
 pub use crate::server::docs::*;
 pub use crate::server::feedback::*;
 pub use crate::server::learn::*;
+pub use crate::server::maintenance::*;
 pub use crate::server::nav::NavigationOrderEntry;
 pub use crate::server::nav::*;
 pub use crate::server::pats::*;
@@ -174,6 +175,10 @@ pub struct AppState {
     pub usage_event_repo: Option<Arc<dyn crate::db::usage_repository::UsageEventRepository>>,
     pub embedding_cache_repo:
         Option<Arc<dyn crate::db::embedding_cache_repository::EmbeddingCacheRepository>>,
+    /// The embedding-cache namespaces the running configuration uses (empty
+    /// with RAG off). The admin purge refuses to delete them.
+    #[from_ref(skip)]
+    pub embedding_cache_namespaces: Vec<String>,
     #[from_ref(skip)]
     pub insecure_cookies: bool,
     #[from_ref(skip)]

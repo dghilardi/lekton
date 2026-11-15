@@ -39,6 +39,33 @@ pub fn cache_namespace(model: &str, dimensions: u32, endpoint: &str) -> String {
     format!("{model}|{dimensions}|{}", &endpoint_hash[..16])
 }
 
+/// Every cache namespace this RAG configuration writes and reads.
+///
+/// The cache wraps exactly one embedding backend: the configured
+/// `embedding_model` behind `embedding_url` or a Vertex project, used for
+/// chunks and, with `embedding_cache_query`, for chat queries too. The
+/// reranker is a cross-encoder that does not embed, and the evaluation tools
+/// bypass the cache, so neither adds a namespace. Startup builds the cache
+/// from this, and the admin purge refuses to delete what it returns.
+pub fn configured_cache_namespaces(rag: &crate::config::RagConfig) -> Vec<String> {
+    // Endpoint identity: distinct per backend so repointing the URL (or Vertex
+    // project) busts the cache instead of returning stale vectors from the old
+    // backend.
+    let endpoint = if rag.embedding_vertex_project_id.is_empty() {
+        format!("oai:{}", rag.embedding_url)
+    } else {
+        format!(
+            "vertex:{}/{}",
+            rag.embedding_vertex_project_id, rag.embedding_vertex_location
+        )
+    };
+    vec![cache_namespace(
+        &rag.embedding_model,
+        rag.embedding_dimensions,
+        &endpoint,
+    )]
+}
+
 // ── CachedEmbeddingService ────────────────────────────────────────────────────
 
 /// Wraps any [`EmbeddingService`] with a MongoDB-backed cache.
@@ -232,6 +259,16 @@ mod tests {
                 store.insert((e.hash.clone(), e.model.clone()), e);
             }
             Ok(())
+        }
+
+        async fn namespace_stats(
+            &self,
+        ) -> Result<Vec<crate::db::embedding_cache_repository::NamespaceStats>, AppError> {
+            unimplemented!("not used by these tests")
+        }
+
+        async fn delete_namespaces(&self, _: &[String]) -> Result<u64, AppError> {
+            unimplemented!("not used by these tests")
         }
     }
 

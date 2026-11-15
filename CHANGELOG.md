@@ -13,7 +13,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- Migration `022` adds missing asset, refresh-token and Learn indexes, with duplicate checks before unique indexes.
+- Migrations `022` and `024` add missing asset, refresh-token, Learn and revision-retention indexes, with duplicate checks before unique indexes.
 
 ### Fixed
 

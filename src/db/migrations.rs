@@ -125,6 +125,38 @@ mod inner {
                 "ghilardi.davide@gmail.com",
                 |db| crate::db::migration::drop_collection_if_exists(db, "user_permissions"),
             )
+            .register(
+                "024_add_revision_retention_indexes",
+                "ghilardi.davide@gmail.com",
+                add_revision_retention_indexes,
+            )
+    }
+
+    /// Retention deletes by logical ID and checks surviving owners by S3 key.
+    /// Keys are deliberately non-unique because legacy slug escaping can collide.
+    async fn add_revision_retention_indexes(db: Database) -> Result<(), mongodb::error::Error> {
+        use mongodb::{options::IndexOptions, IndexModel};
+
+        let revisions = db.collection::<bson::Document>("document_revisions");
+        fail_on_duplicate_keys(
+            &revisions,
+            "024_add_revision_retention_indexes",
+            "document_revisions",
+            bson::Bson::String("$id".into()),
+        )
+        .await?;
+        revisions
+            .create_indexes(vec![
+                IndexModel::builder()
+                    .keys(bson::doc! { "id": 1 })
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+                IndexModel::builder()
+                    .keys(bson::doc! { "s3_key": 1 })
+                    .build(),
+            ])
+            .await?;
+        Ok(())
     }
 
     /// Indexes for the collections still answered by collection scans, each

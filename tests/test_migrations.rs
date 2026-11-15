@@ -570,3 +570,80 @@ async fn migration_drops_unused_permissions_and_handles_absent_collection() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn migration_024_indexes_revision_retention_queries() {
+    let env = common::TestEnv::start().await;
+    run_plan(&env.db).await;
+    let names = index_names(&env.db, "document_revisions").await;
+    for name in ["id_1", "s3_key_1"] {
+        assert!(names.iter().any(|n| n == name), "missing {name}: {names:?}");
+    }
+    let revisions = env
+        .db
+        .collection::<mongodb::bson::Document>("document_revisions");
+    for n in 0..100 {
+        revisions
+            .insert_one(doc! {
+                "id": format!("rev-{n}"), "slug": format!("doc-{n}"), "revision": 1,
+                // Two rows intentionally share a historical key.
+                "s3_key": format!("docs/history/doc_{}/1.md", n / 2),
+            })
+            .await
+            .unwrap();
+    }
+    for (filter, index) in [
+        (doc! { "id": "rev-42" }, "id_1"),
+        (doc! { "s3_key": "docs/history/doc_21/1.md" }, "s3_key_1"),
+    ] {
+        let plan = winning_plan(&env.db, "document_revisions", filter).await;
+        assert!(
+            plan.contains(index) && plan.contains("IXSCAN") && !plan.contains("COLLSCAN"),
+            "retention query must use {index}: {plan}"
+        );
+    }
+    revisions
+        .insert_one(doc! { "id": "rev-42", "slug": "other", "revision": 1 })
+        .await
+        .expect_err("revision IDs must be unique");
+    assert_eq!(
+        revisions
+            .delete_one(doc! { "id": "rev-42" })
+            .await
+            .unwrap()
+            .deleted_count,
+        1
+    );
+    assert!(
+        revisions
+            .find_one(doc! { "s3_key": "docs/history/doc_21/1.md" })
+            .await
+            .unwrap()
+            .is_some(),
+        "a shared history key must retain its other owner"
+    );
+}
+
+#[tokio::test]
+async fn migration_024_refuses_duplicate_revision_ids() {
+    let env = common::TestEnv::start().await;
+    let revisions = env
+        .db
+        .collection::<mongodb::bson::Document>("document_revisions");
+    for slug in ["one", "two"] {
+        revisions
+            .insert_one(doc! { "id": "duplicate", "slug": slug, "revision": 1 })
+            .await
+            .unwrap();
+    }
+    let err = lekton::db::migrations::build_plan()
+        .run(env.db.clone())
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("024_add_revision_retention_indexes"),
+        "{err}"
+    );
+    assert_eq!(revisions.count_documents(doc! {}).await.unwrap(), 2);
+}

@@ -253,6 +253,7 @@ Context:
 {{ context }}
 
 Rules:
+- Respond in the same language as the latest user message, unless the user explicitly requests another output language. Source documents and previous assistant replies must not determine the response language. Preserve code, API paths and identifiers verbatim.
 - Answer ONLY the specific question asked. Do not summarise or repeat the entire context.
 - In a multi-turn conversation, do NOT re-state or re-confirm facts already established in previous turns. Go straight to the new information.
 - Use ONLY the context above. Do NOT use general knowledge or invent details — if the context lacks specifics (e.g. code examples), say so explicitly.

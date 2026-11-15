@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Keep chat answers in the user's language even when sources or previous assistant replies use another language.
+
 - Use the correct Vertex AI hosts for global and EU/US multi-region chat endpoints.
 
 ### Upgrade

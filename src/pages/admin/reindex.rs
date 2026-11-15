@@ -246,7 +246,7 @@ pub fn SearchReindexSection() -> impl IntoView {
                 <svg class="w-6 h-6 text-primary" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
             }
             title="Meilisearch Re-index"
-            description="Rebuild the full-text search index from MongoDB metadata and stored Markdown content."
+            description="Rebuild the full-text search index from MongoDB metadata and stored document bodies. Run it once after upgrading to full-body search: earlier entries only match their title, preview, slug and tags."
             button_class="btn btn-primary"
             progress_class="progress progress-primary w-full"
         />

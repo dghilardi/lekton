@@ -251,6 +251,16 @@ Re-indexing instead of upgrading recomputes every embedding, which costs embeddi
 
 The search index is derived from MongoDB and can always be rebuilt with a full re-index (`/admin/settings` → *Search* → *Re-index*, or `POST /api/v1/admin/search/reindex` as an administrator).
 
+### Full-text indexing
+
+Each document has one entry, searchable by title, preview, slug, tags and its full plain-text body (`content`). That is also the attribute order Meilisearch's ranking uses once matched words, typos and proximity tie, so a title match usually outranks a body-only one, but a body containing every query word can outrank a title containing one. Portal search requests return every field except `content`; a body-only match comes back as a cropped snippet of about 24 words, with the usual highlight ranges. Hybrid chat retrieval asks only for slugs. Meilisearch indexes at most 65,535 word positions per attribute, so the tail of a very large document is not searchable.
+
+Meilisearch therefore stores the full text of every indexed document, including restricted and draft ones. Lekton filters each search by the reader's access levels, but anyone holding the Meilisearch API key, a dump or a snapshot can read every body, and the index uses more disk. Tenant tokens cannot restrict which attributes a search returns, so a client searching Meilisearch directly would see whole bodies of the documents it may read; Lekton does not issue such tokens today.
+
+Startup applies the index settings in the background; a search re-index applies them first and waits up to 60 seconds for Meilisearch to confirm them. A failure is logged and, during a re-index, shown as the job's last error. Changing searchable attributes makes Meilisearch re-process all stored entries, so searches use the old settings for a while after the first upgraded start.
+
+**After upgrading to full-body search, run one search re-index.** Entries written earlier have no `content`: they stay searchable by title, preview, slug and tags, but body-only words do not match until the re-index rewrites them. Saving or syncing an unchanged document does not, so do not wait for routine syncs. The re-index reads stored bodies from S3; it needs no embedding calls and does not touch Qdrant.
+
 ### Upgrading
 
 Lekton is tested against Meilisearch 1.54. A Meilisearch database only opens with the version that created it, so a new image needs one of:

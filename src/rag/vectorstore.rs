@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use qdrant_client::qdrant::{
-    Condition, CreateCollectionBuilder, DeletePointsBuilder, Distance, Filter, PointStruct,
-    ScrollPointsBuilder, SearchPointsBuilder, SetPayloadPointsBuilder, UpsertPointsBuilder,
-    VectorParamsBuilder,
+    Condition, CreateCollectionBuilder, CreateFieldIndexCollectionBuilder, DeletePointsBuilder,
+    Distance, FieldType, Filter, PointStruct, ScrollPointsBuilder, SearchPointsBuilder,
+    SetPayloadPointsBuilder, UpsertPointsBuilder, VectorParamsBuilder,
 };
 use qdrant_client::{Payload, Qdrant};
 
@@ -83,10 +83,9 @@ pub struct VectorPoint {
 /// A single search hit returned from the vector store.
 #[derive(Debug, Clone, Default)]
 pub struct VectorSearchResult {
-    /// Stable identifier of the underlying vector point. Used by offline
-    /// evaluation tooling to match retrieved chunks against an expected set;
-    /// not consumed by the chat-time pipeline. Empty when the backend did not
-    /// return an id.
+    /// Stable identifier of the underlying vector point, used for retrieval
+    /// fusion/deduplication and offline evaluation. Empty when a legacy
+    /// backend did not return an id.
     pub point_id: String,
     pub chunk_text: String,
     pub document_slug: String,
@@ -155,6 +154,19 @@ pub trait VectorStore: Send + Sync {
         include_draft: bool,
     ) -> Result<Vec<VectorSearchResult>, AppError>;
 
+    /// Select relevant passages from a lexically discovered document, ranked
+    /// by the supplied query vector. Must reapply visibility and source filters;
+    /// a document search hit is never authorization to read its chunks.
+    async fn search_document_chunks(
+        &self,
+        vector: Vec<f32>,
+        document_slug: &str,
+        limit: usize,
+        access_levels: Option<&[String]>,
+        include_draft: bool,
+        include_attachments: bool,
+    ) -> Result<Vec<VectorSearchResult>, AppError>;
+
     /// Return all chunks that belong to the given document section.
     async fn get_section_chunks(
         &self,
@@ -220,6 +232,131 @@ impl QdrantVectorStore {
         Ok(conditions)
     }
 
+    fn document_search_filter(
+        slug: &str,
+        access_levels: Option<&[String]>,
+        include_draft: bool,
+        include_attachments: bool,
+    ) -> Result<Filter, AppError> {
+        let mut must = Self::visibility_conditions(access_levels, include_draft)?;
+        must.push(Condition::matches("document_slug", slug.to_string()));
+        Ok(Filter {
+            must,
+            must_not: if include_attachments {
+                vec![]
+            } else {
+                vec![Condition::matches("source_kind", "attachment".to_string())]
+            },
+            ..Default::default()
+        })
+    }
+
+    async fn search_filtered(
+        &self,
+        vector: Vec<f32>,
+        limit: usize,
+        filter: Filter,
+    ) -> Result<Vec<VectorSearchResult>, AppError> {
+        let mut builder =
+            SearchPointsBuilder::new(&self.collection, vector, limit as u64).with_payload(true);
+
+        builder = builder.filter(filter);
+
+        let response = self
+            .client
+            .search_points(builder)
+            .await
+            .map_err(|e| AppError::Internal(format!("qdrant search_points: {e}")))?;
+
+        let results = response
+            .result
+            .into_iter()
+            .map(|scored| {
+                let point_id = scored
+                    .id
+                    .and_then(|id| id.point_id_options)
+                    .map(|opt| match opt {
+                        qdrant_client::qdrant::point_id::PointIdOptions::Uuid(s) => s,
+                        qdrant_client::qdrant::point_id::PointIdOptions::Num(n) => n.to_string(),
+                    })
+                    .unwrap_or_default();
+                let chunk_text = scored
+                    .payload
+                    .get("chunk_text")
+                    .and_then(|v| v.as_str())
+                    .cloned()
+                    .unwrap_or_default();
+                let document_slug = scored
+                    .payload
+                    .get("document_slug")
+                    .and_then(|v| v.as_str())
+                    .cloned()
+                    .unwrap_or_default();
+                let document_title = scored
+                    .payload
+                    .get("document_title")
+                    .and_then(|v| v.as_str())
+                    .cloned()
+                    .unwrap_or_default();
+                let chunk_index = scored
+                    .payload
+                    .get("chunk_index")
+                    .and_then(|v| v.as_integer())
+                    .map(|n| n as u32)
+                    .unwrap_or_default();
+                let section_anchor = scored
+                    .payload
+                    .get("section_anchor")
+                    .and_then(|v| v.as_str())
+                    .cloned()
+                    .unwrap_or_default();
+                let section_path = scored
+                    .payload
+                    .get("section_path")
+                    .and_then(|v| v.as_list())
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(|v| v.as_str().cloned())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let source_kind = scored
+                    .payload
+                    .get("source_kind")
+                    .and_then(|v| v.as_str())
+                    .map(|s| SourceKind::from_payload(s))
+                    .unwrap_or_default();
+                let attachment_key = scored
+                    .payload
+                    .get("attachment_key")
+                    .and_then(|v| v.as_str())
+                    .cloned();
+                let source_page = scored
+                    .payload
+                    .get("source_page")
+                    .and_then(|v| v.as_integer())
+                    .map(|n| n as u32);
+
+                VectorSearchResult {
+                    point_id,
+                    chunk_text,
+                    document_slug,
+                    document_title,
+                    chunk_index,
+                    section_path,
+                    section_anchor,
+                    score: scored.score,
+                    source_kind,
+                    attachment_key,
+                    source_page,
+                }
+            })
+            .collect();
+
+        Ok(results)
+    }
+
     /// Drop the entire collection, ignoring "not found" errors.
     pub async fn delete_collection(&self) -> Result<(), AppError> {
         let exists = self
@@ -259,6 +396,25 @@ impl VectorStore for QdrantVectorStore {
                 collection = %self.collection,
                 dimensions,
                 "created Qdrant collection"
+            );
+        }
+
+        // Hybrid passage lookups search inside a single document. Without a
+        // payload index, such a selective filter can make HNSW return fewer
+        // passages than exist. Creating an existing index is a no-op.
+        if let Err(e) = self
+            .client
+            .create_field_index(CreateFieldIndexCollectionBuilder::new(
+                &self.collection,
+                "document_slug",
+                FieldType::Keyword,
+            ))
+            .await
+        {
+            tracing::warn!(
+                collection = %self.collection,
+                error = %e,
+                "could not create the document_slug payload index"
             );
         }
 
@@ -483,106 +639,32 @@ impl VectorStore for QdrantVectorStore {
             Err(_) => return Ok(Vec::new()),
         };
 
-        let mut builder =
-            SearchPointsBuilder::new(&self.collection, vector, limit as u64).with_payload(true);
-
-        if !conditions.is_empty() {
-            builder = builder.filter(Filter::must(conditions));
-        }
-
-        let response = self
-            .client
-            .search_points(builder)
+        self.search_filtered(vector, limit, Filter::must(conditions))
             .await
-            .map_err(|e| AppError::Internal(format!("qdrant search_points: {e}")))?;
+    }
 
-        let results = response
-            .result
-            .into_iter()
-            .map(|scored| {
-                let point_id = scored
-                    .id
-                    .and_then(|id| id.point_id_options)
-                    .map(|opt| match opt {
-                        qdrant_client::qdrant::point_id::PointIdOptions::Uuid(s) => s,
-                        qdrant_client::qdrant::point_id::PointIdOptions::Num(n) => n.to_string(),
-                    })
-                    .unwrap_or_default();
-                let chunk_text = scored
-                    .payload
-                    .get("chunk_text")
-                    .and_then(|v| v.as_str())
-                    .cloned()
-                    .unwrap_or_default();
-                let document_slug = scored
-                    .payload
-                    .get("document_slug")
-                    .and_then(|v| v.as_str())
-                    .cloned()
-                    .unwrap_or_default();
-                let document_title = scored
-                    .payload
-                    .get("document_title")
-                    .and_then(|v| v.as_str())
-                    .cloned()
-                    .unwrap_or_default();
-                let chunk_index = scored
-                    .payload
-                    .get("chunk_index")
-                    .and_then(|v| v.as_integer())
-                    .map(|n| n as u32)
-                    .unwrap_or_default();
-                let section_anchor = scored
-                    .payload
-                    .get("section_anchor")
-                    .and_then(|v| v.as_str())
-                    .cloned()
-                    .unwrap_or_default();
-                let section_path = scored
-                    .payload
-                    .get("section_path")
-                    .and_then(|v| v.as_list())
-                    .map(|values| {
-                        values
-                            .iter()
-                            .filter_map(|v| v.as_str().cloned())
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                let source_kind = scored
-                    .payload
-                    .get("source_kind")
-                    .and_then(|v| v.as_str())
-                    .map(|s| SourceKind::from_payload(s))
-                    .unwrap_or_default();
-                let attachment_key = scored
-                    .payload
-                    .get("attachment_key")
-                    .and_then(|v| v.as_str())
-                    .cloned();
-                let source_page = scored
-                    .payload
-                    .get("source_page")
-                    .and_then(|v| v.as_integer())
-                    .map(|n| n as u32);
-
-                VectorSearchResult {
-                    point_id,
-                    chunk_text,
-                    document_slug,
-                    document_title,
-                    chunk_index,
-                    section_path,
-                    section_anchor,
-                    score: scored.score,
-                    source_kind,
-                    attachment_key,
-                    source_page,
-                }
-            })
-            .collect();
-
-        Ok(results)
+    async fn search_document_chunks(
+        &self,
+        vector: Vec<f32>,
+        document_slug: &str,
+        limit: usize,
+        access_levels: Option<&[String]>,
+        include_draft: bool,
+        include_attachments: bool,
+    ) -> Result<Vec<VectorSearchResult>, AppError> {
+        if document_slug.is_empty() || limit == 0 || vector.is_empty() {
+            return Ok(Vec::new());
+        }
+        let filter = match Self::document_search_filter(
+            document_slug,
+            access_levels,
+            include_draft,
+            include_attachments,
+        ) {
+            Ok(filter) => filter,
+            Err(_) => return Ok(Vec::new()),
+        };
+        self.search_filtered(vector, limit, filter).await
     }
 
     async fn get_section_chunks(
@@ -710,6 +792,10 @@ mod tests {
             chunk_overlap_tokens: 64,
             expand_to_parent: false,
             hybrid_search_enabled: false,
+            retrieval_candidate_limit: 50,
+            context_chunk_limit: 5,
+            reranker_vertex_project_id: String::new(),
+            reranker_vertex_model: String::new(),
             reranker_url: String::new(),
             reranker_model: String::new(),
             reranker_api_key: String::new(),

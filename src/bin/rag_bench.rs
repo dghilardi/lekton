@@ -152,14 +152,22 @@ mod ssr {
         expand_to_parent: bool,
         #[serde(default)]
         hybrid_search_enabled: bool,
+        #[serde(default = "lekton::config::default_retrieval_candidate_limit")]
+        retrieval_candidate_limit: usize,
+        #[serde(default = "lekton::config::default_context_chunk_limit")]
+        context_chunk_limit: usize,
         #[serde(default)]
         meilisearch_url: String,
         #[serde(default)]
         meilisearch_api_key: String,
 
-        // Reranker (disabled when reranker_url is empty)
+        // Reranker (disabled when both URL and Google project are empty)
         #[serde(default)]
         reranker_url: String,
+        #[serde(default)]
+        reranker_vertex_project_id: String,
+        #[serde(default)]
+        reranker_vertex_model: String,
         #[serde(default)]
         reranker_model: String,
         #[serde(default)]
@@ -229,6 +237,7 @@ mod ssr {
                     self.name
                 ));
             }
+            self.to_rag_config().validate()?;
             Ok(())
         }
 
@@ -249,6 +258,10 @@ mod ssr {
                 chunk_overlap_tokens: self.chunk_overlap_tokens,
                 expand_to_parent: self.expand_to_parent,
                 hybrid_search_enabled: self.hybrid_search_enabled,
+                retrieval_candidate_limit: self.retrieval_candidate_limit,
+                context_chunk_limit: self.context_chunk_limit,
+                reranker_vertex_project_id: self.reranker_vertex_project_id.clone(),
+                reranker_vertex_model: self.reranker_vertex_model.clone(),
                 reranker_url: self.reranker_url.clone(),
                 reranker_model: self.reranker_model.clone(),
                 reranker_api_key: self.reranker_api_key.clone(),
@@ -490,6 +503,12 @@ mod ssr {
         keep_collections: bool,
     ) -> Result<ConfigReport, String> {
         bench.validate()?;
+        if top_k > bench.context_chunk_limit {
+            eprintln!(
+                "[{}] warning: --top-k {} exceeds context_chunk_limit {}; post-rerank metrics are limited by the final context budget. Use a smaller --top-k or raise context_chunk_limit for comparable pre/post metrics.",
+                bench.name, top_k, bench.context_chunk_limit
+            );
+        }
         let collection = bench.collection_name();
 
         let vectorstore = QdrantVectorStore::new(&bench.qdrant_url, &collection)

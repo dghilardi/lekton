@@ -39,8 +39,13 @@ pub async fn run_reindex(
     reindex.progress.store(0, Ordering::Relaxed);
     reindex.outcome.reset();
 
+    // Apply the index settings first, so documents re-indexed below become
+    // searchable on every configured attribute (including the full body).
     if let Err(e) = search.configure_index().await {
         tracing::warn!("Search reindex: failed to configure Meilisearch index: {e}");
+        reindex
+            .outcome
+            .record_failure(format!("configure index: {e}"));
     }
 
     let documents = match document_repo.list_all().await {
@@ -234,6 +239,7 @@ mod tests {
     #[derive(Default)]
     struct RecordingSearch {
         configured: AtomicBool,
+        fail_configure: bool,
         indexed: Mutex<Vec<SearchDocument>>,
         deleted: Mutex<Vec<String>>,
     }
@@ -261,6 +267,9 @@ mod tests {
 
         async fn configure_index(&self) -> Result<(), AppError> {
             self.configured.store(true, Ordering::Relaxed);
+            if self.fail_configure {
+                return Err(AppError::Internal("settings update failed".into()));
+            }
             Ok(())
         }
         async fn health_check(&self) -> Result<(), AppError> {
@@ -330,6 +339,43 @@ mod tests {
 
         let deleted = search.deleted.lock().unwrap();
         assert_eq!(&*deleted, &vec![archived.slug.clone(), hidden.slug.clone()]);
+    }
+
+    #[tokio::test]
+    async fn reindex_indexes_the_full_body_and_reports_a_failed_settings_update() {
+        let doc = make_doc("docs/long", false, false);
+        let repo = Arc::new(MockDocumentRepo {
+            documents: vec![doc.clone()],
+        });
+        let storage = Arc::new(MockStorage::default());
+        let body = format!(
+            "# Long\n\n{}\n\n`deep_identifier_42`",
+            "filler ".repeat(100)
+        );
+        storage
+            .put_object(&doc.s3_key, body.into_bytes())
+            .await
+            .unwrap();
+        let search = Arc::new(RecordingSearch {
+            fail_configure: true,
+            ..Default::default()
+        });
+        let state = Arc::new(SearchReindexState::default());
+
+        run_reindex(state.clone(), repo, storage, search.clone()).await;
+
+        let indexed = search.indexed.lock().unwrap();
+        assert_eq!(indexed.len(), 1, "documents are still indexed");
+        assert!(indexed[0].content.contains("deep_identifier_42"));
+        assert!(!indexed[0].content_preview.contains("deep_identifier_42"));
+        assert_eq!(state.outcome.failed.load(Ordering::Relaxed), 1);
+        assert!(state
+            .outcome
+            .last_error
+            .lock()
+            .unwrap()
+            .as_deref()
+            .is_some_and(|e| e.starts_with("configure index")));
     }
 
     #[tokio::test]

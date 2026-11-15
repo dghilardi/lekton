@@ -25,8 +25,6 @@ pub mod reindex;
 #[cfg(feature = "ssr")]
 pub mod reranker;
 #[cfg(feature = "ssr")]
-pub mod rrf;
-#[cfg(feature = "ssr")]
 pub mod service;
 #[cfg(feature = "ssr")]
 pub mod splitter;
@@ -47,3 +45,9 @@ pub mod client;
 pub use client::build_oai_client;
 #[cfg(feature = "ssr")]
 pub use provider::LlmProvider;
+
+#[cfg(feature = "ssr")]
+mod vertex_reranker;
+
+#[cfg(feature = "ssr")]
+mod hybrid;

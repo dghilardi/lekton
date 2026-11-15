@@ -21,7 +21,7 @@ use crate::db::chat_models::{
 };
 use crate::db::chat_repository::ChatRepository;
 use crate::error::AppError;
-use crate::rag::analyzer::{Complexity, QueryAnalyzer, QueryPlan};
+use crate::rag::analyzer::{QueryAnalyzer, QueryPlan};
 use crate::rag::client::format_llm_error;
 use crate::rag::embedding::EmbeddingService;
 use crate::rag::hyde::HydeService;
@@ -33,8 +33,6 @@ use crate::search::client::SearchService;
 use crate::usage;
 use crate::usage::UsageKey;
 
-/// Maximum number of context chunks returned to the LLM.
-const MAX_CONTEXT_CHUNKS: usize = 5;
 /// Maximum number of conversation history messages to include in the prompt.
 const MAX_HISTORY_MESSAGES: usize = 20;
 /// Upper bound on conversation-history characters forwarded to the LLM prompt.
@@ -43,8 +41,8 @@ const MAX_HISTORY_PROMPT_CHARS: usize = 8_000;
 /// Upper bound on retrieved-document characters forwarded to the LLM prompt.
 /// Prevents parent expansion and large chunks from blowing up prompt size.
 const MAX_CONTEXT_PROMPT_CHARS: usize = 12_000;
-/// How many extra Qdrant candidates to fetch when hybrid search or reranking
-/// is enabled (gives RRF/reranker room to reorder before truncating).
+/// Small hybrid overfetch when no reranker is active. Reranking uses its
+/// independent configured candidate limit instead.
 const CANDIDATE_MULTIPLIER: usize = 3;
 /// Upper bound on characters fed to [`ChatService::summarize`], to keep the
 /// prompt within the model's context window regardless of input size.
@@ -89,11 +87,13 @@ pub struct ChatService {
     embedding: Arc<dyn EmbeddingService>,
     vectorstore: Arc<dyn VectorStore>,
     expand_to_parent: bool,
+    retrieval_candidate_limit: usize,
+    context_chunk_limit: usize,
     /// Optional Meilisearch service used for hybrid search (RRF). `None` when
     /// hybrid search is disabled or Meilisearch is not configured.
     search_service: Option<Arc<dyn SearchService>>,
     /// Optional cross-encoder reranker applied after retrieval. `None` when
-    /// `reranker_url` is empty.
+    /// both URL and Google project are empty.
     reranker: Option<Arc<dyn Reranker>>,
     /// Optional query analyzer for complexity classification and decomposition.
     /// `None` when `analyzer_model` is empty.
@@ -178,15 +178,15 @@ pub struct RetrievalOutput {
     /// the analyzer is disabled or fails).
     pub query_plan: QueryPlan,
     /// The exact set of query strings that was embedded — equal to
-    /// `[retrieval_query]` for simple plans, or the (optionally HyDE-expanded)
-    /// sub-queries for decomposed plans.
+    /// standalone query plus up to three unique analyzer subqueries, optionally
+    /// replaced with HyDE text for embedding only.
     pub queries_embedded: Vec<String>,
     /// Top-K candidates after vector search, dedup, and (optional) hybrid RRF
-    /// — but **before** the cross-encoder reranker. Already truncated to
-    /// `MAX_CONTEXT_CHUNKS`.
+    /// — before reranking. Bounded by `retrieval_candidate_limit` when reranking
+    /// is active, otherwise by `context_chunk_limit`.
     pub pre_rerank: Vec<VectorSearchResult>,
-    /// Final top-K used to build the LLM prompt. Equal to `pre_rerank` when
-    /// the reranker is disabled or fails.
+    /// Final context, bounded by `context_chunk_limit`. On reranker failure,
+    /// this is the first context-sized slice of `pre_rerank`.
     pub post_rerank: Vec<VectorSearchResult>,
 }
 
@@ -200,7 +200,7 @@ pub struct RetrievalOutput {
 pub enum RetrievalMode {
     /// Every configured step.
     Full,
-    /// Vector search only: no rewriter, analyzer, HyDE or reranker.
+    /// Vector search only: no rewriter, analyzer, HyDE, lexical search or reranker.
     Thrifty,
 }
 
@@ -247,6 +247,7 @@ impl ChatService {
         reranker: Option<Arc<dyn Reranker>>,
         include_attachments: bool,
     ) -> Result<Self, AppError> {
+        config.validate().map_err(AppError::Internal)?;
         let chat_resolved = config.resolve_chat();
         if chat_resolved.model.is_empty() {
             return Err(AppError::Internal(
@@ -327,6 +328,8 @@ impl ChatService {
             embedding,
             vectorstore,
             expand_to_parent: config.expand_to_parent,
+            retrieval_candidate_limit: config.retrieval_candidate_limit,
+            context_chunk_limit: config.context_chunk_limit,
             search_service: hybrid_search_service,
             reranker,
             analyzer,
@@ -1031,17 +1034,14 @@ impl ChatService {
                 QueryPlan::simple()
             };
 
-        // The set of strings to embed: original query for simple plans,
-        // sub-queries for multi-entity / multi-hop decomposition.
-        let queries_to_embed: Vec<String> = match query_plan.complexity {
-            Complexity::Simple => vec![retrieval_query.clone()],
-            _ => query_plan.sub_queries.clone(),
-        };
+        // Keep the standalone query plus unique analyzer subqueries, bounded
+        // before either retrieval branch or optional HyDE generation.
+        let natural_queries =
+            super::hybrid::natural_queries(&retrieval_query, &query_plan.sub_queries);
+        let queries_to_embed = natural_queries.clone();
 
-        // HyDE: replace each query string with a synthetically generated
-        // hypothetical answer document before embedding. The Meilisearch text
-        // search (if enabled) still uses the original retrieval_query so that
-        // keyword recall is not degraded by the generative expansion.
+        // HyDE affects only embedding inputs. Lexical queries retain the
+        // original natural-language variants, including exact identifiers.
         let queries_to_embed = if let Some(hyde) = self.hyde.as_ref().filter(|_| !mode.is_thrifty())
         {
             tracing::debug!(
@@ -1064,22 +1064,25 @@ impl ChatService {
         // Drop (query, vector) pairs where the embedding returned an empty vector —
         // sending a zero-dim vector to Qdrant causes a hard dimension-mismatch error
         // that aborts the entire retrieval. Mirrors the index-time guard in service.rs.
-        let (queries_to_embed, all_vectors): (Vec<_>, Vec<_>) = queries_to_embed
+        let mut natural_filtered = Vec::new();
+        let mut embedded_filtered = Vec::new();
+        let mut vectors_filtered = Vec::new();
+        for ((natural, embedded), vector) in natural_queries
             .into_iter()
+            .zip(queries_to_embed)
             .zip(all_vectors)
-            .filter(|(q, vec)| {
-                if vec.is_empty() {
-                    tracing::warn!(
-                        session_id = %session_id,
-                        sub_query = %preview_text(q, 80),
-                        "RAG: empty query vector for sub-query, skipping"
-                    );
-                    false
-                } else {
-                    true
-                }
-            })
-            .unzip();
+        {
+            if vector.is_empty() {
+                tracing::warn!(session_id = %session_id, "RAG: skipping empty query embedding");
+                continue;
+            }
+            natural_filtered.push(natural);
+            embedded_filtered.push(embedded);
+            vectors_filtered.push(vector);
+        }
+        let natural_queries = natural_filtered;
+        let queries_to_embed = embedded_filtered;
+        let all_vectors = vectors_filtered;
 
         if queries_to_embed.is_empty() {
             return Err(AppError::Internal(
@@ -1087,64 +1090,75 @@ impl ChatService {
             ));
         }
 
-        let vector_limit = if self.search_service.is_some() || self.reranker.is_some() {
-            MAX_CONTEXT_CHUNKS * CANDIDATE_MULTIPLIER
+        let reranker = self.reranker.as_deref().filter(|_| !mode.is_thrifty());
+        let hybrid = self.search_service.as_ref().filter(|_| !mode.is_thrifty());
+        let candidate_limit = if reranker.is_some() {
+            self.retrieval_candidate_limit
         } else {
-            MAX_CONTEXT_CHUNKS
+            self.context_chunk_limit
+        };
+        let vector_limit = if reranker.is_some() {
+            candidate_limit
+        } else if hybrid.is_some() {
+            // Preserve the existing small hybrid overfetch without paying for
+            // the enlarged reranker pool when no reranker is active.
+            (self.context_chunk_limit * CANDIDATE_MULTIPLIER).min(self.retrieval_candidate_limit)
+        } else {
+            self.context_chunk_limit
         };
         tracing::debug!(
             session_id = %session_id,
             retrieval_query = %retrieval_query,
             sub_queries = queries_to_embed.len(),
             vector_limit,
-            hybrid = self.search_service.is_some(),
-            reranker = self.reranker.is_some(),
+            hybrid = hybrid.is_some(),
+            reranker = reranker.is_some(),
             allowed_levels = ?allowed_levels,
             include_draft,
             "RAG: searching vector store"
         );
 
-        // Run one vector search per query in parallel, plus an optional single
-        // Meilisearch query (for the hybrid RRF signal) at the same time.
-        let vector_searches: Vec<_> = all_vectors
-            .into_iter()
-            .map(|vector| {
-                self.vectorstore.search(
-                    vector,
-                    vector_limit,
+        // Vector retrieval and lexical document discovery run concurrently.
+        // Lexical discovery independently resolves relevant, visible passages
+        // from its documents, even when global vector search missed them.
+        let vector_searches = all_vectors.iter().cloned().map(|vector| {
+            self.vectorstore.search(
+                vector,
+                vector_limit,
+                allowed_levels.as_deref(),
+                include_draft,
+            )
+        });
+        let lexical_search = async {
+            if let Some(search) = hybrid {
+                super::hybrid::lexical_candidates(
+                    search.as_ref(),
+                    self.vectorstore.as_ref(),
+                    &natural_queries,
+                    &all_vectors,
                     allowed_levels.as_deref(),
                     include_draft,
+                    self.include_attachments,
                 )
-            })
-            .collect();
-
-        let (vector_results_nested, text_slugs) = if let Some(ref svc) = self.search_service {
-            let text_future =
-                svc.search(&retrieval_query, allowed_levels.as_deref(), include_draft);
-            let (vector_list, text_result) =
-                tokio::join!(futures::future::join_all(vector_searches), text_future);
-            let slugs: Vec<String> = text_result
-                .unwrap_or_else(|e| {
-                    tracing::warn!(
-                        session_id = %session_id,
-                        error = %e,
-                        "hybrid search: Meilisearch query failed, falling back to vector-only"
-                    );
-                    vec![]
-                })
-                .into_iter()
-                .map(|h| h.slug)
-                .collect();
-            (vector_list, slugs)
-        } else {
-            (futures::future::join_all(vector_searches).await, vec![])
+                .await
+            } else {
+                Vec::new()
+            }
         };
+        let (vector_results_nested, lexical_chunks) =
+            tokio::join!(futures::future::join_all(vector_searches), lexical_search);
 
         // Collect per-sub-query results, preserving the list structure needed
         // for RRF-based merging with per-sub-query diversity guarantees.
         let mut chunks_per_subquery: Vec<Vec<VectorSearchResult>> = Vec::new();
         for (sub_query, result) in queries_to_embed.iter().zip(vector_results_nested) {
-            let chunks = result?;
+            // Filter stale attachment hits before diversity selection, fusion,
+            // candidate capping and external reranking so they cannot consume
+            // slots or be sent to a provider when attachment indexing is off.
+            let chunks: Vec<_> = result?
+                .into_iter()
+                .filter(|r| self.include_attachments || r.source_kind != SourceKind::Attachment)
+                .collect();
             tracing::debug!(
                 session_id = %session_id,
                 sub_query = %preview_text(sub_query, 200),
@@ -1156,29 +1170,7 @@ impl ChatService {
             chunks_per_subquery.push(chunks);
         }
 
-        let (merged_chunks, guaranteed_ids) = if chunks_per_subquery.len() > 1 {
-            merge_subquery_chunks(chunks_per_subquery)
-        } else {
-            (
-                chunks_per_subquery.into_iter().flatten().collect(),
-                Vec::new(),
-            )
-        };
-
-        // Apply RRF if hybrid is enabled; otherwise keep retrieval order.
-        // `take_with_guarantee` is used in both paths so that the per-sub-query
-        // diversity contract survives hybrid reordering.
-        let pre_rerank: Vec<VectorSearchResult> = if !text_slugs.is_empty() {
-            tracing::debug!(
-                session_id = %session_id,
-                text_hits = text_slugs.len(),
-                "RAG: applying hybrid RRF"
-            );
-            let fused = crate::rag::rrf::fuse(merged_chunks, &text_slugs);
-            take_with_guarantee(fused, &guaranteed_ids, MAX_CONTEXT_CHUNKS)
-        } else {
-            take_with_guarantee(merged_chunks, &guaranteed_ids, MAX_CONTEXT_CHUNKS)
-        };
+        let pre_rerank = select_candidates(chunks_per_subquery, lexical_chunks, candidate_limit);
 
         tracing::debug!(
             session_id = %session_id,
@@ -1187,38 +1179,22 @@ impl ChatService {
             "RAG: pre-rerank candidates"
         );
 
-        // Cross-encoder reranking (optional): re-score retrieved chunks jointly
-        // against the query and keep only the top MAX_CONTEXT_CHUNKS.
-        let post_rerank =
-            if let Some(reranker) = self.reranker.as_ref().filter(|_| !mode.is_thrifty()) {
-                tracing::debug!(
-                    session_id = %session_id,
-                    candidates = pre_rerank.len(),
-                    "RAG: reranking chunks"
-                );
-                // Keep a truncated fallback in case the reranker call fails.
-                let fallback: Vec<_> = pre_rerank
-                    .iter()
-                    .take(MAX_CONTEXT_CHUNKS)
-                    .cloned()
-                    .collect();
-                match reranker
-                    .rerank(&retrieval_query, pre_rerank.clone(), MAX_CONTEXT_CHUNKS)
-                    .await
-                {
-                    Ok(reranked) => reranked,
-                    Err(e) => {
-                        tracing::warn!(
-                            session_id = %session_id,
-                            error = %e,
-                            "reranker failed, falling back to retrieval order"
-                        );
-                        fallback
-                    }
-                }
-            } else {
-                pre_rerank.clone()
-            };
+        // Rerank the enlarged pool, then select the independent final context budget.
+        let post_rerank = if let Some(reranker) = reranker {
+            super::reranker::rerank_or_fallback(
+                reranker,
+                &retrieval_query,
+                &pre_rerank,
+                self.context_chunk_limit,
+            )
+            .await
+        } else {
+            pre_rerank
+                .iter()
+                .take(self.context_chunk_limit)
+                .cloned()
+                .collect()
+        };
 
         let post_rerank_summary = summarize_search_results(&post_rerank);
         tracing::debug!(
@@ -1228,19 +1204,6 @@ impl ChatService {
             "RAG: retrieval complete"
         );
 
-        // Drop attachment chunks when attachment indexing is disabled (old
-        // chunks may linger from when it was on).
-        let (pre_rerank, post_rerank) = if self.include_attachments {
-            (pre_rerank, post_rerank)
-        } else {
-            let drop_attachments = |v: Vec<VectorSearchResult>| {
-                v.into_iter()
-                    .filter(|r| r.source_kind != SourceKind::Attachment)
-                    .collect::<Vec<_>>()
-            };
-            (drop_attachments(pre_rerank), drop_attachments(post_rerank))
-        };
-
         Ok(RetrievalOutput {
             retrieval_query,
             query_plan,
@@ -1249,6 +1212,47 @@ impl ChatService {
             post_rerank,
         })
     }
+}
+
+/// Fuse vector and lexical passage rankings with equal branch weight. Query
+/// fan-out cannot give lexical retrieval more votes than the vector branch.
+fn select_candidates(
+    lists: Vec<Vec<VectorSearchResult>>,
+    lexical_chunks: Vec<VectorSearchResult>,
+    limit: usize,
+) -> Vec<VectorSearchResult> {
+    let (merged, vector_guarantees) = if lists.len() > 1 {
+        merge_subquery_chunks(lists)
+    } else {
+        (lists.into_iter().flatten().collect(), Vec::new())
+    };
+    if lexical_chunks.is_empty() {
+        return take_with_guarantee(merged, &vector_guarantees, limit);
+    }
+    let (fused, mut guarantees) = merge_subquery_chunks(vec![merged, lexical_chunks]);
+    // Reserve a top hit from each branch before additional vector subqueries,
+    // subject to the overall cap. With a one-slot budget vectors retain priority.
+    guarantees.extend(vector_guarantees);
+    take_with_guarantee(fused, &guarantees, limit)
+}
+
+fn chunk_identity(chunk: &VectorSearchResult) -> String {
+    if !chunk.point_id.is_empty() {
+        return chunk.point_id.clone();
+    }
+    // Legacy stores may omit point IDs. Keep distinct source chunks instead
+    // of collapsing all missing IDs into one candidate.
+    format!(
+        "missing-id:{:?}",
+        (
+            &chunk.document_slug,
+            chunk.source_kind.as_str(),
+            &chunk.attachment_key,
+            chunk.source_page,
+            chunk.chunk_index,
+            &chunk.section_anchor,
+        )
+    )
 }
 
 /// Merge and deduplicate chunks from multiple sub-query searches.
@@ -1264,10 +1268,11 @@ impl ChatService {
 /// order), then remaining candidates sorted by RRF score descending.
 /// Returns `(rrf_sorted_candidates, guaranteed_ids)`.
 ///
-/// `guaranteed_ids` contains the `point_id` of the top-ranked chunk from each
+/// `guaranteed_ids` contains the chunk identity (point ID, or legacy source
+/// identity when missing) of the top-ranked chunk from each
 /// unique sub-query (in sub-query order, deduplicated). Callers should pass
 /// this to [`take_with_guarantee`] so the diversity contract survives any
-/// subsequent reordering (e.g. hybrid `rrf::fuse`).
+/// subsequent reordering (e.g. fusion with lexical passages).
 fn merge_subquery_chunks(
     chunks_per_subquery: Vec<Vec<VectorSearchResult>>,
 ) -> (Vec<VectorSearchResult>, Vec<String>) {
@@ -1279,14 +1284,18 @@ fn merge_subquery_chunks(
 
     for sub_query_chunks in &chunks_per_subquery {
         if let Some(chunk) = sub_query_chunks.first() {
-            if seen.insert(chunk.point_id.clone()) {
-                guaranteed_ids.push(chunk.point_id.clone());
+            if seen.insert(chunk_identity(chunk)) {
+                guaranteed_ids.push(chunk_identity(chunk));
             }
         }
+        let mut query_seen = HashSet::new();
         for (rank, chunk) in sub_query_chunks.iter().enumerate() {
+            if !query_seen.insert(chunk_identity(chunk)) {
+                continue;
+            }
             let contrib = 1.0 / (K + rank + 1) as f64;
             let entry = rrf
-                .entry(chunk.point_id.clone())
+                .entry(chunk_identity(chunk))
                 .or_insert_with(|| (chunk.clone(), 0.0));
             entry.1 += contrib;
             if chunk.score > entry.0.score {
@@ -1299,7 +1308,7 @@ fn merge_subquery_chunks(
         .into_iter()
         .map(|(id, (chunk, score))| (id, chunk, score))
         .collect();
-    sorted.sort_by(|a, b| b.2.total_cmp(&a.2));
+    sorted.sort_by(|a, b| b.2.total_cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
 
     let sorted_idx: HashMap<&str, usize> = sorted
         .iter()
@@ -1329,15 +1338,15 @@ fn merge_subquery_chunks(
 /// Guaranteed chunks are placed first (in the order given), then remaining
 /// slots are filled from `candidates` in their existing order. This preserves
 /// the diversity guarantee even after `candidates` has been reordered by an
-/// external step such as hybrid `rrf::fuse`.
+/// external step such as fusion with lexical passages.
 fn take_with_guarantee(
     candidates: Vec<VectorSearchResult>,
     guaranteed_ids: &[String],
     limit: usize,
 ) -> Vec<VectorSearchResult> {
-    let candidate_map: HashMap<&str, VectorSearchResult> = candidates
+    let candidate_map: HashMap<String, VectorSearchResult> = candidates
         .iter()
-        .map(|c| (c.point_id.as_str(), c.clone()))
+        .map(|c| (chunk_identity(c), c.clone()))
         .collect();
 
     let mut result: Vec<VectorSearchResult> = Vec::with_capacity(limit);
@@ -1358,8 +1367,7 @@ fn take_with_guarantee(
         if result.len() >= limit {
             break;
         }
-        if !included.contains(&chunk.point_id) {
-            included.insert(chunk.point_id.clone());
+        if included.insert(chunk_identity(&chunk)) {
             result.push(chunk);
         }
     }
@@ -2138,7 +2146,7 @@ mod tests {
 
     #[test]
     fn take_with_guarantee_keeps_guaranteed_after_reorder() {
-        // Simulate hybrid rrf::fuse pushing guaranteed chunk "a1" to position 5
+        // Simulate hybrid fusion pushing guaranteed chunk "a1" to position 5
         // (beyond the limit of 3), which plain .take(3) would drop.
         let candidates = vec![
             make_chunk("b1", 0.80),
@@ -2416,3 +2424,7 @@ mod tests {
         assert_eq!(json["status"], "interrupted");
     }
 }
+
+#[cfg(test)]
+#[path = "chat_retrieval_tests.rs"]
+mod retrieval_tests;

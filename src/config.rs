@@ -680,8 +680,14 @@ pub struct RagConfig {
     /// When `true`, combines Qdrant vector search with Meilisearch full-text search via RRF.
     #[serde(default)]
     pub hybrid_search_enabled: bool,
+    /// Maximum merged unique candidates sent to a reranker (1..=100).
+    #[serde(default = "default_retrieval_candidate_limit")]
+    pub retrieval_candidate_limit: usize,
+    /// Final context chunk count (1..=retrieval_candidate_limit).
+    #[serde(default = "default_context_chunk_limit")]
+    pub context_chunk_limit: usize,
     /// Cross-encoder reranker endpoint (Jina/Infinity/Cohere-compatible `/rerank` API).
-    /// Empty string disables reranking.
+    /// Empty string disables reranking unless `reranker_vertex_project_id` is set.
     pub reranker_url: String,
     /// Model name passed to the reranker endpoint. Optional for self-hosted servers.
     pub reranker_model: String,
@@ -690,6 +696,14 @@ pub struct RagConfig {
     /// Extra HTTP headers for reranker requests. Same normalisation rules as LLM headers.
     #[serde(default)]
     pub reranker_headers: HashMap<String, String>,
+    /// Google Ranking API project. When set, selects Google instead of the URL provider.
+    /// Uses existing service account/ADC credentials; always uses the global ranking endpoint.
+    #[serde(default)]
+    pub reranker_vertex_project_id: String,
+    /// Google ranking model, independent of the URL provider's `reranker_model`.
+    /// Empty selects `semantic-ranker-default@latest`.
+    #[serde(default)]
+    pub reranker_vertex_model: String,
 
     /// Default LLM configuration shared by all pipeline steps.
     pub llm: LlmConfig,
@@ -726,6 +740,13 @@ pub struct RagConfig {
     pub attachment_page_text_threshold: usize,
 }
 
+pub fn default_retrieval_candidate_limit() -> usize {
+    50
+}
+pub fn default_context_chunk_limit() -> usize {
+    5
+}
+
 fn default_attachment_page_text_threshold() -> usize {
     100
 }
@@ -740,6 +761,12 @@ impl RagConfig {
     /// Validates numeric and cross-field constraints that `is_enabled` does not cover.
     /// Call this after loading config when RAG is enabled.
     pub fn validate(&self) -> Result<(), String> {
+        if !(1..=100).contains(&self.retrieval_candidate_limit)
+            || self.context_chunk_limit == 0
+            || self.context_chunk_limit > self.retrieval_candidate_limit
+        {
+            return Err("rag.retrieval_candidate_limit must be 1..=100 and rag.context_chunk_limit must be 1..=retrieval_candidate_limit".into());
+        }
         if self.embedding_dimensions == 0 {
             return Err("rag.embedding_dimensions must be > 0".into());
         }

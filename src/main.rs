@@ -736,11 +736,18 @@ async fn main() {
         if config.features.search {
             match MeilisearchService::from_app_config(&config.search) {
                 Ok(service) => {
-                    if let Err(e) = service.configure_index().await {
-                        tracing::warn!("Failed to configure Meilisearch index: {e}");
-                    }
+                    let service = Arc::new(service);
+                    // Apply index settings without delaying startup: a changed
+                    // searchable attribute makes Meilisearch re-process every
+                    // entry, and earlier tasks may be queued ahead of it.
+                    let configuring = service.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = configuring.configure_index().await {
+                            tracing::warn!("Failed to configure Meilisearch index: {e}");
+                        }
+                    });
                     tracing::info!("Meilisearch search service initialized");
-                    Some(Arc::new(service))
+                    Some(service)
                 }
                 Err(e) => {
                     tracing::warn!("Meilisearch not available: {e} — search will be disabled");
@@ -891,11 +898,15 @@ async fn main() {
                     ));
 
                     let chat_svc = if let Some(ref chat_repo) = chat_repo {
-                        let reranker: Option<Arc<dyn lekton::rag::reranker::Reranker>> =
-                            lekton::rag::reranker::CrossEncoderReranker::from_rag_config(
-                                &config.rag,
-                            )
-                            .map(|r| Arc::new(r) as Arc<dyn lekton::rag::reranker::Reranker>);
+                        let reranker = match lekton::rag::reranker::build_reranker(&config.rag)
+                            .await
+                        {
+                            Ok(reranker) => reranker,
+                            Err(error) => {
+                                tracing::warn!(%error, "reranker initialization failed; using retrieval order");
+                                None
+                            }
+                        };
 
                         match lekton::rag::chat::ChatService::from_rag_config(
                             &config.rag,

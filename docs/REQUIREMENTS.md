@@ -141,6 +141,7 @@ an archiving sync, finalize or promote a release.
 ### 4.5. Intelligent Search
 
 * **Engine:** Meilisearch.
+* **Full text:** One entry per document, searchable by title, preview, slug, tags and the full plain-text body (Markdown or editor HTML; code kept verbatim). Attribute order favours metadata over body-only matches after Meilisearch's word, typo and proximity rules. Results carry the preview, or a cropped snippet around a body match, never the body itself. Meilisearch stores every indexed body, so direct (tenant-token) clients would need their own attribute restrictions.
 * **Scoped Search:** When a user logs in, generate a temporary Meilisearch Tenant Token containing the filter: `filter = "role IN ['public', 'user_role']"`.
 * **Vector Readiness:** Ingestion pipeline must be extensible to generate embeddings (via `rust-bert` or OpenAI API) and store them for future RAG (Chat with Docs) features.
 
@@ -343,7 +344,7 @@ backlog for search/RAG reconciliation.
 ### Phase 4: Future Tech (AI) — ✅ Delivered & Extended
 
 * ✅ Vector database (Qdrant) with token-aware chunking and access-scoped retrieval.
-* ✅ "Ask the Docs" streamed chat, with optional hybrid search, HyDE, query rewriting, and cross-encoder reranking.
+* ✅ "Ask the Docs" streamed chat, with optional hybrid search, HyDE, query rewriting, and cross-encoder reranking. Hybrid retrieval includes independently discovered lexical documents with bounded, visibility-filtered passage selection; HyDE affects embedding inputs only. Reranking uses separate validated candidate/context budgets (50/5 by default, up to 100 candidates). Google Ranking API reranking can opt in with existing service account/ADC authentication; provider failures preserve retrieval order (see [setup and IAM](google-reranking.md)).
 * ✅ MCP server exposing docs/schemas/prompts as tools; versioned Prompt Library; documentation feedback loop.
 
 See `IMPLEMENTATION_ROADMAP.md` Phase 7 for the full breakdown and candidate next steps.

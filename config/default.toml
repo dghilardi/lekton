@@ -199,12 +199,20 @@ embedding_cache_query = false
 # Combine vector search (Qdrant) with full-text search (Meilisearch) using RRF.
 # Requires search.url to be configured. Disabled by default.
 hybrid_search_enabled = false
+# Unique merged candidates before reranking; final context is selected afterward.
+# 1 <= context_chunk_limit <= retrieval_candidate_limit <= 100.
+retrieval_candidate_limit = 50
+context_chunk_limit = 5
 
 # Cross-encoder reranker endpoint (Jina/Infinity/Cohere-compatible /rerank API).
-# Leave empty to disable reranking.
+# Leave both URL and Google project empty to disable reranking.
 reranker_url = ""
 reranker_model = ""
 reranker_api_key = ""
+# Optional Google Ranking API: takes precedence over URL/key/headers above.
+# Uses service account/ADC; empty model selects semantic-ranker-default@latest.
+reranker_vertex_project_id = ""
+reranker_vertex_model = ""
 
 # Extra HTTP headers for embedding requests. Keys normalised: _ → - at request time.
 # Via env: LKN__RAG__EMBEDDING_HEADERS__X_PRODUCER=LEKTON  →  x-producer: LEKTON

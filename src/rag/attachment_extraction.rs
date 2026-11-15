@@ -190,6 +190,23 @@ pub(crate) async fn lock_attachment_acl(key: &str) -> tokio::sync::OwnedMutexGua
     lock.lock_owned().await
 }
 
+/// The running worker's queue, for the ACL recompute to re-process an
+/// attachment it cannot update in place (see [`recompute_access_levels`]).
+/// Process-wide for the same reason as [`ACL_LOCKS`].
+static ATTACHMENT_QUEUE: std::sync::RwLock<Option<AttachmentQueue>> = std::sync::RwLock::new(None);
+
+/// Register the queue the ACL recompute uses to re-process attachments.
+pub(crate) fn register_attachment_queue(queue: AttachmentQueue) {
+    *ATTACHMENT_QUEUE.write().unwrap_or_else(|e| e.into_inner()) = Some(queue);
+}
+
+fn registered_attachment_queue() -> Option<AttachmentQueue> {
+    ATTACHMENT_QUEUE
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
 /// Owns the dependencies needed to extract and index a single attachment.
 pub struct AttachmentExtractionService {
     storage: Arc<dyn StorageClient>,
@@ -248,7 +265,9 @@ impl AttachmentExtractionService {
                 }
             }
         });
-        AttachmentQueue { tx, asset_repo }
+        let queue = AttachmentQueue { tx, asset_repo };
+        register_attachment_queue(queue.clone());
+        queue
     }
 
     /// Extract and index one attachment, updating its extraction status. Safe to
@@ -278,6 +297,25 @@ impl AttachmentExtractionService {
             && asset.content_hash == asset.extracted_content_hash
         {
             return Ok(());
+        }
+
+        // Linked only by hidden documents: keep it out of both indexes, without
+        // spending an extraction on it.
+        if referencing_view(self.document_repo.as_ref(), &asset.referenced_by)
+            .await
+            .ineligible
+        {
+            let _acl_guard = lock_attachment_acl(key).await;
+            let references = match self.asset_repo.find_by_key(key).await? {
+                Some(current) => current.referenced_by,
+                None => return Ok(()),
+            };
+            if referencing_view(self.document_repo.as_ref(), &references)
+                .await
+                .ineligible
+            {
+                return self.withdraw(key).await;
+            }
         }
 
         self.asset_repo
@@ -325,8 +363,9 @@ impl AttachmentExtractionService {
             referenced_by: references,
             ..asset
         };
-        let (access_levels, tags) =
-            referencing_acl(self.document_repo.as_ref(), &asset.referenced_by).await;
+        let view = referencing_view(self.document_repo.as_ref(), &asset.referenced_by).await;
+        let access_levels = view.access_levels;
+        let tags = view.tags;
         let filename = filename_from_key(key);
 
         match self
@@ -344,8 +383,7 @@ impl AttachmentExtractionService {
                 // extracted before the linking document is ingested): the
                 // recompute that follows that ingest only updates pages that
                 // exist, so skipping them here would lose them for good.
-                let (document_slug, document_title) =
-                    document_link(self.document_repo.as_ref(), &asset.referenced_by).await;
+                let (document_slug, document_title) = view.link;
                 if let Some(search) = &self.attachment_search {
                     if let Err(e) = search
                         .index_pages(
@@ -412,8 +450,14 @@ impl AttachmentExtractionService {
                 return Ok(true);
             }
         };
-        let (current, _tags) = referencing_acl(self.document_repo.as_ref(), &references).await;
-        let (slug, title) = document_link(self.document_repo.as_ref(), &references).await;
+        let view = referencing_view(self.document_repo.as_ref(), &references).await;
+        if view.ineligible {
+            // Only hidden documents link it now.
+            self.withdraw(key).await?;
+            return Ok(false);
+        }
+        let current = view.access_levels;
+        let (slug, title) = view.link;
         if current == indexed && slug == indexed_slug {
             return Ok(true);
         }
@@ -446,6 +490,18 @@ impl AttachmentExtractionService {
             "attachment deindexed: {}",
             failures.join("; ")
         )))
+    }
+
+    /// Withdraw an attachment only hidden documents link; see
+    /// [`withdraw_attachment`].
+    async fn withdraw(&self, key: &str) -> Result<(), AppError> {
+        withdraw_attachment(
+            key,
+            self.asset_repo.as_ref(),
+            self.rag.as_ref(),
+            self.attachment_search.as_deref(),
+        )
+        .await
     }
 
     /// Record a terminal success/skip state.
@@ -560,8 +616,24 @@ pub async fn recompute_access_levels(
             continue;
         }
 
-        let (levels, _tags) = referencing_acl(document_repo, &asset.referenced_by).await;
-        let (slug, title) = document_link(document_repo, &asset.referenced_by).await;
+        let view = referencing_view(document_repo, &asset.referenced_by).await;
+        if view.ineligible {
+            // Only hidden documents link it: out of both indexes. The record
+            // and blob stay, since it is still referenced.
+            if let Err(e) = withdraw_attachment(key, asset_repo, rag, attachment_search).await {
+                tracing::warn!(key, "recompute attachment ACL: {e}");
+            }
+            continue;
+        }
+        if asset.extraction_status == ExtractionStatus::Pending {
+            // Withdrawn earlier, or not processed yet: there may be no chunks
+            // to update, so have the worker (re)process it.
+            if let Some(queue) = registered_attachment_queue() {
+                queue.enqueue(key);
+            }
+        }
+        let levels = view.access_levels;
+        let (slug, title) = view.link;
 
         let mut failures = Vec::new();
 
@@ -580,6 +652,51 @@ pub async fn recompute_access_levels(
             fail_closed_attachment_acl(key, asset_repo, rag, attachment_search, &failures).await;
         }
     }
+}
+
+/// Why an attachment linked only by hidden documents is not indexed.
+const NO_VISIBLE_REFERENCER: &str =
+    "no visible document links this attachment; it is indexed again once one does";
+
+/// Remove an attachment that only hidden documents link from both indexes,
+/// and leave it `Pending` with no extracted hash: the ACL recompute queues it
+/// again once a visible document links it, and the worker then re-extracts
+/// it. Callers hold the attachment's ACL lock. A failed removal fails closed
+/// (see [`fail_closed_attachment_acl`]) and is reported.
+async fn withdraw_attachment(
+    key: &str,
+    asset_repo: &dyn AssetRepository,
+    rag: &dyn RagService,
+    attachment_search: Option<&dyn AttachmentSearchService>,
+) -> Result<(), AppError> {
+    let mut failures = Vec::new();
+    if let Err(e) = rag.delete_attachment(key).await {
+        failures.push(format!("RAG delete failed: {e}"));
+    }
+    if let Some(search) = attachment_search {
+        if let Err(e) = search.delete_attachment(key).await {
+            failures.push(format!("search delete failed: {e}"));
+        }
+    }
+    if !failures.is_empty() {
+        fail_closed_attachment_acl(key, asset_repo, rag, attachment_search, &failures).await;
+        return Err(AppError::Internal(format!(
+            "attachment {key} could not be withdrawn: {}",
+            failures.join("; ")
+        )));
+    }
+    asset_repo
+        .update_extraction(
+            key,
+            ExtractionUpdate {
+                status: ExtractionStatus::Pending,
+                error: Some(NO_VISIBLE_REFERENCER.to_string()),
+                extracted_content_hash: None,
+                extracted_at: None,
+                indexed_chunks: Some(0),
+            },
+        )
+        .await
 }
 
 async fn fail_closed_attachment_acl(
@@ -661,73 +778,88 @@ async fn mark_orphan_cleanup_failure(
     }
 }
 
-/// Derive an attachment's access levels and tag union from its referencing
-/// documents. Access levels come from published, non-archived referencers (see
-/// [`attachment_access_levels`]); tags are the union over the same set. A
-/// per-document lookup error skips that document (fail-closed: the attachment
-/// ends up no more visible than what could be resolved).
-async fn referencing_acl(
+/// What an attachment's referencing documents grant it.
+struct ReferencingView {
+    /// From the visible, published, non-archived referencers (see
+    /// [`attachment_access_levels`]).
+    access_levels: Vec<String>,
+    /// Union of the same referencers' tags.
+    tags: Vec<String>,
+    /// Slug and title of the first visible referencer, which keyword-search
+    /// hits link to. Empty when there is none.
+    link: (String, String),
+    /// Referenced, and every reference resolves to a hidden document. Such an
+    /// attachment belongs in neither index.
+    ineligible: bool,
+}
+
+/// Derive an attachment's [`ReferencingView`] from its references.
+///
+/// Hidden documents are reachable by slug only, so they grant nothing: no
+/// access level, no tags, no link. A failed document lookup fails closed on
+/// visibility (empty ACL and link) but never marks the attachment ineligible,
+/// so a transient error cannot withdraw it.
+async fn referencing_view(
     document_repo: &dyn DocumentRepository,
     references: &[DocumentReference],
-) -> (Vec<String>, Vec<String>) {
-    let mut docs: Vec<(String, bool, bool)> = Vec::new();
-    let mut tag_set = BTreeSet::new();
+) -> ReferencingView {
     let slugs: Vec<_> = references
         .iter()
         .map(|reference| reference.slug.clone())
         .collect();
-    let resolved = document_repo
-        .find_by_slugs(&slugs)
-        .await
-        .unwrap_or_default();
-    for reference in references {
-        if let Some(doc) = resolved.iter().find(|doc| {
-            doc.slug == reference.slug && doc.release.as_deref() == reference.release.as_deref()
-        }) {
-            if !doc.is_draft && !doc.is_archived {
-                for t in &doc.tags {
-                    tag_set.insert(t.clone());
-                }
-            }
-            docs.push((doc.access_level.clone(), doc.is_draft, doc.is_archived));
+    let resolved = match document_repo.find_by_slugs(&slugs).await {
+        Ok(resolved) => resolved,
+        Err(e) => {
+            tracing::warn!("attachment ACL: cannot resolve referencing documents: {e}");
+            return ReferencingView {
+                access_levels: Vec::new(),
+                tags: Vec::new(),
+                link: (String::new(), String::new()),
+                ineligible: false,
+            };
         }
-    }
-    let refs: Vec<ReferencingDoc> = docs
+    };
+    let referencing: Vec<Option<&crate::db::models::Document>> = references
         .iter()
-        .map(|(access_level, is_draft, is_archived)| ReferencingDoc {
-            access_level,
-            is_draft: *is_draft,
-            is_archived: *is_archived,
+        .map(|reference| {
+            resolved.iter().find(|doc| {
+                doc.slug == reference.slug && doc.release.as_deref() == reference.release.as_deref()
+            })
         })
         .collect();
-    (
-        attachment_access_levels(&refs),
-        tag_set.into_iter().collect(),
-    )
-}
+    let visible: Vec<&crate::db::models::Document> = referencing
+        .iter()
+        .flatten()
+        .copied()
+        .filter(|doc| !doc.is_hidden)
+        .collect();
 
-/// The document an attachment's keyword-search pages link to: the first
-/// reference's slug and its document's title (the slug when it cannot be
-/// resolved). Empty while nothing references the attachment.
-async fn document_link(
-    document_repo: &dyn DocumentRepository,
-    references: &[DocumentReference],
-) -> (String, String) {
-    let Some(reference) = references.first() else {
-        return (String::new(), String::new());
-    };
-    let title = document_repo
-        .find_by_slugs(std::slice::from_ref(&reference.slug))
-        .await
-        .ok()
-        .and_then(|documents| {
-            documents
-                .into_iter()
-                .find(|document| document.release.as_deref() == reference.release.as_deref())
+    let mut tag_set = BTreeSet::new();
+    for doc in visible.iter().filter(|d| !d.is_draft && !d.is_archived) {
+        tag_set.extend(doc.tags.iter().cloned());
+    }
+    let refs: Vec<ReferencingDoc> = visible
+        .iter()
+        .map(|doc| ReferencingDoc {
+            access_level: &doc.access_level,
+            is_draft: doc.is_draft,
+            is_archived: doc.is_archived,
         })
-        .map(|d| d.title)
-        .unwrap_or_else(|| reference.slug.clone());
-    (reference.slug.clone(), title)
+        .collect();
+    ReferencingView {
+        access_levels: attachment_access_levels(&refs),
+        tags: tag_set.into_iter().collect(),
+        link: visible
+            .first()
+            .map(|doc| (doc.slug.clone(), doc.title.clone()))
+            .unwrap_or_default(),
+        // An unresolved reference grants nothing but does not withdraw the
+        // attachment either: only references known to be hidden do.
+        ineligible: !referencing.is_empty()
+            && referencing
+                .iter()
+                .all(|doc| doc.is_some_and(|doc| doc.is_hidden)),
+    }
 }
 
 /// The last path segment of an asset key, used as the attachment's display name.
@@ -1568,6 +1700,133 @@ mod tests {
             worker_rag.effective_acl(),
             Some(vec!["internal".to_string()])
         );
+    }
+
+    fn hidden_doc(slug: &str) -> Document {
+        Document {
+            is_hidden: true,
+            access_level: "public".to_string(),
+            ..internal_doc(slug)
+        }
+    }
+
+    /// A hidden document is reachable by slug only; it must not make the
+    /// attachments it links retrievable, nor be what their hits link to.
+    #[tokio::test]
+    async fn hidden_referencers_grant_an_attachment_nothing() {
+        let docs = Arc::new(StaticDocumentRepo(vec![
+            hidden_doc("docs/hidden"),
+            internal_doc("docs/visible"),
+        ]));
+
+        // Also referenced by a visible document: indexed with that one's ACL
+        // and linked to it, although the hidden one comes first.
+        let key = "attachments/shared/spec.txt";
+        let (asset_repo, storage) =
+            text_attachment(key, vec!["docs/hidden".into(), "docs/visible".into()]).await;
+        let rag = Arc::new(RecordingRagService::default());
+        let search = Arc::new(RecordingAttachmentSearchService::default());
+        recompute_access_levels(
+            rag.as_ref(),
+            asset_repo.as_ref(),
+            docs.as_ref(),
+            storage.as_ref(),
+            Some(search.as_ref()),
+            &[key.to_string()],
+        )
+        .await;
+        assert_eq!(
+            *rag.updated_acl.lock().unwrap(),
+            Some(vec!["internal".to_string()])
+        );
+        assert_eq!(
+            search
+                .updated_link
+                .lock()
+                .unwrap()
+                .clone()
+                .map(|(_, slug, _)| slug),
+            Some("docs/visible".to_string())
+        );
+
+        // Referenced by the hidden document only: withdrawn from both indexes,
+        // and left pending for when a visible document links it again.
+        let key = "attachments/hidden-only/spec.txt";
+        let (asset_repo, storage) = text_attachment(key, vec!["docs/hidden".into()]).await;
+        asset_repo.assets.lock().unwrap()[0].extraction_status = ExtractionStatus::Done;
+        let rag = Arc::new(RecordingRagService::default());
+        let search = Arc::new(RecordingAttachmentSearchService::default());
+        recompute_access_levels(
+            rag.as_ref(),
+            asset_repo.as_ref(),
+            docs.as_ref(),
+            storage.as_ref(),
+            Some(search.as_ref()),
+            &[key.to_string()],
+        )
+        .await;
+        assert!(rag.deleted_attachment.load(Ordering::SeqCst));
+        assert_eq!(*search.deleted.lock().unwrap(), vec![key.to_string()]);
+        assert!(rag.updated_acl.lock().unwrap().is_none());
+        let asset = asset_repo.find_local(key).unwrap();
+        assert_eq!(asset.extraction_status, ExtractionStatus::Pending);
+        assert!(asset.extracted_content_hash.is_none());
+        assert!(
+            asset_repo.still_has(key),
+            "still referenced: the record stays"
+        );
+    }
+
+    #[tokio::test]
+    async fn extraction_does_not_index_an_attachment_only_hidden_documents_link() {
+        let key = "attachments/hidden-only/extract.txt";
+        let (asset_repo, storage) = text_attachment(key, vec!["docs/hidden".into()]).await;
+        let rag = Arc::new(RecordingRagService::default());
+        let service = AttachmentExtractionService::new(
+            storage,
+            asset_repo.clone(),
+            Arc::new(StaticDocumentRepo(vec![hidden_doc("docs/hidden")])),
+            rag.clone(),
+            None,
+            Arc::new(AttachmentExtractors::new(100, None)),
+        );
+        service.process_one(key, true).await.unwrap();
+
+        assert!(rag.indexed_acl.lock().unwrap().is_none());
+        assert!(rag.deleted_attachment.load(Ordering::SeqCst));
+        assert_eq!(
+            asset_repo.find_local(key).unwrap().extraction_status,
+            ExtractionStatus::Pending
+        );
+    }
+
+    /// Withdrawn while only hidden documents linked it; once a visible one
+    /// does, the recompute queues it, since there are no chunks to update.
+    #[tokio::test]
+    async fn a_withdrawn_attachment_is_requeued_once_a_visible_document_links_it() {
+        let key = "attachments/requeue/spec.txt";
+        let (asset_repo, storage) = text_attachment(key, vec!["docs/visible".into()]).await;
+        let (tx, mut rx) = mpsc::channel(16);
+        register_attachment_queue(AttachmentQueue {
+            tx,
+            asset_repo: asset_repo.clone(),
+        });
+
+        recompute_access_levels(
+            &RecordingRagService::default(),
+            asset_repo.as_ref(),
+            &StaticDocumentRepo(vec![internal_doc("docs/visible")]),
+            storage.as_ref(),
+            None,
+            &[key.to_string()],
+        )
+        .await;
+
+        let mut queued = Vec::new();
+        while let Ok(k) = rx.try_recv() {
+            queued.push(k);
+        }
+        assert!(queued.contains(&key.to_string()), "queued: {queued:?}");
     }
 
     /// Chunks already stored with an empty ACL are repaired by a forced

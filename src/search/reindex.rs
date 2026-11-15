@@ -6,8 +6,8 @@ use std::collections::HashSet;
 use crate::db::asset_repository::AssetRepository;
 use crate::db::repository::DocumentRepository;
 use crate::indexing::{
-    currently_known_attachment_keys, currently_live_slugs, index_everywhere, remove_everywhere,
-    IndexTargets,
+    attachment_is_live, currently_live_attachment_keys, currently_live_slugs, hidden_references,
+    index_everywhere, remove_everywhere, IndexTargets,
 };
 use crate::rag::service::RagService;
 use crate::search::attachment_search::AttachmentSearchService;
@@ -70,6 +70,7 @@ pub async fn run_reindex(
             return;
         }
     };
+    let hidden = hidden_references(&documents);
 
     let mut documents_by_slug = std::collections::BTreeMap::<String, Vec<_>>::new();
     for document in documents {
@@ -157,6 +158,7 @@ pub async fn run_reindex(
         asset_repo.as_ref(),
         attachment_search.as_deref(),
         &live_slugs,
+        &hidden,
     )
     .await;
 
@@ -165,7 +167,8 @@ pub async fn run_reindex(
 }
 
 /// Delete index entries MongoDB does not account for: documents whose slug is
-/// not live, and attachment pages whose asset is gone.
+/// not live, and attachment pages whose asset is gone or linked only by hidden
+/// documents (see [`attachment_is_live`]).
 ///
 /// Only called after a complete listing of the documents. Candidates found
 /// against that (possibly old) snapshot are rechecked against MongoDB right
@@ -183,6 +186,7 @@ async fn sweep_orphans(
     asset_repo: &dyn AssetRepository,
     attachment_search: Option<&dyn AttachmentSearchService>,
     live_slugs: &HashSet<String>,
+    hidden: &HashSet<crate::db::models::DocumentReference>,
 ) {
     if live_slugs.is_empty() {
         tracing::warn!("Search reindex: no live documents, skipping the orphan sweep");
@@ -232,10 +236,12 @@ async fn sweep_orphans(
     let Some(attachment_search) = attachment_search else {
         return;
     };
-    // Every asset record counts, referenced yet or not; see
-    // `currently_known_attachment_keys`.
     let live_keys: HashSet<String> = match asset_repo.list_all().await {
-        Ok(assets) => assets.into_iter().map(|asset| asset.key).collect(),
+        Ok(assets) => assets
+            .into_iter()
+            .filter(|asset| attachment_is_live(asset, hidden))
+            .map(|asset| asset.key)
+            .collect(),
         Err(e) => {
             tracing::warn!("Search reindex: cannot list assets, skipping attachment sweep: {e}");
             reindex.outcome.record_failure(format!("list assets: {e}"));
@@ -248,7 +254,13 @@ async fn sweep_orphans(
                 .into_iter()
                 .filter(|key| !live_keys.contains(key))
                 .collect();
-            let known_now = match currently_known_attachment_keys(asset_repo, &candidates).await {
+            let known_now = match currently_live_attachment_keys(
+                asset_repo,
+                document_repo,
+                &candidates,
+            )
+            .await
+            {
                 Ok(known) => known,
                 Err(e) => {
                     tracing::warn!("Search reindex: cannot recheck orphan attachments: {e}");
@@ -1059,6 +1071,47 @@ mod tests {
         assert_eq!(
             *attachments.deleted.lock().unwrap(),
             vec!["gone.pdf".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn reindex_sweeps_attachment_pages_only_hidden_documents_link() {
+        let visible = make_doc("docs/visible", false, false);
+        let hidden = make_doc("docs/hidden", true, false);
+        let repo = Arc::new(MockDocumentRepo {
+            documents: vec![visible.clone(), hidden.clone()],
+            ..Default::default()
+        });
+        let storage = Arc::new(MockStorage::default());
+        storage
+            .put_object(&visible.s3_key, b"# Visible".to_vec())
+            .await
+            .unwrap();
+        let assets = Arc::new(crate::test_utils::InMemoryAssetRepo::with_assets(vec![
+            crate::test_utils::make_asset("hidden-only.pdf", &["docs/hidden"]),
+            crate::test_utils::make_asset("shared.pdf", &["docs/hidden", "docs/visible"]),
+        ]));
+        let attachments = Arc::new(RecordingAttachmentSearch {
+            listed: vec!["hidden-only.pdf".to_string(), "shared.pdf".to_string()],
+            ..Default::default()
+        });
+        let state = Arc::new(SearchReindexState::default());
+        state.is_running.store(true, Ordering::Release);
+
+        run_reindex(
+            state,
+            repo,
+            storage,
+            Arc::new(RecordingSearch::default()),
+            assets,
+            Some(attachments.clone()),
+            None,
+        )
+        .await;
+
+        assert_eq!(
+            *attachments.deleted.lock().unwrap(),
+            vec!["hidden-only.pdf".to_string()]
         );
     }
 }

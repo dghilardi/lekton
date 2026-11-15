@@ -67,11 +67,17 @@ pub async fn run_reindex(
     // from RAG explicitly (and, when flagged, from search too, so the flag can
     // be cleared). Archived latest copies have no entries to keep and are
     // left to the sweep.
+    // Every release copy counts when deciding which attachments only hidden
+    // documents link.
+    let mut hidden = HashSet::new();
     let documents: Vec<Document> = match document_repo.list_all().await {
-        Ok(docs) => latest_copies(docs)
-            .into_iter()
-            .filter(|d| !d.is_archived)
-            .collect(),
+        Ok(docs) => {
+            hidden = crate::indexing::hidden_references(&docs);
+            latest_copies(docs)
+                .into_iter()
+                .filter(|d| !d.is_archived)
+                .collect()
+        }
         Err(e) => {
             tracing::error!("RAG reindex: failed to list documents: {e}");
             listed = false;
@@ -79,9 +85,10 @@ pub async fn run_reindex(
         }
     };
 
-    // Only attachments still referenced by at least one document are worth
-    // re-indexing; an empty `referenced_by` means it is orphaned and pending
-    // cleanup (see `recompute_access_levels`), not something to re-embed.
+    // Only attachments not linked by hidden documents alone are worth re-indexing; an
+    // empty `referenced_by` means it is orphaned and pending cleanup (see
+    // `recompute_access_levels`) or awaiting its document, not something to
+    // re-embed. Attachments linked only by hidden documents are swept.
     let all_assets: Vec<Asset> = match asset_repo.list_all().await {
         Ok(assets) => assets,
         Err(e) => {
@@ -90,8 +97,10 @@ pub async fn run_reindex(
             Vec::new()
         }
     };
-    // Every asset record keeps its chunks, referenced yet or not; see
-    // `currently_known_attachment_keys`.
+    let all_assets: Vec<Asset> = all_assets
+        .into_iter()
+        .filter(|a| crate::indexing::attachment_is_live(a, &hidden))
+        .collect();
     let live_attachment_keys: HashSet<String> = all_assets.iter().map(|a| a.key.clone()).collect();
     let assets: Vec<Asset> = all_assets
         .into_iter()
@@ -168,8 +177,9 @@ async fn still_orphaned(
         &distinct(documents.iter().map(|p| p.document_slug.clone()).collect()),
     )
     .await?;
-    let known_keys = crate::indexing::currently_known_attachment_keys(
+    let known_keys = crate::indexing::currently_live_attachment_keys(
         asset_repo,
+        document_repo,
         &distinct(
             attachments
                 .iter()
@@ -1342,5 +1352,56 @@ mod tests {
             vec!["pdfs/missing.pdf".to_string()]
         );
         assert_eq!(reindex.outcome.snapshot().0, 1);
+    }
+
+    #[tokio::test]
+    async fn run_reindex_leaves_out_attachments_only_hidden_documents_link() {
+        let storage = Arc::new(MockStorage::new());
+        storage
+            .objects
+            .lock()
+            .unwrap()
+            .insert("docs/visible.md".to_string(), b"# Visible".to_vec());
+        let mut hidden = make_doc("hidden", false);
+        hidden.is_hidden = true;
+        let doc_repo = Arc::new(FakeDocRepo {
+            docs: vec![make_doc("visible", false), hidden],
+            ..Default::default()
+        });
+        let rag = Arc::new(RecordingRagService::default());
+        let asset_repo = Arc::new(FakeAssetRepo::new(vec![
+            make_asset("pdfs/hidden-only.pdf", vec!["hidden".to_string()]),
+            make_asset("pdfs/visible.pdf", vec!["visible".to_string()]),
+        ]));
+        let service = Arc::new(AttachmentExtractionService::new(
+            storage.clone(),
+            asset_repo.clone(),
+            doc_repo.clone(),
+            rag.clone(),
+            None,
+            Arc::new(AttachmentExtractors::new(100, None)),
+        ));
+
+        run_reindex(
+            Arc::new(ReindexState::default()),
+            doc_repo,
+            storage,
+            rag.clone(),
+            asset_repo.clone(),
+            Some(service),
+            None,
+        )
+        .await;
+
+        // Not live: swept, and not re-processed.
+        assert_eq!(
+            rag.sweeps.lock().unwrap()[0].1,
+            vec!["pdfs/visible.pdf".to_string()]
+        );
+        let calls = asset_repo.update_extraction_calls.lock().unwrap();
+        assert!(
+            !calls.contains(&"pdfs/hidden-only.pdf".to_string()),
+            "{calls:?}"
+        );
     }
 }

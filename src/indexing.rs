@@ -9,7 +9,6 @@
 
 use std::collections::HashSet;
 
-use crate::db::asset_repository::AssetRepository;
 use crate::db::models::{Asset, Document, DocumentReference};
 use crate::db::repository::DocumentRepository;
 use crate::error::AppError;
@@ -141,33 +140,4 @@ pub fn attachment_is_live(asset: &Asset, hidden: &HashSet<DocumentReference>) ->
             .referenced_by
             .iter()
             .all(|reference| hidden.contains(reference))
-}
-
-/// Which of `candidates` are live attachments *now* ([`attachment_is_live`]
-/// against current MongoDB); see [`currently_live_slugs`].
-pub async fn currently_live_attachment_keys(
-    asset_repo: &dyn AssetRepository,
-    document_repo: &dyn DocumentRepository,
-    candidates: &[String],
-) -> Result<HashSet<String>, AppError> {
-    if candidates.is_empty() {
-        return Ok(HashSet::new());
-    }
-    let assets = asset_repo.find_by_keys(candidates).await?;
-    let slugs: Vec<String> = assets
-        .iter()
-        .flat_map(|asset| asset.referenced_by.iter().map(|r| r.slug.clone()))
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    let hidden = if slugs.is_empty() {
-        HashSet::new()
-    } else {
-        hidden_references(&document_repo.find_by_slugs(&slugs).await?)
-    };
-    Ok(assets
-        .into_iter()
-        .filter(|asset| attachment_is_live(asset, &hidden))
-        .map(|asset| asset.key)
-        .collect())
 }

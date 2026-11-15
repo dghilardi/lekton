@@ -391,11 +391,13 @@ impl crate::db::asset_repository::AssetRepository for InMemoryAssetRepo {
         Ok(())
     }
     async fn find_by_key(&self, key: &str) -> Result<Option<crate::db::models::Asset>, AppError> {
+        let late = self.late_assets.lock().unwrap().clone();
         Ok(self
             .assets
             .lock()
             .unwrap()
             .iter()
+            .chain(&late)
             .find(|a| a.key == key)
             .cloned())
     }

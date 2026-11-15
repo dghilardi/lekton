@@ -6,7 +6,9 @@ use crate::db::asset_repository::AssetRepository;
 use crate::db::models::{Asset, Document};
 use crate::db::repository::DocumentRepository;
 use crate::indexing::{index_everywhere, remove_everywhere, IndexTargets};
-use crate::rag::attachment_extraction::AttachmentExtractionService;
+use crate::rag::attachment_extraction::{
+    settle_swept_attachment, AttachmentExtractionService, SweptAttachment,
+};
 use crate::rag::service::RagService;
 use crate::search::client::SearchService;
 use crate::storage::client::StorageClient;
@@ -135,7 +137,17 @@ pub async fn run_reindex(
     } else {
         let swept = match rag.list_orphans(&live_slugs, &live_attachment_keys).await {
             Ok(orphans) => {
-                match still_orphaned(document_repo.as_ref(), asset_repo.as_ref(), orphans).await {
+                match still_orphaned(
+                    document_repo.as_ref(),
+                    asset_repo.as_ref(),
+                    rag.as_ref(),
+                    attachment_service
+                        .as_deref()
+                        .and_then(|service| service.attachment_search()),
+                    orphans,
+                )
+                .await
+                {
                     Ok(ids) => rag.delete_points(&ids).await.map(|()| ids.len()),
                     Err(e) => Err(e),
                 }
@@ -155,10 +167,14 @@ pub async fn run_reindex(
 
 /// The ids of the orphan candidates that are still orphans according to
 /// MongoDB *now*. The candidates were found against the snapshot taken when
-/// the reindex started; anything ingested since must survive the sweep.
+/// the reindex started; anything ingested since must survive the sweep. An
+/// attachment only hidden documents link is withdrawn instead (see
+/// [`settle_swept_attachment`]), so its points are not in the result.
 async fn still_orphaned(
     document_repo: &dyn DocumentRepository,
     asset_repo: &dyn AssetRepository,
+    rag: &dyn RagService,
+    attachment_search: Option<&dyn crate::search::attachment_search::AttachmentSearchService>,
     candidates: Vec<crate::rag::vectorstore::PointSource>,
 ) -> Result<Vec<String>, crate::error::AppError> {
     let (attachments, documents): (Vec<_>, Vec<_>) = candidates
@@ -177,17 +193,30 @@ async fn still_orphaned(
         &distinct(documents.iter().map(|p| p.document_slug.clone()).collect()),
     )
     .await?;
-    let known_keys = crate::indexing::currently_live_attachment_keys(
-        asset_repo,
-        document_repo,
-        &distinct(
-            attachments
-                .iter()
-                .map(|p| p.attachment_key.clone())
-                .collect(),
-        ),
-    )
-    .await?;
+    // Points of an attachment that is live, or was just withdrawn, are kept
+    // out of the deletion; only those of a gone asset (or with no key) go.
+    let mut settled = HashSet::new();
+    for key in distinct(
+        attachments
+            .iter()
+            .map(|p| p.attachment_key.clone())
+            .collect(),
+    ) {
+        match settle_swept_attachment(
+            &key,
+            asset_repo,
+            document_repo,
+            Some(rag),
+            attachment_search,
+        )
+        .await?
+        {
+            SweptAttachment::Gone => {}
+            SweptAttachment::Live | SweptAttachment::Withdrawn => {
+                settled.insert(key);
+            }
+        }
+    }
     let is_now = |value: &Option<String>, set: &HashSet<String>| {
         value.as_ref().is_some_and(|v| set.contains(v))
     };
@@ -197,7 +226,7 @@ async fn still_orphaned(
         .chain(
             attachments
                 .into_iter()
-                .filter(|p| !is_now(&p.attachment_key, &known_keys)),
+                .filter(|p| !is_now(&p.attachment_key, &settled)),
         )
         .map(|p| p.id)
         .collect())
@@ -668,6 +697,8 @@ mod tests {
     struct FakeAssetRepo {
         assets: Mutex<Vec<Asset>>,
         update_extraction_calls: Mutex<Vec<String>>,
+        /// (key, status) of every `update_extraction`.
+        statuses: Mutex<Vec<(String, crate::db::models::ExtractionStatus)>>,
         /// Created after `list_all` took its snapshot.
         late: Mutex<Vec<Asset>>,
     }
@@ -677,6 +708,7 @@ mod tests {
             Self {
                 assets: Mutex::new(assets),
                 update_extraction_calls: Mutex::new(vec![]),
+                statuses: Mutex::new(vec![]),
                 late: Mutex::new(vec![]),
             }
         }
@@ -688,11 +720,13 @@ mod tests {
             Ok(())
         }
         async fn find_by_key(&self, key: &str) -> Result<Option<Asset>, AppError> {
+            let late = self.late.lock().unwrap().clone();
             Ok(self
                 .assets
                 .lock()
                 .unwrap()
                 .iter()
+                .chain(&late)
                 .find(|a| a.key == key)
                 .cloned())
         }
@@ -718,11 +752,19 @@ mod tests {
             self.assets.lock().unwrap().retain(|a| a.key != key);
             Ok(())
         }
-        async fn update_extraction(&self, key: &str, _: ExtractionUpdate) -> Result<(), AppError> {
+        async fn update_extraction(
+            &self,
+            key: &str,
+            update: ExtractionUpdate,
+        ) -> Result<(), AppError> {
             self.update_extraction_calls
                 .lock()
                 .unwrap()
                 .push(key.to_string());
+            self.statuses
+                .lock()
+                .unwrap()
+                .push((key.to_string(), update.status));
             Ok(())
         }
         async fn set_release_references(
@@ -1402,6 +1444,64 @@ mod tests {
         assert!(
             !calls.contains(&"pdfs/hidden-only.pdf".to_string()),
             "{calls:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_reindex_withdraws_swept_attachments_only_hidden_documents_link() {
+        use crate::db::models::ExtractionStatus;
+        use crate::rag::vectorstore::PointSource;
+        let point = |id: &str, key: &str| PointSource {
+            id: id.to_string(),
+            source_kind: Some("attachment".to_string()),
+            document_slug: Some(String::new()),
+            attachment_key: Some(key.to_string()),
+        };
+        let storage = Arc::new(MockStorage::new());
+        storage
+            .objects
+            .lock()
+            .unwrap()
+            .insert("docs/visible.md".to_string(), b"# Visible".to_vec());
+        let mut hidden = make_doc("hidden", false);
+        hidden.is_hidden = true;
+        let doc_repo = Arc::new(FakeDocRepo {
+            docs: vec![make_doc("visible", false), hidden],
+            ..Default::default()
+        });
+        let asset_repo = Arc::new(FakeAssetRepo::new(vec![make_asset(
+            "pdfs/hidden-only.pdf",
+            vec!["hidden".to_string()],
+        )]));
+        let rag = Arc::new(RecordingRagService::default());
+        *rag.orphans.lock().unwrap() = vec![
+            point("a-hidden", "pdfs/hidden-only.pdf"),
+            point("a-gone", "pdfs/gone.pdf"),
+        ];
+
+        run_reindex(
+            Arc::new(ReindexState::default()),
+            doc_repo,
+            storage,
+            rag.clone(),
+            asset_repo.clone(),
+            None,
+            None,
+        )
+        .await;
+
+        // The gone one is deleted by id; the hidden-only one is withdrawn,
+        // which leaves it pending for when a visible document links it.
+        assert_eq!(
+            *rag.deleted_points.lock().unwrap(),
+            vec!["a-gone".to_string()]
+        );
+        assert_eq!(
+            *asset_repo.statuses.lock().unwrap(),
+            vec![(
+                "pdfs/hidden-only.pdf".to_string(),
+                ExtractionStatus::Pending
+            )]
         );
     }
 }

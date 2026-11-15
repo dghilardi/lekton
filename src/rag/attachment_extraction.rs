@@ -200,6 +200,15 @@ pub(crate) fn register_attachment_queue(queue: AttachmentQueue) {
     *ATTACHMENT_QUEUE.write().unwrap_or_else(|e| e.into_inner()) = Some(queue);
 }
 
+/// A queue backed by a plain channel, for tests outside this module.
+#[cfg(test)]
+pub(crate) fn test_queue(
+    asset_repo: Arc<dyn AssetRepository>,
+) -> (AttachmentQueue, mpsc::Receiver<String>) {
+    let (tx, rx) = mpsc::channel(64);
+    (AttachmentQueue { tx, asset_repo }, rx)
+}
+
 fn registered_attachment_queue() -> Option<AttachmentQueue> {
     ATTACHMENT_QUEUE
         .read()
@@ -237,6 +246,11 @@ impl AttachmentExtractionService {
             attachment_search,
             extractors,
         }
+    }
+
+    /// The keyword-search index the worker writes attachment pages to.
+    pub fn attachment_search(&self) -> Option<&dyn AttachmentSearchService> {
+        self.attachment_search.as_deref()
     }
 
     /// Spawn the background worker draining a bounded queue of `capacity`, and
@@ -456,7 +470,7 @@ impl AttachmentExtractionService {
                 fail_closed_attachment_acl(
                     key,
                     self.asset_repo.as_ref(),
-                    self.rag.as_ref(),
+                    Some(self.rag.as_ref()),
                     self.attachment_search.as_deref(),
                     std::slice::from_ref(&failure),
                 )
@@ -497,7 +511,7 @@ impl AttachmentExtractionService {
         fail_closed_attachment_acl(
             key,
             self.asset_repo.as_ref(),
-            self.rag.as_ref(),
+            Some(self.rag.as_ref()),
             self.attachment_search.as_deref(),
             &failures,
         )
@@ -514,7 +528,7 @@ impl AttachmentExtractionService {
         withdraw_attachment(
             key,
             self.asset_repo.as_ref(),
-            self.rag.as_ref(),
+            Some(self.rag.as_ref()),
             self.attachment_search.as_deref(),
         )
         .await
@@ -636,7 +650,8 @@ pub async fn recompute_access_levels(
         if view.ineligible {
             // Only hidden documents link it: out of both indexes. The record
             // and blob stay, since it is still referenced.
-            if let Err(e) = withdraw_attachment(key, asset_repo, rag, attachment_search).await {
+            if let Err(e) = withdraw_attachment(key, asset_repo, Some(rag), attachment_search).await
+            {
                 tracing::warn!(key, "recompute attachment ACL: {e}");
             }
             continue;
@@ -665,7 +680,8 @@ pub async fn recompute_access_levels(
         }
 
         if !failures.is_empty() {
-            fail_closed_attachment_acl(key, asset_repo, rag, attachment_search, &failures).await;
+            fail_closed_attachment_acl(key, asset_repo, Some(rag), attachment_search, &failures)
+                .await;
         }
     }
 }
@@ -674,20 +690,36 @@ pub async fn recompute_access_levels(
 const NO_VISIBLE_REFERENCER: &str =
     "no visible document links this attachment; it is indexed again once one does";
 
-/// Remove an attachment that only hidden documents link from both indexes,
-/// and leave it `Pending` with no extracted hash: the ACL recompute queues it
-/// again once a visible document links it, and the worker then re-extracts
-/// it. Callers hold the attachment's ACL lock. A failed removal fails closed
-/// (see [`fail_closed_attachment_acl`]) and is reported.
+/// Remove an attachment that only hidden documents link from the given
+/// indexes, leaving it `Pending` with no extracted hash: the ACL recompute
+/// queues it again once a visible document links it, and the worker then
+/// re-extracts it. The status is written first, so an interruption never
+/// leaves a `Done` attachment missing from the indexes. Callers hold the
+/// attachment's ACL lock. A failed removal fails closed (see
+/// [`fail_closed_attachment_acl`]) and is reported.
 async fn withdraw_attachment(
     key: &str,
     asset_repo: &dyn AssetRepository,
-    rag: &dyn RagService,
+    rag: Option<&dyn RagService>,
     attachment_search: Option<&dyn AttachmentSearchService>,
 ) -> Result<(), AppError> {
+    asset_repo
+        .update_extraction(
+            key,
+            ExtractionUpdate {
+                status: ExtractionStatus::Pending,
+                error: Some(NO_VISIBLE_REFERENCER.to_string()),
+                extracted_content_hash: None,
+                extracted_at: None,
+                indexed_chunks: Some(0),
+            },
+        )
+        .await?;
     let mut failures = Vec::new();
-    if let Err(e) = rag.delete_attachment(key).await {
-        failures.push(format!("RAG delete failed: {e}"));
+    if let Some(rag) = rag {
+        if let Err(e) = rag.delete_attachment(key).await {
+            failures.push(format!("RAG delete failed: {e}"));
+        }
     }
     if let Some(search) = attachment_search {
         if let Err(e) = search.delete_attachment(key).await {
@@ -701,24 +733,51 @@ async fn withdraw_attachment(
             failures.join("; ")
         )));
     }
-    asset_repo
-        .update_extraction(
-            key,
-            ExtractionUpdate {
-                status: ExtractionStatus::Pending,
-                error: Some(NO_VISIBLE_REFERENCER.to_string()),
-                extracted_content_hash: None,
-                extracted_at: None,
-                indexed_chunks: Some(0),
-            },
-        )
+    Ok(())
+}
+
+/// What an orphan sweep found about an attachment it was about to remove.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SweptAttachment {
+    /// Live after all (see [`crate::indexing::attachment_is_live`]): keep it.
+    Live,
+    /// Only hidden documents link it: withdrawn through
+    /// [`withdraw_attachment`], so it comes back once a visible one does.
+    Withdrawn,
+    /// No asset record: the caller removes its entries.
+    Gone,
+}
+
+/// Settle an attachment a sweep found in an index but not among the live
+/// ones, under its ACL lock and against current MongoDB. A hidden-only
+/// attachment is withdrawn rather than merely deleted, so it is left
+/// `Pending` and re-queued when relinked; deleting its entries directly would
+/// leave it `Done` and lost.
+pub async fn settle_swept_attachment(
+    key: &str,
+    asset_repo: &dyn AssetRepository,
+    document_repo: &dyn DocumentRepository,
+    rag: Option<&dyn RagService>,
+    attachment_search: Option<&dyn AttachmentSearchService>,
+) -> Result<SweptAttachment, AppError> {
+    let _acl_guard = lock_attachment_acl(key).await;
+    let Some(asset) = asset_repo.find_by_key(key).await? else {
+        return Ok(SweptAttachment::Gone);
+    };
+    if !referencing_view(document_repo, &asset.referenced_by)
         .await
+        .ineligible
+    {
+        return Ok(SweptAttachment::Live);
+    }
+    withdraw_attachment(key, asset_repo, rag, attachment_search).await?;
+    Ok(SweptAttachment::Withdrawn)
 }
 
 async fn fail_closed_attachment_acl(
     key: &str,
     asset_repo: &dyn AssetRepository,
-    rag: &dyn RagService,
+    rag: Option<&dyn RagService>,
     attachment_search: Option<&dyn AttachmentSearchService>,
     failures: &[String],
 ) {
@@ -727,11 +786,13 @@ async fn fail_closed_attachment_acl(
         failures.join("; ")
     );
 
-    if let Err(e) = rag.delete_attachment(key).await {
-        tracing::warn!(
-            key,
-            "recompute attachment ACL: fail-closed RAG delete failed: {e}"
-        );
+    if let Some(rag) = rag {
+        if let Err(e) = rag.delete_attachment(key).await {
+            tracing::warn!(
+                key,
+                "recompute attachment ACL: fail-closed RAG delete failed: {e}"
+            );
+        }
     }
     if let Some(search) = attachment_search {
         if let Err(e) = search.delete_attachment(key).await {

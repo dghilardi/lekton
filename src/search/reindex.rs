@@ -6,9 +6,10 @@ use std::collections::HashSet;
 use crate::db::asset_repository::AssetRepository;
 use crate::db::repository::DocumentRepository;
 use crate::indexing::{
-    attachment_is_live, currently_live_attachment_keys, currently_live_slugs, hidden_references,
-    index_everywhere, remove_everywhere, IndexTargets,
+    attachment_is_live, currently_live_slugs, hidden_references, index_everywhere,
+    remove_everywhere, IndexTargets,
 };
+use crate::rag::attachment_extraction::{settle_swept_attachment, SweptAttachment};
 use crate::rag::service::RagService;
 use crate::search::attachment_search::AttachmentSearchService;
 use crate::search::client::SearchService;
@@ -154,6 +155,7 @@ pub async fn run_reindex(
     sweep_orphans(
         &reindex,
         search.as_ref(),
+        rag.as_deref(),
         document_repo.as_ref(),
         asset_repo.as_ref(),
         attachment_search.as_deref(),
@@ -179,9 +181,11 @@ pub async fn run_reindex(
 /// database name looks exactly like that, and wiping both indexes on its word
 /// is far worse than leaving orphans behind on a genuinely empty instance.
 /// Attachments are left alone when the assets cannot be listed.
+#[allow(clippy::too_many_arguments)]
 async fn sweep_orphans(
     reindex: &SearchReindexState,
     search: &dyn SearchService,
+    rag: Option<&dyn RagService>,
     document_repo: &dyn DocumentRepository,
     asset_repo: &dyn AssetRepository,
     attachment_search: Option<&dyn AttachmentSearchService>,
@@ -254,29 +258,37 @@ async fn sweep_orphans(
                 .into_iter()
                 .filter(|key| !live_keys.contains(key))
                 .collect();
-            let known_now = match currently_live_attachment_keys(
-                asset_repo,
-                document_repo,
-                &candidates,
-            )
-            .await
-            {
-                Ok(known) => known,
-                Err(e) => {
-                    tracing::warn!("Search reindex: cannot recheck orphan attachments: {e}");
-                    reindex
-                        .outcome
-                        .record_failure(format!("recheck orphan attachments: {e}"));
-                    return;
-                }
-            };
-            for key in candidates.iter().filter(|key| !known_now.contains(*key)) {
-                tracing::info!(key, "Search reindex: removing orphaned attachment pages");
-                if let Err(e) = attachment_search.delete_attachment(key).await {
-                    tracing::warn!(key, "Search reindex: failed to remove attachment: {e}");
-                    reindex
-                        .outcome
-                        .record_failure(format!("delete orphan attachment {key}: {e}"));
+            for key in &candidates {
+                // Rechecked against current MongoDB under the attachment's
+                // lock; a hidden-only one is withdrawn, not just deleted.
+                match settle_swept_attachment(
+                    key,
+                    asset_repo,
+                    document_repo,
+                    rag,
+                    Some(attachment_search),
+                )
+                .await
+                {
+                    Ok(SweptAttachment::Live) => {}
+                    Ok(SweptAttachment::Withdrawn) => {
+                        tracing::info!(key, "Search reindex: withdrew hidden-only attachment");
+                    }
+                    Ok(SweptAttachment::Gone) => {
+                        tracing::info!(key, "Search reindex: removing orphaned attachment pages");
+                        if let Err(e) = attachment_search.delete_attachment(key).await {
+                            tracing::warn!(key, "Search reindex: failed to remove attachment: {e}");
+                            reindex
+                                .outcome
+                                .record_failure(format!("delete orphan attachment {key}: {e}"));
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(key, "Search reindex: cannot settle orphan attachment: {e}");
+                        reindex
+                            .outcome
+                            .record_failure(format!("settle orphan attachment {key}: {e}"));
+                    }
                 }
             }
         }
@@ -1101,9 +1113,9 @@ mod tests {
         run_reindex(
             state,
             repo,
-            storage,
+            storage.clone(),
             Arc::new(RecordingSearch::default()),
-            assets,
+            assets.clone(),
             Some(attachments.clone()),
             None,
         )
@@ -1113,5 +1125,38 @@ mod tests {
             *attachments.deleted.lock().unwrap(),
             vec!["hidden-only.pdf".to_string()]
         );
+        // Withdrawn, not just deleted: pending, so it comes back when a
+        // visible document links it.
+        let withdrawn = assets
+            .find_by_key("hidden-only.pdf")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            withdrawn.extraction_status,
+            crate::db::models::ExtractionStatus::Pending
+        );
+        assert!(withdrawn.extracted_content_hash.is_none());
+
+        let (queue, mut queued) = crate::rag::attachment_extraction::test_queue(assets.clone());
+        crate::rag::attachment_extraction::register_attachment_queue(queue);
+        let now_visible = MockDocumentRepo {
+            documents: vec![make_doc("docs/hidden", false, false)],
+            ..Default::default()
+        };
+        crate::rag::attachment_extraction::recompute_access_levels(
+            &crate::test_utils::RecordingRag::default(),
+            assets.as_ref(),
+            &now_visible,
+            storage.as_ref(),
+            None,
+            &["hidden-only.pdf".to_string()],
+        )
+        .await;
+        let mut keys = Vec::new();
+        while let Ok(key) = queued.try_recv() {
+            keys.push(key);
+        }
+        assert!(keys.contains(&"hidden-only.pdf".to_string()), "{keys:?}");
     }
 }

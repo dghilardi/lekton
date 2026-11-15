@@ -232,22 +232,24 @@ pub trait DocumentRepository: Send + Sync {
         Ok(())
     }
 
-    /// Clear `needs_reindex` on one release of a document, but only if it was
-    /// not written since `last_updated` (the snapshot the caller indexed from).
+    /// Clear `needs_reindex` on the document `snapshot` was read from, but
+    /// only if it is still as the caller indexed it: same `last_updated` and
+    /// same eligibility fields (`is_latest`, `is_archived`, `is_hidden`,
+    /// `skip_rag`). Returns whether it matched (and so was cleared).
     ///
-    /// A reindex reads its snapshot long before it gets to clear the flag; an
-    /// ingest landing in between may have failed to index and set the flag
-    /// again, and clearing it unconditionally would hide that failure.
+    /// A reindex or promotion reads its snapshot long before it gets to clear
+    /// the flag; a write landing in between may have failed to index and set
+    /// the flag again, and clearing it unconditionally would hide that failure.
     ///
     /// Defaults to [`Self::clear_needs_reindex`] so test mocks need not
     /// implement it; the MongoDB backend overrides it.
     async fn clear_needs_reindex_if_unchanged(
         &self,
-        slug: &str,
-        release: Option<&str>,
-        _last_updated: chrono::DateTime<chrono::Utc>,
-    ) -> Result<(), AppError> {
-        self.clear_needs_reindex(slug, release).await
+        snapshot: &Document,
+    ) -> Result<bool, AppError> {
+        self.clear_needs_reindex(&snapshot.slug, snapshot.release.as_deref())
+            .await?;
+        Ok(true)
     }
 
     /// Defaults to a no-op returning no affected slugs so test mocks need not
@@ -406,28 +408,43 @@ impl DocumentRepository for MongoDocumentRepository {
 
     async fn clear_needs_reindex_if_unchanged(
         &self,
-        slug: &str,
-        release: Option<&str>,
-        last_updated: chrono::DateTime<chrono::Utc>,
-    ) -> Result<(), AppError> {
+        snapshot: &Document,
+    ) -> Result<bool, AppError> {
         use mongodb::bson::{doc, Bson, DateTime as BsonDateTime};
 
-        let release_match = match release {
+        let release_match = match snapshot.release.as_deref() {
             Some(r) => Bson::String(r.to_string()),
             None => Bson::Null,
         };
+        // A flag missing from older documents reads as its serde default, so
+        // the default value must also match an absent field.
+        let flag = |value: bool, default: bool| -> Bson {
+            if value == default {
+                doc! { "$ne": !value }.into()
+            } else {
+                value.into()
+            }
+        };
 
-        self.collection
+        // `last_updated` catches every ingest and editor write. Promotion and
+        // archiving change what the entries should be without bumping it, so
+        // the fields that decide indexing eligibility are matched too.
+        let result = self
+            .collection
             .update_one(
                 doc! {
-                    "slug": slug,
+                    "slug": &snapshot.slug,
                     "release": release_match,
-                    "last_updated": BsonDateTime::from_chrono(last_updated),
+                    "last_updated": BsonDateTime::from_chrono(snapshot.last_updated),
+                    "is_latest": flag(snapshot.is_latest, true),
+                    "is_archived": flag(snapshot.is_archived, false),
+                    "is_hidden": flag(snapshot.is_hidden, false),
+                    "skip_rag": flag(snapshot.skip_rag, false),
                 },
                 doc! { "$set": { "needs_reindex": false } },
             )
             .await?;
-        Ok(())
+        Ok(result.matched_count > 0)
     }
 
     async fn promote_release(

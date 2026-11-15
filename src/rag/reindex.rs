@@ -302,10 +302,7 @@ async fn record_document_outcome(
         return true;
     }
     if doc.needs_reindex {
-        if let Err(e) = document_repo
-            .clear_needs_reindex_if_unchanged(&doc.slug, doc.release.as_deref(), doc.last_updated)
-            .await
-        {
+        if let Err(e) = document_repo.clear_needs_reindex_if_unchanged(doc).await {
             tracing::warn!(slug = %doc.slug, "RAG reindex: cannot clear needs_reindex: {e}");
         }
     }
@@ -651,12 +648,10 @@ mod tests {
         }
         async fn clear_needs_reindex_if_unchanged(
             &self,
-            slug: &str,
-            _: Option<&str>,
-            _: chrono::DateTime<Utc>,
-        ) -> Result<(), AppError> {
-            self.cleared.lock().unwrap().push(slug.to_string());
-            Ok(())
+            snapshot: &Document,
+        ) -> Result<bool, AppError> {
+            self.cleared.lock().unwrap().push(snapshot.slug.clone());
+            Ok(true)
         }
     }
 

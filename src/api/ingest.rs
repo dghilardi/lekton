@@ -427,7 +427,15 @@ pub(crate) async fn process_authorized_ingest(
         let failures = if doc.is_hidden {
             crate::indexing::remove_everywhere(targets, &doc.slug).await
         } else {
-            crate::indexing::index_everywhere(targets, &doc, &raw_content).await
+            crate::indexing::index_everywhere_replacing(
+                targets,
+                &doc,
+                &raw_content,
+                old_doc
+                    .as_ref()
+                    .map(|old| (old.access_level.as_str(), old.is_draft)),
+            )
+            .await
         };
         for failure in &failures {
             tracing::warn!(slug = %doc.slug, "Failed to reconcile document indexes: {failure}");
@@ -2538,5 +2546,42 @@ mod tests {
         let doc = repo.find_by_slug("docs/page").await.unwrap().unwrap();
         assert!(doc.is_hidden);
         assert!(!doc.needs_reindex);
+    }
+
+    #[tokio::test]
+    async fn test_failed_rag_index_after_an_access_change_drops_the_old_chunks() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let rag = crate::test_utils::RecordingRag::default();
+        let mut ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+        ctx.rag = Some(&rag);
+
+        let mut public = make_request("valid-token", "docs/page");
+        public.access_level = "public".to_string();
+        process_ingest(&ctx, public).await.unwrap();
+
+        // Narrowed to internal while embedding fails: the public chunks would
+        // stay retrievable by everyone, so they go.
+        rag.fail_index
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let outcome = process_ingest(&ctx, make_request("valid-token", "docs/page"))
+            .await
+            .unwrap();
+        assert!(!outcome.response.indexed);
+        assert_eq!(rag.deleted(), vec!["docs/page"]);
+        assert!(
+            repo.find_by_slug("docs/page")
+                .await
+                .unwrap()
+                .unwrap()
+                .needs_reindex
+        );
+
+        // Same access, new body, still failing: the old chunks stay.
+        let mut changed = make_request("valid-token", "docs/page");
+        changed.content = "# Hello\nAgain".to_string();
+        process_ingest(&ctx, changed).await.unwrap();
+        assert_eq!(rag.deleted(), vec!["docs/page"]);
     }
 }

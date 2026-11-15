@@ -267,13 +267,14 @@ impl RagService for DefaultRagService {
             .collect();
 
         // All chunks failed to embed: leave the existing index untouched rather
-        // than wiping it on a degenerate embedding run (avoids silent data loss).
+        // than wiping it on a degenerate embedding run (avoids silent data loss),
+        // but report it: the stored chunks are now stale, so the caller must
+        // record `needs_reindex` (and may drop them if they grant too much).
         if points.is_empty() {
-            tracing::warn!(
-                slug,
-                "RAG: no embeddable chunks produced; existing index left intact"
-            );
-            return Ok(());
+            return Err(AppError::Internal(format!(
+                "all {} chunks of '{slug}' produced empty embeddings; existing chunks left in place",
+                embedding_texts.len()
+            )));
         }
 
         // 4. Upsert the new chunks, then 5. delete the stale ones (everything for
@@ -770,5 +771,44 @@ mod tests {
         assert_eq!(ids, vec!["drop".to_string()]);
         service.delete_points(&ids).await.unwrap();
         assert_eq!(*store.deleted.lock().unwrap(), vec!["drop".to_string()]);
+    }
+
+    /// Returns an empty vector for every text, like a backend that cannot
+    /// embed the input.
+    struct EmptyEmbedding;
+
+    #[async_trait]
+    impl EmbeddingService for EmptyEmbedding {
+        async fn embed(
+            &self,
+            _key: &UsageKey,
+            texts: &[String],
+        ) -> Result<Vec<Vec<f32>>, AppError> {
+            Ok(texts.iter().map(|_| Vec::new()).collect())
+        }
+    }
+
+    #[tokio::test]
+    async fn index_document_fails_when_no_chunk_gets_a_vector() {
+        // Reported, so the caller records `needs_reindex`; the old chunks are
+        // left in place (no destructive write happened).
+        let store = Arc::new(ListingStore::default());
+        let service = DefaultRagService::new(Arc::new(EmptyEmbedding), store.clone(), 100, 10);
+
+        let result = service
+            .index_document(
+                "docs/a",
+                "A",
+                "Some text worth indexing.",
+                "internal",
+                false,
+                &[],
+                None,
+                None,
+            )
+            .await;
+
+        assert!(result.is_err(), "got {result:?}");
+        assert!(store.deleted.lock().unwrap().is_empty());
     }
 }

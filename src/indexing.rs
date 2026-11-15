@@ -31,6 +31,22 @@ pub async fn index_everywhere(
     doc: &Document,
     content: &str,
 ) -> Vec<String> {
+    index_everywhere_replacing(targets, doc, content, None).await
+}
+
+/// [`index_everywhere`] for a write that replaces a stored version whose
+/// access was `previous_access` (access level, draft).
+///
+/// When RAG indexing fails, the old chunks normally stay (stale but better
+/// than a gap). If the access changed, they would keep answering to the old
+/// audience — after a narrowing, to readers who lost access — so they are
+/// removed instead: fail closed until a retry indexes the document again.
+pub async fn index_everywhere_replacing(
+    targets: IndexTargets<'_>,
+    doc: &Document,
+    content: &str,
+    previous_access: Option<(&str, bool)>,
+) -> Vec<String> {
     let mut failures = Vec::new();
 
     if let Some(search) = targets.search {
@@ -59,7 +75,16 @@ pub async fn index_everywhere(
             .await
         };
         if let Err(e) = result {
-            failures.push(format!("rag indexing failed: {e}"));
+            let access_changed = previous_access
+                .is_some_and(|(level, draft)| level != doc.access_level || draft != doc.is_draft);
+            let mut failure = format!("rag indexing failed: {e}");
+            if access_changed {
+                match rag.delete_document(&doc.slug).await {
+                    Ok(()) => failure.push_str("; old chunks removed, the access changed"),
+                    Err(e) => failure.push_str(&format!("; removing the old chunks failed: {e}")),
+                }
+            }
+            failures.push(failure);
         }
     }
 

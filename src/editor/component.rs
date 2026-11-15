@@ -184,6 +184,9 @@ pub async fn save_editor_page(
         .as_ref()
         .map(|d| d.links_out.clone())
         .unwrap_or_default();
+    let previous_access = old_doc
+        .as_ref()
+        .map(|d| (d.access_level.clone(), d.is_draft));
 
     let doc = build_editor_document(
         slug,
@@ -211,6 +214,9 @@ pub async fn save_editor_page(
         doc,
         &html_content,
         &old_links,
+        previous_access
+            .as_ref()
+            .map(|(level, draft)| (level.as_str(), *draft)),
     )
     .await;
 
@@ -303,6 +309,7 @@ async fn finalize_document_save(
     mut doc: crate::db::models::Document,
     html_content: &str,
     old_links: &[String],
+    previous_access: Option<(&str, bool)>,
 ) -> Result<String, crate::error::AppError> {
     let slug = doc.slug.clone();
     let links_out = doc.links_out.clone();
@@ -319,7 +326,8 @@ async fn finalize_document_save(
     let mut warnings = if doc.is_hidden {
         crate::indexing::remove_everywhere(targets, &slug).await
     } else {
-        crate::indexing::index_everywhere(targets, &doc, html_content).await
+        crate::indexing::index_everywhere_replacing(targets, &doc, html_content, previous_access)
+            .await
     };
     for warning in &warnings {
         tracing::warn!(slug = %slug, "Failed to reconcile document indexes: {warning}");
@@ -1151,6 +1159,7 @@ mod tests {
             make_doc(),
             "<p>body</p>",
             &[],
+            None,
         )
         .await
         .unwrap();
@@ -1189,6 +1198,7 @@ mod tests {
             make_doc(),
             "<p>body</p>",
             &[],
+            None,
         )
         .await
         .unwrap();
@@ -1216,6 +1226,7 @@ mod tests {
             make_doc(),
             "<p>body</p>",
             &[],
+            None,
         )
         .await
         .unwrap();
@@ -1272,6 +1283,7 @@ mod tests {
             hidden,
             "<p>body</p>",
             &[],
+            None,
         )
         .await
         .unwrap();
@@ -1301,6 +1313,7 @@ mod tests {
             make_doc(),
             "<p>body</p>",
             &[],
+            None,
         )
         .await
         .unwrap();
@@ -1339,6 +1352,7 @@ mod tests {
             make_doc(),
             "<p>body</p>",
             &[],
+            None,
         )
         .await
         .unwrap();
@@ -1386,6 +1400,7 @@ mod tests {
             doc,
             "<p>body</p>",
             &[],
+            None,
         )
         .await
         .unwrap();
@@ -1393,6 +1408,52 @@ mod tests {
         assert!(rag.indexed().is_empty());
         assert_eq!(rag.deleted(), vec!["guide"]);
         assert_eq!(search.indexed(), vec!["guide"]);
+    }
+
+    #[tokio::test]
+    async fn a_failed_rag_index_after_an_access_change_drops_the_old_chunks() {
+        let rag = crate::test_utils::RecordingRag::default();
+        rag.fail_index
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let mut narrowed = make_doc();
+        narrowed.access_level = "internal".to_string();
+
+        // Was public: the old chunks would stay retrievable by everyone.
+        finalize_document_save(
+            &CapturingDocumentRepo::default(),
+            &StubAssetRepo::default(),
+            None,
+            Some(&rag),
+            None,
+            &MockStorage::new(),
+            narrowed.clone(),
+            "<p>body</p>",
+            &[],
+            Some(("public", false)),
+        )
+        .await
+        .unwrap();
+        assert_eq!(rag.deleted(), vec!["guide"]);
+
+        // Same access as before: the old chunks stay until a retry.
+        let rag = crate::test_utils::RecordingRag::default();
+        rag.fail_index
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        finalize_document_save(
+            &CapturingDocumentRepo::default(),
+            &StubAssetRepo::default(),
+            None,
+            Some(&rag),
+            None,
+            &MockStorage::new(),
+            narrowed,
+            "<p>body</p>",
+            &[],
+            Some(("internal", false)),
+        )
+        .await
+        .unwrap();
+        assert!(rag.deleted().is_empty());
     }
 
     #[test]

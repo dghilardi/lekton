@@ -9,7 +9,7 @@ mod search_index {
 
     use lekton::rag::service::AttachmentPage;
     use lekton::search::attachment_search::{
-        AttachmentSearchService, MeilisearchAttachmentService,
+        page_id, page_preview, AttachmentSearchService, MeilisearchAttachmentService,
     };
     use lekton::search::client::{slug_to_id, MeilisearchService, SearchDocument, SearchService};
 
@@ -198,6 +198,88 @@ mod search_index {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    /// Pages written before full-text attachment search have no `content`;
+    /// the backfill finds exactly those and writes them back whole.
+    #[tokio::test]
+    async fn preview_only_pages_are_listed_and_can_gain_their_text() {
+        let (_meili, url) = start_meilisearch().await;
+        let attachments = MeilisearchAttachmentService::new(&url, None::<String>).unwrap();
+        attachments.configure_index().await.unwrap();
+        let public = ["public".to_string()];
+
+        // One attachment indexed today, with full text.
+        let pages = [AttachmentPage {
+            page_number: Some(1),
+            text: "current page".to_string(),
+        }];
+        attachments
+            .index_pages("new.pdf", "new.pdf", "docs/n", "New", &pages, &public)
+            .await
+            .unwrap();
+        assert!(attachments
+            .pages_without_text("new.pdf")
+            .await
+            .unwrap()
+            .is_empty());
+
+        // One written by an earlier release: a preview and no `content`.
+        let deep = format!("{} E4711", "Opening filler about the device. ".repeat(20));
+        let client = meilisearch_sdk::client::Client::new(&url, None::<String>).unwrap();
+        let legacy: Vec<serde_json::Value> = [Some(1), Some(2)]
+            .into_iter()
+            .map(|page| {
+                serde_json::json!({
+                    "id": page_id("old.pdf", page),
+                    "attachment_key": "old.pdf",
+                    "filename": "old.pdf",
+                    "document_slug": "docs/o",
+                    "document_title": "Old",
+                    "page": page,
+                    "content_preview": page_preview(&deep),
+                    "access_levels": public,
+                })
+            })
+            .collect();
+        client
+            .index("attachment_chunks")
+            .add_documents(&legacy, Some("id"))
+            .await
+            .unwrap()
+            .wait_for_completion(&client, None, None)
+            .await
+            .unwrap();
+        assert!(attachments
+            .search("E4711", Some(&public))
+            .await
+            .unwrap()
+            .is_empty());
+
+        let mut missing = attachments.pages_without_text("old.pdf").await.unwrap();
+        missing.sort_by_key(|p| p.page);
+        assert_eq!(
+            missing.iter().map(|p| p.page).collect::<Vec<_>>(),
+            [Some(1), Some(2)]
+        );
+        assert_eq!(missing[0].document_slug, "docs/o");
+        assert_eq!(missing[0].access_levels, public);
+
+        missing[0].content = Some(deep.clone());
+        missing[1].content = Some(String::new());
+        attachments.update_pages(&missing).await.unwrap();
+
+        assert!(attachments
+            .pages_without_text("old.pdf")
+            .await
+            .unwrap()
+            .is_empty());
+        let hits = attachments.search("E4711", Some(&public)).await.unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(
+            (hits[0].page, hits[0].document_slug.as_str()),
+            (Some(1), "docs/o")
+        );
     }
 
     /// Pre-create `index` with a primary key the services do not use, so every

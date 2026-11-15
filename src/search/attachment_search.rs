@@ -140,6 +140,22 @@ pub trait AttachmentSearchService: Send + Sync {
     /// the engine applies it. Called on startup and before a search re-index.
     async fn configure_index(&self) -> Result<(), AppError>;
 
+    /// The indexed pages of `attachment_key` that have no full text yet
+    /// (`content` absent: written before full-text attachment search), for
+    /// the search re-index's backfill. Defaults to none.
+    async fn pages_without_text(
+        &self,
+        _attachment_key: &str,
+    ) -> Result<Vec<AttachmentChunkDocument>, AppError> {
+        Ok(Vec::new())
+    }
+
+    /// Write already-indexed pages back whole (e.g. with their `content`
+    /// filled in), keyed by `id`. Defaults to doing nothing.
+    async fn update_pages(&self, _pages: &[AttachmentChunkDocument]) -> Result<(), AppError> {
+        Ok(())
+    }
+
     /// Every distinct attachment key the index holds, for the full-reindex
     /// orphan sweep. Defaults to nothing, so nothing is ever swept.
     async fn list_indexed_attachment_keys(&self) -> Result<Vec<String>, AppError> {
@@ -182,6 +198,12 @@ fn truncate_preview(text: &str, max_len: usize) -> String {
         .find(|&i| trimmed.is_char_boundary(i))
         .unwrap_or(0);
     trimmed[..boundary].to_string()
+}
+
+/// The preview stored for a page's text.
+#[cfg(feature = "ssr")]
+pub fn page_preview(text: &str) -> String {
+    truncate_preview(text, PREVIEW_LEN)
 }
 
 /// Build the id for one page: stable across re-indexes of the same
@@ -268,7 +290,7 @@ impl AttachmentSearchService for MeilisearchAttachmentService {
                 document_slug: document_slug.to_string(),
                 document_title: document_title.to_string(),
                 page: p.page_number,
-                content_preview: truncate_preview(&p.text, PREVIEW_LEN),
+                content_preview: page_preview(&p.text),
                 content: Some(p.text.trim().to_string()),
                 access_levels: access_levels.to_vec(),
             })
@@ -477,6 +499,66 @@ impl AttachmentSearchService for MeilisearchAttachmentService {
             .with_filterable_attributes(["attachment_key", "access_levels"])
             .with_searchable_attributes(SEARCHABLE_ATTRIBUTES);
         apply_settings(&self.client, &self.index(), &settings).await
+    }
+
+    async fn pages_without_text(
+        &self,
+        attachment_key: &str,
+    ) -> Result<Vec<AttachmentChunkDocument>, AppError> {
+        use crate::search::client::{is_index_not_found, LIST_PAGE_SIZE};
+        use meilisearch_sdk::documents::{DocumentsQuery, DocumentsResults};
+
+        // `content` cannot be filtered on, so every page is read with it.
+        let index = self.index();
+        let filter = format!(
+            "attachment_key = {}",
+            serde_json::to_string(attachment_key).map_err(|e| AppError::Internal(e.to_string()))?
+        );
+        let mut missing = Vec::new();
+        let mut offset = 0;
+        loop {
+            let mut query = DocumentsQuery::new(&index);
+            query
+                .with_filter(&filter)
+                .with_limit(LIST_PAGE_SIZE)
+                .with_offset(offset);
+            let page: DocumentsResults<AttachmentChunkDocument> =
+                match index.get_documents_with(&query).await {
+                    Ok(page) => page,
+                    Err(e) if is_index_not_found(&e) => break,
+                    Err(e) => {
+                        return Err(AppError::Internal(format!(
+                            "Meilisearch attachment page fetch error: {e}"
+                        )))
+                    }
+                };
+            let fetched = page.results.len();
+            offset += fetched;
+            missing.extend(page.results.into_iter().filter(|p| p.content.is_none()));
+            if fetched < LIST_PAGE_SIZE {
+                break;
+            }
+        }
+        Ok(missing)
+    }
+
+    async fn update_pages(&self, pages: &[AttachmentChunkDocument]) -> Result<(), AppError> {
+        let Some(first) = pages.first() else {
+            return Ok(());
+        };
+        let task = self
+            .index()
+            .add_or_update(pages, Some("id"))
+            .await
+            .map_err(|e| {
+                AppError::Internal(format!("Meilisearch attachment page update error: {e}"))
+            })?;
+        wait_for_task(
+            &self.client,
+            task,
+            &format!("updating pages of attachment '{}'", first.attachment_key),
+        )
+        .await
     }
 
     async fn list_indexed_attachment_keys(&self) -> Result<Vec<String>, AppError> {

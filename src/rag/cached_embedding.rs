@@ -97,11 +97,14 @@ impl EmbeddingService for CachedEmbeddingService {
             .map(|e| (e.hash, e.embedding))
             .collect();
 
-        // 3. Identify which inputs are still missing from the cache.
+        // 3. Identify which inputs are still missing from the cache, once per
+        //    distinct text: a batch may repeat a text, and each copy needs the
+        //    same vector, not a second paid embedding.
+        let mut seen = std::collections::HashSet::new();
         let missing_indices: Vec<usize> = hashes
             .iter()
             .enumerate()
-            .filter(|(_, h)| !cache_map.contains_key(*h))
+            .filter(|(_, h)| !cache_map.contains_key(*h) && seen.insert(*h))
             .map(|(i, _)| i)
             .collect();
 
@@ -145,10 +148,11 @@ impl EmbeddingService for CachedEmbeddingService {
             }
         }
 
-        // 7. Reconstruct the result slice in the original input order.
+        // 7. Reconstruct the result slice in the original input order. Cloned,
+        //    not taken: a repeated text needs its vector more than once.
         let result: Vec<Vec<f32>> = hashes
             .iter()
-            .map(|h| cache_map.remove(h).unwrap_or_default())
+            .map(|h| cache_map.get(h).cloned().unwrap_or_default())
             .collect();
 
         Ok(result)
@@ -164,6 +168,8 @@ mod tests {
 
     struct CountingEmbedding {
         call_count: Mutex<usize>,
+        /// Total number of texts sent to the backend.
+        embedded: Mutex<usize>,
         keys: Mutex<Vec<UsageKey>>,
         dims: usize,
     }
@@ -172,6 +178,7 @@ mod tests {
         fn new(dims: usize) -> Self {
             Self {
                 call_count: Mutex::new(0),
+                embedded: Mutex::new(0),
                 keys: Mutex::new(Vec::new()),
                 dims,
             }
@@ -188,6 +195,7 @@ mod tests {
     impl EmbeddingService for CountingEmbedding {
         async fn embed(&self, key: &UsageKey, texts: &[String]) -> Result<Vec<Vec<f32>>, AppError> {
             *self.call_count.lock().unwrap() += 1;
+            *self.embedded.lock().unwrap() += texts.len();
             self.keys.lock().unwrap().push(key.clone());
             Ok(texts.iter().map(|_| vec![0.1f32; self.dims]).collect())
         }
@@ -252,6 +260,36 @@ mod tests {
         let (_, _, svc) = make_service(4);
         let result = svc.embed(&UsageKey::System, &[]).await.unwrap();
         assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn duplicate_texts_in_one_batch_all_get_their_vector() {
+        // Two chunks with the same text (a repeated boilerplate paragraph, two
+        // identical table rows) must both be indexed, whether the text was
+        // cached already or not.
+        let (inner, _, svc) = make_service(4);
+        let texts = vec![
+            "same text".to_string(),
+            "other".to_string(),
+            "same  text".to_string(), // normalises to the first
+        ];
+
+        let first = svc.embed(&UsageKey::System, &texts).await.unwrap();
+        assert!(
+            first.iter().all(|v| v.len() == 4),
+            "uncached duplicates: {first:?}"
+        );
+        assert_eq!(
+            *inner.embedded.lock().unwrap(),
+            2,
+            "each distinct text embedded once"
+        );
+
+        let cached = svc.embed(&UsageKey::System, &texts).await.unwrap();
+        assert!(
+            cached.iter().all(|v| v.len() == 4),
+            "cached duplicates: {cached:?}"
+        );
     }
 
     #[tokio::test]

@@ -481,6 +481,11 @@ async fn acknowledge_promoted(
     // from this stale snapshot would undo whatever landed meanwhile.
     match repo.clear_needs_reindex_if_unchanged(doc).await {
         Ok(true) => {
+            // Known limitation: this pulls the slug from the backlog whichever
+            // promotion added it, so with two overlapping promotions of one
+            // source the earlier run can acknowledge the later one's entry.
+            // Telling them apart needs a promotion generation; promotions are
+            // rare manual operations, so it is accepted.
             if let Err(e) = release_repo.clear_reindex_pending(source_id, slug).await {
                 tracing::warn!(slug = %slug, "promotion reindex: cannot acknowledge success: {e}");
             }

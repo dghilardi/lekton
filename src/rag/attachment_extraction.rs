@@ -173,7 +173,10 @@ static ACL_LOCKS: std::sync::LazyLock<
 /// the write, so the last write is always derived from the latest read.
 ///
 /// Process-wide: Lekton runs a single replica, and every ACL write path lives
-/// in this module, so no handle needs threading through the callers.
+/// in this module, so no handle needs threading through the callers. The
+/// guard is held across store I/O (reads, ACL writes, deletes), so writers of
+/// one attachment queue behind each other; accepted, since only writers of the
+/// same key contend.
 pub(crate) async fn lock_attachment_acl(key: &str) -> tokio::sync::OwnedMutexGuard<()> {
     let lock = {
         let mut locks = ACL_LOCKS.lock().unwrap_or_else(|e| e.into_inner());

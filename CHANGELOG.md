@@ -7,7 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - Search full attachment page text and show bounded snippets around matching words.
-- Configurable revision retention (last 10 by default) and an admin preview and prune action for existing history.
+- Configurable revision retention (last 10 by default) and an admin preview and prune action for existing history; failed S3 archives leave valid history intact.
 - Read-only admin consistency report for MongoDB, S3 and search indexes, with paginated storage listing.
 - Admin embedding-cache inventory and confirmed purge of unused namespaces, with server-side protection for active models.
 

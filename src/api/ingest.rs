@@ -344,36 +344,53 @@ pub(crate) async fn process_authorized_ingest(
                     revision_num
                 );
 
-                // Read old content from S3 and copy to history
-                if let Ok(Some(old_content)) = ctx.storage.get_object(&old.s3_key).await {
-                    if let Err(e) = ctx.storage.put_object(&history_key, old_content).await {
-                        tracing::warn!("Failed to archive the previous revision to S3: {e}");
+                // A row must only own a successfully archived body. Otherwise
+                // retention could evict valid history for an unreadable revision.
+                let archived = match ctx.storage.get_object(&old.s3_key).await {
+                    Ok(Some(old_content)) => {
+                        match ctx.storage.put_object(&history_key, old_content).await {
+                            Ok(()) => true,
+                            Err(e) => {
+                                tracing::warn!(key = %history_key, "Failed to archive the previous revision to S3: {e}");
+                                false
+                            }
+                        }
                     }
-                }
-
-                // Determine who is updating (token name or "legacy")
-                let updated_by = actor.to_string();
-
-                let revision = crate::db::document_revision_repository::DocumentRevision {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    slug: request.slug.clone(),
-                    revision: revision_num,
-                    content_hash: old_content_hash.clone(),
-                    s3_key: history_key,
-                    updated_by,
-                    created_at: Utc::now(),
+                    Ok(None) => {
+                        tracing::warn!(key = %old.s3_key, "Cannot archive the previous revision: S3 body is missing");
+                        false
+                    }
+                    Err(e) => {
+                        tracing::warn!(key = %old.s3_key, "Cannot read the previous revision from S3: {e}");
+                        false
+                    }
                 };
 
-                if let Err(e) = ctx.revision_repo.create(revision).await {
-                    tracing::warn!("Failed to create revision record: {e}");
-                } else {
-                    crate::jobs::revision_retention::prune_slug(
-                        ctx.revision_repo,
-                        ctx.storage,
-                        &request.slug,
-                        ctx.revision_keep_last,
-                    )
-                    .await;
+                if archived {
+                    // Determine who is updating (token name or "legacy")
+                    let updated_by = actor.to_string();
+
+                    let revision = crate::db::document_revision_repository::DocumentRevision {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        slug: request.slug.clone(),
+                        revision: revision_num,
+                        content_hash: old_content_hash.clone(),
+                        s3_key: history_key,
+                        updated_by,
+                        created_at: Utc::now(),
+                    };
+
+                    if let Err(e) = ctx.revision_repo.create(revision).await {
+                        tracing::warn!("Failed to create revision record: {e}");
+                    } else {
+                        crate::jobs::revision_retention::prune_slug(
+                            ctx.revision_repo,
+                            ctx.storage,
+                            &request.slug,
+                            ctx.revision_keep_last,
+                        )
+                        .await;
+                    }
                 }
             }
         }
@@ -1215,6 +1232,218 @@ mod tests {
         async fn next_revision_number(&self, _: &str) -> Result<u64, AppError> {
             Ok(1)
         }
+    }
+
+    #[derive(Default)]
+    struct RetentionRevisionRepo {
+        rows: Mutex<Vec<crate::db::document_revision_repository::DocumentRevision>>,
+    }
+
+    #[async_trait]
+    impl DocumentRevisionRepository for RetentionRevisionRepo {
+        async fn list_slugs(&self) -> Result<Vec<String>, AppError> {
+            Ok(vec!["docs/hello".into()])
+        }
+        async fn key_is_referenced(&self, key: &str) -> Result<bool, AppError> {
+            Ok(self.rows.lock().unwrap().iter().any(|r| r.s3_key == key))
+        }
+        async fn delete(&self, id: &str) -> Result<bool, AppError> {
+            let mut rows = self.rows.lock().unwrap();
+            let before = rows.len();
+            rows.retain(|r| r.id != id);
+            Ok(rows.len() != before)
+        }
+        async fn create(
+            &self,
+            row: crate::db::document_revision_repository::DocumentRevision,
+        ) -> Result<(), AppError> {
+            self.rows.lock().unwrap().push(row);
+            Ok(())
+        }
+        async fn find_latest(
+            &self,
+            slug: &str,
+        ) -> Result<Option<crate::db::document_revision_repository::DocumentRevision>, AppError>
+        {
+            Ok(self.list_by_slug(slug).await?.into_iter().next())
+        }
+        async fn list_by_slug(
+            &self,
+            slug: &str,
+        ) -> Result<Vec<crate::db::document_revision_repository::DocumentRevision>, AppError>
+        {
+            let mut rows: Vec<_> = self
+                .rows
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|r| r.slug == slug)
+                .cloned()
+                .collect();
+            rows.sort_by_key(|r| std::cmp::Reverse(r.revision));
+            Ok(rows)
+        }
+        async fn next_revision_number(&self, slug: &str) -> Result<u64, AppError> {
+            Ok(self.find_latest(slug).await?.map_or(1, |r| r.revision + 1))
+        }
+    }
+
+    #[derive(Clone, Copy, PartialEq)]
+    enum ArchiveOutcome {
+        ReadError,
+        Missing,
+        WriteError,
+        Success,
+    }
+
+    struct ArchiveStorage<'a> {
+        inner: &'a MockStorage,
+        outcome: ArchiveOutcome,
+    }
+
+    #[async_trait]
+    impl StorageClient for ArchiveStorage<'_> {
+        async fn get_object(&self, key: &str) -> Result<Option<Vec<u8>>, AppError> {
+            match self.outcome {
+                ArchiveOutcome::ReadError => Err(AppError::Storage("archive read failed".into())),
+                ArchiveOutcome::Missing => Ok(None),
+                _ => self.inner.get_object(key).await,
+            }
+        }
+        async fn put_object(&self, key: &str, body: Vec<u8>) -> Result<(), AppError> {
+            if key.starts_with("docs/history/") && self.outcome == ArchiveOutcome::WriteError {
+                return Err(AppError::Storage("archive write failed".into()));
+            }
+            self.inner.put_object(key, body).await
+        }
+        async fn delete_object(&self, key: &str) -> Result<(), AppError> {
+            self.inner.delete_object(key).await
+        }
+        async fn list(
+            &self,
+            prefix: &str,
+            continuation: Option<&str>,
+        ) -> Result<crate::storage::client::ListPage, AppError> {
+            self.inner.list(prefix, continuation).await
+        }
+    }
+
+    async fn assert_archive_retention_at_limit(outcome: ArchiveOutcome) {
+        use crate::db::document_revision_repository::DocumentRevision;
+
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let revisions = RetentionRevisionRepo::default();
+        let mut ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+        ctx.revision_repo = &revisions;
+        ctx.revision_keep_last = 2;
+        let mut request = make_request("valid-token", "docs/hello");
+        let outgoing = request.content.clone();
+        process_ingest(&ctx, request.clone()).await.unwrap();
+        for n in 1..=2 {
+            let key = format!("docs/history/docs_hello/{n}.md");
+            storage
+                .put_object(&key, format!("history {n}").into_bytes())
+                .await
+                .unwrap();
+            revisions
+                .create(DocumentRevision {
+                    id: format!("rev-{n}"),
+                    slug: request.slug.clone(),
+                    revision: n,
+                    content_hash: format!("hash-{n}"),
+                    s3_key: key,
+                    updated_by: "earlier".into(),
+                    created_at: Utc::now(),
+                })
+                .await
+                .unwrap();
+        }
+        let archive_storage = ArchiveStorage {
+            inner: &storage,
+            outcome,
+        };
+        ctx.storage = &archive_storage;
+        request.content = "replacement body".into();
+        let result = process_ingest(&ctx, request)
+            .await
+            .expect("archive failures must not fail ingest");
+        assert!(result.response.changed);
+        assert_eq!(
+            storage.get_object(&result.response.s3_key).await.unwrap(),
+            Some(b"replacement body".to_vec())
+        );
+        let rows = revisions.list_by_slug("docs/hello").await.unwrap();
+        let expected = if outcome == ArchiveOutcome::Success {
+            vec![3, 2]
+        } else {
+            vec![2, 1]
+        };
+        assert_eq!(
+            rows.iter().map(|r| r.revision).collect::<Vec<_>>(),
+            expected
+        );
+        for row in &rows {
+            assert!(
+                storage.get_object(&row.s3_key).await.unwrap().is_some(),
+                "retained revision must have its body"
+            );
+        }
+        assert_eq!(
+            storage
+                .get_object("docs/history/docs_hello/2.md")
+                .await
+                .unwrap(),
+            Some(b"history 2".to_vec())
+        );
+        if outcome == ArchiveOutcome::Success {
+            assert_eq!(
+                storage
+                    .get_object("docs/history/docs_hello/3.md")
+                    .await
+                    .unwrap(),
+                Some(outgoing.into_bytes())
+            );
+            assert!(storage
+                .get_object("docs/history/docs_hello/1.md")
+                .await
+                .unwrap()
+                .is_none());
+        } else {
+            assert_eq!(
+                storage
+                    .get_object("docs/history/docs_hello/1.md")
+                    .await
+                    .unwrap(),
+                Some(b"history 1".to_vec())
+            );
+            assert!(storage
+                .get_object("docs/history/docs_hello/3.md")
+                .await
+                .unwrap()
+                .is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn archive_read_error_preserves_history_at_retention_limit() {
+        assert_archive_retention_at_limit(ArchiveOutcome::ReadError).await;
+    }
+
+    #[tokio::test]
+    async fn archive_missing_body_preserves_history_at_retention_limit() {
+        assert_archive_retention_at_limit(ArchiveOutcome::Missing).await;
+    }
+
+    #[tokio::test]
+    async fn archive_write_error_preserves_history_at_retention_limit() {
+        assert_archive_retention_at_limit(ArchiveOutcome::WriteError).await;
+    }
+
+    #[tokio::test]
+    async fn archive_success_prunes_history_at_retention_limit() {
+        assert_archive_retention_at_limit(ArchiveOutcome::Success).await;
     }
 
     /// Stateless no-op asset repository for ingest tests that don't assert on

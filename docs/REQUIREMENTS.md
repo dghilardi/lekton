@@ -160,7 +160,9 @@ an archiving sync, finalize or promote a release.
 * Historical revisions are retained per slug: keep the newest 10 by default,
   with `LKN__STORAGE__REVISION_KEEP_LAST=0` meaning unlimited. Missing configuration
   uses the default. Pruning deletes Mongo metadata before S3, preserves objects
-  shared by surviving revisions, and never fails ingestion. Administrators can
+  shared by surviving revisions, and never fails ingestion. A revision is recorded
+  and retention runs only after its outgoing body is successfully archived to S3;
+  archive failures are logged while ingestion continues. Administrators can
   preview the count and confirm a sweep of existing history. Revision numbering
   remains monotonic because the latest revision is always retained.
 

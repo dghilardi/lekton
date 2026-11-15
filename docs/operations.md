@@ -398,6 +398,9 @@ and are listed separately rather than treated as unowned objects to delete.
 per slug: the default is **10**, an omitted setting uses that default, and **0**
 keeps unlimited history. This counts outgoing historical bodies, not the current
 document. Revision numbers keep increasing because the newest revision is retained.
+Outgoing bodies must be successfully archived to S3 before a revision is recorded
+and retention runs. Read errors, missing bodies and archive write errors are logged;
+ingestion continues without adding a broken revision or pruning valid history.
 Changing the limit applies when the next revision is created. To apply it to all
 existing history, preview retention in Data Maintenance, then confirm the sweep.
 The count is a preview; concurrent edits may change it before the sweep runs.

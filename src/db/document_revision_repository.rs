@@ -32,6 +32,15 @@ pub struct DocumentRevision {
 /// Repository trait for document revision history.
 #[async_trait]
 pub trait DocumentRevisionRepository: Send + Sync {
+    /// All slugs with historical revisions, for the admin retention sweep.
+    async fn list_slugs(&self) -> Result<Vec<String>, AppError>;
+
+    /// Whether a surviving revision owns this key (legacy slug escaping can collide).
+    async fn key_is_referenced(&self, key: &str) -> Result<bool, AppError>;
+
+    /// Delete exactly this row; true only for the caller that removed it.
+    async fn delete(&self, id: &str) -> Result<bool, AppError>;
+
     /// Insert a new revision record.
     async fn create(&self, revision: DocumentRevision) -> Result<(), AppError>;
 
@@ -63,6 +72,33 @@ impl MongoDocumentRevisionRepository {
 #[cfg(feature = "ssr")]
 #[async_trait]
 impl DocumentRevisionRepository for MongoDocumentRevisionRepository {
+    async fn key_is_referenced(&self, key: &str) -> Result<bool, AppError> {
+        Ok(self
+            .collection
+            .find_one(bson::doc! { "s3_key": key })
+            .await?
+            .is_some())
+    }
+
+    async fn list_slugs(&self) -> Result<Vec<String>, AppError> {
+        Ok(self
+            .collection
+            .distinct("slug", bson::doc! {})
+            .await?
+            .into_iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect())
+    }
+
+    async fn delete(&self, id: &str) -> Result<bool, AppError> {
+        Ok(self
+            .collection
+            .delete_one(bson::doc! { "id": id })
+            .await?
+            .deleted_count
+            == 1)
+    }
+
     async fn create(&self, revision: DocumentRevision) -> Result<(), AppError> {
         self.collection.insert_one(&revision).await?;
         Ok(())

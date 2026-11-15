@@ -1083,6 +1083,7 @@ async fn main() {
         schema_repo,
         settings_repo,
         asset_repo,
+        revision_keep_last: config.storage.revision_keep_last,
         storage_client,
         search_service,
         leptos_options: leptos_options.clone(),

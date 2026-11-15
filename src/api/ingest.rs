@@ -45,6 +45,7 @@ pub struct IngestContext<'a> {
     pub access_level_repo: &'a dyn AccessLevelRepository,
     pub service_token_repo: &'a dyn ServiceTokenRepository,
     pub revision_repo: &'a dyn DocumentRevisionRepository,
+    pub revision_keep_last: usize,
     /// Release catalogue, consulted to decide whether the document being
     /// ingested lands in the release currently aliased `latest`.
     pub release_repo: &'a dyn crate::db::release_repository::ReleaseRepository,
@@ -365,6 +366,14 @@ pub(crate) async fn process_authorized_ingest(
 
                 if let Err(e) = ctx.revision_repo.create(revision).await {
                     tracing::warn!("Failed to create revision record: {e}");
+                } else {
+                    crate::jobs::revision_retention::prune_slug(
+                        ctx.revision_repo,
+                        ctx.storage,
+                        &request.slug,
+                        ctx.revision_keep_last,
+                    )
+                    .await;
                 }
             }
         }
@@ -773,6 +782,7 @@ pub async fn ingest_handler(
         access_level_repo: state.access_level_repo.as_ref(),
         service_token_repo: state.service_token_repo.as_ref(),
         revision_repo: state.document_revision_repo.as_ref(),
+        revision_keep_last: state.revision_keep_last,
         release_repo: state.release_repo.as_ref(),
         rag: state.rag_service.as_deref(),
         legacy_token: Some(&state.service_token),
@@ -1172,6 +1182,16 @@ mod tests {
 
     #[async_trait]
     impl crate::db::document_revision_repository::DocumentRevisionRepository for MockRevisionRepo {
+        async fn key_is_referenced(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        async fn list_slugs(&self) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
+        async fn delete(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+
         async fn create(
             &self,
             _: crate::db::document_revision_repository::DocumentRevision,
@@ -1335,6 +1355,7 @@ mod tests {
             access_level_repo: &MockAccessLevelRepo,
             service_token_repo: token_repo,
             revision_repo: &MockRevisionRepo,
+            revision_keep_last: 10,
             release_repo: &MockReleaseRepo,
             rag: None,
             legacy_token,

@@ -13,6 +13,7 @@ pub fn DataMaintenancePanel() -> impl IntoView {
         <div class="space-y-6">
             <EmbeddingCacheSection />
             <ConsistencySection />
+            <RevisionRetentionSection />
         </div>
     }
 }
@@ -249,6 +250,56 @@ fn ConsistencySection() -> impl IntoView {
                     }.into_any(),
                 })}
             </div>
+        </section>
+    }
+}
+
+#[component]
+fn RevisionRetentionSection() -> impl IntoView {
+    use crate::server::maintenance::{
+        preview_revision_retention, prune_revision_history, RetentionPreview,
+    };
+    let preview = RwSignal::new(None::<RetentionPreview>);
+    let message = RwSignal::new(String::new());
+    let confirm = RwSignal::new(false);
+    let inspect = crate::components::browser_action(move |_: &()| async move {
+        preview.set(None);
+        match with_auth_retry(preview_revision_retention).await {
+            Ok(p) => {
+                message.set(format!(
+                    "{} revisions would be removed. Keep last {} per slug (0 means unlimited).",
+                    p.candidates, p.keep_last
+                ));
+                preview.set(Some(p));
+            }
+            Err(e) => message.set(e.to_string()),
+        }
+    });
+    let prune = crate::components::browser_action(move |_: &()| async move {
+        preview.set(None);
+        message.set(match with_auth_retry(prune_revision_history).await {
+            Ok((deleted, failures)) => format!("Removed {deleted} revision rows; {failures} failures. Run the consistency report to check storage leftovers."),
+            Err(e) => e.to_string(),
+        });
+    });
+    view! {
+        <section class="space-y-4" aria-labelledby="retention-title">
+            <h2 id="retention-title" class="text-xl font-semibold">"Revision history retention"</h2>
+            <p class="text-sm max-w-3xl">"New revisions apply the configured limit automatically. Preview and prune older history for all slugs here. Current document bodies are preserved. The count may change if documents are edited during the sweep."</p>
+            <div class="flex flex-wrap gap-3">
+                <button class="btn btn-outline btn-sm" disabled=move || inspect.pending().get() || prune.pending().get()
+                    on:click=move |_| { inspect.dispatch(()); }>"Preview retention"</button>
+                <button class="btn btn-error btn-outline btn-sm"
+                    disabled=move || preview.get().is_none_or(|p| p.candidates == 0) || prune.pending().get()
+                    on:click=move |_| confirm.set(true)>"Prune history…"</button>
+            </div>
+            <p role="status">{move || message.get()}</p>
+            <crate::components::ConfirmDialog open=confirm id="prune-history"
+                title="Remove older revisions?"
+                message="Older historical bodies will be permanently deleted according to the configured limit."
+                confirm_label="Prune history"
+                on_cancel=Callback::new(move |_| confirm.set(false))
+                on_confirm=Callback::new(move |_| { confirm.set(false); prune.dispatch(()); }) />
         </section>
     }
 }

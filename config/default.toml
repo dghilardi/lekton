@@ -136,6 +136,8 @@ connect_timeout_ms = 10000
 max_pool_size = 20
 
 [storage]
+# Historical revisions per slug; 0 keeps unlimited history.
+revision_keep_last = 10
 # Required. Set via LKN__STORAGE__BUCKET or config/lekton.toml.
 bucket = ""
 

@@ -351,3 +351,26 @@ Advisories without a patched release are accepted only after weighing their impa
 |----------|---------------|--------|---------|
 | RUSTSEC-2023-0071 (`rsa` timing side channel) | `openidconnect` 4 | Lekton only verifies RS256 ID-token signatures with public keys; the attack needs private-key operations. | Move to `rsa` 0.10 once it is stable and `openidconnect` adopts it. |
 | GHSA-866g-f22w-33x8 (low, `@ai-sdk/provider-utils` resource consumption) | `@scalar/api-reference` → `@scalar/agent-chat`, which pins `ai` 6.0.33 | The Scalar agent chat is not configured by Lekton; the shipped viewer is Scalar's prebuilt bundle, so an npm override would not change it. | Wait for a Scalar release that bumps the pin, or pass `agent: { disabled: true }` to the viewer. |
+
+## Data maintenance
+
+Administrators can use **Settings → Data Maintenance** to inspect embedding-cache
+namespaces, purge selected unused namespaces, and run a read-only consistency
+report across MongoDB, S3, Meilisearch and Qdrant. Active cache namespaces are
+protected on the server. Sizes are estimates; namespace counts do not load vectors.
+The report caps samples at 20 per category. Disabled or unavailable indexes are
+reported as skipped, and concurrent imports can produce temporary findings.
+It does not delete or repair anything. Inline editor images have no Mongo owner
+and are listed separately rather than treated as unowned objects to delete.
+
+`LKN__STORAGE__REVISION_KEEP_LAST` controls the number of historical revisions kept
+per slug: the default is **10**, an omitted setting uses that default, and **0**
+keeps unlimited history. This counts outgoing historical bodies, not the current
+document. Revision numbers keep increasing because the newest revision is retained.
+Changing the limit applies when the next revision is created. To apply it to all
+existing history, preview retention in Data Maintenance, then confirm the sweep.
+The count is a preview; concurrent edits may change it before the sweep runs.
+Pruning removes each Mongo row first and then its S3 object, preserving objects
+still referenced by other revisions (legacy escaped slug keys can collide). Failures are logged
+and never fail ingestion; S3 failures leave orphan objects visible in the report.
+Editor saves currently do not create historical revisions.

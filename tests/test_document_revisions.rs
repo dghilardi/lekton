@@ -277,3 +277,106 @@ async fn set_archived_toggles_flag() {
     let doc = env.repo.find_by_slug(&slug).await.unwrap().unwrap();
     assert!(!doc.is_archived);
 }
+
+#[tokio::test]
+async fn retention_keeps_latest_ten_and_revision_numbers_keep_increasing() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+    for n in 0..14 {
+        env.ingest(
+            &server,
+            "retained",
+            "Retained",
+            &format!("# Version {n}"),
+            "public",
+        )
+        .await;
+    }
+    let rows = env
+        .document_revision_repo
+        .list_by_slug("retained")
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 10);
+    assert_eq!(rows.first().unwrap().revision, 13);
+    assert_eq!(rows.last().unwrap().revision, 4);
+    assert_eq!(
+        env.document_revision_repo
+            .next_revision_number("retained")
+            .await
+            .unwrap(),
+        14
+    );
+    assert!(env
+        .storage
+        .get_object("docs/history/retained/1.md")
+        .await
+        .unwrap()
+        .is_none());
+    assert!(env
+        .storage
+        .get_object(&rows[0].s3_key)
+        .await
+        .unwrap()
+        .is_some());
+    let count =
+        lekton::jobs::revision_retention::count_candidates(env.document_revision_repo.as_ref(), 2)
+            .await
+            .unwrap();
+    assert_eq!(count, 8);
+    let unlimited = lekton::jobs::revision_retention::prune_slug(
+        env.document_revision_repo.as_ref(),
+        env.storage.as_ref(),
+        "retained",
+        0,
+    )
+    .await;
+    assert_eq!(unlimited.rows_deleted, 0);
+    let pruned = lekton::jobs::revision_retention::prune_slug(
+        env.document_revision_repo.as_ref(),
+        env.storage.as_ref(),
+        "retained",
+        2,
+    )
+    .await;
+    assert_eq!(pruned.rows_deleted, count);
+    assert_eq!(pruned.failures, 0);
+}
+
+#[tokio::test]
+async fn retention_preserves_history_object_owned_by_another_slug() {
+    use lekton::db::document_revision_repository::DocumentRevision;
+    let env = common::TestEnv::start().await;
+    let key = "docs/history/a_b/1.md";
+    env.storage
+        .put_object(key, b"shared".to_vec())
+        .await
+        .unwrap();
+    for (slug, revision, s3_key) in [("a/b", 1, key), ("a/b", 2, "newer"), ("a_b", 1, key)] {
+        env.document_revision_repo
+            .create(DocumentRevision {
+                id: uuid::Uuid::new_v4().to_string(),
+                slug: slug.into(),
+                revision,
+                s3_key: s3_key.into(),
+                content_hash: "hash".into(),
+                updated_by: "test".into(),
+                created_at: chrono::Utc::now(),
+            })
+            .await
+            .unwrap();
+    }
+    let result = lekton::jobs::revision_retention::prune_slug(
+        env.document_revision_repo.as_ref(),
+        env.storage.as_ref(),
+        "a/b",
+        1,
+    )
+    .await;
+    assert_eq!(result.rows_deleted, 1);
+    assert_eq!(result.failures, 0);
+    assert_eq!(
+        env.storage.get_object(key).await.unwrap().unwrap(),
+        b"shared"
+    );
+}

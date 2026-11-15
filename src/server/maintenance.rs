@@ -168,3 +168,51 @@ mod tests {
         assert_eq!(ns.model_and_dimensions(), ("nomic-embed-text", "768"));
     }
 }
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RetentionPreview {
+    pub keep_last: usize,
+    pub candidates: u64,
+}
+
+#[server(PreviewRevisionRetention, "/api")]
+pub async fn preview_revision_retention() -> Result<RetentionPreview, ServerFnError> {
+    let state = expect_context::<AppState>();
+    require_admin_user(&state).await?;
+    let candidates = crate::jobs::revision_retention::count_candidates(
+        state.document_revision_repo.as_ref(),
+        state.revision_keep_last,
+    )
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(RetentionPreview {
+        keep_last: state.revision_keep_last,
+        candidates,
+    })
+}
+
+#[server(PruneRevisionHistory, "/api")]
+pub async fn prune_revision_history() -> Result<(u64, u64), ServerFnError> {
+    let state = expect_context::<AppState>();
+    let admin = require_admin_user(&state).await?;
+    let slugs = state
+        .document_revision_repo
+        .list_slugs()
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let mut deleted = 0;
+    let mut failures = 0;
+    for slug in slugs {
+        let result = crate::jobs::revision_retention::prune_slug(
+            state.document_revision_repo.as_ref(),
+            state.storage_client.as_ref(),
+            &slug,
+            state.revision_keep_last,
+        )
+        .await;
+        deleted += result.rows_deleted;
+        failures += result.failures;
+    }
+    tracing::info!(admin = %admin.email, deleted, failures, "Revision retention sweep finished");
+    Ok((deleted, failures))
+}

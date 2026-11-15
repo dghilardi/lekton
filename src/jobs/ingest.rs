@@ -32,6 +32,7 @@ pub fn context(state: &AppState) -> IngestContext<'_> {
         access_level_repo: state.access_level_repo.as_ref(),
         service_token_repo: state.service_token_repo.as_ref(),
         revision_repo: state.document_revision_repo.as_ref(),
+        revision_keep_last: state.revision_keep_last,
         release_repo: state.release_repo.as_ref(),
         rag: state.rag_service.as_deref(),
         legacy_token: Some(&state.service_token),

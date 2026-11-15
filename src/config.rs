@@ -325,10 +325,17 @@ fn default_database_max_pool_size() -> u32 {
 
 #[derive(Debug, Deserialize)]
 pub struct StorageConfig {
+    /// Historical revisions to keep per slug. Zero disables pruning.
+    #[serde(default = "default_revision_keep_last")]
+    pub revision_keep_last: usize,
     /// S3 bucket name. Required.
     pub bucket: String,
     /// Custom S3 endpoint for MinIO / Garage / LocalStack.
     pub endpoint: Option<String>,
+}
+
+fn default_revision_keep_last() -> usize {
+    10
 }
 
 // ── Search ────────────────────────────────────────────────────────────────────
@@ -1211,5 +1218,24 @@ mod tests {
         config.ingest = super::IngestConfig::default();
         config.ingest.wait_seconds = 0;
         assert!(config.validate_features().is_ok());
+    }
+}
+
+#[cfg(test)]
+mod retention_config_tests {
+    #[test]
+    fn omitted_retention_defaults_to_ten_and_zero_is_unlimited() {
+        let config: super::StorageConfig =
+            serde_json::from_value(serde_json::json!({ "bucket": "test" })).unwrap();
+        assert_eq!(config.revision_keep_last, 10);
+        let config: super::StorageConfig = serde_json::from_value(
+            serde_json::json!({ "bucket": "test", "revision_keep_last": 0 }),
+        )
+        .unwrap();
+        assert_eq!(config.revision_keep_last, 0);
+        assert!(serde_json::from_value::<super::StorageConfig>(
+            serde_json::json!({ "bucket": "test", "revision_keep_last": -1 })
+        )
+        .is_err());
     }
 }

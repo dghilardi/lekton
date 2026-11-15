@@ -2,6 +2,16 @@ use async_trait::async_trait;
 
 use crate::error::AppError;
 
+/// One page of a [`StorageClient::list`] listing.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ListPage {
+    /// Object keys in lexicographic order.
+    pub keys: Vec<String>,
+    /// Pass back to [`StorageClient::list`] for the next page; `None` on the
+    /// last one.
+    pub next: Option<String>,
+}
+
 /// Trait for blob storage operations (S3-compatible).
 ///
 /// Abstracted as a trait so tests can use a mock without a real S3 instance.
@@ -15,6 +25,33 @@ pub trait StorageClient: Send + Sync {
 
     /// Delete an object by key.
     async fn delete_object(&self, key: &str) -> Result<(), AppError>;
+
+    /// One page (at most 1,000 keys) of the objects whose key starts with
+    /// `prefix`, in key order. Start with `continuation: None`, then pass the
+    /// previous page's `next` until it is `None`.
+    async fn list(&self, prefix: &str, continuation: Option<&str>) -> Result<ListPage, AppError>;
+}
+
+/// Page size of an in-memory [`StorageClient::list`], matching S3's maximum.
+pub const LIST_PAGE_SIZE: usize = 1_000;
+
+/// [`StorageClient::list`] over an in-memory set of keys, for test doubles:
+/// the continuation token is the last key of the previous page.
+pub fn list_keys_page<'a>(
+    keys: impl Iterator<Item = &'a String>,
+    prefix: &str,
+    continuation: Option<&str>,
+) -> ListPage {
+    let mut matching: Vec<&String> = keys
+        .filter(|key| key.starts_with(prefix))
+        .filter(|key| continuation.is_none_or(|after| key.as_str() > after))
+        .collect();
+    matching.sort();
+    let next = (matching.len() > LIST_PAGE_SIZE).then(|| matching[LIST_PAGE_SIZE - 1].clone());
+    ListPage {
+        keys: matching.into_iter().take(LIST_PAGE_SIZE).cloned().collect(),
+        next,
+    }
 }
 
 /// S3 implementation of StorageClient.
@@ -127,5 +164,58 @@ impl StorageClient for S3StorageClient {
             .map_err(|e| AppError::Storage(format!("Failed to delete object '{}': {}", key, e)))?;
 
         Ok(())
+    }
+
+    async fn list(&self, prefix: &str, continuation: Option<&str>) -> Result<ListPage, AppError> {
+        let output = self
+            .client
+            .list_objects_v2()
+            .bucket(&self.bucket)
+            .prefix(prefix)
+            .max_keys(LIST_PAGE_SIZE as i32)
+            .set_continuation_token(continuation.map(str::to_string))
+            .send()
+            .await
+            .map_err(|e| {
+                AppError::Storage(format!(
+                    "Failed to list objects under '{prefix}': {}",
+                    e.into_service_error()
+                ))
+            })?;
+        let keys = output
+            .contents()
+            .iter()
+            .filter_map(|object| object.key().map(str::to_string))
+            .collect();
+        let next = if output.is_truncated().unwrap_or(false) {
+            output.next_continuation_token().map(str::to_string)
+        } else {
+            None
+        };
+        Ok(ListPage { keys, next })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn in_memory_listing_pages_by_prefix_in_key_order() {
+        let mut keys: Vec<String> = (0..LIST_PAGE_SIZE + 5)
+            .map(|i| format!("docs/{i:05}.md"))
+            .collect();
+        keys.push("assets/a.png".into());
+
+        let first = list_keys_page(keys.iter(), "docs/", None);
+        assert_eq!(first.keys.len(), LIST_PAGE_SIZE);
+        assert_eq!(first.keys[0], "docs/00000.md");
+        let second = list_keys_page(keys.iter(), "docs/", first.next.as_deref());
+        assert_eq!(second.keys.len(), 5);
+        assert_eq!(second.next, None);
+        assert!(!second.keys.iter().any(|k| first.keys.contains(k)));
+
+        let assets = list_keys_page(keys.iter(), "assets/", None);
+        assert_eq!(assets.keys, vec!["assets/a.png".to_string()]);
     }
 }

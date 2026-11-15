@@ -53,6 +53,18 @@ impl crate::storage::client::StorageClient for MockStorage {
         self.objects.lock().unwrap().remove(key);
         Ok(())
     }
+
+    async fn list(
+        &self,
+        prefix: &str,
+        continuation: Option<&str>,
+    ) -> Result<crate::storage::client::ListPage, AppError> {
+        Ok(crate::storage::client::list_keys_page(
+            self.objects.lock().unwrap().keys(),
+            prefix,
+            continuation,
+        ))
+    }
 }
 
 // ── MockUserRepository ─────────────────────────────────────────────────────

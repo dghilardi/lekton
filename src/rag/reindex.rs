@@ -255,7 +255,7 @@ async fn still_orphaned(
 
 /// The copy of each slug that search and RAG carry: the one resolving to its
 /// source's `latest` release. Keeps the listing's order of first appearance.
-fn latest_copies(documents: Vec<Document>) -> Vec<Document> {
+pub(crate) fn latest_copies(documents: Vec<Document>) -> Vec<Document> {
     let mut order = Vec::new();
     let mut by_slug = std::collections::HashMap::<String, Vec<Document>>::new();
     for document in documents {

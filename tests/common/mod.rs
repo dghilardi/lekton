@@ -254,6 +254,11 @@ impl TestEnv {
             usage_event_repo: None,
             embedding_cache_repo: None,
             embedding_cache_namespaces: Vec::new(),
+            storage_reference_repo: Arc::new(
+                lekton::db::storage_reference_repository::MongoStorageReferenceRepository::new(
+                    &mongo_db,
+                ),
+            ),
             schema_endpoint_reindex_state: Arc::new(
                 lekton::schema::reindex::SchemaEndpointReindexState::default(),
             ),
@@ -594,6 +599,9 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
         usage_event_repo: None,
         embedding_cache_repo: None,
         embedding_cache_namespaces: Vec::new(),
+        storage_reference_repo: Arc::new(
+            lekton::db::storage_reference_repository::MongoStorageReferenceRepository::new(&env.db),
+        ),
         schema_endpoint_reindex_state: Arc::new(
             lekton::schema::reindex::SchemaEndpointReindexState::default(),
         ),

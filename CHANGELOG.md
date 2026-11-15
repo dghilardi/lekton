@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Read-only admin consistency report for MongoDB, S3 and search indexes, with paginated storage listing.
 
 - Add a Data Maintenance admin page. Its embedding-cache section lists the cache namespaces (model, dimensions, endpoint) with entry counts and approximate size, marks the ones the current configuration uses, and deletes selected unused ones after a confirmation; namespaces in use cannot be deleted, also server-side. Counting reads only an index, never the stored vectors.
 

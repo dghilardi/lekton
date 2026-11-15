@@ -33,3 +33,5 @@ pub mod user_repository;
 
 #[cfg(feature = "ssr")]
 pub mod ingest_job_repository;
+#[cfg(feature = "ssr")]
+pub mod storage_reference_repository;

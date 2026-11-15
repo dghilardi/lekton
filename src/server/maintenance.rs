@@ -79,6 +79,57 @@ pub async fn purge_embedding_cache_namespaces(
     .map_err(|e| ServerFnError::new(e.to_string()))
 }
 
+// ── Consistency report ───────────────────────────────────────────────────────
+
+/// One category of the consistency report.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConsistencyFinding {
+    /// Stable identifier, e.g. `s3_orphans`.
+    pub id: String,
+    pub title: String,
+    /// What the category means and what to do about it.
+    pub description: String,
+    pub count: u64,
+    /// At most [`CONSISTENCY_SAMPLE_LIMIT`] examples.
+    pub samples: Vec<String>,
+    /// Expected by design rather than a problem (shown for information).
+    pub informational: bool,
+}
+
+/// Examples kept per category of the consistency report.
+pub const CONSISTENCY_SAMPLE_LIMIT: usize = 20;
+
+/// The read-only comparison of MongoDB, S3, Meilisearch and Qdrant.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ConsistencyReport {
+    /// What was compared, e.g. `("S3 objects", 1234)`.
+    pub totals: Vec<(String, u64)>,
+    pub findings: Vec<ConsistencyFinding>,
+    /// Stores that were not compared, and why (feature disabled, listing
+    /// failed).
+    pub skipped: Vec<String>,
+}
+
+/// Compare MongoDB with S3, Meilisearch and Qdrant. Reads only: nothing is
+/// deleted or modified.
+#[server(RunConsistencyReport, "/api")]
+pub async fn run_consistency_report() -> Result<ConsistencyReport, ServerFnError> {
+    let state = expect_context::<AppState>();
+    require_admin_user(&state).await?;
+
+    crate::jobs::consistency_report::build_report(crate::jobs::consistency_report::Sources {
+        references: state.storage_reference_repo.as_ref(),
+        documents: state.document_repo.as_ref(),
+        assets: state.asset_repo.as_ref(),
+        storage: state.storage_client.as_ref(),
+        search: state.search_service.as_deref(),
+        attachment_search: state.attachment_search_service.as_deref(),
+        rag: state.rag_service.as_deref(),
+    })
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
 /// Bytes as a short human-readable size (`1.5 MB`), decimal units.
 pub fn format_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];

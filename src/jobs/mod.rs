@@ -1,4 +1,6 @@
 #[cfg(feature = "ssr")]
+pub mod consistency_report;
+#[cfg(feature = "ssr")]
 pub mod embedding_cache;
 #[cfg(feature = "ssr")]
 pub mod ingest;

@@ -179,6 +179,9 @@ pub struct AppState {
     /// with RAG off). The admin purge refuses to delete them.
     #[from_ref(skip)]
     pub embedding_cache_namespaces: Vec<String>,
+    /// Every S3 key MongoDB points at, for the consistency report.
+    pub storage_reference_repo:
+        Arc<dyn crate::db::storage_reference_repository::StorageReferenceRepository>,
     #[from_ref(skip)]
     pub insecure_cookies: bool,
     #[from_ref(skip)]

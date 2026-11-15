@@ -12,6 +12,7 @@ pub fn DataMaintenancePanel() -> impl IntoView {
     view! {
         <div class="space-y-6">
             <EmbeddingCacheSection />
+            <ConsistencySection />
         </div>
     }
 }
@@ -208,5 +209,46 @@ fn NamespaceTable(
                 </tfoot>
             </table>
         </div>
+    }
+}
+
+#[component]
+fn ConsistencySection() -> impl IntoView {
+    let result =
+        RwSignal::new(None::<Result<crate::server::maintenance::ConsistencyReport, String>>);
+    let action = crate::components::browser_action(move |_: &()| async move {
+        result.set(Some(
+            with_auth_retry(crate::server::maintenance::run_consistency_report)
+                .await
+                .map_err(|e| e.to_string()),
+        ));
+    });
+    view! {
+        <section class="space-y-4" aria-labelledby="consistency-title">
+            <h2 id="consistency-title" class="text-xl font-semibold">"Storage and index consistency"</h2>
+            <p class="text-sm max-w-3xl">"Compare MongoDB with storage and indexes. This report only reads data. Concurrent imports can cause temporary findings; rerun after they finish. Samples are capped at 20 per category."</p>
+            <button class="btn btn-outline btn-sm" disabled=move || action.pending().get()
+                on:click=move |_| { action.dispatch(()); }>
+                {move || if action.pending().get() { "Comparing…" } else { "Run consistency report" }}
+            </button>
+            <div aria-live="polite">
+                {move || result.get().map(|r| match r {
+                    Err(e) => view! { <p class="text-error" role="alert">{e}</p> }.into_any(),
+                    Ok(report) => view! {
+                        <dl>{report.totals.into_iter().map(|(name, count)| view! {
+                            <div class="flex gap-4"><dt>{name}</dt><dd class="tabular-nums">{count}</dd></div>
+                        }).collect_view()}</dl>
+                        {report.skipped.into_iter().map(|s| view! { <p class="text-warning">{s}</p> }).collect_view()}
+                        <div class="space-y-4 mt-4">{report.findings.into_iter().map(|f| view! {
+                            <details class="border border-base-300 rounded-box p-4">
+                                <summary class="cursor-pointer font-medium">{f.title} ": " {f.count}</summary>
+                                <p class="text-sm mt-2">{f.description}</p>
+                                <ul class="list-disc pl-5 break-all text-sm">{f.samples.into_iter().map(|s| view! { <li>{s}</li> }).collect_view()}</ul>
+                            </details>
+                        }).collect_view()}</div>
+                    }.into_any(),
+                })}
+            </div>
+        </section>
     }
 }

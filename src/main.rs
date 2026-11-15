@@ -1119,6 +1119,11 @@ async fn main() {
         usage_event_repo,
         embedding_cache_repo,
         embedding_cache_namespaces,
+        storage_reference_repo: Arc::new(
+            lekton::db::storage_reference_repository::MongoStorageReferenceRepository::new(
+                &mongo_db,
+            ),
+        ),
         insecure_cookies: config.server.insecure_cookies,
         max_attachment_size_bytes: config.server.max_attachment_size_mb * 1024 * 1024,
         features,

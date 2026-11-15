@@ -30,7 +30,8 @@ pub struct AttachmentChunkDocument {
     /// Display filename (last path segment of `attachment_key`).
     pub filename: String,
     /// Slug of the (first) document that references this attachment, used to
-    /// link a hit back to `/docs/{slug}`.
+    /// link a hit back to `/docs/{slug}`. Empty while no document references
+    /// it; such pages are not returned by search.
     pub document_slug: String,
     /// Title of that document, shown alongside the filename in results.
     pub document_title: String,
@@ -78,13 +79,16 @@ pub trait AttachmentSearchService: Send + Sync {
     /// Remove every indexed page for an attachment.
     async fn delete_attachment(&self, attachment_key: &str) -> Result<(), AppError>;
 
-    /// Update only the `access_levels` of every indexed page for an
-    /// attachment, without re-indexing its text — for when the referencing
-    /// document's access level changes but the attachment content did not.
-    /// A no-op if the attachment has no indexed pages.
-    async fn update_access_levels(
+    /// Update the linked document (`document_slug`, `document_title`) and the
+    /// `access_levels` of every indexed page for an attachment, without
+    /// re-indexing its text — for when the referencing documents change but
+    /// the attachment content did not. A no-op if the attachment has no
+    /// indexed pages.
+    async fn update_reference(
         &self,
         attachment_key: &str,
+        document_slug: &str,
+        document_title: &str,
         access_levels: &[String],
     ) -> Result<(), AppError>;
 
@@ -240,9 +244,11 @@ impl AttachmentSearchService for MeilisearchAttachmentService {
         }
     }
 
-    async fn update_access_levels(
+    async fn update_reference(
         &self,
         attachment_key: &str,
+        document_slug: &str,
+        document_title: &str,
         access_levels: &[String],
     ) -> Result<(), AppError> {
         use meilisearch_sdk::documents::DocumentsQuery;
@@ -257,6 +263,8 @@ impl AttachmentSearchService for MeilisearchAttachmentService {
         #[derive(Serialize)]
         struct PartialAcl<'a> {
             id: &'a str,
+            document_slug: &'a str,
+            document_title: &'a str,
             access_levels: &'a [String],
         }
 
@@ -285,13 +293,15 @@ impl AttachmentSearchService for MeilisearchAttachmentService {
                 .iter()
                 .map(|d| PartialAcl {
                     id: &d.id,
+                    document_slug,
+                    document_title,
                     access_levels,
                 })
                 .collect();
 
-            // `add_or_update` merges by id (only `access_levels` is overwritten,
-            // every other field is left untouched), unlike `add_documents` which
-            // replaces the whole document.
+            // `add_or_update` merges by id (only the fields above are
+            // overwritten, every other field is left untouched), unlike
+            // `add_documents` which replaces the whole document.
             self.index()
                 .add_or_update(&updates, Some("id"))
                 .await
@@ -339,6 +349,9 @@ impl AttachmentSearchService for MeilisearchAttachmentService {
         Ok(results
             .hits
             .into_iter()
+            // Pages of an attachment no document links yet have nowhere to
+            // point a hit at (and an empty ACL, so only admins would see them).
+            .filter(|hit| !hit.result.document_slug.is_empty())
             .map(|hit| AttachmentSearchHit {
                 document_slug: hit.result.document_slug,
                 document_title: hit.result.document_title,

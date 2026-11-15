@@ -305,39 +305,34 @@ impl AttachmentExtractionService {
                 // the first referencing document — attachments are almost
                 // always referenced by exactly one (the admin upload flow
                 // links a PDF to a single stub document); a shared attachment
-                // simply shows up under that first document's page.
+                // simply shows up under that first document's page. Indexed
+                // even while no document references it yet (the upload is
+                // extracted before the linking document is ingested): the
+                // recompute that follows that ingest only updates pages that
+                // exist, so skipping them here would lose them for good.
+                let (document_slug, document_title) =
+                    document_link(self.document_repo.as_ref(), &asset.referenced_by).await;
                 if let Some(search) = &self.attachment_search {
-                    if let Some(reference) = asset.referenced_by.first() {
-                        let doc_title = self
-                            .document_repo
-                            .find_by_slugs(std::slice::from_ref(&reference.slug))
-                            .await
-                            .ok()
-                            .and_then(|documents| {
-                                documents.into_iter().find(|document| {
-                                    document.release.as_deref() == reference.release.as_deref()
-                                })
-                            })
-                            .map(|d| d.title)
-                            .unwrap_or_else(|| reference.slug.clone());
-                        if let Err(e) = search
-                            .index_pages(
-                                key,
-                                &filename,
-                                &reference.slug,
-                                &doc_title,
-                                &pages,
-                                &access_levels,
-                            )
-                            .await
-                        {
-                            return self
-                                .fail(key, &format!("keyword-search indexing failed: {e}"))
-                                .await;
-                        }
+                    if let Err(e) = search
+                        .index_pages(
+                            key,
+                            &filename,
+                            &document_slug,
+                            &document_title,
+                            &pages,
+                            &access_levels,
+                        )
+                        .await
+                    {
+                        return self
+                            .fail(key, &format!("keyword-search indexing failed: {e}"))
+                            .await;
                     }
                 }
-                if !self.reconcile_acl_after_index(key, &access_levels).await {
+                if !self
+                    .reconcile_acl_after_index(key, &access_levels, &document_slug)
+                    .await
+                {
                     return Ok(());
                 }
                 self.finish(key, ExtractionStatus::Done, &asset.content_hash, n as u32)
@@ -347,8 +342,9 @@ impl AttachmentExtractionService {
         }
     }
 
-    /// Apply the ACL the attachment's references imply *now*, if it differs
-    /// from the one just indexed. Returns `false` when the run must stop here
+    /// Apply the ACL and document link the attachment's references imply
+    /// *now*, if they differ from the ones just indexed (`indexed`,
+    /// `indexed_slug`). Returns `false` when the run must stop here
     /// (the asset is gone, or the update failed and the attachment was
     /// deindexed and marked failed).
     ///
@@ -358,7 +354,12 @@ impl AttachmentExtractionService {
     /// nothing, so without this check they keep the ACL of the earlier read —
     /// empty, for a freshly uploaded file — and stay invisible. Any recompute
     /// started after this read finds the chunks, so no change slips through.
-    async fn reconcile_acl_after_index(&self, key: &str, indexed: &[String]) -> bool {
+    async fn reconcile_acl_after_index(
+        &self,
+        key: &str,
+        indexed: &[String],
+        indexed_slug: &str,
+    ) -> bool {
         let references = match self.asset_repo.find_by_key(key).await {
             Ok(Some(asset)) => asset.referenced_by,
             Ok(None) => {
@@ -376,7 +377,8 @@ impl AttachmentExtractionService {
             }
         };
         let (current, _tags) = referencing_acl(self.document_repo.as_ref(), &references).await;
-        if current == indexed {
+        let (slug, title) = document_link(self.document_repo.as_ref(), &references).await;
+        if current == indexed && slug == indexed_slug {
             return true;
         }
 
@@ -389,7 +391,7 @@ impl AttachmentExtractionService {
             failures.push(format!("RAG ACL update failed: {e}"));
         }
         if let Some(search) = &self.attachment_search {
-            if let Err(e) = search.update_access_levels(key, &current).await {
+            if let Err(e) = search.update_reference(key, &slug, &title, &current).await {
                 failures.push(format!("search ACL update failed: {e}"));
             }
         }
@@ -516,6 +518,7 @@ pub async fn recompute_access_levels(
         }
 
         let (levels, _tags) = referencing_acl(document_repo, &asset.referenced_by).await;
+        let (slug, title) = document_link(document_repo, &asset.referenced_by).await;
 
         let mut failures = Vec::new();
 
@@ -524,7 +527,7 @@ pub async fn recompute_access_levels(
             failures.push(format!("RAG ACL update failed: {e}"));
         }
         if let Some(search) = attachment_search {
-            if let Err(e) = search.update_access_levels(key, &levels).await {
+            if let Err(e) = search.update_reference(key, &slug, &title, &levels).await {
                 tracing::warn!(key, "recompute attachment ACL: search update failed: {e}");
                 failures.push(format!("search ACL update failed: {e}"));
             }
@@ -658,6 +661,30 @@ async fn referencing_acl(
         attachment_access_levels(&refs),
         tag_set.into_iter().collect(),
     )
+}
+
+/// The document an attachment's keyword-search pages link to: the first
+/// reference's slug and its document's title (the slug when it cannot be
+/// resolved). Empty while nothing references the attachment.
+async fn document_link(
+    document_repo: &dyn DocumentRepository,
+    references: &[DocumentReference],
+) -> (String, String) {
+    let Some(reference) = references.first() else {
+        return (String::new(), String::new());
+    };
+    let title = document_repo
+        .find_by_slugs(std::slice::from_ref(&reference.slug))
+        .await
+        .ok()
+        .and_then(|documents| {
+            documents
+                .into_iter()
+                .find(|document| document.release.as_deref() == reference.release.as_deref())
+        })
+        .map(|d| d.title)
+        .unwrap_or_else(|| reference.slug.clone());
+    (reference.slug.clone(), title)
 }
 
 /// The last path segment of an asset key, used as the attachment's display name.
@@ -1120,6 +1147,10 @@ mod tests {
     struct RecordingAttachmentSearchService {
         deleted: Mutex<Vec<String>>,
         updated_acl: Mutex<Option<(String, Vec<String>)>>,
+        /// (key, document slug) of every `index_pages` call.
+        indexed: Mutex<Vec<(String, String)>>,
+        /// (key, document slug, document title) of the last reference update.
+        updated_link: Mutex<Option<(String, String, String)>>,
         fail_index: AtomicBool,
         fail_update: AtomicBool,
     }
@@ -1130,9 +1161,9 @@ mod tests {
     {
         async fn index_pages(
             &self,
+            key: &str,
             _: &str,
-            _: &str,
-            _: &str,
+            document_slug: &str,
             _: &str,
             _: &[crate::rag::service::AttachmentPage],
             _: &[String],
@@ -1142,6 +1173,10 @@ mod tests {
                     "simulated search indexing failure".to_string(),
                 ));
             }
+            self.indexed
+                .lock()
+                .unwrap()
+                .push((key.to_string(), document_slug.to_string()));
             Ok(())
         }
         async fn delete_attachment(&self, attachment_key: &str) -> Result<(), AppError> {
@@ -1151,9 +1186,11 @@ mod tests {
                 .push(attachment_key.to_string());
             Ok(())
         }
-        async fn update_access_levels(
+        async fn update_reference(
             &self,
             attachment_key: &str,
+            document_slug: &str,
+            document_title: &str,
             access_levels: &[String],
         ) -> Result<(), AppError> {
             if self.fail_update.load(Ordering::SeqCst) {
@@ -1163,6 +1200,11 @@ mod tests {
             }
             *self.updated_acl.lock().unwrap() =
                 Some((attachment_key.to_string(), access_levels.to_vec()));
+            *self.updated_link.lock().unwrap() = Some((
+                attachment_key.to_string(),
+                document_slug.to_string(),
+                document_title.to_string(),
+            ));
             Ok(())
         }
         async fn search(
@@ -1324,6 +1366,60 @@ mod tests {
                 ExtractionStatus::Done
             );
         }
+    }
+
+    /// The document linking the attachment is ingested only after the worker
+    /// finished. The pages must still reach keyword search, and the ingest's
+    /// recompute must then point them at the document with its ACL.
+    #[tokio::test]
+    async fn pages_reach_keyword_search_before_any_document_references_them() {
+        let key = "attachments/docs/guide/spec.txt";
+        let (asset_repo, storage) = text_attachment(key, vec![]).await;
+        let rag = Arc::new(RecordingRagService::default());
+        let search = Arc::new(RecordingAttachmentSearchService::default());
+        let document_repo = Arc::new(StaticDocumentRepo(vec![internal_doc("docs/guide")]));
+
+        let service = AttachmentExtractionService::new(
+            storage.clone(),
+            asset_repo.clone(),
+            document_repo.clone(),
+            rag.clone(),
+            Some(search.clone()),
+            Arc::new(AttachmentExtractors::new(100, None)),
+        );
+        service.process_one(key, false).await.unwrap();
+        assert_eq!(
+            *search.indexed.lock().unwrap(),
+            vec![(key.to_string(), String::new())],
+            "pages are indexed, linked to no document yet"
+        );
+
+        // The document is ingested and its recompute runs.
+        asset_repo.assets.lock().unwrap()[0]
+            .referenced_by
+            .push("docs/guide".into());
+        recompute_access_levels(
+            rag.as_ref(),
+            asset_repo.as_ref(),
+            document_repo.as_ref(),
+            storage.as_ref(),
+            Some(search.as_ref()),
+            &[key.to_string()],
+        )
+        .await;
+
+        assert_eq!(
+            *search.updated_link.lock().unwrap(),
+            Some((
+                key.to_string(),
+                "docs/guide".to_string(),
+                "Guide".to_string()
+            ))
+        );
+        assert_eq!(
+            *search.updated_acl.lock().unwrap(),
+            Some((key.to_string(), vec!["internal".to_string()]))
+        );
     }
 
     /// Chunks already stored with an empty ACL are repaired by a forced

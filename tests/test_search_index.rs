@@ -100,4 +100,45 @@ mod search_index {
         })
         .await;
     }
+
+    #[tokio::test]
+    async fn unlinked_attachment_pages_surface_once_a_document_links_them() {
+        let (_meili, url) = start_meilisearch().await;
+        let attachments = MeilisearchAttachmentService::new(&url, None::<String>).unwrap();
+        attachments.configure_index().await.unwrap();
+
+        // Extracted before any document referenced the file.
+        let pages = [AttachmentPage {
+            page_number: Some(1),
+            text: "torque wrench calibration".to_string(),
+        }];
+        attachments
+            .index_pages("spec.pdf", "spec.pdf", "", "", &pages, &[])
+            .await
+            .unwrap();
+        eventually(|| async {
+            attachments.list_indexed_attachment_keys().await.unwrap() == ["spec.pdf"]
+        })
+        .await;
+        assert!(
+            attachments.search("torque", None).await.unwrap().is_empty(),
+            "an unlinked page has nowhere to point a hit at"
+        );
+
+        attachments
+            .update_reference("spec.pdf", "docs/tools", "Tools", &["public".to_string()])
+            .await
+            .unwrap();
+        eventually(|| async {
+            let hits = attachments
+                .search("torque", Some(&["public".to_string()]))
+                .await
+                .unwrap();
+            hits.len() == 1
+                && hits[0].document_slug == "docs/tools"
+                && hits[0].document_title == "Tools"
+                && hits[0].filename == "spec.pdf"
+        })
+        .await;
+    }
 }

@@ -442,7 +442,13 @@ mod tests {
             self.deleted.lock().unwrap().push(key.to_string());
             Ok(())
         }
-        async fn update_access_levels(&self, _: &str, _: &[String]) -> Result<(), AppError> {
+        async fn update_reference(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &[String],
+        ) -> Result<(), AppError> {
             Ok(())
         }
         async fn search(

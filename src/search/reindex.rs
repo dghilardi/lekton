@@ -64,6 +64,31 @@ pub async fn run_reindex(
         tracing::warn!("Search reindex: failed to configure Meilisearch index: {e}");
     }
 
+    // What the indexes hold before this run writes anything. The sweep may
+    // only delete entries listed here: an ingest writes the index before
+    // MongoDB, so an entry that first appears during the run may belong to a
+    // document MongoDB does not show yet, which the recheck cannot tell from
+    // an orphan. Without a start listing, that index is not swept.
+    let indexed_at_start: Option<HashSet<String>> = match search.list_indexed_slugs().await {
+        Ok(slugs) => Some(slugs.into_iter().collect()),
+        Err(e) => {
+            tracing::warn!("Search reindex: cannot list the index, it will not be swept: {e}");
+            None
+        }
+    };
+    let attachments_at_start: Option<HashSet<String>> = match &attachment_search {
+        Some(attachment_search) => match attachment_search.list_indexed_attachment_keys().await {
+            Ok(keys) => Some(keys.into_iter().collect()),
+            Err(e) => {
+                tracing::warn!(
+                    "Search reindex: cannot list attachment pages, they will not be swept: {e}"
+                );
+                None
+            }
+        },
+        None => None,
+    };
+
     let documents = match document_repo.list_all().await {
         Ok(docs) => docs,
         Err(e) => {
@@ -161,6 +186,10 @@ pub async fn run_reindex(
         attachment_search.as_deref(),
         &live_slugs,
         &hidden,
+        StartListings {
+            documents: indexed_at_start.as_ref(),
+            attachments: attachments_at_start.as_ref(),
+        },
     )
     .await;
 
@@ -172,10 +201,12 @@ pub async fn run_reindex(
 /// not live, and attachment pages whose asset is gone or linked only by hidden
 /// documents (see [`attachment_is_live`]).
 ///
-/// Only called after a complete listing of the documents. Candidates found
-/// against that (possibly old) snapshot are rechecked against MongoDB right
-/// before deleting, so nothing written during the run is lost; when that
-/// recheck fails, nothing is deleted.
+/// Only called after a complete listing of the documents. A candidate must
+/// already have been in the index when the run started (`at_start`), and is
+/// rechecked against MongoDB right before deleting, so nothing written during
+/// the run is lost; when that recheck fails, nothing is deleted. A slug that
+/// was an orphan at the start and is re-ingested during the run can still be
+/// swept before its document reaches MongoDB; its next write restores it.
 ///
 /// An empty live set skips the sweep entirely, deliberately: a misconfigured
 /// database name looks exactly like that, and wiping both indexes on its word
@@ -191,17 +222,19 @@ async fn sweep_orphans(
     attachment_search: Option<&dyn AttachmentSearchService>,
     live_slugs: &HashSet<String>,
     hidden: &HashSet<crate::db::models::DocumentReference>,
+    at_start: StartListings<'_>,
 ) {
     if live_slugs.is_empty() {
         tracing::warn!("Search reindex: no live documents, skipping the orphan sweep");
         return;
     }
 
-    let orphans = match search.list_indexed_slugs().await {
-        Ok(indexed) => {
+    let orphans = match (at_start.documents, search.list_indexed_slugs().await) {
+        (None, _) => Vec::new(),
+        (Some(at_start), Ok(indexed)) => {
             let candidates: Vec<String> = indexed
                 .into_iter()
-                .filter(|slug| !live_slugs.contains(slug))
+                .filter(|slug| at_start.contains(slug) && !live_slugs.contains(slug))
                 .collect();
             match currently_live_slugs(document_repo, &candidates).await {
                 Ok(live_now) => candidates
@@ -217,7 +250,7 @@ async fn sweep_orphans(
                 }
             }
         }
-        Err(e) => {
+        (Some(_), Err(e)) => {
             tracing::warn!("Search reindex: cannot list indexed documents: {e}");
             reindex.outcome.record_failure(format!("list index: {e}"));
             Vec::new()
@@ -237,7 +270,9 @@ async fn sweep_orphans(
         }
     }
 
-    let Some(attachment_search) = attachment_search else {
+    let (Some(attachment_search), Some(attachments_at_start)) =
+        (attachment_search, at_start.attachments)
+    else {
         return;
     };
     let live_keys: HashSet<String> = match asset_repo.list_all().await {
@@ -256,7 +291,7 @@ async fn sweep_orphans(
         Ok(indexed) => {
             let candidates: Vec<String> = indexed
                 .into_iter()
-                .filter(|key| !live_keys.contains(key))
+                .filter(|key| attachments_at_start.contains(key) && !live_keys.contains(key))
                 .collect();
             for key in &candidates {
                 // Rechecked against current MongoDB under the attachment's
@@ -299,6 +334,13 @@ async fn sweep_orphans(
                 .record_failure(format!("list attachment index: {e}"));
         }
     }
+}
+
+/// What the indexes held when the reindex started; `None` where that could
+/// not be listed.
+struct StartListings<'a> {
+    documents: Option<&'a HashSet<String>>,
+    attachments: Option<&'a HashSet<String>>,
 }
 
 /// Record a document's reconciliation outcome, clearing its `needs_reindex`
@@ -452,11 +494,17 @@ mod tests {
         deleted: Mutex<Vec<String>>,
         /// What `list_indexed_slugs` reports as already in the index.
         listed: Vec<String>,
+        /// What `list_indexed_slugs` reports instead, when set, until the
+        /// first document is indexed (the reindex's start listing).
+        listed_at_start: Option<Vec<String>>,
+        /// Set by the first `index_document`.
+        started: Arc<AtomicBool>,
     }
 
     #[async_trait]
     impl SearchService for RecordingSearch {
         async fn index_document(&self, doc: &SearchDocument) -> Result<(), AppError> {
+            self.started.store(true, Ordering::SeqCst);
             self.indexed.lock().unwrap().push(doc.clone());
             Ok(())
         }
@@ -483,7 +531,10 @@ mod tests {
             Ok(())
         }
         async fn list_indexed_slugs(&self) -> Result<Vec<String>, AppError> {
-            Ok(self.listed.clone())
+            Ok(match &self.listed_at_start {
+                Some(at_start) if !self.started.load(Ordering::SeqCst) => at_start.clone(),
+                _ => self.listed.clone(),
+            })
         }
     }
 
@@ -496,6 +547,10 @@ mod tests {
     struct RecordingAttachmentSearch {
         listed: Vec<String>,
         deleted: Mutex<Vec<String>>,
+        /// See `RecordingSearch::listed_at_start`; `started` is shared with
+        /// the `RecordingSearch` of the same run.
+        listed_at_start: Option<Vec<String>>,
+        started: Arc<AtomicBool>,
     }
 
     #[async_trait]
@@ -535,7 +590,10 @@ mod tests {
             Ok(())
         }
         async fn list_indexed_attachment_keys(&self) -> Result<Vec<String>, AppError> {
-            Ok(self.listed.clone())
+            Ok(match &self.listed_at_start {
+                Some(at_start) if !self.started.load(Ordering::SeqCst) => at_start.clone(),
+                _ => self.listed.clone(),
+            })
         }
     }
 
@@ -1158,5 +1216,58 @@ mod tests {
             keys.push(key);
         }
         assert!(keys.contains(&"hidden-only.pdf".to_string()), "{keys:?}");
+    }
+
+    #[tokio::test]
+    async fn reindex_never_sweeps_what_first_appeared_in_the_index_during_the_run() {
+        // An ingest writes the index before MongoDB: mid-run, its slug is in
+        // the index but not yet in MongoDB, which the recheck cannot see.
+        let live = make_doc("docs/live", false, false);
+        let repo = Arc::new(MockDocumentRepo {
+            documents: vec![live.clone()],
+            ..Default::default()
+        });
+        let storage = Arc::new(MockStorage::default());
+        storage
+            .put_object(&live.s3_key, b"# Live".to_vec())
+            .await
+            .unwrap();
+        let search = Arc::new(RecordingSearch {
+            listed_at_start: Some(vec![live.slug.clone(), "docs/gone".to_string()]),
+            listed: vec![
+                live.slug.clone(),
+                "docs/gone".to_string(),
+                "docs/in-flight".to_string(),
+            ],
+            ..Default::default()
+        });
+        let attachments = Arc::new(RecordingAttachmentSearch {
+            listed_at_start: Some(vec!["gone.pdf".to_string()]),
+            listed: vec!["gone.pdf".to_string(), "in-flight.pdf".to_string()],
+            started: search.started.clone(),
+            ..Default::default()
+        });
+        let state = Arc::new(SearchReindexState::default());
+        state.is_running.store(true, Ordering::Release);
+
+        run_reindex(
+            state,
+            repo,
+            storage,
+            search.clone(),
+            no_assets(),
+            Some(attachments.clone()),
+            None,
+        )
+        .await;
+
+        assert_eq!(
+            *search.deleted.lock().unwrap(),
+            vec!["docs/gone".to_string()]
+        );
+        assert_eq!(
+            *attachments.deleted.lock().unwrap(),
+            vec!["gone.pdf".to_string()]
+        );
     }
 }

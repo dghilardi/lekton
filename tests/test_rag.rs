@@ -196,6 +196,8 @@ mod rag_integration {
 
         let before = vectorstore.list_point_sources().await.unwrap();
         assert_eq!(before.len(), 5);
+        // The ids a reindex lists at its start, before writing anything.
+        assert_eq!(svc.list_point_ids().await.unwrap().len(), 5);
 
         let live_slugs: HashSet<String> = ["docs/live".to_string()].into();
         let live_keys: HashSet<String> = ["live.pdf".to_string()].into();

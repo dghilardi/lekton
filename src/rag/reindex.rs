@@ -115,6 +115,20 @@ pub async fn run_reindex(
         .map(|d| d.slug.clone())
         .collect();
 
+    // The chunks stored before this run writes anything. The sweep may only
+    // delete these: an ingest writes RAG before MongoDB, so a chunk that first
+    // appears during the run may belong to a document MongoDB does not show
+    // yet, which the recheck cannot tell from an orphan.
+    let ids_at_start = match rag.list_point_ids().await {
+        Ok(ids) => Some(ids),
+        Err(e) => {
+            tracing::warn!(
+                "RAG reindex: cannot list stored chunks, skipping the orphan sweep: {e}"
+            );
+            None
+        }
+    };
+
     reindex_items(
         &reindex,
         document_repo.as_ref(),
@@ -127,6 +141,9 @@ pub async fn run_reindex(
     )
     .await;
 
+    let Some(ids_at_start) = ids_at_start else {
+        return;
+    };
     if !listed {
         tracing::warn!("RAG reindex: listing was incomplete, skipping the orphan sweep");
     } else if live_slugs.is_empty() {
@@ -137,6 +154,10 @@ pub async fn run_reindex(
     } else {
         let swept = match rag.list_orphans(&live_slugs, &live_attachment_keys).await {
             Ok(orphans) => {
+                let orphans: Vec<_> = orphans
+                    .into_iter()
+                    .filter(|p| ids_at_start.contains(&p.id))
+                    .collect();
                 match still_orphaned(
                     document_repo.as_ref(),
                     asset_repo.as_ref(),
@@ -791,6 +812,9 @@ mod tests {
         orphans: Mutex<Vec<crate::rag::vectorstore::PointSource>>,
         /// Ids passed to `delete_points`.
         deleted_points: Mutex<Vec<String>>,
+        /// What `list_point_ids` (the reindex's start listing) reports; when
+        /// unset, the ids of `orphans`, as if they all predate the run.
+        ids_at_start: Mutex<Option<Vec<String>>>,
         /// (slug, release) of every successful `index_document`.
         indexed_releases: Mutex<Vec<(String, Option<String>)>>,
     }
@@ -861,6 +885,18 @@ mod tests {
         async fn delete_points(&self, ids: &[String]) -> Result<(), AppError> {
             self.deleted_points.lock().unwrap().extend_from_slice(ids);
             Ok(())
+        }
+        async fn list_point_ids(&self) -> Result<std::collections::HashSet<String>, AppError> {
+            Ok(match self.ids_at_start.lock().unwrap().clone() {
+                Some(ids) => ids.into_iter().collect(),
+                None => self
+                    .orphans
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|p| p.id.clone())
+                    .collect(),
+            })
         }
     }
 
@@ -1502,6 +1538,48 @@ mod tests {
                 "pdfs/hidden-only.pdf".to_string(),
                 ExtractionStatus::Pending
             )]
+        );
+    }
+
+    #[tokio::test]
+    async fn run_reindex_never_sweeps_points_that_first_appeared_during_the_run() {
+        use crate::rag::vectorstore::PointSource;
+        let point = |id: &str, slug: &str| PointSource {
+            id: id.to_string(),
+            source_kind: Some("document".to_string()),
+            document_slug: Some(slug.to_string()),
+            attachment_key: None,
+        };
+        let storage = Arc::new(MockStorage::new());
+        storage
+            .objects
+            .lock()
+            .unwrap()
+            .insert("docs/normal.md".to_string(), b"# Hello".to_vec());
+        let doc_repo = Arc::new(FakeDocRepo {
+            docs: vec![make_doc("normal", false)],
+            ..Default::default()
+        });
+        let rag = Arc::new(RecordingRagService::default());
+        // `in-flight` was indexed by an ingest that has not reached MongoDB.
+        *rag.orphans.lock().unwrap() =
+            vec![point("p-gone", "gone"), point("p-in-flight", "in-flight")];
+        *rag.ids_at_start.lock().unwrap() = Some(vec!["p-gone".to_string()]);
+
+        run_reindex(
+            Arc::new(ReindexState::default()),
+            doc_repo,
+            storage,
+            rag.clone(),
+            Arc::new(FakeAssetRepo::new(vec![])),
+            None,
+            None,
+        )
+        .await;
+
+        assert_eq!(
+            *rag.deleted_points.lock().unwrap(),
+            vec!["p-gone".to_string()]
         );
     }
 }

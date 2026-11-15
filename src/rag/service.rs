@@ -98,6 +98,13 @@ pub trait RagService: Send + Sync {
     async fn delete_points(&self, _ids: &[String]) -> Result<(), AppError> {
         Ok(())
     }
+
+    /// The id of every stored chunk. A full reindex lists them before it
+    /// starts indexing; its sweep may only delete chunks that already existed
+    /// then. Defaults to none, so nothing is ever swept.
+    async fn list_point_ids(&self) -> Result<HashSet<String>, AppError> {
+        Ok(HashSet::new())
+    }
 }
 
 /// Whether a point is an attachment chunk: its `source_kind` says so or,
@@ -452,6 +459,16 @@ impl RagService for DefaultRagService {
             self.vectorstore.delete_points(batch).await?;
         }
         Ok(())
+    }
+
+    async fn list_point_ids(&self) -> Result<HashSet<String>, AppError> {
+        Ok(self
+            .vectorstore
+            .list_point_sources()
+            .await?
+            .into_iter()
+            .map(|p| p.id)
+            .collect())
     }
 }
 

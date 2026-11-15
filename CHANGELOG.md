@@ -28,7 +28,7 @@ All notable changes to this project will be documented in this file.
 
 - Let search and RAG reindexes clear `needs_reindex`: a flagged document is indexed into every enabled index in the same pass and cleared once all succeeded, unless it was written, archived, hidden or promoted meanwhile. Release promotion clears the flag, and its re-index backlog entry, under the same condition instead of unconditionally. Previously the flag stayed set until the next ingest.
 
-- Sweep orphans in full reindexes: the search reindex removes Meilisearch documents and attachment pages MongoDB no longer knows, and the RAG reindex removes their Qdrant chunks, including chunks from the payload format before `source_kind`. Candidates are rechecked against MongoDB right before deletion, so entries written during the run survive. Nothing is swept when listing MongoDB fails or finds no live document.
+- Sweep orphans in full reindexes: the search reindex removes Meilisearch documents and attachment pages MongoDB no longer knows, and the RAG reindex removes their Qdrant chunks, including chunks from the payload format before `source_kind`. Only entries already indexed when the run started can be swept, and candidates are rechecked against MongoDB right before deletion, so entries written during the run survive. Nothing is swept when listing MongoDB fails or finds no live document.
 
 - Remove a renamed document's old slug from search, RAG and its assets' references; they kept serving it and granting its readers access to the assets.
 

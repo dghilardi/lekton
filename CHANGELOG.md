@@ -14,6 +14,8 @@ All notable changes to this project will be documented in this file.
 
 - Restrict the editor asset panel's list and delete server functions to admins; they were callable without a session.
 
+- Update `ammonia` to 4.2.5 (RUSTSEC-2026-0533, mutation XSS through nested SVG and MathML). Lekton's allowlist enables neither those namespaces nor the raw-text tags the attack needs, so its rendered pages were not exposed, but the advisory failed the dependency audit.
+
 ### Fixed
 
 - Cut the browser bundle a reader downloads by 43%: the release WASM goes from 5,488,834 bytes on `main` (5,656,054 with the other changes in this release) to 3,154,501 bytes. Chat answers are rendered with an escaping Markdown renderer (raw HTML shown as text, link and image targets limited to web, mail and in-page addresses, heading attributes dropped), so the HTML sanitizer and its parser are no longer compiled for the browser (−632 KB); and release builds type-erase component views like debug builds already do (`always-erase-components`, −1.87 MB), at the cost of a little dynamic dispatch when views are built.

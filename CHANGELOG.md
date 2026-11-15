@@ -22,7 +22,7 @@ All notable changes to this project will be documented in this file.
 
 - Index extracted attachment pages into keyword search even before a document links the file, and point them at the document once it does. Extraction used to skip keyword search when the upload was processed before its document was ingested, and nothing added the pages later.
 
-- Stop attachments from being indexed with an empty ACL when the document linking them is ingested while they are being extracted: the worker now uses the references current after extraction and re-applies the ACL after indexing. A RAG reindex repairs attachments already affected.
+- Stop attachments from being indexed with an empty ACL when the document linking them is ingested while they are being extracted: the worker now uses the references current after extraction and re-applies the ACL after indexing. ACL updates for one attachment are serialized, so an older read can no longer overwrite a newer, narrower ACL. A RAG reindex repairs attachments already affected.
 
 - Keep hidden documents out of search and RAG: ingest, editor saves and release promotion indexed them, while reindexes excluded them. They are now removed from both indexes whenever written, including when a document becomes hidden.
 

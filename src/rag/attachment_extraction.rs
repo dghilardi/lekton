@@ -158,6 +158,38 @@ async fn wait_until(ready: impl Fn() -> bool, poll: std::time::Duration) {
     tracing::info!("attachment extraction resuming: spend headroom is available again");
 }
 
+/// One async lock per attachment key with an ACL write in flight; entries
+/// whose lock nobody holds any more are pruned on the next acquisition.
+static ACL_LOCKS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>>,
+> = std::sync::LazyLock::new(Default::default);
+
+/// Serialize the ACL writes for one attachment key.
+///
+/// Both the ACL recompute and the extraction worker's post-index repair read
+/// the attachment's references and then write the ACL they imply. Run
+/// concurrently, the older read could land last and overwrite a newer,
+/// narrower ACL with a wider one. Each holds this guard from the read through
+/// the write, so the last write is always derived from the latest read.
+///
+/// Process-wide: Lekton runs a single replica, and every ACL write path lives
+/// in this module, so no handle needs threading through the callers.
+pub(crate) async fn lock_attachment_acl(key: &str) -> tokio::sync::OwnedMutexGuard<()> {
+    let lock = {
+        let mut locks = ACL_LOCKS.lock().unwrap_or_else(|e| e.into_inner());
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        match locks.get(key).and_then(std::sync::Weak::upgrade) {
+            Some(lock) => lock,
+            None => {
+                let lock = Arc::new(tokio::sync::Mutex::new(()));
+                locks.insert(key.to_string(), Arc::downgrade(&lock));
+                lock
+            }
+        }
+    };
+    lock.lock_owned().await
+}
+
 /// Owns the dependencies needed to extract and index a single attachment.
 pub struct AttachmentExtractionService {
     storage: Arc<dyn StorageClient>,
@@ -362,6 +394,8 @@ impl AttachmentExtractionService {
         indexed: &[String],
         indexed_slug: &str,
     ) -> Result<bool, AppError> {
+        // Held from the read through the write; see `lock_attachment_acl`.
+        let _acl_guard = lock_attachment_acl(key).await;
         let references = match self.asset_repo.find_by_key(key).await {
             Ok(Some(asset)) => asset.referenced_by,
             Ok(None) => {
@@ -479,6 +513,8 @@ pub async fn recompute_access_levels(
     keys: &[String],
 ) {
     for key in keys {
+        // Held from the read through the write; see `lock_attachment_acl`.
+        let _acl_guard = lock_attachment_acl(key).await;
         let asset = match asset_repo.find_by_key(key).await {
             Ok(Some(a)) => a,
             Ok(None) => continue,
@@ -1453,6 +1489,84 @@ mod tests {
         assert_eq!(
             asset_repo.find_local(key).unwrap().extraction_status,
             ExtractionStatus::Failed
+        );
+    }
+
+    /// The recompute and the worker's post-index repair both read references
+    /// and then write the ACL. Interleaved, the older read could overwrite a
+    /// newer, narrower ACL, so both hold the attachment's lock across the pair.
+    #[tokio::test]
+    async fn acl_writers_wait_for_the_attachment_lock() {
+        let key = "attachments/locked/spec.txt";
+        let held = lock_attachment_acl(key).await;
+
+        // The recompute.
+        let (asset_repo, storage) = text_attachment(key, vec!["docs/guide".to_string()]).await;
+        let rag = Arc::new(RecordingRagService::default());
+        let docs = Arc::new(StaticDocumentRepo(vec![internal_doc("docs/guide")]));
+        let recompute = {
+            let (rag, asset_repo, docs, storage) = (
+                rag.clone(),
+                asset_repo.clone(),
+                docs.clone(),
+                storage.clone(),
+            );
+            tokio::spawn(async move {
+                recompute_access_levels(
+                    rag.as_ref(),
+                    asset_repo.as_ref(),
+                    docs.as_ref(),
+                    storage.as_ref(),
+                    None,
+                    &[key.to_string()],
+                )
+                .await;
+            })
+        };
+
+        // The worker, with a reference landing while it indexes, so its
+        // post-index repair has an ACL to write.
+        let (worker_assets, worker_storage) = text_attachment(key, vec![]).await;
+        *worker_assets.arriving_reference.lock().unwrap() = Some((2, "docs/guide".into()));
+        let worker_rag = Arc::new(RecordingRagService::default());
+        let service = Arc::new(AttachmentExtractionService::new(
+            worker_storage,
+            worker_assets.clone(),
+            docs.clone(),
+            worker_rag.clone(),
+            None,
+            Arc::new(AttachmentExtractors::new(100, None)),
+        ));
+        let worker = {
+            let service = service.clone();
+            tokio::spawn(async move { service.process_one(key, false).await })
+        };
+
+        sleep(Duration::from_millis(100)).await;
+        assert!(
+            rag.updated_acl.lock().unwrap().is_none(),
+            "the recompute wrote while the lock was held"
+        );
+        assert_eq!(
+            worker_rag.indexed_acl.lock().unwrap().clone(),
+            Some(vec![]),
+            "indexing itself does not wait"
+        );
+        assert!(
+            worker_rag.updated_acl.lock().unwrap().is_none(),
+            "the post-index repair wrote while the lock was held"
+        );
+
+        drop(held);
+        recompute.await.unwrap();
+        worker.await.unwrap().unwrap();
+        assert_eq!(
+            *rag.updated_acl.lock().unwrap(),
+            Some(vec!["internal".to_string()])
+        );
+        assert_eq!(
+            worker_rag.effective_acl(),
+            Some(vec!["internal".to_string()])
         );
     }
 

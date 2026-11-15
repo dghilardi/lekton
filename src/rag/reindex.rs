@@ -82,24 +82,27 @@ pub async fn run_reindex(
     // Only attachments still referenced by at least one document are worth
     // re-indexing; an empty `referenced_by` means it is orphaned and pending
     // cleanup (see `recompute_access_levels`), not something to re-embed.
-    let assets: Vec<Asset> = match asset_repo.list_all().await {
-        Ok(assets) => assets
-            .into_iter()
-            .filter(|a| !a.referenced_by.is_empty())
-            .collect(),
+    let all_assets: Vec<Asset> = match asset_repo.list_all().await {
+        Ok(assets) => assets,
         Err(e) => {
             tracing::error!("RAG reindex: failed to list assets: {e}");
             listed = false;
             Vec::new()
         }
     };
+    // Every asset record keeps its chunks, referenced yet or not; see
+    // `currently_known_attachment_keys`.
+    let live_attachment_keys: HashSet<String> = all_assets.iter().map(|a| a.key.clone()).collect();
+    let assets: Vec<Asset> = all_assets
+        .into_iter()
+        .filter(|a| !a.referenced_by.is_empty())
+        .collect();
 
     let live_slugs: HashSet<String> = documents
         .iter()
         .filter(|d| !d.skip_rag && !d.is_hidden)
         .map(|d| d.slug.clone())
         .collect();
-    let live_attachment_keys: HashSet<String> = assets.iter().map(|a| a.key.clone()).collect();
 
     reindex_items(
         &reindex,
@@ -116,11 +119,21 @@ pub async fn run_reindex(
     if !listed {
         tracing::warn!("RAG reindex: listing was incomplete, skipping the orphan sweep");
     } else if live_slugs.is_empty() {
-        // A misconfigured database looks exactly like this; never empty the
-        // store on its word.
+        // Deliberately not swept: a misconfigured database name looks exactly
+        // like this, and emptying the store on its word is far worse than
+        // leaving orphans behind on a genuinely empty instance.
         tracing::warn!("RAG reindex: no live documents, skipping the orphan sweep");
     } else {
-        match rag.sweep_orphans(&live_slugs, &live_attachment_keys).await {
+        let swept = match rag.list_orphans(&live_slugs, &live_attachment_keys).await {
+            Ok(orphans) => {
+                match still_orphaned(document_repo.as_ref(), asset_repo.as_ref(), orphans).await {
+                    Ok(ids) => rag.delete_points(&ids).await.map(|()| ids.len()),
+                    Err(e) => Err(e),
+                }
+            }
+            Err(e) => Err(e),
+        };
+        match swept {
             Ok(0) => {}
             Ok(deleted) => tracing::info!(deleted, "RAG reindex: removed orphaned chunks"),
             Err(e) => {
@@ -129,6 +142,55 @@ pub async fn run_reindex(
             }
         }
     }
+}
+
+/// The ids of the orphan candidates that are still orphans according to
+/// MongoDB *now*. The candidates were found against the snapshot taken when
+/// the reindex started; anything ingested since must survive the sweep.
+async fn still_orphaned(
+    document_repo: &dyn DocumentRepository,
+    asset_repo: &dyn AssetRepository,
+    candidates: Vec<crate::rag::vectorstore::PointSource>,
+) -> Result<Vec<String>, crate::error::AppError> {
+    let (attachments, documents): (Vec<_>, Vec<_>) = candidates
+        .into_iter()
+        .partition(crate::rag::service::is_attachment_point);
+    let distinct = |values: Vec<Option<String>>| -> Vec<String> {
+        values
+            .into_iter()
+            .flatten()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    };
+    let live_slugs = crate::indexing::currently_live_slugs(
+        document_repo,
+        &distinct(documents.iter().map(|p| p.document_slug.clone()).collect()),
+    )
+    .await?;
+    let known_keys = crate::indexing::currently_known_attachment_keys(
+        asset_repo,
+        &distinct(
+            attachments
+                .iter()
+                .map(|p| p.attachment_key.clone())
+                .collect(),
+        ),
+    )
+    .await?;
+    let is_now = |value: &Option<String>, set: &HashSet<String>| {
+        value.as_ref().is_some_and(|v| set.contains(v))
+    };
+    Ok(documents
+        .into_iter()
+        .filter(|p| !is_now(&p.document_slug, &live_slugs))
+        .chain(
+            attachments
+                .into_iter()
+                .filter(|p| !is_now(&p.attachment_key, &known_keys)),
+        )
+        .map(|p| p.id)
+        .collect())
 }
 
 /// The copy of each slug that search and RAG carry: the one resolving to its
@@ -531,6 +593,9 @@ mod tests {
         docs: Vec<Document>,
         /// Slugs whose `needs_reindex` was cleared.
         cleared: Mutex<Vec<String>>,
+        /// Written after `list_all` took its snapshot: lookups by slug see
+        /// them, the listing does not.
+        late: Vec<Document>,
     }
 
     #[async_trait]
@@ -545,6 +610,7 @@ mod tests {
             Ok(self
                 .docs
                 .iter()
+                .chain(&self.late)
                 .filter(|d| slugs.contains(&d.slug))
                 .cloned()
                 .collect())
@@ -597,6 +663,8 @@ mod tests {
     struct FakeAssetRepo {
         assets: Mutex<Vec<Asset>>,
         update_extraction_calls: Mutex<Vec<String>>,
+        /// Created after `list_all` took its snapshot.
+        late: Mutex<Vec<Asset>>,
     }
 
     impl FakeAssetRepo {
@@ -604,6 +672,7 @@ mod tests {
             Self {
                 assets: Mutex::new(assets),
                 update_extraction_calls: Mutex::new(vec![]),
+                late: Mutex::new(vec![]),
             }
         }
     }
@@ -623,11 +692,13 @@ mod tests {
                 .cloned())
         }
         async fn find_by_keys(&self, keys: &[String]) -> Result<Vec<Asset>, AppError> {
+            let late = self.late.lock().unwrap().clone();
             Ok(self
                 .assets
                 .lock()
                 .unwrap()
                 .iter()
+                .chain(&late)
                 .filter(|a| keys.contains(&a.key))
                 .cloned()
                 .collect())
@@ -667,8 +738,12 @@ mod tests {
         deleted_slugs: Mutex<Vec<String>>,
         /// Slugs whose indexing should fail (to exercise failure/retry paths).
         fail_slugs: Mutex<Vec<String>>,
-        /// The live sets each `sweep_orphans` call received.
+        /// The live sets each `list_orphans` call received.
         sweeps: Mutex<Vec<(Vec<String>, Vec<String>)>>,
+        /// What `list_orphans` reports.
+        orphans: Mutex<Vec<crate::rag::vectorstore::PointSource>>,
+        /// Ids passed to `delete_points`.
+        deleted_points: Mutex<Vec<String>>,
         /// (slug, release) of every successful `index_document`.
         indexed_releases: Mutex<Vec<(String, Option<String>)>>,
     }
@@ -724,17 +799,21 @@ mod tests {
         async fn health_check(&self) -> Result<(), AppError> {
             Ok(())
         }
-        async fn sweep_orphans(
+        async fn list_orphans(
             &self,
             live_slugs: &std::collections::HashSet<String>,
             live_attachment_keys: &std::collections::HashSet<String>,
-        ) -> Result<usize, AppError> {
+        ) -> Result<Vec<crate::rag::vectorstore::PointSource>, AppError> {
             let mut slugs: Vec<_> = live_slugs.iter().cloned().collect();
             slugs.sort();
             let mut keys: Vec<_> = live_attachment_keys.iter().cloned().collect();
             keys.sort();
             self.sweeps.lock().unwrap().push((slugs, keys));
-            Ok(0)
+            Ok(self.orphans.lock().unwrap().clone())
+        }
+        async fn delete_points(&self, ids: &[String]) -> Result<(), AppError> {
+            self.deleted_points.lock().unwrap().extend_from_slice(ids);
+            Ok(())
         }
     }
 
@@ -768,12 +847,16 @@ mod tests {
         )
         .await;
 
-        // A skip_rag document has no chunks to keep.
+        // A skip_rag document has no chunks to keep; every asset record keeps
+        // its chunks, an unreferenced one too (it may await its document).
         assert_eq!(
             *rag.sweeps.lock().unwrap(),
             vec![(
                 vec!["normal".to_string()],
-                vec!["pdfs/referenced.pdf".to_string()]
+                vec![
+                    "pdfs/orphaned.pdf".to_string(),
+                    "pdfs/referenced.pdf".to_string()
+                ]
             )]
         );
     }
@@ -1171,6 +1254,58 @@ mod tests {
         assert_eq!(
             *rag.indexed_releases.lock().unwrap(),
             vec![("guide".to_string(), Some("2.0.0".to_string()))]
+        );
+    }
+
+    #[tokio::test]
+    async fn run_reindex_never_sweeps_what_mongo_learned_during_the_run() {
+        use crate::rag::vectorstore::PointSource;
+        let point = |id: &str, kind: &str, slug: &str, key: Option<&str>| PointSource {
+            id: id.to_string(),
+            source_kind: Some(kind.to_string()),
+            document_slug: Some(slug.to_string()),
+            attachment_key: key.map(str::to_string),
+        };
+        let storage = Arc::new(MockStorage::new());
+        storage
+            .objects
+            .lock()
+            .unwrap()
+            .insert("docs/normal.md".to_string(), b"# Hello".to_vec());
+        // Ingested while the reindex ran: after its snapshot, before the sweep.
+        let doc_repo = Arc::new(FakeDocRepo {
+            docs: vec![make_doc("normal", false)],
+            late: vec![make_doc("ingested-meanwhile", false)],
+            ..Default::default()
+        });
+        let asset_repo = Arc::new(FakeAssetRepo::new(vec![]));
+        asset_repo
+            .late
+            .lock()
+            .unwrap()
+            .push(make_asset("uploaded-meanwhile.pdf", vec![]));
+        let rag = Arc::new(RecordingRagService::default());
+        *rag.orphans.lock().unwrap() = vec![
+            point("p-late", "document", "ingested-meanwhile", None),
+            point("p-gone", "document", "gone", None),
+            point("a-late", "attachment", "", Some("uploaded-meanwhile.pdf")),
+            point("a-gone", "attachment", "", Some("gone.pdf")),
+        ];
+
+        run_reindex(
+            Arc::new(ReindexState::default()),
+            doc_repo,
+            storage,
+            rag.clone(),
+            asset_repo,
+            None,
+            None,
+        )
+        .await;
+
+        assert_eq!(
+            *rag.deleted_points.lock().unwrap(),
+            vec!["p-gone".to_string(), "a-gone".to_string()]
         );
     }
 }

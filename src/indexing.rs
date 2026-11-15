@@ -7,7 +7,12 @@
 //! [`remove_everywhere`] for flagged documents and clear the flag only when
 //! they report no failure.
 
+use std::collections::HashSet;
+
+use crate::db::asset_repository::AssetRepository;
 use crate::db::models::Document;
+use crate::db::repository::DocumentRepository;
+use crate::error::AppError;
 use crate::rag::service::RagService;
 use crate::search::client::{build_search_document, SearchService};
 
@@ -77,4 +82,59 @@ pub async fn remove_everywhere(targets: IndexTargets<'_>, slug: &str) -> Vec<Str
         }
     }
     failures
+}
+
+/// Which of `candidates` MongoDB knows *now* as live documents: the latest
+/// copy of the slug is neither archived nor hidden.
+///
+/// An orphan sweep compares the index against a snapshot taken when its
+/// reindex started, which can be half an hour old by the time it deletes. It
+/// re-asks MongoDB about its candidates right before deleting, so an entry
+/// ingested during the run is never removed.
+pub async fn currently_live_slugs(
+    repo: &dyn DocumentRepository,
+    candidates: &[String],
+) -> Result<HashSet<String>, AppError> {
+    if candidates.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let mut by_slug = std::collections::HashMap::<String, Vec<Document>>::new();
+    for document in repo.find_by_slugs(candidates).await? {
+        by_slug
+            .entry(document.slug.clone())
+            .or_default()
+            .push(document);
+    }
+    Ok(by_slug
+        .into_values()
+        .filter_map(|copies| {
+            crate::db::repository::resolve_by_release(
+                copies,
+                &crate::versioning::ReleasePins::default(),
+            )
+        })
+        .filter(|document| !document.is_archived && !document.is_hidden)
+        .map(|document| document.slug)
+        .collect())
+}
+
+/// Which of `candidates` MongoDB knows *now* as assets; see
+/// [`currently_live_slugs`]. An asset with no referencing document yet is
+/// kept: an upload is extracted before the document linking it is ingested,
+/// and removing its entries then would lose them for good. Removing an
+/// unreferenced asset is the ACL recompute's job, which deletes the record
+/// with its entries.
+pub async fn currently_known_attachment_keys(
+    asset_repo: &dyn AssetRepository,
+    candidates: &[String],
+) -> Result<HashSet<String>, AppError> {
+    if candidates.is_empty() {
+        return Ok(HashSet::new());
+    }
+    Ok(asset_repo
+        .find_by_keys(candidates)
+        .await?
+        .into_iter()
+        .map(|asset| asset.key)
+        .collect())
 }

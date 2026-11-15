@@ -366,6 +366,9 @@ impl crate::rag::service::RagService for RecordingRag {
 pub struct InMemoryAssetRepo {
     pub assets: Mutex<Vec<crate::db::models::Asset>>,
     pub fail_list: std::sync::atomic::AtomicBool,
+    /// Created after `list_all` took its snapshot: lookups by key see them,
+    /// the listing does not.
+    pub late_assets: Mutex<Vec<crate::db::models::Asset>>,
 }
 
 #[cfg(feature = "ssr")]
@@ -400,11 +403,13 @@ impl crate::db::asset_repository::AssetRepository for InMemoryAssetRepo {
         &self,
         keys: &[String],
     ) -> Result<Vec<crate::db::models::Asset>, AppError> {
+        let late = self.late_assets.lock().unwrap().clone();
         Ok(self
             .assets
             .lock()
             .unwrap()
             .iter()
+            .chain(&late)
             .filter(|a| keys.contains(&a.key))
             .cloned()
             .collect())

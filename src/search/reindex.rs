@@ -5,7 +5,10 @@ use std::collections::HashSet;
 
 use crate::db::asset_repository::AssetRepository;
 use crate::db::repository::DocumentRepository;
-use crate::indexing::{index_everywhere, remove_everywhere, IndexTargets};
+use crate::indexing::{
+    currently_known_attachment_keys, currently_live_slugs, index_everywhere, remove_everywhere,
+    IndexTargets,
+};
 use crate::rag::service::RagService;
 use crate::search::attachment_search::AttachmentSearchService;
 use crate::search::client::SearchService;
@@ -150,6 +153,7 @@ pub async fn run_reindex(
     sweep_orphans(
         &reindex,
         search.as_ref(),
+        document_repo.as_ref(),
         asset_repo.as_ref(),
         attachment_search.as_deref(),
         &live_slugs,
@@ -161,15 +165,21 @@ pub async fn run_reindex(
 }
 
 /// Delete index entries MongoDB does not account for: documents whose slug is
-/// not live, and attachment pages whose asset no document references.
+/// not live, and attachment pages whose asset is gone.
 ///
-/// Only called after a complete listing of the documents. An empty live set is
-/// treated as a listing problem rather than a reason to empty the index (a
-/// misconfigured database name looks exactly like that), and attachments are
-/// left alone when the assets cannot be listed.
+/// Only called after a complete listing of the documents. Candidates found
+/// against that (possibly old) snapshot are rechecked against MongoDB right
+/// before deleting, so nothing written during the run is lost; when that
+/// recheck fails, nothing is deleted.
+///
+/// An empty live set skips the sweep entirely, deliberately: a misconfigured
+/// database name looks exactly like that, and wiping both indexes on its word
+/// is far worse than leaving orphans behind on a genuinely empty instance.
+/// Attachments are left alone when the assets cannot be listed.
 async fn sweep_orphans(
     reindex: &SearchReindexState,
     search: &dyn SearchService,
+    document_repo: &dyn DocumentRepository,
     asset_repo: &dyn AssetRepository,
     attachment_search: Option<&dyn AttachmentSearchService>,
     live_slugs: &HashSet<String>,
@@ -179,9 +189,35 @@ async fn sweep_orphans(
         return;
     }
 
-    match search.list_indexed_slugs().await {
+    let orphans = match search.list_indexed_slugs().await {
         Ok(indexed) => {
-            for slug in indexed.iter().filter(|slug| !live_slugs.contains(*slug)) {
+            let candidates: Vec<String> = indexed
+                .into_iter()
+                .filter(|slug| !live_slugs.contains(slug))
+                .collect();
+            match currently_live_slugs(document_repo, &candidates).await {
+                Ok(live_now) => candidates
+                    .into_iter()
+                    .filter(|slug| !live_now.contains(slug))
+                    .collect(),
+                Err(e) => {
+                    tracing::warn!("Search reindex: cannot recheck orphan candidates: {e}");
+                    reindex
+                        .outcome
+                        .record_failure(format!("recheck orphans: {e}"));
+                    Vec::new()
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Search reindex: cannot list indexed documents: {e}");
+            reindex.outcome.record_failure(format!("list index: {e}"));
+            Vec::new()
+        }
+    };
+    {
+        {
+            for slug in &orphans {
                 tracing::info!(slug, "Search reindex: removing orphaned document");
                 if let Err(e) = search.delete_document(slug).await {
                     tracing::warn!(slug, "Search reindex: failed to remove orphan: {e}");
@@ -191,21 +227,15 @@ async fn sweep_orphans(
                 }
             }
         }
-        Err(e) => {
-            tracing::warn!("Search reindex: cannot list indexed documents: {e}");
-            reindex.outcome.record_failure(format!("list index: {e}"));
-        }
     }
 
     let Some(attachment_search) = attachment_search else {
         return;
     };
+    // Every asset record counts, referenced yet or not; see
+    // `currently_known_attachment_keys`.
     let live_keys: HashSet<String> = match asset_repo.list_all().await {
-        Ok(assets) => assets
-            .into_iter()
-            .filter(|asset| !asset.referenced_by.is_empty())
-            .map(|asset| asset.key)
-            .collect(),
+        Ok(assets) => assets.into_iter().map(|asset| asset.key).collect(),
         Err(e) => {
             tracing::warn!("Search reindex: cannot list assets, skipping attachment sweep: {e}");
             reindex.outcome.record_failure(format!("list assets: {e}"));
@@ -214,7 +244,21 @@ async fn sweep_orphans(
     };
     match attachment_search.list_indexed_attachment_keys().await {
         Ok(indexed) => {
-            for key in indexed.iter().filter(|key| !live_keys.contains(*key)) {
+            let candidates: Vec<String> = indexed
+                .into_iter()
+                .filter(|key| !live_keys.contains(key))
+                .collect();
+            let known_now = match currently_known_attachment_keys(asset_repo, &candidates).await {
+                Ok(known) => known,
+                Err(e) => {
+                    tracing::warn!("Search reindex: cannot recheck orphan attachments: {e}");
+                    reindex
+                        .outcome
+                        .record_failure(format!("recheck orphan attachments: {e}"));
+                    return;
+                }
+            };
+            for key in candidates.iter().filter(|key| !known_now.contains(*key)) {
                 tracing::info!(key, "Search reindex: removing orphaned attachment pages");
                 if let Err(e) = attachment_search.delete_attachment(key).await {
                     tracing::warn!(key, "Search reindex: failed to remove attachment: {e}");
@@ -280,10 +324,14 @@ mod tests {
     use crate::error::AppError;
     use crate::search::client::{SearchDocument, SearchHit};
 
+    #[derive(Default)]
     struct MockDocumentRepo {
         documents: Vec<Document>,
         /// Slugs whose `needs_reindex` was cleared.
         cleared: Mutex<Vec<String>>,
+        /// Written after `list_all` took its snapshot: lookups by slug see
+        /// them, the listing does not.
+        late: Vec<Document>,
     }
 
     #[async_trait]
@@ -295,8 +343,14 @@ mod tests {
         async fn find_by_slug(&self, _: &str) -> Result<Option<Document>, AppError> {
             Ok(None)
         }
-        async fn find_by_slugs(&self, _: &[String]) -> Result<Vec<Document>, AppError> {
-            Ok(vec![])
+        async fn find_by_slugs(&self, slugs: &[String]) -> Result<Vec<Document>, AppError> {
+            Ok(self
+                .documents
+                .iter()
+                .chain(&self.late)
+                .filter(|d| slugs.contains(&d.slug))
+                .cloned()
+                .collect())
         }
 
         async fn list_all(&self) -> Result<Vec<Document>, AppError> {
@@ -501,8 +555,8 @@ mod tests {
         let archived = make_doc("docs/archived", false, true);
 
         let repo = Arc::new(MockDocumentRepo {
-            cleared: Default::default(),
             documents: vec![active.clone(), hidden.clone(), archived.clone()],
+            ..Default::default()
         });
         let storage = Arc::new(MockStorage::default());
         storage
@@ -552,8 +606,8 @@ mod tests {
         archived_old.s3_key = "docs/1.0.0/guide.md".to_string();
 
         let repo = Arc::new(MockDocumentRepo {
-            cleared: Default::default(),
             documents: vec![archived_old, latest.clone()],
+            ..Default::default()
         });
         let storage = Arc::new(MockStorage::default());
         storage
@@ -613,8 +667,8 @@ mod tests {
 
         let doc = make_doc("a", false, false);
         let repo = Arc::new(MockDocumentRepo {
-            cleared: Default::default(),
             documents: vec![doc.clone()],
+            ..Default::default()
         });
         let storage = Arc::new(MockStorage::default());
         storage
@@ -680,8 +734,8 @@ mod tests {
 
         let doc = make_doc("a", false, false);
         let repo = Arc::new(MockDocumentRepo {
-            cleared: Default::default(),
             documents: vec![doc.clone()],
+            ..Default::default()
         });
         let storage = Arc::new(MockStorage::default());
         storage
@@ -720,8 +774,8 @@ mod tests {
         let active = make_doc("docs/active", false, false);
         let hidden = make_doc("docs/hidden", true, false);
         let repo = Arc::new(MockDocumentRepo {
-            cleared: Default::default(),
             documents: vec![active.clone(), hidden.clone()],
+            ..Default::default()
         });
         let storage = Arc::new(MockStorage::default());
         storage
@@ -766,9 +820,11 @@ mod tests {
         let deleted = search.deleted.lock().unwrap().clone();
         assert!(deleted.contains(&"docs/renamed-away".to_string()));
         assert!(!deleted.contains(&"docs/active".to_string()));
+        // An unreferenced asset record keeps its pages: it may be an upload
+        // whose document is still to be ingested.
         assert_eq!(
             *attachments.deleted.lock().unwrap(),
-            vec!["unreferenced.pdf".to_string(), "deleted.pdf".to_string()]
+            vec!["deleted.pdf".to_string()]
         );
     }
 
@@ -864,8 +920,8 @@ mod tests {
         run_reindex(
             state,
             Arc::new(MockDocumentRepo {
-                cleared: Default::default(),
                 documents: vec![doc],
+                ..Default::default()
             }),
             storage,
             search.clone(),
@@ -892,8 +948,8 @@ mod tests {
                 .unwrap();
         }
         let repo = Arc::new(MockDocumentRepo {
-            cleared: Default::default(),
             documents,
+            ..Default::default()
         });
         let search = Arc::new(RecordingSearch::default());
         let state = Arc::new(SearchReindexState::default());
@@ -951,5 +1007,63 @@ mod tests {
         // RAG disabled: search alone is every enabled index.
         let (_, repo) = reindex_with_rag(vec![flagged], None).await;
         assert_eq!(*repo.cleared.lock().unwrap(), vec!["docs/flagged"]);
+    }
+
+    #[tokio::test]
+    async fn reindex_never_sweeps_what_mongo_learned_during_the_run() {
+        let live = make_doc("docs/live", false, false);
+        // Ingested while the reindex ran: after its snapshot, before the sweep.
+        let late = make_doc("docs/ingested-meanwhile", false, false);
+        let late_hidden = make_doc("docs/hidden-meanwhile", true, false);
+        let repo = Arc::new(MockDocumentRepo {
+            documents: vec![live.clone()],
+            late: vec![late.clone(), late_hidden.clone()],
+            ..Default::default()
+        });
+        let storage = Arc::new(MockStorage::default());
+        storage
+            .put_object(&live.s3_key, b"# Live".to_vec())
+            .await
+            .unwrap();
+        let search = Arc::new(RecordingSearch {
+            listed: vec![
+                live.slug.clone(),
+                late.slug.clone(),
+                late_hidden.slug.clone(),
+                "docs/gone".to_string(),
+            ],
+            ..Default::default()
+        });
+        let assets = crate::test_utils::InMemoryAssetRepo::default();
+        assets
+            .late_assets
+            .lock()
+            .unwrap()
+            .push(crate::test_utils::make_asset("uploaded-meanwhile.pdf", &[]));
+        let attachments = Arc::new(RecordingAttachmentSearch {
+            listed: vec!["uploaded-meanwhile.pdf".to_string(), "gone.pdf".to_string()],
+            ..Default::default()
+        });
+        let state = Arc::new(SearchReindexState::default());
+        state.is_running.store(true, Ordering::Release);
+
+        run_reindex(
+            state,
+            repo,
+            storage,
+            search.clone(),
+            Arc::new(assets),
+            Some(attachments.clone()),
+            None,
+        )
+        .await;
+
+        let mut deleted = search.deleted.lock().unwrap().clone();
+        deleted.sort();
+        assert_eq!(deleted, vec!["docs/gone", "docs/hidden-meanwhile"]);
+        assert_eq!(
+            *attachments.deleted.lock().unwrap(),
+            vec!["gone.pdf".to_string()]
+        );
     }
 }

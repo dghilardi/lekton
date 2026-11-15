@@ -136,7 +136,7 @@ mod rag_integration {
     }
 
     #[tokio::test]
-    async fn sweep_orphans_removes_points_mongo_no_longer_knows() {
+    async fn orphan_points_mongo_no_longer_knows_can_be_listed_and_deleted() {
         use lekton::rag::service::AttachmentPage;
         use qdrant_client::qdrant::{PointStruct, UpsertPointsBuilder};
         use std::collections::HashSet;
@@ -199,8 +199,15 @@ mod rag_integration {
 
         let live_slugs: HashSet<String> = ["docs/live".to_string()].into();
         let live_keys: HashSet<String> = ["live.pdf".to_string()].into();
-        let deleted = svc.sweep_orphans(&live_slugs, &live_keys).await.unwrap();
-        assert_eq!(deleted, 3);
+        let orphans: Vec<String> = svc
+            .list_orphans(&live_slugs, &live_keys)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|p| p.id)
+            .collect();
+        assert_eq!(orphans.len(), 3);
+        svc.delete_points(&orphans).await.unwrap();
 
         let mut remaining: Vec<String> = vectorstore
             .list_point_sources()

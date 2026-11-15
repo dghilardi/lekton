@@ -80,53 +80,63 @@ pub trait RagService: Send + Sync {
     /// vector store actually answers.
     async fn health_check(&self) -> Result<(), AppError>;
 
-    /// Delete every chunk MongoDB no longer accounts for: document chunks whose
-    /// slug is not in `live_slugs`, attachment chunks whose key is not in
-    /// `live_attachment_keys` (see [`orphan_point_ids`]). Returns how many
-    /// chunks were deleted. Only a full reindex calls it, with sets built from
-    /// a complete MongoDB listing. Defaults to a no-op.
-    async fn sweep_orphans(
+    /// The chunks MongoDB's snapshot does not account for: document chunks
+    /// whose slug is not in `live_slugs`, attachment chunks whose key is not in
+    /// `live_attachment_keys` (see [`orphan_points`]). Only a full reindex
+    /// calls it, with sets built from a complete MongoDB listing, and it
+    /// rechecks the candidates against MongoDB before [`Self::delete_points`].
+    /// Defaults to none.
+    async fn list_orphans(
         &self,
         _live_slugs: &HashSet<String>,
         _live_attachment_keys: &HashSet<String>,
-    ) -> Result<usize, AppError> {
-        Ok(0)
+    ) -> Result<Vec<PointSource>, AppError> {
+        Ok(Vec::new())
+    }
+
+    /// Delete chunks by point id. Defaults to a no-op.
+    async fn delete_points(&self, _ids: &[String]) -> Result<(), AppError> {
+        Ok(())
     }
 }
 
-/// The ids of the points that belong to no live document or attachment.
+/// Whether a point is an attachment chunk: its `source_kind` says so or,
+/// lacking one (points written before it existed), it carries an
+/// `attachment_key`. Every other point is a document chunk.
+pub fn is_attachment_point(point: &PointSource) -> bool {
+    match point.source_kind.as_deref() {
+        Some(kind) => kind == SourceKind::Attachment.as_str(),
+        None => point.attachment_key.is_some(),
+    }
+}
+
+/// The points that belong to no live document or attachment.
 ///
-/// A point is an attachment chunk when its `source_kind` says so or, lacking
-/// one, when it carries an `attachment_key`; it is kept while that key is
-/// live. Every other point is a document chunk — including those written
+/// An attachment chunk (see [`is_attachment_point`]) is kept while its key is
+/// live; every other point is a document chunk — including those written
 /// before `source_kind` existed — and is kept while its `document_slug` is
 /// live. A missing or empty slug or key never matches, so such points go.
-/// Matching is by id, never by slug filter: attachment chunks store an empty
-/// `document_slug`, so deleting "the empty slug" would take them all.
-pub fn orphan_point_ids(
-    points: &[PointSource],
+/// Callers delete by id, never by slug filter: attachment chunks store an
+/// empty `document_slug`, so deleting "the empty slug" would take them all.
+pub fn orphan_points(
+    points: Vec<PointSource>,
     live_slugs: &HashSet<String>,
     live_attachment_keys: &HashSet<String>,
-) -> Vec<String> {
+) -> Vec<PointSource> {
     let is_live = |value: &Option<String>, live: &HashSet<String>| {
         value
             .as_deref()
             .is_some_and(|v| !v.is_empty() && live.contains(v))
     };
     points
-        .iter()
+        .into_iter()
         .filter(|point| {
-            let is_attachment = match point.source_kind.as_deref() {
-                Some(kind) => kind == SourceKind::Attachment.as_str(),
-                None => point.attachment_key.is_some(),
-            };
-            if is_attachment {
+            if is_attachment_point(point) {
                 !is_live(&point.attachment_key, live_attachment_keys)
             } else {
                 !is_live(&point.document_slug, live_slugs)
             }
         })
-        .map(|point| point.id.clone())
         .collect()
 }
 
@@ -428,17 +438,20 @@ impl RagService for DefaultRagService {
         self.vectorstore.health_check().await
     }
 
-    async fn sweep_orphans(
+    async fn list_orphans(
         &self,
         live_slugs: &HashSet<String>,
         live_attachment_keys: &HashSet<String>,
-    ) -> Result<usize, AppError> {
+    ) -> Result<Vec<PointSource>, AppError> {
         let points = self.vectorstore.list_point_sources().await?;
-        let orphans = orphan_point_ids(&points, live_slugs, live_attachment_keys);
-        for batch in orphans.chunks(1_000) {
+        Ok(orphan_points(points, live_slugs, live_attachment_keys))
+    }
+
+    async fn delete_points(&self, ids: &[String]) -> Result<(), AppError> {
+        for batch in ids.chunks(1_000) {
             self.vectorstore.delete_points(batch).await?;
         }
-        Ok(orphans.len())
+        Ok(())
     }
 }
 
@@ -619,7 +632,7 @@ mod tests {
     }
 
     #[test]
-    fn orphan_point_ids_keeps_live_sources_and_drops_the_rest() {
+    fn orphan_points_keeps_live_sources_and_drops_the_rest() {
         let points = [
             point("live-doc", Some("document"), Some("docs/live"), None),
             point("renamed-doc", Some("document"), Some("docs/old"), None),
@@ -633,7 +646,11 @@ mod tests {
             point("doc-empty-slug", Some("document"), Some(""), None),
         ];
 
-        let mut orphans = orphan_point_ids(&points, &set(&["docs/live"]), &set(&["a.pdf"]));
+        let mut orphans: Vec<String> =
+            orphan_points(points.to_vec(), &set(&["docs/live"]), &set(&["a.pdf"]))
+                .into_iter()
+                .map(|p| p.id)
+                .collect();
         orphans.sort();
 
         assert_eq!(
@@ -718,7 +735,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sweep_orphans_deletes_only_orphaned_points() {
+    async fn list_orphans_then_delete_points_removes_only_orphaned_points() {
         let store = Arc::new(ListingStore {
             points: vec![
                 point("keep", Some("document"), Some("docs/live"), None),
@@ -728,12 +745,13 @@ mod tests {
         });
         let service = DefaultRagService::new(Arc::new(FakeEmbedding), store.clone(), 100, 10);
 
-        let deleted = service
-            .sweep_orphans(&set(&["docs/live"]), &HashSet::new())
+        let orphans = service
+            .list_orphans(&set(&["docs/live"]), &HashSet::new())
             .await
             .unwrap();
-
-        assert_eq!(deleted, 1);
+        let ids: Vec<String> = orphans.into_iter().map(|p| p.id).collect();
+        assert_eq!(ids, vec!["drop".to_string()]);
+        service.delete_points(&ids).await.unwrap();
         assert_eq!(*store.deleted.lock().unwrap(), vec!["drop".to_string()]);
     }
 }

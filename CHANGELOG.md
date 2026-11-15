@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Stop attachments from being indexed with an empty ACL when the document linking them is ingested while they are being extracted: the worker now uses the references current after extraction and re-applies the ACL after indexing. A RAG reindex repairs attachments already affected.
+
 - Keep hidden documents out of search and RAG: ingest, editor saves and release promotion indexed them, while reindexes excluded them. They are now removed from both indexes whenever written, including when a document becomes hidden.
 
 - Let search and RAG reindexes clear `needs_reindex`: a flagged document is indexed into every enabled index in the same pass and cleared once all succeeded, unless it was written again meanwhile. Previously the flag stayed set until the next ingest.

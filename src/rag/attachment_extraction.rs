@@ -13,7 +13,7 @@ use chrono::Utc;
 use tokio::sync::mpsc::{self, error::TrySendError};
 
 use crate::db::asset_repository::{AssetRepository, ExtractionUpdate};
-use crate::db::models::{DocumentReference, ExtractionStatus};
+use crate::db::models::{Asset, DocumentReference, ExtractionStatus};
 use crate::db::repository::DocumentRepository;
 use crate::error::AppError;
 use crate::rag::attachment_acl::{attachment_access_levels, ReferencingDoc};
@@ -280,6 +280,17 @@ impl AttachmentExtractionService {
             Err(e) => return self.fail(key, &format!("extraction failed: {e}")).await,
         };
 
+        // Extraction can take long enough for the references read above to be
+        // stale; start from what they are now.
+        let references = match self.asset_repo.find_by_key(key).await {
+            Ok(Some(current)) => current.referenced_by,
+            Ok(None) => return Ok(()), // deleted in the meantime
+            Err(_) => asset.referenced_by.clone(),
+        };
+        let asset = Asset {
+            referenced_by: references,
+            ..asset
+        };
         let (access_levels, tags) =
             referencing_acl(self.document_repo.as_ref(), &asset.referenced_by).await;
         let filename = filename_from_key(key);
@@ -326,11 +337,74 @@ impl AttachmentExtractionService {
                         }
                     }
                 }
+                if !self.reconcile_acl_after_index(key, &access_levels).await {
+                    return Ok(());
+                }
                 self.finish(key, ExtractionStatus::Done, &asset.content_hash, n as u32)
                     .await
             }
             Err(e) => self.fail(key, &format!("indexing failed: {e}")).await,
         }
+    }
+
+    /// Apply the ACL the attachment's references imply *now*, if it differs
+    /// from the one just indexed. Returns `false` when the run must stop here
+    /// (the asset is gone, or the update failed and the attachment was
+    /// deindexed and marked failed).
+    ///
+    /// A document linking the attachment is typically ingested while the
+    /// worker is still extracting it: the upload enqueues extraction first.
+    /// That ingest's ACL recompute runs before these chunks exist and changes
+    /// nothing, so without this check they keep the ACL of the earlier read —
+    /// empty, for a freshly uploaded file — and stay invisible. Any recompute
+    /// started after this read finds the chunks, so no change slips through.
+    async fn reconcile_acl_after_index(&self, key: &str, indexed: &[String]) -> bool {
+        let references = match self.asset_repo.find_by_key(key).await {
+            Ok(Some(asset)) => asset.referenced_by,
+            Ok(None) => {
+                // Cleaned up as an orphan while we indexed: nothing will ever
+                // clean these chunks up but us.
+                let _ = self.rag.delete_attachment(key).await;
+                if let Some(search) = &self.attachment_search {
+                    let _ = search.delete_attachment(key).await;
+                }
+                return false;
+            }
+            Err(e) => {
+                tracing::warn!(key, "attachment extraction: cannot re-read references: {e}");
+                return true;
+            }
+        };
+        let (current, _tags) = referencing_acl(self.document_repo.as_ref(), &references).await;
+        if current == indexed {
+            return true;
+        }
+
+        let mut failures = Vec::new();
+        if let Err(e) = self
+            .rag
+            .update_attachment_access_levels(key, &current)
+            .await
+        {
+            failures.push(format!("RAG ACL update failed: {e}"));
+        }
+        if let Some(search) = &self.attachment_search {
+            if let Err(e) = search.update_access_levels(key, &current).await {
+                failures.push(format!("search ACL update failed: {e}"));
+            }
+        }
+        if failures.is_empty() {
+            return true;
+        }
+        fail_closed_attachment_acl(
+            key,
+            self.asset_repo.as_ref(),
+            self.rag.as_ref(),
+            self.attachment_search.as_deref(),
+            &failures,
+        )
+        .await;
+        false
     }
 
     /// Record a terminal success/skip state.
@@ -675,12 +749,18 @@ mod tests {
 
     struct FakeAssetRepo {
         assets: Mutex<Vec<Asset>>,
+        /// A reference that lands right after the given (1-based) `find_by_key`
+        /// call, the way a document ingest lands while the worker is busy.
+        arriving_reference: Mutex<Option<(usize, crate::db::models::DocumentReference)>>,
+        find_calls: std::sync::atomic::AtomicUsize,
     }
 
     impl FakeAssetRepo {
         fn new(assets: Vec<Asset>) -> Self {
             Self {
                 assets: Mutex::new(assets),
+                arriving_reference: Mutex::new(None),
+                find_calls: Default::default(),
             }
         }
 
@@ -704,13 +784,17 @@ mod tests {
             Ok(())
         }
         async fn find_by_key(&self, key: &str) -> Result<Option<Asset>, AppError> {
-            Ok(self
-                .assets
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|a| a.key == key)
-                .cloned())
+            let mut assets = self.assets.lock().unwrap();
+            let found = assets.iter().find(|a| a.key == key).cloned();
+            let call = self.find_calls.fetch_add(1, Ordering::SeqCst) + 1;
+            let mut arriving = self.arriving_reference.lock().unwrap();
+            if arriving.as_ref().is_some_and(|(after, _)| *after == call) {
+                let (_, reference) = arriving.take().unwrap();
+                if let Some(asset) = assets.iter_mut().find(|a| a.key == key) {
+                    asset.referenced_by.push(reference);
+                }
+            }
+            Ok(found)
         }
         async fn find_by_keys(&self, keys: &[String]) -> Result<Vec<Asset>, AppError> {
             Ok(self
@@ -828,6 +912,8 @@ mod tests {
     #[derive(Default)]
     struct RecordingRagService {
         deleted_attachment: AtomicBool,
+        /// The access levels the last `index_attachment` wrote.
+        indexed_acl: Mutex<Option<Vec<String>>>,
         updated_acl: Mutex<Option<Vec<String>>>,
         fail_update: AtomicBool,
         fail_delete: AtomicBool,
@@ -856,10 +942,12 @@ mod tests {
             _: &str,
             _: &str,
             _: &[AttachmentPage],
-            _: &[String],
+            access_levels: &[String],
             _: &[String],
         ) -> Result<usize, AppError> {
-            Ok(0)
+            *self.indexed_acl.lock().unwrap() = Some(access_levels.to_vec());
+            *self.updated_acl.lock().unwrap() = None;
+            Ok(1)
         }
         async fn delete_attachment(&self, _: &str) -> Result<(), AppError> {
             if self.fail_delete.load(Ordering::SeqCst) {
@@ -1087,6 +1175,182 @@ mod tests {
         async fn configure_index(&self) -> Result<(), AppError> {
             Ok(())
         }
+    }
+
+    impl RecordingRagService {
+        /// The access levels the attachment's chunks carry now.
+        fn effective_acl(&self) -> Option<Vec<String>> {
+            self.updated_acl
+                .lock()
+                .unwrap()
+                .clone()
+                .or_else(|| self.indexed_acl.lock().unwrap().clone())
+        }
+    }
+
+    /// Resolves a fixed set of documents.
+    struct StaticDocumentRepo(Vec<Document>);
+
+    #[async_trait]
+    impl DocumentRepository for StaticDocumentRepo {
+        async fn create_or_update(&self, _: Document) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn find_by_slug(&self, _: &str) -> Result<Option<Document>, AppError> {
+            Ok(None)
+        }
+        async fn find_by_slugs(&self, slugs: &[String]) -> Result<Vec<Document>, AppError> {
+            Ok(self
+                .0
+                .iter()
+                .filter(|d| slugs.contains(&d.slug))
+                .cloned()
+                .collect())
+        }
+        async fn list_all(&self) -> Result<Vec<Document>, AppError> {
+            Ok(self.0.clone())
+        }
+        async fn list_by_access_levels(
+            &self,
+            _: Option<&[String]>,
+            _: bool,
+            _: &crate::versioning::ReleasePins,
+        ) -> Result<Vec<Document>, AppError> {
+            Ok(self.0.clone())
+        }
+        async fn update_backlinks(
+            &self,
+            _: &str,
+            _: &[String],
+            _: &[String],
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn find_by_slug_prefix(&self, _: &str) -> Result<Vec<Document>, AppError> {
+            Ok(vec![])
+        }
+        async fn set_archived(&self, _: &str, _: Option<&str>, _: bool) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn rename_slug(&self, _: &str, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn find_by_source_path(&self, _: &str) -> Result<Option<Document>, AppError> {
+            Ok(None)
+        }
+        async fn find_all_by_source_id(&self, _: &str) -> Result<Vec<Document>, AppError> {
+            Ok(vec![])
+        }
+    }
+
+    fn internal_doc(slug: &str) -> Document {
+        Document {
+            slug: slug.to_string(),
+            title: "Guide".to_string(),
+            summary: None,
+            s3_key: format!("docs/{slug}.md"),
+            access_level: "internal".to_string(),
+            is_draft: false,
+            service_owner: "team".to_string(),
+            last_updated: Utc::now(),
+            tags: vec![],
+            links_out: vec![],
+            backlinks: vec![],
+            parent_slug: None,
+            order: 0,
+            is_hidden: false,
+            content_hash: None,
+            metadata_hash: None,
+            is_archived: false,
+            source_path: None,
+            source_id: None,
+            release: None,
+            is_latest: true,
+            needs_reindex: false,
+            skip_rag: false,
+        }
+    }
+
+    /// A text attachment `key` stored in a fresh asset repo and storage.
+    async fn text_attachment(
+        key: &str,
+        referenced_by: Vec<String>,
+    ) -> (Arc<FakeAssetRepo>, Arc<MockStorage>) {
+        let mut asset = make_asset(key, referenced_by);
+        asset.content_type = "text/plain".to_string();
+        asset.content_hash = Some("sha256:content".to_string());
+        asset.extraction_status = ExtractionStatus::Pending;
+        let storage = Arc::new(MockStorage::new());
+        storage
+            .put_object(&format!("assets/{key}"), b"attachment text".to_vec())
+            .await
+            .unwrap();
+        (Arc::new(FakeAssetRepo::new(vec![asset])), storage)
+    }
+
+    /// The upload enqueues extraction before the document linking the file is
+    /// ingested. When the ingest lands while the worker is extracting, its ACL
+    /// recompute finds no chunks yet, and the worker must not then index the
+    /// chunks with the ACL of the reference-less snapshot it started from.
+    #[tokio::test]
+    async fn a_reference_landing_during_extraction_reaches_the_indexed_acl() {
+        // After the first read: lands while extracting. After the second:
+        // lands while indexing, after the ACL was computed.
+        for lands_after_read in [1, 2] {
+            let key = "attachments/docs/guide/spec.txt";
+            let (asset_repo, storage) = text_attachment(key, vec![]).await;
+            *asset_repo.arriving_reference.lock().unwrap() =
+                Some((lands_after_read, "docs/guide".into()));
+            let rag = Arc::new(RecordingRagService::default());
+            let search = Arc::new(RecordingAttachmentSearchService::default());
+
+            let service = AttachmentExtractionService::new(
+                storage,
+                asset_repo.clone(),
+                Arc::new(StaticDocumentRepo(vec![internal_doc("docs/guide")])),
+                rag.clone(),
+                Some(search.clone()),
+                Arc::new(AttachmentExtractors::new(100, None)),
+            );
+            service.process_one(key, false).await.unwrap();
+
+            assert_eq!(
+                rag.effective_acl(),
+                Some(vec!["internal".to_string()]),
+                "reference landing after read {lands_after_read}"
+            );
+            assert_eq!(
+                asset_repo.find_local(key).unwrap().extraction_status,
+                ExtractionStatus::Done
+            );
+        }
+    }
+
+    /// Chunks already stored with an empty ACL are repaired by a forced
+    /// re-process, which is what the RAG reindex runs for every attachment.
+    #[tokio::test]
+    async fn a_forced_reprocess_repairs_an_empty_acl() {
+        let key = "attachments/docs/guide/spec.txt";
+        let (asset_repo, storage) = text_attachment(key, vec!["docs/guide".to_string()]).await;
+        {
+            let mut assets = asset_repo.assets.lock().unwrap();
+            assets[0].extraction_status = ExtractionStatus::Done;
+            assets[0].extracted_content_hash = Some("sha256:content".to_string());
+        }
+        let rag = Arc::new(RecordingRagService::default());
+        *rag.indexed_acl.lock().unwrap() = Some(vec![]);
+
+        let service = AttachmentExtractionService::new(
+            storage,
+            asset_repo,
+            Arc::new(StaticDocumentRepo(vec![internal_doc("docs/guide")])),
+            rag.clone(),
+            None,
+            Arc::new(AttachmentExtractors::new(100, None)),
+        );
+        service.process_one(key, true).await.unwrap();
+
+        assert_eq!(rag.effective_acl(), Some(vec!["internal".to_string()]));
     }
 
     #[tokio::test]

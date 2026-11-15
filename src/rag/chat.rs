@@ -1272,7 +1272,7 @@ fn chunk_identity(chunk: &VectorSearchResult) -> String {
 /// identity when missing) of the top-ranked chunk from each
 /// unique sub-query (in sub-query order, deduplicated). Callers should pass
 /// this to [`take_with_guarantee`] so the diversity contract survives any
-/// subsequent reordering (e.g. hybrid `rrf::fuse`).
+/// subsequent reordering (e.g. fusion with lexical passages).
 fn merge_subquery_chunks(
     chunks_per_subquery: Vec<Vec<VectorSearchResult>>,
 ) -> (Vec<VectorSearchResult>, Vec<String>) {
@@ -1338,7 +1338,7 @@ fn merge_subquery_chunks(
 /// Guaranteed chunks are placed first (in the order given), then remaining
 /// slots are filled from `candidates` in their existing order. This preserves
 /// the diversity guarantee even after `candidates` has been reordered by an
-/// external step such as hybrid `rrf::fuse`.
+/// external step such as fusion with lexical passages.
 fn take_with_guarantee(
     candidates: Vec<VectorSearchResult>,
     guaranteed_ids: &[String],
@@ -2146,7 +2146,7 @@ mod tests {
 
     #[test]
     fn take_with_guarantee_keeps_guaranteed_after_reorder() {
-        // Simulate hybrid rrf::fuse pushing guaranteed chunk "a1" to position 5
+        // Simulate hybrid fusion pushing guaranteed chunk "a1" to position 5
         // (beyond the limit of 3), which plain .take(3) would drop.
         let candidates = vec![
             make_chunk("b1", 0.80),

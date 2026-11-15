@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use qdrant_client::qdrant::{
-    Condition, CreateCollectionBuilder, DeletePointsBuilder, Distance, Filter, PointStruct,
-    ScrollPointsBuilder, SearchPointsBuilder, SetPayloadPointsBuilder, UpsertPointsBuilder,
-    VectorParamsBuilder,
+    Condition, CreateCollectionBuilder, CreateFieldIndexCollectionBuilder, DeletePointsBuilder,
+    Distance, FieldType, Filter, PointStruct, ScrollPointsBuilder, SearchPointsBuilder,
+    SetPayloadPointsBuilder, UpsertPointsBuilder, VectorParamsBuilder,
 };
 use qdrant_client::{Payload, Qdrant};
 
@@ -396,6 +396,25 @@ impl VectorStore for QdrantVectorStore {
                 collection = %self.collection,
                 dimensions,
                 "created Qdrant collection"
+            );
+        }
+
+        // Hybrid passage lookups search inside a single document. Without a
+        // payload index, such a selective filter can make HNSW return fewer
+        // passages than exist. Creating an existing index is a no-op.
+        if let Err(e) = self
+            .client
+            .create_field_index(CreateFieldIndexCollectionBuilder::new(
+                &self.collection,
+                "document_slug",
+                FieldType::Keyword,
+            ))
+            .await
+        {
+            tracing::warn!(
+                collection = %self.collection,
+                error = %e,
+                "could not create the document_slug payload index"
             );
         }
 

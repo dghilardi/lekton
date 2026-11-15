@@ -4,9 +4,9 @@ use lekton::rag::vectorstore::{
     ChunkPayload, QdrantVectorStore, SourceKind, VectorPoint, VectorStore,
 };
 use testcontainers::{
-    core::{ContainerPort, WaitFor},
+    core::{ContainerPort, Mount, WaitFor},
     runners::AsyncRunner,
-    GenericImage,
+    GenericImage, ImageExt,
 };
 
 fn point_id(id: u64) -> String {
@@ -49,6 +49,9 @@ async fn lexical_document_passages_are_relevance_ranked_and_visibility_filtered_
     let container = GenericImage::new("qdrant/qdrant", "v1.19.1")
         .with_exposed_port(ContainerPort::Tcp(6334))
         .with_wait_for(WaitFor::message_on_stdout("Qdrant gRPC listening"))
+        // Keep storage in memory: collection creation fsyncs, which can exceed
+        // the client timeout on a busy host disk.
+        .with_mount(Mount::tmpfs_mount("/qdrant/storage"))
         .start()
         .await
         .expect("start Qdrant");

@@ -37,11 +37,14 @@ mockall::mock! { Repo {}
     }
 }
 
+/// Recorded passage lookups: (document slug, limit, query vector).
+type LexicalCalls = Arc<Mutex<Vec<(String, usize, Vec<f32>)>>>;
+
 struct TestStore {
     lists: Vec<Vec<VectorSearchResult>>,
     expected_limit: usize,
     lexical: HashMap<String, Vec<VectorSearchResult>>,
-    lexical_calls: Arc<Mutex<Vec<(String, usize, Vec<f32>)>>>,
+    lexical_calls: LexicalCalls,
     lexical_failure: bool,
     lexical_hang: bool,
 }
@@ -393,10 +396,8 @@ async fn lexical_only_document_reaches_reranker_and_final_context() {
             .map(|slug| SearchHit {
                 slug: slug.into(),
                 title: slug.into(),
-                tags: vec![],
                 content_preview: "preview".into(),
-                attachment_key: None,
-                page: None,
+                ..SearchHit::default()
             })
             .collect(),
         ..Default::default()
@@ -476,6 +477,32 @@ async fn hybrid_without_reranker_keeps_existing_small_overfetch_and_thrifty_skip
             usize::from(!mode.is_thrifty())
         );
     }
+}
+
+#[tokio::test]
+async fn hybrid_without_reranker_admits_lexical_passage_beside_top_vector_hit() {
+    let mut config = config();
+    config.hybrid_search_enabled = true;
+    let search = Arc::new(TestSearch {
+        hits: vec![hit("lexical-only")],
+        ..Default::default()
+    });
+    let mut backend = store(vec![(0..80).map(chunk).collect()], 15);
+    let mut lexical = chunk(99);
+    lexical.document_slug = "lexical-only".into();
+    backend.lexical.insert("lexical-only".into(), vec![lexical]);
+    let chat = service(&config, backend, Arc::default(), Some(search), None, true).await;
+    let result = retrieve(&chat, RetrievalMode::Full).await;
+    let ids = |chunks: &[VectorSearchResult]| {
+        chunks
+            .iter()
+            .map(|c| c.point_id.clone())
+            .collect::<Vec<_>>()
+    };
+    // Without a reranker the final context keeps the top vector hit first,
+    // then the top lexical passage, then the fused ranking.
+    assert_eq!(ids(&result.pre_rerank), ["p0", "p99", "p1", "p2", "p3"]);
+    assert_eq!(ids(&result.post_rerank), ids(&result.pre_rerank));
 }
 
 #[test]
@@ -613,7 +640,7 @@ async fn decomposition_and_hyde_only_expand_queries_and_filter_attachments_befor
     let result = retrieve(&chat, RetrievalMode::Full).await;
     task.abort();
     assert_eq!(result.query_plan.sub_queries, ["one", "two"]);
-    let embedded = embedding.0.lock().unwrap();
+    let embedded = embedding.0.lock().unwrap().clone();
     assert_eq!(embedded.len(), 3);
     assert_eq!(
         *search.queries.lock().unwrap(),
@@ -625,7 +652,7 @@ async fn decomposition_and_hyde_only_expand_queries_and_filter_attachments_befor
         .unwrap()
         .iter()
         .all(|q| !q.contains("hypothetical")));
-    let lookups = lookups.lock().unwrap();
+    let lookups = lookups.lock().unwrap().clone();
     assert_eq!(lookups.len(), 3);
     for i in 0..3 {
         assert!(lookups.iter().any(
@@ -654,7 +681,6 @@ async fn decomposition_and_hyde_only_expand_queries_and_filter_attachments_befor
     assert_eq!(reranker.seen.lock().unwrap()[0].0, "original question");
     assert_eq!(result.post_rerank.len(), 3);
     assert_eq!(result.post_rerank[0].point_id, "p8");
-    drop(embedded);
     let thrifty_embedding = Arc::new(RecordingEmbedding::default());
     let thrifty_reranker = Arc::new(RecordingReranker::default());
     let thrifty = service(
@@ -689,10 +715,8 @@ fn hit(slug: &str) -> SearchHit {
     SearchHit {
         slug: slug.into(),
         title: slug.into(),
-        tags: vec![],
         content_preview: "untrusted search preview".into(),
-        attachment_key: None,
-        page: None,
+        ..SearchHit::default()
     }
 }
 
@@ -707,7 +731,10 @@ fn natural_query_fanout_is_bounded_deduplicated_and_keeps_identifiers() {
     ];
     subqueries.extend((0..100).map(|i| format!("question {i}")));
     let queries = super::super::hybrid::natural_queries(original, &subqueries);
-    assert_eq!(queries, [original, "TP-200", "question 0", "question 1"]);
+    assert_eq!(
+        queries,
+        [original, "TP-200", "question 0", "question 1", "question 2"]
+    );
 }
 
 #[tokio::test]
@@ -743,7 +770,7 @@ async fn lexical_queries_preserve_identifiers_and_document_passage_work_is_bound
         false,
     )
     .await;
-    assert_eq!(search.calls.load(std::sync::atomic::Ordering::SeqCst), 4);
+    assert_eq!(search.calls.load(std::sync::atomic::Ordering::SeqCst), 5);
     assert_eq!(search.queries.lock().unwrap()[0], query);
     let lookups = backend.lexical_calls.lock().unwrap();
     assert_eq!(lookups.len(), 8);
@@ -868,7 +895,7 @@ async fn hanging_lexical_discovery_or_passage_lookup_has_bounded_vector_fallback
         .await;
         let start = tokio::time::Instant::now();
         let result = retrieve(&chat, RetrievalMode::Full).await;
-        assert!(start.elapsed() <= std::time::Duration::from_secs(20));
+        assert!(start.elapsed() <= std::time::Duration::from_secs(10));
         assert_eq!(result.post_rerank.len(), 5);
         assert_eq!(result.post_rerank[0].point_id, "p0");
     }

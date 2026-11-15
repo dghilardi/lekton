@@ -59,7 +59,7 @@ Rules:
 - multi_entity: multiple independent entities that can be retrieved in parallel. \
   Break the query into 2-4 atomic sub-queries, each targeting one entity.
 - multi_hop: answer to one sub-question depends on the previous result. \
-  List sub-questions in dependency order.";
+  List 2-4 sub-questions in dependency order.";
 
 pub struct QueryAnalyzer {
     llm_provider: Arc<LlmProvider>,

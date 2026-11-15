@@ -25,8 +25,6 @@ pub mod reindex;
 #[cfg(feature = "ssr")]
 pub mod reranker;
 #[cfg(feature = "ssr")]
-pub mod rrf;
-#[cfg(feature = "ssr")]
 pub mod service;
 #[cfg(feature = "ssr")]
 pub mod splitter;

@@ -40,7 +40,11 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- Optional Google Ranking API reranking with automatically refreshed service account/ADC authentication. Rerank a configurable pool of up to 100 unique merged candidates (default 50) before selecting final context chunks (default 5), with bounded retrieval-order fallback. Hybrid retrieval now admits independently discovered lexical documents through visibility-filtered, relevance-ranked Qdrant passage lookups, with shared pre-HyDE query variants and bounded fan-out.
+- Optional Google Ranking API reranking with automatically refreshed service account/ADC authentication. Rerank a configurable pool of up to 100 unique merged candidates (default 50) before selecting final context chunks (default 5), with bounded retrieval-order fallback.
+
+### Changed
+
+- Hybrid retrieval now admits documents found only by Meilisearch: their most relevant passages are looked up in Qdrant under the reader's access-level, draft and attachment filters and fused with the vector candidates, instead of only boosting documents that vector search had already found. Lexical and vector search share the original question and analyzer subqueries (before HyDE), fan-out is bounded, and the lexical branch adds at most about 10 seconds when Meilisearch or Qdrant is slow. Startup adds a `document_slug` payload index to the Qdrant collection.
 
 ## [0.40.0] 2026-11-09
 

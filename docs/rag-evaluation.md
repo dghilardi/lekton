@@ -304,7 +304,7 @@ Hybrid retrieval searches Meilisearch with the original standalone question and
 bounded, deduplicated analyzer subqueries before HyDE. Lexical-only documents
 contribute relevance-ranked Qdrant passages under the same visibility filters.
 Vector and lexical rankings have equal branch-level RRF weight before candidate
-capping. Fan-out is at most four query variants, eight lexical documents and three
+capping. Fan-out is at most five query variants, eight lexical documents and three
 passages per document. HyDE changes embedding inputs only. Meilisearch discovery
 still covers metadata and previews rather than full bodies; scoped passage
 selection is semantic. See [retrieval behavior](google-reranking.md#limits-and-fallback).

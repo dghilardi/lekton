@@ -64,7 +64,8 @@ and the candidate limit must not exceed **100**. Defaults are 50 candidates and
 5 final chunks. The same fields work in `rag-bench` TOML. For CPU-hosted
 cross-encoders, lower `LKN__RAG__RETRIEVAL_CANDIDATE_LIMIT` if scoring 50 passages
 approaches the 30-second timeout. Query fan-out is deduplicated and capped at
-four variants: the standalone original plus at most three analyzer subqueries.
+five variants: the standalone original plus at most four analyzer subqueries
+(the analyzer asks for two to four).
 Each vector query can fetch the candidate limit; the merged unique pool is capped
 separately. Invalid budgets are
 rejected at startup and in retrieval-only evaluation initialization.
@@ -90,12 +91,17 @@ query or context passage.
 Meilisearch document ranks are fused across query variants. At most eight unique
 documents are then resolved through `VectorStore::search_document_chunks`, using
 the strongest matching query's embedding to select at most three relevant
-passages **anywhere** in each document. This is a scoped relevance search, not a
+passages **anywhere** in each document. With HyDE enabled that embedding is the
+hypothetical answer's, so exact identifiers steer document discovery but not
+which passages are picked inside a document. This is a scoped relevance search, not a
 scroll of the first chunks. Every lookup reapplies Qdrant access-level, draft,
 document and attachment filters; a Meilisearch hit alone grants no access.
-Each optional discovery/passage request has a 10-second deadline. Failures and
-timeouts retain the other retrieval results; an unavailable lexical branch falls
-back to vector retrieval.
+Discovery and passage lookup each have a 5-second deadline, so the lexical
+branch adds at most about 10 seconds to a turn. Failures and timeouts retain the
+other retrieval results; an unavailable lexical branch falls back to vector
+retrieval. Startup creates a Qdrant keyword payload index on `document_slug`
+(a no-op when it exists) so these single-document searches stay complete on
+large collections.
 
 Lexical document rank and within-document passage relevance form one passage
 ranking (round-robin first passages across documents before second/third).
@@ -117,7 +123,11 @@ chunk-level lexical indexing would require a separate indexing change.
 Without a reranker, the pre/post lists stay final-context sized. Vector-only
 retrieval requests only that many hits. Hybrid retrieval retains its existing
 small vector overfetch (three times the final limit, capped by the candidate
-budget), plus the same bounded independent lexical passage lookups.
+budget), plus the same bounded independent lexical passage lookups. The final
+context then starts with the top vector hit and the top lexical passage, followed
+by the fused ranking, so lexical passages enter context without reranking. The
+earlier document-level boost of vector chunks from lexically matched documents
+is replaced by this passage fusion.
 Thrifty mode skips analyzer, HyDE, rewriting, lexical search and reranking, and
 requests only the final vector count. The existing prompt-character budget and
 optional parent-section expansion still apply after chunk selection.

@@ -401,12 +401,14 @@ impl AttachmentExtractionService {
                             .await;
                     }
                 }
-                if !self
+                let Some(_acl_guard) = self
                     .reconcile_acl_after_index(key, &access_levels, &document_slug)
                     .await?
-                {
+                else {
                     return Ok(());
-                }
+                };
+                // Still under the lock: a withdrawal waiting for it must land
+                // after this write, never be overwritten by it.
                 self.finish(key, ExtractionStatus::Done, &asset.content_hash, n as u32)
                     .await
             }
@@ -416,9 +418,11 @@ impl AttachmentExtractionService {
 
     /// Apply the ACL and document link the attachment's references imply
     /// *now*, if they differ from the ones just indexed (`indexed`,
-    /// `indexed_slug`). Returns `Ok(false)` when the run must stop here
-    /// because the asset is gone, and an error when the update failed and the
-    /// attachment was deindexed and marked failed.
+    /// `indexed_slug`). Returns the attachment's ACL guard, still held, so the
+    /// caller records the final status before anyone else can withdraw it;
+    /// `None` when the run must stop here (the asset is gone or was
+    /// withdrawn), and an error when the update failed and the attachment was
+    /// deindexed and marked failed.
     ///
     /// A document linking the attachment is typically ingested while the
     /// worker is still extracting it: the upload enqueues extraction first.
@@ -431,9 +435,9 @@ impl AttachmentExtractionService {
         key: &str,
         indexed: &[String],
         indexed_slug: &str,
-    ) -> Result<bool, AppError> {
+    ) -> Result<Option<tokio::sync::OwnedMutexGuard<()>>, AppError> {
         // Held from the read through the write; see `lock_attachment_acl`.
-        let _acl_guard = lock_attachment_acl(key).await;
+        let acl_guard = lock_attachment_acl(key).await;
         let references = match self.asset_repo.find_by_key(key).await {
             Ok(Some(asset)) => asset.referenced_by,
             Ok(None) => {
@@ -443,7 +447,7 @@ impl AttachmentExtractionService {
                 if let Some(search) = &self.attachment_search {
                     let _ = search.delete_attachment(key).await;
                 }
-                return Ok(false);
+                return Ok(None);
             }
             Err(e) => {
                 // The indexed ACL cannot be confirmed against the current
@@ -466,12 +470,12 @@ impl AttachmentExtractionService {
         if view.ineligible {
             // Only hidden documents link it now.
             self.withdraw(key).await?;
-            return Ok(false);
+            return Ok(None);
         }
         let current = view.access_levels;
         let (slug, title) = view.link;
         if current == indexed && slug == indexed_slug {
-            return Ok(true);
+            return Ok(Some(acl_guard));
         }
 
         let mut failures = Vec::new();
@@ -488,7 +492,7 @@ impl AttachmentExtractionService {
             }
         }
         if failures.is_empty() {
-            return Ok(true);
+            return Ok(Some(acl_guard));
         }
         fail_closed_attachment_acl(
             key,
@@ -969,6 +973,11 @@ mod tests {
         find_calls: std::sync::atomic::AtomicUsize,
         /// The (1-based) `find_by_key` call that fails.
         fail_find_at: Mutex<Option<usize>>,
+        /// References that replace the stored ones right after the given
+        /// (1-based) `find_by_key` call.
+        replacing_references: Mutex<Option<(usize, Vec<crate::db::models::DocumentReference>)>>,
+        /// Makes writes of a `Done` status slow, like a busy database.
+        slow_done_write: AtomicBool,
     }
 
     impl FakeAssetRepo {
@@ -978,6 +987,8 @@ mod tests {
                 arriving_reference: Mutex::new(None),
                 find_calls: Default::default(),
                 fail_find_at: Mutex::new(None),
+                replacing_references: Mutex::new(None),
+                slow_done_write: AtomicBool::new(false),
             }
         }
 
@@ -1006,6 +1017,13 @@ mod tests {
             let call = self.find_calls.fetch_add(1, Ordering::SeqCst) + 1;
             if *self.fail_find_at.lock().unwrap() == Some(call) {
                 return Err(AppError::Internal("asset lookup failed".to_string()));
+            }
+            let mut replacing = self.replacing_references.lock().unwrap();
+            if replacing.as_ref().is_some_and(|(after, _)| *after == call) {
+                let (_, references) = replacing.take().unwrap();
+                if let Some(asset) = assets.iter_mut().find(|a| a.key == key) {
+                    asset.referenced_by = references;
+                }
             }
             let mut arriving = self.arriving_reference.lock().unwrap();
             if arriving.as_ref().is_some_and(|(after, _)| *after == call) {
@@ -1041,6 +1059,11 @@ mod tests {
             key: &str,
             update: ExtractionUpdate,
         ) -> Result<(), AppError> {
+            if update.status == ExtractionStatus::Done
+                && self.slow_done_write.load(Ordering::SeqCst)
+            {
+                sleep(Duration::from_millis(100)).await;
+            }
             if let Some(asset) = self
                 .assets
                 .lock()
@@ -1612,6 +1635,68 @@ mod tests {
         assert_eq!(
             *search.updated_acl.lock().unwrap(),
             Some((key.to_string(), vec!["internal".to_string()]))
+        );
+    }
+
+    /// The worker's final `Done` write must not land after a withdrawal that
+    /// ran once its post-index check released the lock: the attachment would
+    /// read `Done` while out of both indexes, and nothing would re-queue it.
+    #[tokio::test]
+    async fn a_withdrawal_during_the_final_status_write_is_not_overwritten() {
+        let key = "attachments/race/finish.txt";
+        let (asset_repo, storage) = text_attachment(key, vec!["docs/visible".into()]).await;
+        // Hidden-only right after the worker's post-index read (the third).
+        *asset_repo.replacing_references.lock().unwrap() = Some((3, vec!["docs/hidden".into()]));
+        asset_repo.slow_done_write.store(true, Ordering::SeqCst);
+        let docs = Arc::new(StaticDocumentRepo(vec![
+            internal_doc("docs/visible"),
+            hidden_doc("docs/hidden"),
+        ]));
+        let rag = Arc::new(RecordingRagService::default());
+        let service = Arc::new(AttachmentExtractionService::new(
+            storage.clone(),
+            asset_repo.clone(),
+            docs.clone(),
+            rag.clone(),
+            None,
+            Arc::new(AttachmentExtractors::new(100, None)),
+        ));
+
+        // Queue the worker first, then the recompute, behind the lock.
+        let held = lock_attachment_acl(key).await;
+        let worker = {
+            let service = service.clone();
+            tokio::spawn(async move { service.process_one(key, false).await })
+        };
+        sleep(Duration::from_millis(50)).await;
+        let recompute = {
+            let (rag, asset_repo, docs, storage) = (
+                rag.clone(),
+                asset_repo.clone(),
+                docs.clone(),
+                storage.clone(),
+            );
+            tokio::spawn(async move {
+                recompute_access_levels(
+                    rag.as_ref(),
+                    asset_repo.as_ref(),
+                    docs.as_ref(),
+                    storage.as_ref(),
+                    None,
+                    &[key.to_string()],
+                )
+                .await;
+            })
+        };
+        sleep(Duration::from_millis(50)).await;
+        drop(held);
+        worker.await.unwrap().unwrap();
+        recompute.await.unwrap();
+
+        assert!(rag.deleted_attachment.load(Ordering::SeqCst));
+        assert_eq!(
+            asset_repo.find_local(key).unwrap().extraction_status,
+            ExtractionStatus::Pending
         );
     }
 

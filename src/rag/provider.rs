@@ -11,6 +11,15 @@ use super::client::build_oai_client;
 const DEFAULT_VERTEX_LOCATION: &str = "us-central1";
 const GCP_SCOPE_CLOUD_PLATFORM: &str = "https://www.googleapis.com/auth/cloud-platform";
 
+fn vertex_api_base(project_id: &str, location: &str) -> String {
+    let host = match location {
+        "global" => "aiplatform.googleapis.com".to_string(),
+        "eu" | "us" => format!("aiplatform.{location}.rep.googleapis.com"),
+        _ => format!("{location}-aiplatform.googleapis.com"),
+    };
+    format!("https://{host}/v1beta1/projects/{project_id}/locations/{location}/endpoints/openapi")
+}
+
 #[derive(Clone)]
 pub enum LlmProvider {
     OpenAiCompatible {
@@ -80,9 +89,7 @@ impl LlmProvider {
                     .map_err(|e| {
                         AppError::Internal(format!("failed to acquire Vertex AI access token: {e}"))
                     })?;
-                let api_base = format!(
-                    "https://{location}-aiplatform.googleapis.com/v1beta1/projects/{project_id}/locations/{location}/endpoints/openapi"
-                );
+                let api_base = vertex_api_base(project_id, location);
 
                 build_oai_client(&api_base, token.as_str(), extra_headers)
             }
@@ -100,6 +107,25 @@ impl LlmProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vertex_endpoints_use_the_host_for_each_location_kind() {
+        for (location, host) in [
+            ("global", "aiplatform.googleapis.com"),
+            ("eu", "aiplatform.eu.rep.googleapis.com"),
+            ("us", "aiplatform.us.rep.googleapis.com"),
+            ("europe-west1", "europe-west1-aiplatform.googleapis.com"),
+            ("us-central1", "us-central1-aiplatform.googleapis.com"),
+        ] {
+            let url = reqwest::Url::parse(&vertex_api_base("test-project", location)).unwrap();
+            assert_eq!(url.scheme(), "https");
+            assert_eq!(url.host_str(), Some(host));
+            assert_eq!(
+                url.path(),
+                format!("/v1beta1/projects/test-project/locations/{location}/endpoints/openapi")
+            );
+        }
+    }
 
     fn make_openai_config(url: &str) -> ResolvedLlmConfig {
         ResolvedLlmConfig {

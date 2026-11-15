@@ -60,13 +60,22 @@ pub async fn run_reindex(
     reindex.progress.store(0, Ordering::Relaxed);
     reindex.outcome.reset();
 
-    // Apply the index settings first, so documents re-indexed below become
-    // searchable on every configured attribute (including the full body).
+    // Apply the index settings first, so documents and attachment pages
+    // re-indexed below become searchable on every configured attribute
+    // (including the full body and page text).
     if let Err(e) = search.configure_index().await {
         tracing::warn!("Search reindex: failed to configure Meilisearch index: {e}");
         reindex
             .outcome
             .record_failure(format!("configure index: {e}"));
+    }
+    if let Some(attachment_search) = &attachment_search {
+        if let Err(e) = attachment_search.configure_index().await {
+            tracing::warn!("Search reindex: failed to configure the attachment index: {e}");
+            reindex
+                .outcome
+                .record_failure(format!("configure attachment index: {e}"));
+        }
     }
 
     // What the indexes hold before this run writes anything. The sweep may
@@ -197,6 +206,41 @@ pub async fn run_reindex(
         },
     )
     .await;
+
+    // Backfill only existing indexed attachments; new extractions already
+    // carry full text. This never enters the paid worker/RAG reindex path.
+    if let (Some(pages), Some(keys)) = (&attachment_search, &attachments_at_start) {
+        let mut totals = crate::search::attachment_backfill::PageTextBackfill::default();
+        for key in keys {
+            match crate::search::attachment_backfill::backfill_page_text(
+                key,
+                asset_repo.as_ref(),
+                storage.as_ref(),
+                pages.as_ref(),
+            )
+            .await
+            {
+                Ok(result) => {
+                    if result.unrecoverable > 0 {
+                        reindex.outcome.record_skip();
+                        tracing::warn!(key, pages = result.unrecoverable, "Search reindex: native text cannot recover these pages; retaining previews");
+                    }
+                    totals.add(result);
+                }
+                Err(e) => {
+                    tracing::warn!(key, "Search reindex: attachment text backfill failed: {e}");
+                    reindex
+                        .outcome
+                        .record_failure(format!("backfill {key}: {e}"));
+                }
+            }
+        }
+        tracing::info!(
+            filled = totals.filled,
+            unrecoverable = totals.unrecoverable,
+            "Search reindex: attachment text backfill complete"
+        );
+    }
 
     tracing::info!(total, "Search reindex: complete");
     reindex.progress.store(100, Ordering::Relaxed);
@@ -572,6 +616,8 @@ mod tests {
         /// the `RecordingSearch` of the same run.
         listed_at_start: Option<Vec<String>>,
         started: Arc<AtomicBool>,
+        fail_configure: bool,
+        fail_backfill: bool,
     }
 
     #[async_trait]
@@ -608,7 +654,20 @@ mod tests {
             Ok(vec![])
         }
         async fn configure_index(&self) -> Result<(), AppError> {
+            if self.fail_configure {
+                return Err(AppError::Internal("settings update failed".into()));
+            }
             Ok(())
+        }
+        async fn pages_without_text(
+            &self,
+            _: &str,
+        ) -> Result<Vec<crate::search::attachment_search::AttachmentChunkDocument>, AppError>
+        {
+            if self.fail_backfill {
+                return Err(AppError::Internal("page fetch failed".into()));
+            }
+            Ok(vec![])
         }
         async fn list_indexed_attachment_keys(&self) -> Result<Vec<String>, AppError> {
             Ok(match &self.listed_at_start {
@@ -616,6 +675,52 @@ mod tests {
                 _ => self.listed.clone(),
             })
         }
+    }
+
+    #[tokio::test]
+    async fn search_reindex_runs_backfill_and_reports_its_failures() {
+        let doc = make_doc("docs/live", false, false);
+        let repo = Arc::new(MockDocumentRepo {
+            documents: vec![doc.clone()],
+            ..Default::default()
+        });
+        let storage = Arc::new(MockStorage::default());
+        storage
+            .put_object(&doc.s3_key, b"# Live".to_vec())
+            .await
+            .unwrap();
+        let mut asset = crate::test_utils::make_asset("live.txt", &["docs/live"]);
+        asset.extraction_status = crate::db::models::ExtractionStatus::Done;
+        asset.content_hash = Some("same".into());
+        asset.extracted_content_hash = asset.content_hash.clone();
+        let assets = Arc::new(crate::test_utils::InMemoryAssetRepo::with_assets(vec![
+            asset,
+        ]));
+        let attachments = Arc::new(RecordingAttachmentSearch {
+            listed: vec!["live.txt".into()],
+            fail_backfill: true,
+            ..Default::default()
+        });
+        let state = Arc::new(SearchReindexState::default());
+        run_reindex(
+            state.clone(),
+            repo,
+            storage,
+            Arc::new(RecordingSearch::default()),
+            assets,
+            Some(attachments),
+            None,
+        )
+        .await;
+        assert_eq!(state.outcome.failed.load(Ordering::Relaxed), 1);
+        assert!(state
+            .outcome
+            .last_error
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .contains("backfill"));
     }
 
     fn make_doc(slug: &str, is_hidden: bool, is_archived: bool) -> Document {
@@ -737,6 +842,47 @@ mod tests {
             .unwrap()
             .as_deref()
             .is_some_and(|e| e.starts_with("configure index")));
+    }
+
+    #[tokio::test]
+    async fn reindex_reports_a_failed_attachment_settings_update() {
+        let doc = make_doc("docs/a", false, false);
+        let repo = Arc::new(MockDocumentRepo {
+            documents: vec![doc.clone()],
+            ..Default::default()
+        });
+        let storage = Arc::new(MockStorage::default());
+        storage
+            .put_object(&doc.s3_key, b"# A".to_vec())
+            .await
+            .unwrap();
+        let search = Arc::new(RecordingSearch::default());
+        let attachments = Arc::new(RecordingAttachmentSearch {
+            fail_configure: true,
+            ..Default::default()
+        });
+        let state = Arc::new(SearchReindexState::default());
+
+        run_reindex(
+            state.clone(),
+            repo,
+            storage,
+            search.clone(),
+            no_assets(),
+            Some(attachments),
+            None,
+        )
+        .await;
+
+        assert_eq!(search.indexed.lock().unwrap().len(), 1);
+        assert_eq!(state.outcome.failed.load(Ordering::Relaxed), 1);
+        assert!(state
+            .outcome
+            .last_error
+            .lock()
+            .unwrap()
+            .as_deref()
+            .is_some_and(|e| e.starts_with("configure attachment index")));
     }
 
     #[tokio::test]

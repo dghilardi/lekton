@@ -776,10 +776,16 @@ async fn main() {
             &config.search,
         ) {
             Ok(service) => {
-                if let Err(e) = service.configure_index().await {
-                    tracing::warn!("Failed to configure Meilisearch attachment index: {e}");
-                }
-                Some(Arc::new(service))
+                let service = Arc::new(service);
+                // In the background, like the document index: a changed
+                // searchable attribute re-processes every indexed page.
+                let configuring = service.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = configuring.configure_index().await {
+                        tracing::warn!("Failed to configure Meilisearch attachment index: {e}");
+                    }
+                });
+                Some(service)
             }
             Err(e) => {
                 tracing::warn!(

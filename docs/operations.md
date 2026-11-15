@@ -4,6 +4,20 @@ Runtime procedures for backup, recovery, token rotation, and dependency auditing
 
 ---
 
+## Vertex AI Chat Endpoints
+
+Set `rag.llm.vertex_location` (or the per-step override) to the location supported
+by the selected model. Single regions such as `europe-west1` use
+`europe-west1-aiplatform.googleapis.com`; `global` uses `aiplatform.googleapis.com`,
+and the `eu`/`us` multi-regions use `aiplatform.eu.rep.googleapis.com` and
+`aiplatform.us.rep.googleapis.com`. All use the OpenAI-compatible
+`/v1beta1/projects/PROJECT/locations/LOCATION/endpoints/openapi` path with the
+existing service account/ADC authentication and automatic token refresh.
+
+The endpoint correction requires an image newer than the original `0.41.0`.
+For Gemini 3.5 Flash-Lite in EU, use `google/gemini-3.5-flash-lite` and `eu`.
+Embedding location/model and the global Google Ranking API remain independent.
+
 ## Reverse Proxy And Rate Limiting
 
 Lekton rate-limits dynamic routes, not static fallback assets. By default the limiter uses the peer IP, but it can read `X-Forwarded-For`, `X-Real-IP`, and `Forwarded` only when the direct peer matches `LKN__SERVER__RATE_LIMIT_TRUSTED_PROXIES`.
@@ -273,6 +287,12 @@ Each document has one entry, searchable by title, preview, slug, tags and its fu
 Meilisearch therefore stores the full text of every indexed document, including restricted and draft ones. Lekton filters each search by the reader's access levels, but anyone holding the Meilisearch API key, a dump or a snapshot can read every body, and the index uses more disk. Tenant tokens cannot restrict which attributes a search returns, so a client searching Meilisearch directly would see whole bodies of the documents it may read; Lekton does not issue such tokens today.
 
 Startup applies the index settings in the background; a search re-index applies them first and waits up to 60 seconds for Meilisearch to confirm them. A failure is logged and, during a re-index, shown as the job's last error. Changing searchable attributes makes Meilisearch re-process all stored entries, so searches use the old settings for a while after the first upgraded start.
+
+Extracted attachment text has its own index, `attachment_chunks`, with one entry per PDF page (or per plain-text file). Each entry is searchable by preview, filename, linking document title and the page's full text (`content`), in that order; searches return every field except `content`, with the same 24-word snippet and highlight ranges as documents. Hybrid chat retrieval does not read this index: attachment passages reach chat only through vector search. The search re-index applies this index's settings too.
+
+**After upgrading attachment full-text search, run one search re-index** from Admin → Settings, or authenticated `POST /api/v1/admin/search/reindex`, then poll `GET /api/v1/admin/search/reindex/status`. Existing indexed attachments with settled extraction hashes are backfilled from their original S3 bytes using plain-text decoding or the PDF native text layer (`libpdfium` required). Only pages missing `content` are updated; ACLs and links are preserved under the attachment lock. This path never invokes a VLM or embeddings and never writes Qdrant. Logs report `filled` and `unrecoverable` page totals; failures appear in the job status. Unrecoverable pages count as skipped attachments in job status.
+
+A native page must reproduce its stored preview before its full text is accepted. Otherwise the page keeps its searchable preview and is marked with empty `content` so repeated search reindexes do not extract it again. Recovering these pages requires an explicitly chosen reprocessing operation: a RAG reindex force-extracts attachments and may invoke configured VLM transcription for sparse/scanned PDF pages plus embeddings for chunks. It is not required for the free backfill. No exact paid cost can be inferred from extraction hashes: transcription provenance is not recorded. Budget using the number of sparse/scanned pages, the configured VLM's per-image/token rates and embedding tokens before choosing that operation.
 
 **After upgrading to full-body search, run one search re-index.** Entries written earlier have no `content`: they stay searchable by title, preview, slug and tags, but body-only words do not match until the re-index rewrites them. Saving or syncing an unchanged document does not, so do not wait for routine syncs. The re-index reads stored bodies from S3; it needs no embedding calls and does not touch Qdrant.
 

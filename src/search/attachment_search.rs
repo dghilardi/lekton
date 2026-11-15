@@ -6,7 +6,8 @@
 //! Indexed at page granularity: one Meilisearch document per extracted page
 //! (or one document for non-paginated plain-text attachments), carrying
 //! enough of the owning document's identity to link a hit back to
-//! `/docs/{slug}` and show which page to look at.
+//! `/docs/{slug}` and show which page to look at. The page's full text is
+//! searchable; hits show a snippet around the match, never the whole page.
 
 use serde::{Deserialize, Serialize};
 
@@ -15,7 +16,10 @@ use crate::error::AppError;
 #[cfg(feature = "ssr")]
 use crate::rag::service::AttachmentPage;
 #[cfg(feature = "ssr")]
-use crate::search::client::wait_for_task;
+use crate::search::client::{
+    apply_settings, formatted_field, preview_or_body_snippet, wait_for_task, HIGHLIGHT_END,
+    HIGHLIGHT_START, SNIPPET_WORDS,
+};
 #[cfg(feature = "ssr")]
 use async_trait::async_trait;
 
@@ -41,6 +45,11 @@ pub struct AttachmentChunkDocument {
     pub page: Option<u32>,
     /// First ~200 characters of the page's extracted text.
     pub content_preview: String,
+    /// The page's full extracted text. Searchable, but a search never returns
+    /// it whole: hits carry [`RETRIEVED_ATTRIBUTES`] and at most a cropped
+    /// snippet. `None` for pages indexed before full-text attachment search.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
     /// Access levels inherited from the referencing document(s); mirrors the
     /// RAG attachment ACL derivation (`referencing_acl`) — no draft gating,
     /// since attachment content is treated as published-or-invisible there
@@ -57,6 +66,28 @@ pub struct AttachmentSearchHit {
     pub filename: String,
     pub page: Option<u32>,
     pub content_preview: String,
+    /// Character ranges (`[start, end)`) of `document_title` that match the query.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub title_matches: Vec<[usize; 2]>,
+    /// Character ranges (`[start, end)`) of `content_preview` that match the query.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preview_matches: Vec<[usize; 2]>,
+}
+
+impl From<AttachmentSearchHit> for crate::search::client::SearchHit {
+    /// Shown in the search results under the linking document.
+    fn from(hit: AttachmentSearchHit) -> Self {
+        Self {
+            slug: hit.document_slug,
+            title: hit.document_title,
+            tags: vec![],
+            content_preview: hit.content_preview,
+            attachment_key: Some(hit.attachment_key),
+            page: hit.page,
+            title_matches: hit.title_matches,
+            preview_matches: hit.preview_matches,
+        }
+    }
 }
 
 /// Trait for attachment keyword search, enabling mock testing.
@@ -105,8 +136,25 @@ pub trait AttachmentSearchService: Send + Sync {
         allowed_levels: Option<&[String]>,
     ) -> Result<Vec<AttachmentSearchHit>, AppError>;
 
-    /// Configure the index (filterable/searchable attributes). Call once on startup.
+    /// Configure the index (filterable/searchable attributes) and wait until
+    /// the engine applies it. Called on startup and before a search re-index.
     async fn configure_index(&self) -> Result<(), AppError>;
+
+    /// The indexed pages of `attachment_key` that have no full text yet
+    /// (`content` absent: written before full-text attachment search), for
+    /// the search re-index's backfill. Defaults to none.
+    async fn pages_without_text(
+        &self,
+        _attachment_key: &str,
+    ) -> Result<Vec<AttachmentChunkDocument>, AppError> {
+        Ok(Vec::new())
+    }
+
+    /// Write already-indexed pages back whole (e.g. with their `content`
+    /// filled in), keyed by `id`. Defaults to doing nothing.
+    async fn update_pages(&self, _pages: &[AttachmentChunkDocument]) -> Result<(), AppError> {
+        Ok(())
+    }
 
     /// Every distinct attachment key the index holds, for the full-reindex
     /// orphan sweep. Defaults to nothing, so nothing is ever swept.
@@ -114,6 +162,29 @@ pub trait AttachmentSearchService: Send + Sync {
         Ok(Vec::new())
     }
 }
+
+/// Searchable attributes in ranking precedence, mirroring the document index:
+/// the preview and the identifying metadata outrank matches only in the body.
+#[cfg(feature = "ssr")]
+const SEARCHABLE_ATTRIBUTES: [&str; 4] =
+    ["content_preview", "filename", "document_title", "content"];
+
+/// Attributes a search returns: everything except the full page text.
+#[cfg(feature = "ssr")]
+const RETRIEVED_ATTRIBUTES: [&str; 8] = [
+    "id",
+    "attachment_key",
+    "filename",
+    "document_slug",
+    "document_title",
+    "page",
+    "content_preview",
+    "access_levels",
+];
+
+/// Length of the stored preview, in bytes.
+#[cfg(feature = "ssr")]
+const PREVIEW_LEN: usize = 200;
 
 /// Truncate to at most `max_len` bytes, on a char boundary.
 #[cfg(feature = "ssr")]
@@ -127,6 +198,12 @@ fn truncate_preview(text: &str, max_len: usize) -> String {
         .find(|&i| trimmed.is_char_boundary(i))
         .unwrap_or(0);
     trimmed[..boundary].to_string()
+}
+
+/// The preview stored for a page's text.
+#[cfg(feature = "ssr")]
+pub fn page_preview(text: &str) -> String {
+    truncate_preview(text, PREVIEW_LEN)
 }
 
 /// Build the id for one page: stable across re-indexes of the same
@@ -213,7 +290,8 @@ impl AttachmentSearchService for MeilisearchAttachmentService {
                 document_slug: document_slug.to_string(),
                 document_title: document_title.to_string(),
                 page: p.page_number,
-                content_preview: truncate_preview(&p.text, 200),
+                content_preview: page_preview(&p.text),
+                content: Some(p.text.trim().to_string()),
                 access_levels: access_levels.to_vec(),
             })
             .collect();
@@ -361,7 +439,26 @@ impl AttachmentSearchService for MeilisearchAttachmentService {
 
         let index = self.index();
         let mut search_query = index.search();
-        search_query.with_query(query).with_limit(10);
+        search_query
+            .with_query(query)
+            .with_limit(10)
+            // Never the full page text; `content` only comes back cropped below.
+            .with_attributes_to_retrieve(meilisearch_sdk::search::Selectors::Some(
+                &RETRIEVED_ATTRIBUTES,
+            ))
+            .with_attributes_to_highlight(meilisearch_sdk::search::Selectors::Some(&[
+                "document_title",
+                "content_preview",
+                "content",
+            ]))
+            .with_highlight_pre_tag(HIGHLIGHT_START)
+            .with_highlight_post_tag(HIGHLIGHT_END)
+            // A window around the first match rather than the opening words.
+            .with_attributes_to_crop(meilisearch_sdk::search::Selectors::Some(&[
+                ("content_preview", Some(SNIPPET_WORDS)),
+                ("content", Some(SNIPPET_WORDS)),
+            ]))
+            .with_crop_marker("…");
         if !filter_str.is_empty() {
             search_query.with_filter(&filter_str);
         }
@@ -377,31 +474,91 @@ impl AttachmentSearchService for MeilisearchAttachmentService {
             // Pages of an attachment no document links yet have nowhere to
             // point a hit at (and an empty ACL, so only admins would see them).
             .filter(|hit| !hit.result.document_slug.is_empty())
-            .map(|hit| AttachmentSearchHit {
-                document_slug: hit.result.document_slug,
-                document_title: hit.result.document_title,
-                attachment_key: hit.result.attachment_key,
-                filename: hit.result.filename,
-                page: hit.result.page,
-                content_preview: hit.result.content_preview,
+            .map(|hit| {
+                let formatted = hit.formatted_result.as_ref();
+                let (document_title, title_matches) = formatted_field(formatted, "document_title")
+                    .unwrap_or_else(|| (hit.result.document_title.clone(), vec![]));
+                let (content_preview, preview_matches) =
+                    preview_or_body_snippet(formatted, &hit.result.content_preview);
+                AttachmentSearchHit {
+                    document_slug: hit.result.document_slug,
+                    document_title,
+                    attachment_key: hit.result.attachment_key,
+                    filename: hit.result.filename,
+                    page: hit.result.page,
+                    content_preview,
+                    title_matches,
+                    preview_matches,
+                }
             })
             .collect())
     }
 
     async fn configure_index(&self) -> Result<(), AppError> {
+        let settings = meilisearch_sdk::settings::Settings::new()
+            .with_filterable_attributes(["attachment_key", "access_levels"])
+            .with_searchable_attributes(SEARCHABLE_ATTRIBUTES);
+        apply_settings(&self.client, &self.index(), &settings).await
+    }
+
+    async fn pages_without_text(
+        &self,
+        attachment_key: &str,
+    ) -> Result<Vec<AttachmentChunkDocument>, AppError> {
+        use crate::search::client::{is_index_not_found, LIST_PAGE_SIZE};
+        use meilisearch_sdk::documents::{DocumentsQuery, DocumentsResults};
+
+        // `content` cannot be filtered on, so every page is read with it.
         let index = self.index();
+        let filter = format!(
+            "attachment_key = {}",
+            serde_json::to_string(attachment_key).map_err(|e| AppError::Internal(e.to_string()))?
+        );
+        let mut missing = Vec::new();
+        let mut offset = 0;
+        loop {
+            let mut query = DocumentsQuery::new(&index);
+            query
+                .with_filter(&filter)
+                .with_limit(LIST_PAGE_SIZE)
+                .with_offset(offset);
+            let page: DocumentsResults<AttachmentChunkDocument> =
+                match index.get_documents_with(&query).await {
+                    Ok(page) => page,
+                    Err(e) if is_index_not_found(&e) => break,
+                    Err(e) => {
+                        return Err(AppError::Internal(format!(
+                            "Meilisearch attachment page fetch error: {e}"
+                        )))
+                    }
+                };
+            let fetched = page.results.len();
+            offset += fetched;
+            missing.extend(page.results.into_iter().filter(|p| p.content.is_none()));
+            if fetched < LIST_PAGE_SIZE {
+                break;
+            }
+        }
+        Ok(missing)
+    }
 
-        index
-            .set_filterable_attributes(["attachment_key", "access_levels"])
+    async fn update_pages(&self, pages: &[AttachmentChunkDocument]) -> Result<(), AppError> {
+        let Some(first) = pages.first() else {
+            return Ok(());
+        };
+        let task = self
+            .index()
+            .add_or_update(pages, Some("id"))
             .await
-            .map_err(|e| AppError::Internal(format!("Meilisearch attachment config error: {e}")))?;
-
-        index
-            .set_searchable_attributes(["content_preview", "filename", "document_title"])
-            .await
-            .map_err(|e| AppError::Internal(format!("Meilisearch attachment config error: {e}")))?;
-
-        Ok(())
+            .map_err(|e| {
+                AppError::Internal(format!("Meilisearch attachment page update error: {e}"))
+            })?;
+        wait_for_task(
+            &self.client,
+            task,
+            &format!("updating pages of attachment '{}'", first.attachment_key),
+        )
+        .await
     }
 
     async fn list_indexed_attachment_keys(&self) -> Result<Vec<String>, AppError> {

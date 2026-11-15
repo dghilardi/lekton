@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -34,6 +35,10 @@ impl crate::jobs::RunningFlag for ReindexState {
 /// chunking/embedding/extraction configuration — are picked up without
 /// requiring a no-op re-upload of each file.
 ///
+/// Afterwards, chunks of documents and attachments MongoDB no longer accounts
+/// for (renamed or deleted slugs, unreferenced attachments, points written
+/// before `source_kind` existed) are swept from the vector store.
+///
 /// This function is meant to be spawned as a background Tokio task.
 /// It updates `state` with progress as it goes and resets `is_running`
 /// on completion (or failure).
@@ -53,6 +58,8 @@ pub async fn run_reindex(
     // Indexing always follows `latest`: older releases mostly repeat content
     // that is already indexed (identical bodies are deduplicated by hash), so
     // embedding them would spend vectors on duplicates.
+    // A sweep is only safe against a complete listing of both collections.
+    let mut listed = true;
     let documents: Vec<Document> = match document_repo
         .list_by_access_levels(None, true, &crate::versioning::ReleasePins::default())
         .await
@@ -60,6 +67,7 @@ pub async fn run_reindex(
         Ok(docs) => docs.into_iter().filter(|d| !d.is_archived).collect(),
         Err(e) => {
             tracing::error!("RAG reindex: failed to list documents: {e}");
+            listed = false;
             Vec::new()
         }
     };
@@ -74,9 +82,17 @@ pub async fn run_reindex(
             .collect(),
         Err(e) => {
             tracing::error!("RAG reindex: failed to list assets: {e}");
+            listed = false;
             Vec::new()
         }
     };
+
+    let live_slugs: HashSet<String> = documents
+        .iter()
+        .filter(|d| !d.skip_rag)
+        .map(|d| d.slug.clone())
+        .collect();
+    let live_attachment_keys: HashSet<String> = assets.iter().map(|a| a.key.clone()).collect();
 
     reindex_items(
         &reindex,
@@ -87,6 +103,23 @@ pub async fn run_reindex(
         assets,
     )
     .await;
+
+    if !listed {
+        tracing::warn!("RAG reindex: listing was incomplete, skipping the orphan sweep");
+    } else if live_slugs.is_empty() {
+        // A misconfigured database looks exactly like this; never empty the
+        // store on its word.
+        tracing::warn!("RAG reindex: no live documents, skipping the orphan sweep");
+    } else {
+        match rag.sweep_orphans(&live_slugs, &live_attachment_keys).await {
+            Ok(0) => {}
+            Ok(deleted) => tracing::info!(deleted, "RAG reindex: removed orphaned chunks"),
+            Err(e) => {
+                tracing::warn!("RAG reindex: orphan sweep failed: {e}");
+                reindex.outcome.record_failure(format!("orphan sweep: {e}"));
+            }
+        }
+    }
 }
 
 /// Re-index only the documents/attachments that failed in the previous run,
@@ -553,6 +586,8 @@ mod tests {
         deleted_slugs: Mutex<Vec<String>>,
         /// Slugs whose indexing should fail (to exercise failure/retry paths).
         fail_slugs: Mutex<Vec<String>>,
+        /// The live sets each `sweep_orphans` call received.
+        sweeps: Mutex<Vec<(Vec<String>, Vec<String>)>>,
     }
 
     #[async_trait]
@@ -602,6 +637,104 @@ mod tests {
         async fn health_check(&self) -> Result<(), AppError> {
             Ok(())
         }
+        async fn sweep_orphans(
+            &self,
+            live_slugs: &std::collections::HashSet<String>,
+            live_attachment_keys: &std::collections::HashSet<String>,
+        ) -> Result<usize, AppError> {
+            let mut slugs: Vec<_> = live_slugs.iter().cloned().collect();
+            slugs.sort();
+            let mut keys: Vec<_> = live_attachment_keys.iter().cloned().collect();
+            keys.sort();
+            self.sweeps.lock().unwrap().push((slugs, keys));
+            Ok(0)
+        }
+    }
+
+    #[tokio::test]
+    async fn run_reindex_sweeps_orphans_against_live_documents_and_attachments() {
+        let reindex = Arc::new(ReindexState::default());
+        let storage = Arc::new(MockStorage::new());
+        storage
+            .objects
+            .lock()
+            .unwrap()
+            .insert("docs/normal.md".to_string(), b"# Hello".to_vec());
+        let doc_repo = Arc::new(FakeDocRepo {
+            docs: vec![make_doc("normal", false), make_doc("upload-stub", true)],
+        });
+        let rag = Arc::new(RecordingRagService::default());
+        let asset_repo = Arc::new(FakeAssetRepo::new(vec![
+            make_asset("pdfs/referenced.pdf", vec!["upload-stub".to_string()]),
+            make_asset("pdfs/orphaned.pdf", vec![]),
+        ]));
+
+        run_reindex(reindex, doc_repo, storage, rag.clone(), asset_repo, None).await;
+
+        // A skip_rag document has no chunks to keep.
+        assert_eq!(
+            *rag.sweeps.lock().unwrap(),
+            vec![(
+                vec!["normal".to_string()],
+                vec!["pdfs/referenced.pdf".to_string()]
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn run_reindex_never_sweeps_without_a_complete_listing() {
+        let storage = Arc::new(MockStorage::new());
+        let rag = Arc::new(RecordingRagService::default());
+
+        // Assets cannot be listed.
+        let assets = Arc::new(crate::test_utils::InMemoryAssetRepo::default());
+        assets
+            .fail_list
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let doc_repo = Arc::new(FakeDocRepo {
+            docs: vec![make_doc("normal", false)],
+        });
+        run_reindex(
+            Arc::new(ReindexState::default()),
+            doc_repo,
+            storage.clone(),
+            rag.clone(),
+            assets,
+            None,
+        )
+        .await;
+
+        // No live document at all: treated as a listing problem.
+        run_reindex(
+            Arc::new(ReindexState::default()),
+            Arc::new(FakeDocRepo { docs: vec![] }),
+            storage.clone(),
+            rag.clone(),
+            Arc::new(FakeAssetRepo::new(vec![])),
+            None,
+        )
+        .await;
+
+        // A retry of failed items is partial by design.
+        let reindex = Arc::new(ReindexState::default());
+        reindex
+            .failed_docs
+            .lock()
+            .unwrap()
+            .push("normal".to_string());
+        run_reindex_failed(
+            reindex,
+            Arc::new(FakeDocRepo {
+                docs: vec![make_doc("normal", false)],
+            }),
+            storage,
+            rag.clone(),
+            Arc::new(FakeAssetRepo::new(vec![])),
+            None,
+        )
+        .await;
+
+        assert!(rag.sweeps.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

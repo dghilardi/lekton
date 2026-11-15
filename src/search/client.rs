@@ -82,7 +82,18 @@ pub trait SearchService: Send + Sync {
     /// search backend actually answers, not merely because the service was
     /// constructed.
     async fn health_check(&self) -> Result<(), AppError>;
+
+    /// Every slug the index holds, for the full-reindex orphan sweep.
+    /// Defaults to nothing, so a backend that cannot list never has anything
+    /// swept.
+    async fn list_indexed_slugs(&self) -> Result<Vec<String>, AppError> {
+        Ok(Vec::new())
+    }
 }
+
+/// Page size for listing every document of a Meilisearch index.
+#[cfg(feature = "ssr")]
+pub(crate) const LIST_PAGE_SIZE: usize = 1_000;
 
 /// Meilisearch implementation of the SearchService.
 #[cfg(feature = "ssr")]
@@ -240,6 +251,50 @@ impl SearchService for MeilisearchService {
             .map(|_| ())
             .map_err(|e| AppError::Internal(format!("Meilisearch health check failed: {e}")))
     }
+
+    async fn list_indexed_slugs(&self) -> Result<Vec<String>, AppError> {
+        use meilisearch_sdk::documents::{DocumentsQuery, DocumentsResults};
+
+        #[derive(Deserialize)]
+        struct SlugOnly {
+            slug: String,
+        }
+
+        let index = self.index();
+        let mut slugs = Vec::new();
+        loop {
+            let mut query = DocumentsQuery::new(&index);
+            query
+                .with_fields(["slug"])
+                .with_limit(LIST_PAGE_SIZE)
+                .with_offset(slugs.len());
+            let page: DocumentsResults<SlugOnly> = match index.get_documents_with(&query).await {
+                Ok(page) => page,
+                // The index is created by the first write; none yet means empty.
+                Err(e) if is_index_not_found(&e) => return Ok(slugs),
+                Err(e) => {
+                    return Err(AppError::Internal(format!(
+                        "Meilisearch list documents error: {e}"
+                    )))
+                }
+            };
+            let fetched = page.results.len();
+            slugs.extend(page.results.into_iter().map(|d| d.slug));
+            if fetched < LIST_PAGE_SIZE {
+                return Ok(slugs);
+            }
+        }
+    }
+}
+
+/// Whether a Meilisearch error means the index does not exist yet.
+#[cfg(feature = "ssr")]
+pub(crate) fn is_index_not_found(error: &meilisearch_sdk::errors::Error) -> bool {
+    matches!(
+        error,
+        meilisearch_sdk::errors::Error::Meilisearch(e)
+            if e.error_code == meilisearch_sdk::errors::ErrorCode::IndexNotFound
+    )
 }
 
 /// Convert a slug to a valid Meilisearch document ID.

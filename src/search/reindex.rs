@@ -1,7 +1,11 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
+use std::collections::HashSet;
+
+use crate::db::asset_repository::AssetRepository;
 use crate::db::repository::DocumentRepository;
+use crate::search::attachment_search::AttachmentSearchService;
 use crate::search::client::{build_search_document, SearchService};
 use crate::storage::client::StorageClient;
 
@@ -21,16 +25,21 @@ impl crate::jobs::RunningFlag for SearchReindexState {
     }
 }
 
-/// Run a full reconciliation of the Meilisearch `documents` index.
+/// Run a full reconciliation of the Meilisearch indexes.
 ///
 /// Active, visible documents are indexed from the canonical MongoDB metadata and
 /// S3 markdown content. Hidden or archived documents are deleted from the search
-/// index so stale results do not remain after metadata-only changes.
+/// index so stale results do not remain after metadata-only changes. Entries
+/// MongoDB no longer knows at all — a renamed or deleted slug, the pages of an
+/// attachment nothing references — are swept from the `documents` and
+/// `attachment_chunks` indexes.
 pub async fn run_reindex(
     reindex: Arc<SearchReindexState>,
     document_repo: Arc<dyn DocumentRepository>,
     storage: Arc<dyn StorageClient>,
     search: Arc<dyn SearchService>,
+    asset_repo: Arc<dyn AssetRepository>,
+    attachment_search: Option<Arc<dyn AttachmentSearchService>>,
 ) {
     // Reset `is_running` unconditionally when this task ends, even on an early
     // return or panic, so a crashed reindex cannot block all future runs.
@@ -68,6 +77,9 @@ pub async fn run_reindex(
 
     tracing::info!(total, "Search reindex: starting");
 
+    // The slugs that belong in the index; anything else found there is swept.
+    let mut live_slugs = HashSet::new();
+
     for (i, (slug, candidates)) in documents_by_slug.into_iter().enumerate() {
         let Some(doc) = crate::db::repository::resolve_by_release(
             candidates,
@@ -96,6 +108,8 @@ pub async fn run_reindex(
             update_progress(&reindex, i, total);
             continue;
         }
+
+        live_slugs.insert(doc.slug.clone());
 
         let content = match storage.get_object(&doc.s3_key).await {
             Ok(Some(bytes)) => String::from_utf8_lossy(&bytes).into_owned(),
@@ -126,8 +140,90 @@ pub async fn run_reindex(
         update_progress(&reindex, i, total);
     }
 
+    sweep_orphans(
+        &reindex,
+        search.as_ref(),
+        asset_repo.as_ref(),
+        attachment_search.as_deref(),
+        &live_slugs,
+    )
+    .await;
+
     tracing::info!(total, "Search reindex: complete");
     reindex.progress.store(100, Ordering::Relaxed);
+}
+
+/// Delete index entries MongoDB does not account for: documents whose slug is
+/// not live, and attachment pages whose asset no document references.
+///
+/// Only called after a complete listing of the documents. An empty live set is
+/// treated as a listing problem rather than a reason to empty the index (a
+/// misconfigured database name looks exactly like that), and attachments are
+/// left alone when the assets cannot be listed.
+async fn sweep_orphans(
+    reindex: &SearchReindexState,
+    search: &dyn SearchService,
+    asset_repo: &dyn AssetRepository,
+    attachment_search: Option<&dyn AttachmentSearchService>,
+    live_slugs: &HashSet<String>,
+) {
+    if live_slugs.is_empty() {
+        tracing::warn!("Search reindex: no live documents, skipping the orphan sweep");
+        return;
+    }
+
+    match search.list_indexed_slugs().await {
+        Ok(indexed) => {
+            for slug in indexed.iter().filter(|slug| !live_slugs.contains(*slug)) {
+                tracing::info!(slug, "Search reindex: removing orphaned document");
+                if let Err(e) = search.delete_document(slug).await {
+                    tracing::warn!(slug, "Search reindex: failed to remove orphan: {e}");
+                    reindex
+                        .outcome
+                        .record_failure(format!("delete orphan {slug}: {e}"));
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Search reindex: cannot list indexed documents: {e}");
+            reindex.outcome.record_failure(format!("list index: {e}"));
+        }
+    }
+
+    let Some(attachment_search) = attachment_search else {
+        return;
+    };
+    let live_keys: HashSet<String> = match asset_repo.list_all().await {
+        Ok(assets) => assets
+            .into_iter()
+            .filter(|asset| !asset.referenced_by.is_empty())
+            .map(|asset| asset.key)
+            .collect(),
+        Err(e) => {
+            tracing::warn!("Search reindex: cannot list assets, skipping attachment sweep: {e}");
+            reindex.outcome.record_failure(format!("list assets: {e}"));
+            return;
+        }
+    };
+    match attachment_search.list_indexed_attachment_keys().await {
+        Ok(indexed) => {
+            for key in indexed.iter().filter(|key| !live_keys.contains(*key)) {
+                tracing::info!(key, "Search reindex: removing orphaned attachment pages");
+                if let Err(e) = attachment_search.delete_attachment(key).await {
+                    tracing::warn!(key, "Search reindex: failed to remove attachment: {e}");
+                    reindex
+                        .outcome
+                        .record_failure(format!("delete orphan attachment {key}: {e}"));
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Search reindex: cannot list indexed attachments: {e}");
+            reindex
+                .outcome
+                .record_failure(format!("list attachment index: {e}"));
+        }
+    }
 }
 
 fn update_progress(reindex: &SearchReindexState, index: usize, total: usize) {
@@ -236,6 +332,8 @@ mod tests {
         configured: AtomicBool,
         indexed: Mutex<Vec<SearchDocument>>,
         deleted: Mutex<Vec<String>>,
+        /// What `list_indexed_slugs` reports as already in the index.
+        listed: Vec<String>,
     }
 
     #[async_trait]
@@ -265,6 +363,55 @@ mod tests {
         }
         async fn health_check(&self) -> Result<(), AppError> {
             Ok(())
+        }
+        async fn list_indexed_slugs(&self) -> Result<Vec<String>, AppError> {
+            Ok(self.listed.clone())
+        }
+    }
+
+    fn no_assets() -> Arc<dyn AssetRepository> {
+        Arc::new(crate::test_utils::InMemoryAssetRepo::default())
+    }
+
+    /// Lists a fixed set of attachment keys and records which get deleted.
+    #[derive(Default)]
+    struct RecordingAttachmentSearch {
+        listed: Vec<String>,
+        deleted: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl AttachmentSearchService for RecordingAttachmentSearch {
+        async fn index_pages(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &[crate::rag::service::AttachmentPage],
+            _: &[String],
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn delete_attachment(&self, key: &str) -> Result<(), AppError> {
+            self.deleted.lock().unwrap().push(key.to_string());
+            Ok(())
+        }
+        async fn update_access_levels(&self, _: &str, _: &[String]) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn search(
+            &self,
+            _: &str,
+            _: Option<&[String]>,
+        ) -> Result<Vec<crate::search::attachment_search::AttachmentSearchHit>, AppError> {
+            Ok(vec![])
+        }
+        async fn configure_index(&self) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn list_indexed_attachment_keys(&self) -> Result<Vec<String>, AppError> {
+            Ok(self.listed.clone())
         }
     }
 
@@ -317,7 +464,15 @@ mod tests {
             ..Default::default()
         });
 
-        run_reindex(state.clone(), repo, storage, search.clone()).await;
+        run_reindex(
+            state.clone(),
+            repo,
+            storage,
+            search.clone(),
+            no_assets(),
+            None,
+        )
+        .await;
 
         assert!(!state.is_running.load(Ordering::Acquire));
         assert_eq!(state.progress.load(Ordering::Relaxed), 100);
@@ -357,7 +512,7 @@ mod tests {
             ..Default::default()
         });
 
-        run_reindex(state, repo, storage, search.clone()).await;
+        run_reindex(state, repo, storage, search.clone(), no_assets(), None).await;
 
         let indexed = search.indexed.lock().unwrap();
         assert_eq!(indexed.len(), 1);
@@ -405,7 +560,15 @@ mod tests {
         let state = Arc::new(SearchReindexState::default());
         state.is_running.store(true, Ordering::Release);
 
-        run_reindex(state.clone(), repo, storage, Arc::new(FailingSearch)).await;
+        run_reindex(
+            state.clone(),
+            repo,
+            storage,
+            Arc::new(FailingSearch),
+            no_assets(),
+            None,
+        )
+        .await;
 
         let (failed, skipped, last_error) = state.outcome.snapshot();
         assert_eq!(failed, 1, "a failed index must be counted");
@@ -467,7 +630,15 @@ mod tests {
 
         let state_in_task = state.clone();
         let handle = tokio::spawn(async move {
-            run_reindex(state_in_task, repo, storage, Arc::new(PanickingSearch)).await;
+            run_reindex(
+                state_in_task,
+                repo,
+                storage,
+                Arc::new(PanickingSearch),
+                no_assets(),
+                None,
+            )
+            .await;
         });
         let _ = handle.await; // JoinError from the panic; ignore it.
 
@@ -475,5 +646,163 @@ mod tests {
             !state.is_running.load(Ordering::Acquire),
             "a panicked reindex must reset is_running"
         );
+    }
+
+    #[tokio::test]
+    async fn reindex_sweeps_entries_mongo_no_longer_knows() {
+        let active = make_doc("docs/active", false, false);
+        let hidden = make_doc("docs/hidden", true, false);
+        let repo = Arc::new(MockDocumentRepo {
+            documents: vec![active.clone(), hidden.clone()],
+        });
+        let storage = Arc::new(MockStorage::default());
+        storage
+            .put_object(&active.s3_key, b"# Active".to_vec())
+            .await
+            .unwrap();
+        let search = Arc::new(RecordingSearch {
+            // `docs/renamed-away` is what a slug rename leaves behind.
+            listed: vec![
+                "docs/active".to_string(),
+                "docs/hidden".to_string(),
+                "docs/renamed-away".to_string(),
+            ],
+            ..Default::default()
+        });
+        let assets = Arc::new(crate::test_utils::InMemoryAssetRepo::with_assets(vec![
+            crate::test_utils::make_asset("live.pdf", &["docs/active"]),
+            crate::test_utils::make_asset("unreferenced.pdf", &[]),
+        ]));
+        let attachments = Arc::new(RecordingAttachmentSearch {
+            listed: vec![
+                "live.pdf".to_string(),
+                "unreferenced.pdf".to_string(),
+                "deleted.pdf".to_string(),
+            ],
+            ..Default::default()
+        });
+        let state = Arc::new(SearchReindexState::default());
+        state.is_running.store(true, Ordering::Release);
+
+        run_reindex(
+            state,
+            repo,
+            storage,
+            search.clone(),
+            assets,
+            Some(attachments.clone()),
+        )
+        .await;
+
+        let deleted = search.deleted.lock().unwrap().clone();
+        assert!(deleted.contains(&"docs/renamed-away".to_string()));
+        assert!(!deleted.contains(&"docs/active".to_string()));
+        assert_eq!(
+            *attachments.deleted.lock().unwrap(),
+            vec!["unreferenced.pdf".to_string(), "deleted.pdf".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn reindex_never_sweeps_without_a_complete_listing() {
+        struct FailingListRepo;
+        #[async_trait]
+        impl DocumentRepository for FailingListRepo {
+            async fn create_or_update(&self, _: Document) -> Result<(), AppError> {
+                Ok(())
+            }
+            async fn find_by_slug(&self, _: &str) -> Result<Option<Document>, AppError> {
+                Ok(None)
+            }
+            async fn find_by_slugs(&self, _: &[String]) -> Result<Vec<Document>, AppError> {
+                Ok(vec![])
+            }
+            async fn list_all(&self) -> Result<Vec<Document>, AppError> {
+                Err(AppError::Internal("mongo down".into()))
+            }
+            async fn list_by_access_levels(
+                &self,
+                _: Option<&[String]>,
+                _: bool,
+                _: &crate::versioning::ReleasePins,
+            ) -> Result<Vec<Document>, AppError> {
+                Err(AppError::Internal("mongo down".into()))
+            }
+            async fn update_backlinks(
+                &self,
+                _: &str,
+                _: &[String],
+                _: &[String],
+            ) -> Result<(), AppError> {
+                Ok(())
+            }
+            async fn find_by_slug_prefix(&self, _: &str) -> Result<Vec<Document>, AppError> {
+                Ok(vec![])
+            }
+            async fn set_archived(
+                &self,
+                _: &str,
+                _: Option<&str>,
+                _: bool,
+            ) -> Result<(), AppError> {
+                Ok(())
+            }
+            async fn rename_slug(&self, _: &str, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            async fn find_by_source_path(&self, _: &str) -> Result<Option<Document>, AppError> {
+                Ok(None)
+            }
+            async fn find_all_by_source_id(&self, _: &str) -> Result<Vec<Document>, AppError> {
+                Ok(vec![])
+            }
+        }
+
+        let search = Arc::new(RecordingSearch {
+            listed: vec!["docs/a".to_string()],
+            ..Default::default()
+        });
+        let attachments = Arc::new(RecordingAttachmentSearch {
+            listed: vec!["a.pdf".to_string()],
+            ..Default::default()
+        });
+        let state = Arc::new(SearchReindexState::default());
+        state.is_running.store(true, Ordering::Release);
+        run_reindex(
+            state,
+            Arc::new(FailingListRepo),
+            Arc::new(MockStorage::default()),
+            search.clone(),
+            no_assets(),
+            Some(attachments.clone()),
+        )
+        .await;
+        assert!(search.deleted.lock().unwrap().is_empty());
+        assert!(attachments.deleted.lock().unwrap().is_empty());
+
+        // Documents listed, assets not: documents are swept, attachments kept.
+        let doc = make_doc("docs/live", false, false);
+        let storage = Arc::new(MockStorage::default());
+        storage
+            .put_object(&doc.s3_key, b"# Live".to_vec())
+            .await
+            .unwrap();
+        let assets = crate::test_utils::InMemoryAssetRepo::default();
+        assets.fail_list.store(true, Ordering::SeqCst);
+        let state = Arc::new(SearchReindexState::default());
+        state.is_running.store(true, Ordering::Release);
+        run_reindex(
+            state,
+            Arc::new(MockDocumentRepo {
+                documents: vec![doc],
+            }),
+            storage,
+            search.clone(),
+            Arc::new(assets),
+            Some(attachments.clone()),
+        )
+        .await;
+        assert_eq!(*search.deleted.lock().unwrap(), vec!["docs/a".to_string()]);
+        assert!(attachments.deleted.lock().unwrap().is_empty());
     }
 }

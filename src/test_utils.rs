@@ -356,3 +356,142 @@ impl crate::rag::service::RagService for RecordingRag {
         Ok(())
     }
 }
+
+// ── InMemoryAssetRepo ──────────────────────────────────────────────────────
+
+/// In-memory [`AssetRepository`](crate::db::asset_repository::AssetRepository).
+/// `fail_list` makes `list_all` fail.
+#[cfg(feature = "ssr")]
+#[derive(Default)]
+pub struct InMemoryAssetRepo {
+    pub assets: Mutex<Vec<crate::db::models::Asset>>,
+    pub fail_list: std::sync::atomic::AtomicBool,
+}
+
+#[cfg(feature = "ssr")]
+impl InMemoryAssetRepo {
+    pub fn with_assets(assets: Vec<crate::db::models::Asset>) -> Self {
+        Self {
+            assets: Mutex::new(assets),
+            ..Default::default()
+        }
+    }
+}
+
+#[cfg(feature = "ssr")]
+#[async_trait]
+impl crate::db::asset_repository::AssetRepository for InMemoryAssetRepo {
+    async fn create_or_update(&self, asset: crate::db::models::Asset) -> Result<(), AppError> {
+        let mut assets = self.assets.lock().unwrap();
+        assets.retain(|a| a.key != asset.key);
+        assets.push(asset);
+        Ok(())
+    }
+    async fn find_by_key(&self, key: &str) -> Result<Option<crate::db::models::Asset>, AppError> {
+        Ok(self
+            .assets
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|a| a.key == key)
+            .cloned())
+    }
+    async fn find_by_keys(
+        &self,
+        keys: &[String],
+    ) -> Result<Vec<crate::db::models::Asset>, AppError> {
+        Ok(self
+            .assets
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|a| keys.contains(&a.key))
+            .cloned()
+            .collect())
+    }
+    async fn list_all(&self) -> Result<Vec<crate::db::models::Asset>, AppError> {
+        if self.fail_list.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(AppError::Internal("asset listing failed".into()));
+        }
+        Ok(self.assets.lock().unwrap().clone())
+    }
+    async fn list_by_prefix(
+        &self,
+        prefix: &str,
+    ) -> Result<Vec<crate::db::models::Asset>, AppError> {
+        Ok(self
+            .assets
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|a| a.key.starts_with(prefix))
+            .cloned()
+            .collect())
+    }
+    async fn delete(&self, key: &str) -> Result<(), AppError> {
+        self.assets.lock().unwrap().retain(|a| a.key != key);
+        Ok(())
+    }
+    async fn update_extraction(
+        &self,
+        key: &str,
+        update: crate::db::asset_repository::ExtractionUpdate,
+    ) -> Result<(), AppError> {
+        if let Some(asset) = self
+            .assets
+            .lock()
+            .unwrap()
+            .iter_mut()
+            .find(|a| a.key == key)
+        {
+            asset.extraction_status = update.status;
+            asset.extraction_error = update.error;
+            asset.extracted_content_hash = update.extracted_content_hash;
+            asset.extracted_at = update.extracted_at;
+            asset.indexed_chunks = update.indexed_chunks;
+        }
+        Ok(())
+    }
+    async fn set_release_references(
+        &self,
+        source: &crate::db::models::DocumentReference,
+        keys: &[String],
+    ) -> Result<Vec<String>, AppError> {
+        let mut affected = Vec::new();
+        for asset in self.assets.lock().unwrap().iter_mut() {
+            let has = asset.referenced_by.contains(source);
+            let wants = keys.contains(&asset.key);
+            if has && !wants {
+                asset.referenced_by.retain(|r| r != source);
+                affected.push(asset.key.clone());
+            } else if wants && !has {
+                asset.referenced_by.push(source.clone());
+                affected.push(asset.key.clone());
+            }
+        }
+        Ok(affected)
+    }
+    async fn list_unfinished_extractions(&self) -> Result<Vec<crate::db::models::Asset>, AppError> {
+        Ok(vec![])
+    }
+}
+
+/// An asset fixture with the given key and referencing slugs (unversioned).
+#[cfg(feature = "ssr")]
+pub fn make_asset(key: &str, referenced_by: &[&str]) -> crate::db::models::Asset {
+    crate::db::models::Asset {
+        key: key.to_string(),
+        content_type: "application/pdf".to_string(),
+        size_bytes: 3,
+        s3_key: format!("assets/{key}"),
+        uploaded_at: Utc::now(),
+        uploaded_by: "test".to_string(),
+        referenced_by: referenced_by.iter().map(|s| (*s).into()).collect(),
+        content_hash: Some("sha256:same".to_string()),
+        extraction_status: crate::db::models::ExtractionStatus::Done,
+        extraction_error: None,
+        extracted_content_hash: Some("sha256:same".to_string()),
+        extracted_at: None,
+        indexed_chunks: None,
+    }
+}

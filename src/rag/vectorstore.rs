@@ -166,6 +166,29 @@ pub trait VectorStore: Send + Sync {
 
     /// Cheap reachability probe for readiness checks.
     async fn health_check(&self) -> Result<(), AppError>;
+
+    /// The id and source payload fields of every point, for the full-reindex
+    /// orphan sweep. Defaults to nothing, so a store that cannot list never
+    /// has anything swept.
+    async fn list_point_sources(&self) -> Result<Vec<PointSource>, AppError> {
+        Ok(Vec::new())
+    }
+
+    /// Delete points by id.
+    async fn delete_points(&self, _ids: &[String]) -> Result<(), AppError> {
+        Ok(())
+    }
+}
+
+/// What ties a stored point to its source: the payload fields an orphan sweep
+/// matches against MongoDB. Each is `None` when the payload lacks it, as
+/// points written before `source_kind` existed do.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PointSource {
+    pub id: String,
+    pub source_kind: Option<String>,
+    pub document_slug: Option<String>,
+    pub attachment_key: Option<String>,
 }
 
 // ── Qdrant implementation ────────────────────────────────────────────────────
@@ -685,6 +708,74 @@ impl VectorStore for QdrantVectorStore {
             .await
             .map(|_| ())
             .map_err(|e| AppError::Internal(format!("qdrant health check: {e}")))
+    }
+
+    async fn list_point_sources(&self) -> Result<Vec<PointSource>, AppError> {
+        use qdrant_client::qdrant::point_id::PointIdOptions;
+
+        let mut sources = Vec::new();
+        let mut offset: Option<qdrant_client::qdrant::PointId> = None;
+        loop {
+            let mut builder = ScrollPointsBuilder::new(&self.collection)
+                .limit(1_000)
+                .with_payload(qdrant_client::qdrant::PayloadIncludeSelector {
+                    fields: ["source_kind", "document_slug", "attachment_key"]
+                        .map(String::from)
+                        .to_vec(),
+                })
+                .with_vectors(false);
+            if let Some(offset) = offset.take() {
+                builder = builder.offset(offset);
+            }
+            let response = self
+                .client
+                .scroll(builder)
+                .await
+                .map_err(|e| AppError::Internal(format!("qdrant scroll point sources: {e}")))?;
+
+            for point in response.result {
+                let Some(id) = point.id.and_then(|id| id.point_id_options) else {
+                    continue;
+                };
+                let field = |name: &str| point.payload.get(name).and_then(|v| v.as_str()).cloned();
+                sources.push(PointSource {
+                    id: match id {
+                        PointIdOptions::Uuid(uuid) => uuid,
+                        PointIdOptions::Num(n) => n.to_string(),
+                    },
+                    source_kind: field("source_kind"),
+                    document_slug: field("document_slug"),
+                    attachment_key: field("attachment_key"),
+                });
+            }
+
+            match response.next_page_offset {
+                Some(next) => offset = Some(next),
+                None => return Ok(sources),
+            }
+        }
+    }
+
+    async fn delete_points(&self, ids: &[String]) -> Result<(), AppError> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let ids: Vec<qdrant_client::qdrant::PointId> = ids
+            .iter()
+            .map(|id| match id.parse::<u64>() {
+                Ok(n) => n.into(),
+                Err(_) => id.clone().into(),
+            })
+            .collect();
+        self.client
+            .delete_points(
+                DeletePointsBuilder::new(&self.collection)
+                    .points(ids)
+                    .wait(true),
+            )
+            .await
+            .map_err(|e| AppError::Internal(format!("qdrant delete_points (by id): {e}")))?;
+        Ok(())
     }
 }
 

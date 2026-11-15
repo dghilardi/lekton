@@ -100,10 +100,19 @@ pub async fn trigger_reindex_handler(
     let document_repo = state.document_repo.clone();
     let storage = state.storage_client.clone();
     let search_clone = search.clone();
+    let asset_repo = state.asset_repo.clone();
+    let attachment_search = state.attachment_search_service.clone();
 
     tokio::spawn(async move {
-        crate::search::reindex::run_reindex(reindex_clone, document_repo, storage, search_clone)
-            .await;
+        crate::search::reindex::run_reindex(
+            reindex_clone,
+            document_repo,
+            storage,
+            search_clone,
+            asset_repo,
+            attachment_search,
+        )
+        .await;
     });
 
     Ok((

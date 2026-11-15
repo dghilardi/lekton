@@ -101,6 +101,12 @@ pub trait AttachmentSearchService: Send + Sync {
 
     /// Configure the index (filterable/searchable attributes). Call once on startup.
     async fn configure_index(&self) -> Result<(), AppError>;
+
+    /// Every distinct attachment key the index holds, for the full-reindex
+    /// orphan sweep. Defaults to nothing, so nothing is ever swept.
+    async fn list_indexed_attachment_keys(&self) -> Result<Vec<String>, AppError> {
+        Ok(Vec::new())
+    }
 }
 
 /// Truncate to at most `max_len` bytes, on a char boundary.
@@ -358,6 +364,43 @@ impl AttachmentSearchService for MeilisearchAttachmentService {
             .map_err(|e| AppError::Internal(format!("Meilisearch attachment config error: {e}")))?;
 
         Ok(())
+    }
+
+    async fn list_indexed_attachment_keys(&self) -> Result<Vec<String>, AppError> {
+        use crate::search::client::{is_index_not_found, LIST_PAGE_SIZE};
+        use meilisearch_sdk::documents::{DocumentsQuery, DocumentsResults};
+
+        #[derive(Deserialize)]
+        struct KeyOnly {
+            attachment_key: String,
+        }
+
+        let index = self.index();
+        let mut keys = std::collections::BTreeSet::new();
+        let mut offset = 0;
+        loop {
+            let mut query = DocumentsQuery::new(&index);
+            query
+                .with_fields(["attachment_key"])
+                .with_limit(LIST_PAGE_SIZE)
+                .with_offset(offset);
+            let page: DocumentsResults<KeyOnly> = match index.get_documents_with(&query).await {
+                Ok(page) => page,
+                Err(e) if is_index_not_found(&e) => break,
+                Err(e) => {
+                    return Err(AppError::Internal(format!(
+                        "Meilisearch attachment list error: {e}"
+                    )))
+                }
+            };
+            let fetched = page.results.len();
+            offset += fetched;
+            keys.extend(page.results.into_iter().map(|d| d.attachment_key));
+            if fetched < LIST_PAGE_SIZE {
+                break;
+            }
+        }
+        Ok(keys.into_iter().collect())
     }
 }
 

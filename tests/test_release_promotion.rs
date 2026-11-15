@@ -646,3 +646,62 @@ async fn a_stale_reindex_snapshot_cannot_undo_a_later_demotion() {
         "exactly one release may claim the alias"
     );
 }
+
+/// A reindex clears `needs_reindex` from a snapshot read long before. An ingest
+/// that landed in between and failed to index has set the flag again, and the
+/// late clear must not hide that failure.
+#[tokio::test]
+async fn a_reindex_clears_needs_reindex_only_if_the_document_is_unchanged() {
+    let env = common::TestEnv::start().await;
+
+    let mut flagged = doc("api/auth", "1.0.0", true);
+    flagged.needs_reindex = true;
+    env.repo.create_or_update(flagged).await.unwrap();
+    let snapshot = env
+        .repo
+        .find_all_by_slug("api/auth")
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+
+    // A newer ingest also failed to index.
+    let mut newer = snapshot.clone();
+    newer.last_updated = snapshot.last_updated + chrono::Duration::seconds(5);
+    env.repo.create_or_update(newer).await.unwrap();
+
+    env.repo
+        .clear_needs_reindex_if_unchanged(
+            &snapshot.slug,
+            snapshot.release.as_deref(),
+            snapshot.last_updated,
+        )
+        .await
+        .unwrap();
+    let current = env
+        .repo
+        .find_all_by_slug("api/auth")
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert!(current.needs_reindex, "the newer failure must stay flagged");
+
+    // Unchanged since the snapshot: cleared.
+    env.repo
+        .clear_needs_reindex_if_unchanged(
+            &current.slug,
+            current.release.as_deref(),
+            current.last_updated,
+        )
+        .await
+        .unwrap();
+    let cleared = env
+        .repo
+        .find_all_by_slug("api/auth")
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert!(!cleared.needs_reindex);
+}

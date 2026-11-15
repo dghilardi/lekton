@@ -175,6 +175,11 @@ an archiving sync, finalize or promote a release.
 }
 ```
 
+`needs_reindex` is one flag for all derived indexes: it is set when a write
+failed to bring the document into search or RAG, and cleared only by a pass that
+brought it into every enabled index — a later ingest, or a search or RAG
+reindex, which index flagged documents into both.
+
 ### Collection: `schemas`
 
 ```json

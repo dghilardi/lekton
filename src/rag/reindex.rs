@@ -5,8 +5,10 @@ use std::sync::{Arc, Mutex};
 use crate::db::asset_repository::AssetRepository;
 use crate::db::models::{Asset, Document};
 use crate::db::repository::DocumentRepository;
+use crate::indexing::{index_everywhere, remove_everywhere, IndexTargets};
 use crate::rag::attachment_extraction::AttachmentExtractionService;
 use crate::rag::service::RagService;
+use crate::search::client::SearchService;
 use crate::storage::client::StorageClient;
 
 /// Shared state for tracking a background re-index operation.
@@ -49,6 +51,7 @@ pub async fn run_reindex(
     rag: Arc<dyn RagService>,
     asset_repo: Arc<dyn AssetRepository>,
     attachment_service: Option<Arc<AttachmentExtractionService>>,
+    search: Option<Arc<dyn SearchService>>,
 ) {
     // Reset `is_running` unconditionally when this task ends, even on an early
     // return or panic, so a crashed reindex cannot block all future runs.
@@ -96,8 +99,10 @@ pub async fn run_reindex(
 
     reindex_items(
         &reindex,
+        document_repo.as_ref(),
         storage.as_ref(),
         rag.as_ref(),
+        search.as_deref(),
         attachment_service.as_deref(),
         documents,
         assets,
@@ -132,6 +137,7 @@ pub async fn run_reindex_failed(
     rag: Arc<dyn RagService>,
     asset_repo: Arc<dyn AssetRepository>,
     attachment_service: Option<Arc<AttachmentExtractionService>>,
+    search: Option<Arc<dyn SearchService>>,
 ) {
     let _guard = crate::jobs::RunningGuard::new(reindex.clone());
 
@@ -167,8 +173,10 @@ pub async fn run_reindex_failed(
 
     reindex_items(
         &reindex,
+        document_repo.as_ref(),
         storage.as_ref(),
         rag.as_ref(),
+        search.as_deref(),
         attachment_service.as_deref(),
         documents,
         assets,
@@ -176,12 +184,49 @@ pub async fn run_reindex_failed(
     .await;
 }
 
+/// Record a document's reconciliation outcome. On failure, count it and keep
+/// the slug for a targeted retry; on success, clear its `needs_reindex` flag
+/// when it was reconciled in every enabled index. Returns whether it failed.
+async fn record_document_outcome(
+    reindex: &ReindexState,
+    document_repo: &dyn DocumentRepository,
+    doc: &Document,
+    action: &str,
+    failures: Vec<String>,
+) -> bool {
+    if !failures.is_empty() {
+        let failures = failures.join("; ");
+        tracing::warn!(slug = %doc.slug, "RAG reindex: failed to {action}: {failures}");
+        reindex
+            .outcome
+            .record_failure(format!("{action} {}: {failures}", doc.slug));
+        reindex.failed_docs.lock().unwrap().push(doc.slug.clone());
+        return true;
+    }
+    if doc.needs_reindex {
+        if let Err(e) = document_repo
+            .clear_needs_reindex_if_unchanged(&doc.slug, doc.release.as_deref(), doc.last_updated)
+            .await
+        {
+            tracing::warn!(slug = %doc.slug, "RAG reindex: cannot clear needs_reindex: {e}");
+        }
+    }
+    false
+}
+
 /// Shared worker: (re)index the given documents and attachments, updating
 /// progress and recording per-item failures so they can be retried in isolation.
+///
+/// A document flagged `needs_reindex` is brought into search as well (when
+/// enabled) and its flag cleared once every enabled index took it; see
+/// [`crate::indexing`].
+#[allow(clippy::too_many_arguments)]
 async fn reindex_items(
     reindex: &ReindexState,
+    document_repo: &dyn DocumentRepository,
     storage: &dyn StorageClient,
     rag: &dyn RagService,
+    search: Option<&dyn SearchService>,
     attachment_service: Option<&AttachmentExtractionService>,
     documents: Vec<Document>,
     assets: Vec<Asset>,
@@ -224,17 +269,21 @@ async fn reindex_items(
             log_cost_projection(spend_at_start, done - skipped - failed, total);
         }
 
+        // A flagged document is reconciled in every enabled index, so its
+        // flag can be cleared; an unflagged one only needs RAG.
+        let targets = IndexTargets {
+            search: search.filter(|_| doc.needs_reindex),
+            rag: Some(rag),
+        };
+
         // A skip_rag document (e.g. a PDF upload stub) is deliberately excluded
         // from RAG; a full reindex must respect that rather than silently
         // re-adding it, and clean up any chunks left by an earlier ingest.
-        if doc.skip_rag {
-            if let Err(e) = rag.delete_document(&doc.slug).await {
-                tracing::warn!(slug = %doc.slug, "RAG reindex: failed to remove skip_rag document: {e}");
+        // `index_everywhere` does the same, but needs the body for search.
+        if doc.skip_rag && targets.search.is_none() {
+            let failures = remove_everywhere(targets, &doc.slug).await;
+            if record_document_outcome(reindex, document_repo, doc, "remove", failures).await {
                 failed += 1;
-                reindex
-                    .outcome
-                    .record_failure(format!("remove {}: {e}", doc.slug));
-                reindex.failed_docs.lock().unwrap().push(doc.slug.clone());
             }
             done += 1;
             reindex
@@ -271,26 +320,9 @@ async fn reindex_items(
             }
         };
 
-        // Index the document
-        if let Err(e) = rag
-            .index_document(
-                &doc.slug,
-                &doc.title,
-                &content,
-                &doc.access_level,
-                doc.is_draft,
-                &doc.tags,
-                doc.source_id.as_deref(),
-                doc.release.as_deref(),
-            )
-            .await
-        {
-            tracing::warn!(slug = %doc.slug, "RAG reindex: failed to index: {e}");
+        let failures = index_everywhere(targets, doc, &content).await;
+        if record_document_outcome(reindex, document_repo, doc, "index", failures).await {
             failed += 1;
-            reindex
-                .outcome
-                .record_failure(format!("index {}: {e}", doc.slug));
-            reindex.failed_docs.lock().unwrap().push(doc.slug.clone());
         }
 
         done += 1;
@@ -457,8 +489,11 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
     struct FakeDocRepo {
         docs: Vec<Document>,
+        /// Slugs whose `needs_reindex` was cleared.
+        cleared: Mutex<Vec<String>>,
     }
 
     #[async_trait]
@@ -510,6 +545,15 @@ mod tests {
         }
         async fn find_all_by_source_id(&self, _: &str) -> Result<Vec<Document>, AppError> {
             Ok(vec![])
+        }
+        async fn clear_needs_reindex_if_unchanged(
+            &self,
+            slug: &str,
+            _: Option<&str>,
+            _: chrono::DateTime<Utc>,
+        ) -> Result<(), AppError> {
+            self.cleared.lock().unwrap().push(slug.to_string());
+            Ok(())
         }
     }
 
@@ -662,6 +706,7 @@ mod tests {
             .insert("docs/normal.md".to_string(), b"# Hello".to_vec());
         let doc_repo = Arc::new(FakeDocRepo {
             docs: vec![make_doc("normal", false), make_doc("upload-stub", true)],
+            ..Default::default()
         });
         let rag = Arc::new(RecordingRagService::default());
         let asset_repo = Arc::new(FakeAssetRepo::new(vec![
@@ -669,7 +714,16 @@ mod tests {
             make_asset("pdfs/orphaned.pdf", vec![]),
         ]));
 
-        run_reindex(reindex, doc_repo, storage, rag.clone(), asset_repo, None).await;
+        run_reindex(
+            reindex,
+            doc_repo,
+            storage,
+            rag.clone(),
+            asset_repo,
+            None,
+            None,
+        )
+        .await;
 
         // A skip_rag document has no chunks to keep.
         assert_eq!(
@@ -693,6 +747,7 @@ mod tests {
             .store(true, std::sync::atomic::Ordering::SeqCst);
         let doc_repo = Arc::new(FakeDocRepo {
             docs: vec![make_doc("normal", false)],
+            ..Default::default()
         });
         run_reindex(
             Arc::new(ReindexState::default()),
@@ -701,16 +756,18 @@ mod tests {
             rag.clone(),
             assets,
             None,
+            None,
         )
         .await;
 
         // No live document at all: treated as a listing problem.
         run_reindex(
             Arc::new(ReindexState::default()),
-            Arc::new(FakeDocRepo { docs: vec![] }),
+            Arc::new(FakeDocRepo::default()),
             storage.clone(),
             rag.clone(),
             Arc::new(FakeAssetRepo::new(vec![])),
+            None,
             None,
         )
         .await;
@@ -726,10 +783,12 @@ mod tests {
             reindex,
             Arc::new(FakeDocRepo {
                 docs: vec![make_doc("normal", false)],
+                ..Default::default()
             }),
             storage,
             rag.clone(),
             Arc::new(FakeAssetRepo::new(vec![])),
+            None,
             None,
         )
         .await;
@@ -748,11 +807,21 @@ mod tests {
             .insert("docs/normal.md".to_string(), b"# Hello".to_vec());
         let doc_repo = Arc::new(FakeDocRepo {
             docs: vec![make_doc("normal", false), make_doc("upload-stub", true)],
+            ..Default::default()
         });
         let rag = Arc::new(RecordingRagService::default());
         let asset_repo = Arc::new(FakeAssetRepo::new(vec![]));
 
-        run_reindex(reindex, doc_repo, storage, rag.clone(), asset_repo, None).await;
+        run_reindex(
+            reindex,
+            doc_repo,
+            storage,
+            rag.clone(),
+            asset_repo,
+            None,
+            None,
+        )
+        .await;
 
         assert_eq!(*rag.indexed_slugs.lock().unwrap(), vec!["normal"]);
         assert_eq!(*rag.deleted_slugs.lock().unwrap(), vec!["upload-stub"]);
@@ -774,6 +843,7 @@ mod tests {
             .insert("docs/bad.md".to_string(), b"# Bad".to_vec());
         let doc_repo = Arc::new(FakeDocRepo {
             docs: vec![make_doc("good", false), make_doc("bad", false)],
+            ..Default::default()
         });
         let rag = Arc::new(RecordingRagService::default());
         rag.fail_slugs.lock().unwrap().push("bad".to_string());
@@ -786,6 +856,7 @@ mod tests {
             storage.clone(),
             rag.clone(),
             asset_repo.clone(),
+            None,
             None,
         )
         .await;
@@ -810,6 +881,7 @@ mod tests {
             rag.clone(),
             asset_repo,
             None,
+            None,
         )
         .await;
 
@@ -829,7 +901,7 @@ mod tests {
     async fn run_reindex_force_reprocesses_referenced_attachments_only() {
         let reindex = Arc::new(ReindexState::default());
         let storage = Arc::new(MockStorage::new());
-        let doc_repo = Arc::new(FakeDocRepo { docs: vec![] });
+        let doc_repo = Arc::new(FakeDocRepo::default());
         let rag = Arc::new(RecordingRagService::default());
         let asset_repo = Arc::new(FakeAssetRepo::new(vec![
             make_asset("pdfs/referenced.pdf", vec!["docs/a".to_string()]),
@@ -852,6 +924,7 @@ mod tests {
             rag,
             asset_repo.clone(),
             Some(service),
+            None,
         )
         .await;
 
@@ -872,16 +945,100 @@ mod tests {
     async fn run_reindex_without_attachment_service_does_not_fail() {
         let reindex = Arc::new(ReindexState::default());
         let storage = Arc::new(MockStorage::new());
-        let doc_repo = Arc::new(FakeDocRepo { docs: vec![] });
+        let doc_repo = Arc::new(FakeDocRepo::default());
         let rag = Arc::new(RecordingRagService::default());
         let asset_repo = Arc::new(FakeAssetRepo::new(vec![make_asset(
             "pdfs/referenced.pdf",
             vec!["docs/a".to_string()],
         )]));
 
-        run_reindex(reindex.clone(), doc_repo, storage, rag, asset_repo, None).await;
+        run_reindex(
+            reindex.clone(),
+            doc_repo,
+            storage,
+            rag,
+            asset_repo,
+            None,
+            None,
+        )
+        .await;
 
         assert!(!reindex.is_running.load(Ordering::Acquire));
         assert_eq!(reindex.progress.load(Ordering::Relaxed), 100);
+    }
+
+    #[tokio::test]
+    async fn run_reindex_clears_needs_reindex_only_after_every_enabled_index_took_it() {
+        let storage = Arc::new(MockStorage::new());
+        for slug in ["flagged", "clean"] {
+            storage
+                .objects
+                .lock()
+                .unwrap()
+                .insert(format!("docs/{slug}.md"), b"# Body".to_vec());
+        }
+        let mut flagged = make_doc("flagged", false);
+        flagged.needs_reindex = true;
+        let clean = make_doc("clean", false);
+
+        // Search enabled: a flagged document goes into search too, then is
+        // cleared; an unflagged one is left to the search reindex.
+        let doc_repo = Arc::new(FakeDocRepo {
+            docs: vec![flagged.clone(), clean.clone()],
+            ..Default::default()
+        });
+        let search = Arc::new(crate::test_utils::RecordingSearch::default());
+        run_reindex(
+            Arc::new(ReindexState::default()),
+            doc_repo.clone(),
+            storage.clone(),
+            Arc::new(RecordingRagService::default()),
+            Arc::new(FakeAssetRepo::new(vec![])),
+            None,
+            Some(search.clone()),
+        )
+        .await;
+        assert_eq!(search.indexed(), vec!["flagged"]);
+        assert_eq!(*doc_repo.cleared.lock().unwrap(), vec!["flagged"]);
+
+        // Search failing: the flag stays.
+        let doc_repo = Arc::new(FakeDocRepo {
+            docs: vec![flagged.clone()],
+            ..Default::default()
+        });
+        let search = Arc::new(crate::test_utils::RecordingSearch::default());
+        search
+            .fail_index
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let reindex = Arc::new(ReindexState::default());
+        run_reindex(
+            reindex.clone(),
+            doc_repo.clone(),
+            storage.clone(),
+            Arc::new(RecordingRagService::default()),
+            Arc::new(FakeAssetRepo::new(vec![])),
+            None,
+            Some(search),
+        )
+        .await;
+        assert!(doc_repo.cleared.lock().unwrap().is_empty());
+        assert_eq!(*reindex.failed_docs.lock().unwrap(), vec!["flagged"]);
+
+        // Search disabled: RAG alone is every enabled index.
+        let doc_repo = Arc::new(FakeDocRepo {
+            docs: vec![flagged],
+            ..Default::default()
+        });
+        run_reindex(
+            Arc::new(ReindexState::default()),
+            doc_repo.clone(),
+            storage,
+            Arc::new(RecordingRagService::default()),
+            Arc::new(FakeAssetRepo::new(vec![])),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(*doc_repo.cleared.lock().unwrap(), vec!["flagged"]);
     }
 }

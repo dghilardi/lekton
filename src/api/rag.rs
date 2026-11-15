@@ -86,6 +86,7 @@ pub async fn trigger_reindex_handler(
     let rag_clone = rag.clone();
     let asset_repo = state.asset_repo.clone();
     let attachment_service = state.attachment_service.clone();
+    let search = state.search_service.clone();
 
     tokio::spawn(async move {
         crate::rag::reindex::run_reindex(
@@ -95,6 +96,7 @@ pub async fn trigger_reindex_handler(
             rag_clone,
             asset_repo,
             attachment_service,
+            search,
         )
         .await;
     });

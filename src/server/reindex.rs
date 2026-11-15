@@ -76,6 +76,7 @@ pub async fn trigger_rag_reindex() -> Result<String, ServerFnError> {
     let rag_clone = rag.clone();
     let asset_repo = state.asset_repo.clone();
     let attachment_service = state.attachment_service.clone();
+    let search = state.search_service.clone();
 
     tokio::spawn(async move {
         crate::rag::reindex::run_reindex(
@@ -85,6 +86,7 @@ pub async fn trigger_rag_reindex() -> Result<String, ServerFnError> {
             rag_clone,
             asset_repo,
             attachment_service,
+            search,
         )
         .await;
     });
@@ -122,6 +124,7 @@ pub async fn trigger_rag_reindex_failed() -> Result<String, ServerFnError> {
     let rag_clone = rag.clone();
     let asset_repo = state.asset_repo.clone();
     let attachment_service = state.attachment_service.clone();
+    let search = state.search_service.clone();
 
     tokio::spawn(async move {
         crate::rag::reindex::run_reindex_failed(
@@ -131,6 +134,7 @@ pub async fn trigger_rag_reindex_failed() -> Result<String, ServerFnError> {
             rag_clone,
             asset_repo,
             attachment_service,
+            search,
         )
         .await;
     });
@@ -193,6 +197,7 @@ pub async fn trigger_search_reindex() -> Result<String, ServerFnError> {
     let search_clone = search.clone();
     let asset_repo = state.asset_repo.clone();
     let attachment_search = state.attachment_search_service.clone();
+    let rag = state.rag_service.clone();
 
     tokio::spawn(async move {
         crate::search::reindex::run_reindex(
@@ -202,6 +207,7 @@ pub async fn trigger_search_reindex() -> Result<String, ServerFnError> {
             search_clone,
             asset_repo,
             attachment_search,
+            rag,
         )
         .await;
     });

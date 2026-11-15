@@ -232,6 +232,24 @@ pub trait DocumentRepository: Send + Sync {
         Ok(())
     }
 
+    /// Clear `needs_reindex` on one release of a document, but only if it was
+    /// not written since `last_updated` (the snapshot the caller indexed from).
+    ///
+    /// A reindex reads its snapshot long before it gets to clear the flag; an
+    /// ingest landing in between may have failed to index and set the flag
+    /// again, and clearing it unconditionally would hide that failure.
+    ///
+    /// Defaults to [`Self::clear_needs_reindex`] so test mocks need not
+    /// implement it; the MongoDB backend overrides it.
+    async fn clear_needs_reindex_if_unchanged(
+        &self,
+        slug: &str,
+        release: Option<&str>,
+        _last_updated: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), AppError> {
+        self.clear_needs_reindex(slug, release).await
+    }
+
     /// Defaults to a no-op returning no affected slugs so test mocks need not
     /// implement it; the MongoDB backend overrides it.
     async fn promote_release(
@@ -380,6 +398,32 @@ impl DocumentRepository for MongoDocumentRepository {
         self.collection
             .update_one(
                 doc! { "slug": slug, "release": release_match },
+                doc! { "$set": { "needs_reindex": false } },
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn clear_needs_reindex_if_unchanged(
+        &self,
+        slug: &str,
+        release: Option<&str>,
+        last_updated: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), AppError> {
+        use mongodb::bson::{doc, Bson, DateTime as BsonDateTime};
+
+        let release_match = match release {
+            Some(r) => Bson::String(r.to_string()),
+            None => Bson::Null,
+        };
+
+        self.collection
+            .update_one(
+                doc! {
+                    "slug": slug,
+                    "release": release_match,
+                    "last_updated": BsonDateTime::from_chrono(last_updated),
+                },
                 doc! { "$set": { "needs_reindex": false } },
             )
             .await?;

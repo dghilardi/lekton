@@ -5,8 +5,10 @@ use std::collections::HashSet;
 
 use crate::db::asset_repository::AssetRepository;
 use crate::db::repository::DocumentRepository;
+use crate::indexing::{index_everywhere, remove_everywhere, IndexTargets};
+use crate::rag::service::RagService;
 use crate::search::attachment_search::AttachmentSearchService;
-use crate::search::client::{build_search_document, SearchService};
+use crate::search::client::SearchService;
 use crate::storage::client::StorageClient;
 
 /// Shared state for tracking a background full-text search re-index operation.
@@ -33,6 +35,11 @@ impl crate::jobs::RunningFlag for SearchReindexState {
 /// MongoDB no longer knows at all — a renamed or deleted slug, the pages of an
 /// attachment nothing references — are swept from the `documents` and
 /// `attachment_chunks` indexes.
+///
+/// A document flagged `needs_reindex` is brought into RAG as well (when
+/// enabled) and its flag cleared once every enabled index took it; see
+/// [`crate::indexing`]. Unflagged documents only touch search.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_reindex(
     reindex: Arc<SearchReindexState>,
     document_repo: Arc<dyn DocumentRepository>,
@@ -40,6 +47,7 @@ pub async fn run_reindex(
     search: Arc<dyn SearchService>,
     asset_repo: Arc<dyn AssetRepository>,
     attachment_search: Option<Arc<dyn AttachmentSearchService>>,
+    rag: Option<Arc<dyn RagService>>,
 ) {
     // Reset `is_running` unconditionally when this task ends, even on an early
     // return or panic, so a crashed reindex cannot block all future runs.
@@ -98,13 +106,17 @@ pub async fn run_reindex(
             continue;
         };
 
+        // A flagged document is reconciled in every enabled index, so the
+        // flag can be cleared; an unflagged one only needs search.
+        let targets = IndexTargets {
+            search: Some(search.as_ref()),
+            rag: rag.as_deref().filter(|_| doc.needs_reindex),
+        };
+
         if doc.is_archived || doc.is_hidden {
-            if let Err(e) = search.delete_document(&doc.slug).await {
-                tracing::warn!(slug = %doc.slug, "Search reindex: failed to delete stale document: {e}");
-                reindex
-                    .outcome
-                    .record_failure(format!("delete {}: {e}", doc.slug));
-            }
+            let failures = remove_everywhere(targets, &doc.slug).await;
+            record_document_outcome(&reindex, document_repo.as_ref(), &doc, "delete", failures)
+                .await;
             update_progress(&reindex, i, total);
             continue;
         }
@@ -129,13 +141,8 @@ pub async fn run_reindex(
             }
         };
 
-        let search_doc = build_search_document(&doc, &content);
-        if let Err(e) = search.index_document(&search_doc).await {
-            tracing::warn!(slug = %doc.slug, "Search reindex: failed to index document: {e}");
-            reindex
-                .outcome
-                .record_failure(format!("index {}: {e}", doc.slug));
-        }
+        let failures = index_everywhere(targets, &doc, &content).await;
+        record_document_outcome(&reindex, document_repo.as_ref(), &doc, "index", failures).await;
 
         update_progress(&reindex, i, total);
     }
@@ -226,6 +233,33 @@ async fn sweep_orphans(
     }
 }
 
+/// Record a document's reconciliation outcome, clearing its `needs_reindex`
+/// flag when it was reconciled in every enabled index without a failure.
+async fn record_document_outcome(
+    reindex: &SearchReindexState,
+    document_repo: &dyn DocumentRepository,
+    doc: &crate::db::models::Document,
+    action: &str,
+    failures: Vec<String>,
+) {
+    if !failures.is_empty() {
+        let failures = failures.join("; ");
+        tracing::warn!(slug = %doc.slug, "Search reindex: failed to {action} document: {failures}");
+        reindex
+            .outcome
+            .record_failure(format!("{action} {}: {failures}", doc.slug));
+        return;
+    }
+    if doc.needs_reindex {
+        if let Err(e) = document_repo
+            .clear_needs_reindex_if_unchanged(&doc.slug, doc.release.as_deref(), doc.last_updated)
+            .await
+        {
+            tracing::warn!(slug = %doc.slug, "Search reindex: cannot clear needs_reindex: {e}");
+        }
+    }
+}
+
 fn update_progress(reindex: &SearchReindexState, index: usize, total: usize) {
     let pct = ((index + 1) * 100 / total) as u32;
     reindex.progress.store(pct, Ordering::Relaxed);
@@ -248,6 +282,8 @@ mod tests {
 
     struct MockDocumentRepo {
         documents: Vec<Document>,
+        /// Slugs whose `needs_reindex` was cleared.
+        cleared: Mutex<Vec<String>>,
     }
 
     #[async_trait]
@@ -300,6 +336,15 @@ mod tests {
         }
         async fn find_all_by_source_id(&self, _: &str) -> Result<Vec<Document>, AppError> {
             Ok(vec![])
+        }
+        async fn clear_needs_reindex_if_unchanged(
+            &self,
+            slug: &str,
+            _: Option<&str>,
+            _: chrono::DateTime<Utc>,
+        ) -> Result<(), AppError> {
+            self.cleared.lock().unwrap().push(slug.to_string());
+            Ok(())
         }
     }
 
@@ -450,6 +495,7 @@ mod tests {
         let archived = make_doc("docs/archived", false, true);
 
         let repo = Arc::new(MockDocumentRepo {
+            cleared: Default::default(),
             documents: vec![active.clone(), hidden.clone(), archived.clone()],
         });
         let storage = Arc::new(MockStorage::default());
@@ -470,6 +516,7 @@ mod tests {
             storage,
             search.clone(),
             no_assets(),
+            None,
             None,
         )
         .await;
@@ -499,6 +546,7 @@ mod tests {
         archived_old.s3_key = "docs/1.0.0/guide.md".to_string();
 
         let repo = Arc::new(MockDocumentRepo {
+            cleared: Default::default(),
             documents: vec![archived_old, latest.clone()],
         });
         let storage = Arc::new(MockStorage::default());
@@ -512,7 +560,16 @@ mod tests {
             ..Default::default()
         });
 
-        run_reindex(state, repo, storage, search.clone(), no_assets(), None).await;
+        run_reindex(
+            state,
+            repo,
+            storage,
+            search.clone(),
+            no_assets(),
+            None,
+            None,
+        )
+        .await;
 
         let indexed = search.indexed.lock().unwrap();
         assert_eq!(indexed.len(), 1);
@@ -550,6 +607,7 @@ mod tests {
 
         let doc = make_doc("a", false, false);
         let repo = Arc::new(MockDocumentRepo {
+            cleared: Default::default(),
             documents: vec![doc.clone()],
         });
         let storage = Arc::new(MockStorage::default());
@@ -566,6 +624,7 @@ mod tests {
             storage,
             Arc::new(FailingSearch),
             no_assets(),
+            None,
             None,
         )
         .await;
@@ -615,6 +674,7 @@ mod tests {
 
         let doc = make_doc("a", false, false);
         let repo = Arc::new(MockDocumentRepo {
+            cleared: Default::default(),
             documents: vec![doc.clone()],
         });
         let storage = Arc::new(MockStorage::default());
@@ -637,6 +697,7 @@ mod tests {
                 Arc::new(PanickingSearch),
                 no_assets(),
                 None,
+                None,
             )
             .await;
         });
@@ -653,6 +714,7 @@ mod tests {
         let active = make_doc("docs/active", false, false);
         let hidden = make_doc("docs/hidden", true, false);
         let repo = Arc::new(MockDocumentRepo {
+            cleared: Default::default(),
             documents: vec![active.clone(), hidden.clone()],
         });
         let storage = Arc::new(MockStorage::default());
@@ -691,6 +753,7 @@ mod tests {
             search.clone(),
             assets,
             Some(attachments.clone()),
+            None,
         )
         .await;
 
@@ -775,6 +838,7 @@ mod tests {
             search.clone(),
             no_assets(),
             Some(attachments.clone()),
+            None,
         )
         .await;
         assert!(search.deleted.lock().unwrap().is_empty());
@@ -794,15 +858,92 @@ mod tests {
         run_reindex(
             state,
             Arc::new(MockDocumentRepo {
+                cleared: Default::default(),
                 documents: vec![doc],
             }),
             storage,
             search.clone(),
             Arc::new(assets),
             Some(attachments.clone()),
+            None,
         )
         .await;
         assert_eq!(*search.deleted.lock().unwrap(), vec!["docs/a".to_string()]);
         assert!(attachments.deleted.lock().unwrap().is_empty());
+    }
+
+    /// Runs a search reindex over `documents` (bodies stored for each) with
+    /// the given RAG service, returning the search mock and the repo.
+    async fn reindex_with_rag(
+        documents: Vec<Document>,
+        rag: Option<Arc<dyn crate::rag::service::RagService>>,
+    ) -> (Arc<RecordingSearch>, Arc<MockDocumentRepo>) {
+        let storage = Arc::new(MockStorage::default());
+        for doc in &documents {
+            storage
+                .put_object(&doc.s3_key, b"# Body".to_vec())
+                .await
+                .unwrap();
+        }
+        let repo = Arc::new(MockDocumentRepo {
+            cleared: Default::default(),
+            documents,
+        });
+        let search = Arc::new(RecordingSearch::default());
+        let state = Arc::new(SearchReindexState::default());
+        state.is_running.store(true, Ordering::Release);
+        run_reindex(
+            state,
+            repo.clone(),
+            storage,
+            search.clone(),
+            no_assets(),
+            None,
+            rag,
+        )
+        .await;
+        (search, repo)
+    }
+
+    #[tokio::test]
+    async fn reindex_clears_needs_reindex_only_after_every_enabled_index_took_it() {
+        let mut flagged = make_doc("docs/flagged", false, false);
+        flagged.needs_reindex = true;
+        let clean = make_doc("docs/clean", false, false);
+        let mut flagged_hidden = make_doc("docs/flagged-hidden", true, false);
+        flagged_hidden.needs_reindex = true;
+
+        // RAG enabled: a flagged document goes into RAG too, then is cleared;
+        // an unflagged one is left to the RAG reindex.
+        let rag = Arc::new(crate::test_utils::RecordingRag::default());
+        let (search, repo) = reindex_with_rag(
+            vec![flagged.clone(), clean.clone(), flagged_hidden.clone()],
+            Some(rag.clone()),
+        )
+        .await;
+        assert_eq!(rag.indexed(), vec!["docs/flagged"]);
+        assert_eq!(rag.deleted(), vec!["docs/flagged-hidden"]);
+        let mut indexed: Vec<_> = search
+            .indexed
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|d| d.slug.clone())
+            .collect();
+        indexed.sort();
+        assert_eq!(indexed, vec!["docs/clean", "docs/flagged"]);
+        let mut cleared = repo.cleared.lock().unwrap().clone();
+        cleared.sort();
+        assert_eq!(cleared, vec!["docs/flagged", "docs/flagged-hidden"]);
+
+        // RAG failing: the flag stays.
+        let rag = Arc::new(crate::test_utils::RecordingRag::default());
+        rag.fail_index.store(true, Ordering::SeqCst);
+        let (_, repo) = reindex_with_rag(vec![flagged.clone()], Some(rag)).await;
+        assert!(repo.cleared.lock().unwrap().is_empty());
+
+        // RAG disabled: search alone is every enabled index.
+        let (_, repo) = reindex_with_rag(vec![flagged], None).await;
+        assert_eq!(*repo.cleared.lock().unwrap(), vec!["docs/flagged"]);
     }
 }

@@ -90,9 +90,12 @@ pub struct Document {
     pub is_latest: bool,
     /// `true` when the last ingest failed to (re)index this document in
     /// Meilisearch and/or the RAG vector store, so search/chat are known to be
-    /// stale relative to MongoDB. Cleared on the next successful ingest. Lets
-    /// operators detect documents that need a re-index after a transient
-    /// search/embedding outage instead of the drift being silent.
+    /// stale relative to MongoDB. Cleared only by a pass that brought the
+    /// document into every enabled index: the next successful ingest, or a
+    /// search or RAG reindex (which index flagged documents into both; see
+    /// `crate::indexing`). Lets operators detect documents that need a
+    /// re-index after a transient search/embedding outage instead of the drift
+    /// being silent.
     #[serde(default)]
     pub needs_reindex: bool,
     /// When `true`, this document is deliberately excluded from the RAG vector

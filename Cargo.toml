@@ -72,6 +72,8 @@ jsonwebtoken = { version = "10", optional = true }
 # RAG (Retrieval-Augmented Generation)
 qdrant-client = { version = "1", optional = true }
 async-openai = { version = "0.35", features = ["embedding", "chat-completion"], optional = true }
+# The retry policy type async-openai takes; bounds the embedding client's retries.
+backoff = { version = "0.4", optional = true }
 gcp_auth = { version = "0.12.6", optional = true }
 rustls = { version = "0.23", features = ["aws-lc-rs"], optional = true }
 text-splitter = { version = "0.30", features = ["markdown", "tiktoken-rs"], optional = true }
@@ -234,6 +236,7 @@ ssr = [
     "dep:async-stream",
     "dep:qdrant-client",
     "dep:async-openai",
+    "dep:backoff",
     "dep:gcp_auth",
     "dep:rustls",
     "dep:text-splitter",

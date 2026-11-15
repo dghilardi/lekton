@@ -64,6 +64,39 @@ pub fn build_oai_client(
     Ok(Client::with_config(oai_config))
 }
 
+/// How long one embedding call may keep retrying server errors and rate
+/// limits before failing.
+pub const EMBEDDING_RETRY_BUDGET: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The retry policy for embedding calls: async-openai's exponential backoff,
+/// but giving up after [`EMBEDDING_RETRY_BUDGET`] instead of its 15-minute
+/// default.
+pub fn embedding_backoff() -> backoff::ExponentialBackoff {
+    backoff::ExponentialBackoff {
+        max_elapsed_time: Some(EMBEDDING_RETRY_BUDGET),
+        ..Default::default()
+    }
+}
+
+/// [`build_oai_client`] for embedding calls, with bounded waits: the
+/// project's HTTP client (per-request and connect timeouts, see
+/// [`crate::net::http_client`]) and [`embedding_backoff`].
+///
+/// Ingest, editor saves and reindexes wait for the embedding before they
+/// record a document, so an unhealthy endpoint must fail them within about a
+/// minute (leaving `needs_reindex`) rather than hang them. The chat and other
+/// LLM clients keep the library defaults: a streamed answer can legitimately
+/// outlast a fixed request timeout.
+pub fn build_embedding_oai_client(
+    url: &str,
+    api_key: &str,
+    extra_headers: &HashMap<String, String>,
+) -> Result<Client<OpenAIConfig>, AppError> {
+    Ok(build_oai_client(url, api_key, extra_headers)?
+        .with_http_client(crate::net::http_client())
+        .with_backoff(embedding_backoff()))
+}
+
 /// Format provider errors into a stable user-facing string.
 ///
 /// Some OpenAI-compatible endpoints, notably Vertex AI's OpenAPI bridge,
@@ -146,7 +179,23 @@ mod tests {
 
     use async_openai::error::OpenAIError;
 
-    use super::{build_oai_client, format_llm_error};
+    use super::{
+        build_embedding_oai_client, build_oai_client, embedding_backoff, format_llm_error,
+    };
+
+    #[test]
+    fn embedding_client_retries_within_a_bounded_budget() {
+        // The library default keeps retrying 5xx/429 for 15 minutes, and an
+        // ingest or editor save waits for the embedding.
+        let policy = embedding_backoff();
+        assert_eq!(
+            policy.max_elapsed_time,
+            Some(std::time::Duration::from_secs(60))
+        );
+        assert!(
+            build_embedding_oai_client("http://localhost:11434/v1", "", &HashMap::new()).is_ok()
+        );
+    }
 
     #[test]
     fn builds_client_without_headers() {

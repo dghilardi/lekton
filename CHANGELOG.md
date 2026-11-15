@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Bound the OpenAI-compatible embedding client: requests time out (30 seconds, 10 to connect) and retries of server errors and rate limits stop after a minute instead of fifteen, so an unhealthy endpoint fails an ingest, editor save or reindex step quickly and leaves `needs_reindex` set instead of stalling it.
+
 - Report a document whose chunks all came back without an embedding as a failed RAG index (setting `needs_reindex`) instead of a success. When RAG indexing fails on an ingest or editor save that changed the document's access, its old chunks are removed rather than left answering to the previous audience.
 
 - Count attachments that fail to process (including a failed ACL check after indexing, which deindexes them) as failures of the RAG reindex, so “retry failed” picks them up; they were reported as successes.

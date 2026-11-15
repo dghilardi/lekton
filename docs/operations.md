@@ -251,6 +251,14 @@ Re-indexing instead of upgrading recomputes every embedding, which costs embeddi
 
 The search index is derived from MongoDB and can always be rebuilt with a full re-index (`/admin/settings` → *Search* → *Re-index*, or `POST /api/v1/admin/search/reindex` as an administrator).
 
+### Full-text indexing
+
+Each document has one entry, searchable by title, preview, slug, tags and its full plain-text body (`content`), in that ranking order. Search requests return every field except `content`; a body-only match comes back as a cropped snippet of about 24 words, with the usual highlight ranges. Meilisearch indexes only the first 65,535 words of an attribute, so text beyond that in a very large document is not searchable.
+
+Startup and every search re-index apply the index settings and wait up to 60 seconds for Meilisearch to finish them; a failure is logged and, during a re-index, shown as the job's last error. Changing searchable attributes makes Meilisearch re-process all stored entries, so the first startup after an upgrade can take longer.
+
+**After upgrading to full-body search, run one search re-index.** Entries written earlier have no `content`: they stay searchable by title, preview, slug and tags, but body-only words do not match until the re-index (or the next save, sync or promotion of that document) rewrites them. The re-index reads stored bodies from S3; it needs no embedding calls and does not touch Qdrant.
+
 ### Upgrading
 
 Lekton is tested against Meilisearch 1.54. A Meilisearch database only opens with the version that created it, so a new image needs one of:

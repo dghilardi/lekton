@@ -282,3 +282,177 @@ async fn search_fails_when_service_unavailable() {
 
     response.assert_status_internal_server_error();
 }
+
+/// A body far past the 200-character preview, with an identifier in prose and
+/// another in a code block.
+fn long_body(title: &str, keyword: &str, code_identifier: &str) -> String {
+    format!(
+        "# {title}\n\n{}\n\nWhen the device reports `{keyword}`, reboot it.\n\n{}\n\n\
+         ```rust\nfn {code_identifier}() {{}}\n```\n\nbodytailmarker {}",
+        "Opening filler sentence about devices. ".repeat(10),
+        "Middle filler sentence about firmware. ".repeat(10),
+        "Closing filler sentence. ".repeat(40),
+    )
+}
+
+#[tokio::test]
+async fn search_finds_body_only_terms_with_a_bounded_snippet_and_no_body() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    let keyword = format!("bodyonlykw{id}");
+    let code_identifier = format!("reset_device_{id}");
+
+    let public_slug = format!("search-body-public-{id}");
+    let restricted_slug = format!("search-body-architect-{id}");
+    let draft_slug = format!("search-body-draft-{id}");
+    let body = long_body("Device guide", &keyword, &code_identifier);
+    assert!(body.find(&keyword).unwrap() > 300);
+    env.ingest(&server, &public_slug, "Device guide", &body, "public")
+        .await
+        .assert_status_ok();
+    env.ingest(
+        &server,
+        &restricted_slug,
+        "Device guide",
+        &body,
+        "architect",
+    )
+    .await
+    .assert_status_ok();
+    server
+        .post("/api/v1/ingest")
+        .json(&serde_json::json!({
+            "service_token": "test-token",
+            "slug": draft_slug,
+            "source_path": format!("docs/{draft_slug}.md"),
+            "source_id": "test-source",
+            "title": "Device guide",
+            "content": body,
+            "access_level": "public",
+            "is_draft": true,
+            "service_owner": "test-team",
+            "tags": ["test"],
+        }))
+        .await
+        .assert_status_ok();
+    env.wait_for_search_indexing().await;
+
+    let response = server
+        .get("/api/v1/search")
+        .add_query_param("q", &keyword)
+        .await;
+    response.assert_status_ok();
+    let raw = response.text();
+    let results: Vec<serde_json::Value> = serde_json::from_str(&raw).unwrap();
+    let slugs: Vec<_> = results.iter().filter_map(|r| r["slug"].as_str()).collect();
+    assert_eq!(slugs, [public_slug.as_str()], "only the visible document");
+
+    // The response carries a snippet around the body match, never the body.
+    let hit = &results[0];
+    assert!(hit.get("content").is_none(), "{hit}");
+    assert!(!raw.contains("bodytailmarker") && !raw.contains("Closing filler"));
+    let preview = hit["content_preview"].as_str().unwrap();
+    assert!(preview.contains(&keyword), "{preview}");
+    assert!(preview.split_whitespace().count() <= 30, "{preview}");
+    let [start, end] =
+        serde_json::from_value::<Vec<[usize; 2]>>(hit["preview_matches"].clone()).unwrap()[0];
+    let matched: String = preview.chars().skip(start).take(end - start).collect();
+    assert_eq!(matched, keyword);
+
+    // Identifiers inside code blocks are searchable too.
+    let results: Vec<serde_json::Value> = server
+        .get("/api/v1/search")
+        .add_query_param("q", &code_identifier)
+        .await
+        .json();
+    assert!(results
+        .iter()
+        .any(|r| r["slug"].as_str() == Some(public_slug.as_str())));
+
+    // Hybrid discovery calls the same service with the reader's visibility.
+    let levels = vec!["public".to_string()];
+    let hits = env
+        .search
+        .search(&keyword, Some(&levels), false)
+        .await
+        .unwrap();
+    assert_eq!(
+        hits.iter().map(|h| h.slug.as_str()).collect::<Vec<_>>(),
+        [public_slug.as_str()]
+    );
+    let hits = env.search.search(&keyword, None, true).await.unwrap();
+    assert_eq!(hits.len(), 3, "admins see every copy, one hit per document");
+}
+
+#[tokio::test]
+async fn search_ranks_metadata_matches_above_body_only_matches() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    let keyword = format!("rankkw{id}");
+    let body_slug = format!("search-rank-body-{id}");
+    let title_slug = format!("search-rank-title-{id}");
+
+    // Ingest the body-only match first so ties cannot explain the order.
+    env.ingest(
+        &server,
+        &body_slug,
+        "Firmware notes",
+        &long_body("Firmware notes", &keyword, "unused_identifier"),
+        "public",
+    )
+    .await
+    .assert_status_ok();
+    env.ingest(
+        &server,
+        &title_slug,
+        &format!("Reference {keyword}"),
+        "# Reference\n\nShort page.",
+        "public",
+    )
+    .await
+    .assert_status_ok();
+    env.wait_for_search_indexing().await;
+
+    let results: Vec<serde_json::Value> = server
+        .get("/api/v1/search")
+        .add_query_param("q", &keyword)
+        .await
+        .json();
+    let slugs: Vec<_> = results.iter().filter_map(|r| r["slug"].as_str()).collect();
+    assert_eq!(slugs, [title_slug.as_str(), body_slug.as_str()]);
+}
+
+#[tokio::test]
+async fn search_keeps_entries_indexed_before_full_body_search() {
+    let env = common::TestEnv::start().await;
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    let slug = format!("search-legacy-{id}");
+    // A pre-upgrade entry has no body; it stays findable by its old fields.
+    let legacy = lekton::search::client::SearchDocument {
+        id: lekton::search::client::slug_to_id(&slug),
+        slug: slug.clone(),
+        title: format!("Legacy legacykw{id}"),
+        access_level: "public".into(),
+        is_draft: false,
+        service_owner: "team".into(),
+        tags: vec![],
+        content_preview: "Legacy preview".into(),
+        content: String::new(),
+        last_updated: 0,
+        source_id: None,
+        release: None,
+    };
+    env.search.index_document(&legacy).await.unwrap();
+    env.wait_for_search_indexing().await;
+
+    let hits = env
+        .search
+        .search(&format!("legacykw{id}"), None, false)
+        .await
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].slug, slug);
+    assert_eq!(hits[0].content_preview, "Legacy preview");
+}

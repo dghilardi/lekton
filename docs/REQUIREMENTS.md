@@ -141,6 +141,7 @@ an archiving sync, finalize or promote a release.
 ### 4.5. Intelligent Search
 
 * **Engine:** Meilisearch.
+* **Full text:** One entry per document, searchable by title, preview, slug, tags and the full plain-text body (Markdown or editor HTML; code kept verbatim). Metadata outranks body-only matches. Results carry the preview, or a cropped snippet around a body match, never the body itself.
 * **Scoped Search:** When a user logs in, generate a temporary Meilisearch Tenant Token containing the filter: `filter = "role IN ['public', 'user_role']"`.
 * **Vector Readiness:** Ingestion pipeline must be extensible to generate embeddings (via `rust-bert` or OpenAI API) and store them for future RAG (Chat with Docs) features.
 

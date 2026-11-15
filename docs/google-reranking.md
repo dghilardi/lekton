@@ -112,13 +112,13 @@ vector-subquery anchors follow. Lexical-only documents can reach the reranker an
 final context even with no global vector hits. Existing candidate/context budgets
 still apply to the merged pool and final/fallback selection.
 
-**Index tradeoff:** Meilisearch currently indexes title, slug, tags and a short
-(~200-character) content preview, not full document bodies. Discovery can miss an
-identifier appearing only deep in a document unless its metadata/preview matches.
-Passage selection inside a discovered document uses dense semantic relevance,
-not chunk-level BM25. This keeps existing indexes and stable Qdrant payloads;
-no reindex, re-embedding or synthetic preview chunks are required. Full-body or
-chunk-level lexical indexing would require a separate indexing change.
+**Index tradeoff:** Meilisearch indexes one entry per document: title, slug,
+tags, the short preview and the full plain-text body (see
+[search indexing](operations.md#full-text-indexing)), so an identifier deep in
+a document can discover it. Entries indexed before full-body search only match
+their metadata and preview until a search re-index. Passage selection inside a
+discovered document uses dense semantic relevance, not chunk-level BM25, so no
+re-embedding or Qdrant change is needed.
 
 Without a reranker, the pre/post lists stay final-context sized. Vector-only
 retrieval requests only that many hits. Hybrid retrieval retains its existing

@@ -306,5 +306,5 @@ contribute relevance-ranked Qdrant passages under the same visibility filters.
 Vector and lexical rankings have equal branch-level RRF weight before candidate
 capping. Fan-out is at most five query variants, eight lexical documents and three
 passages per document. HyDE changes embedding inputs only. Meilisearch discovery
-still covers metadata and previews rather than full bodies; scoped passage
-selection is semantic. See [retrieval behavior](google-reranking.md#limits-and-fallback).
+matches document metadata and full bodies (one entry per document); scoped
+passage selection is semantic. See [retrieval behavior](google-reranking.md#limits-and-fallback).

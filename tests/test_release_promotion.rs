@@ -705,3 +705,64 @@ async fn a_reindex_clears_needs_reindex_only_if_the_document_is_unchanged() {
         .unwrap();
     assert!(!cleared.needs_reindex);
 }
+
+/// Hidden documents stay out of search: a promotion whose new release hides a
+/// slug must remove that slug's entry rather than index the hidden copy.
+#[tokio::test]
+async fn promotion_reindex_removes_a_slug_the_new_release_hides() {
+    let env = common::TestEnv::start().await;
+
+    let visible = doc("api/secret", "1.0.0", true);
+    let hidden = Document {
+        is_hidden: true,
+        ..doc("api/secret", "1.2.0", false)
+    };
+    env.repo.create_or_update(visible.clone()).await.unwrap();
+    env.repo.create_or_update(hidden).await.unwrap();
+    env.storage
+        .put_object("docs/api_secret.md", b"# Secret\n\nbody".to_vec())
+        .await
+        .unwrap();
+    env.search
+        .index_document(&lekton::search::client::build_search_document(
+            &visible, "# Secret",
+        ))
+        .await
+        .unwrap();
+    env.wait_for_search_indexing().await;
+    assert_eq!(
+        env.search.list_indexed_slugs().await.unwrap(),
+        ["api/secret"]
+    );
+
+    let affected = env
+        .repo
+        .promote_release("assets-manager", "1.2.0")
+        .await
+        .unwrap();
+    lekton::api::releases::reindex_promoted(
+        env.repo.as_ref(),
+        env.release_repo.as_ref(),
+        "assets-manager",
+        env.storage.as_ref(),
+        Some(env.search.as_ref()),
+        None,
+        &affected,
+    )
+    .await;
+    env.wait_for_search_indexing().await;
+
+    assert!(
+        env.search.list_indexed_slugs().await.unwrap().is_empty(),
+        "the hidden copy must not be indexed"
+    );
+    let latest = env
+        .repo
+        .find_all_by_slug("api/secret")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|d| d.is_latest)
+        .unwrap();
+    assert!(!latest.needs_reindex);
+}

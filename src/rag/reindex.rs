@@ -63,11 +63,15 @@ pub async fn run_reindex(
     // embedding them would spend vectors on duplicates.
     // A sweep is only safe against a complete listing of both collections.
     let mut listed = true;
-    let documents: Vec<Document> = match document_repo
-        .list_by_access_levels(None, true, &crate::versioning::ReleasePins::default())
-        .await
-    {
-        Ok(docs) => docs.into_iter().filter(|d| !d.is_archived).collect(),
+    // The latest copy of every slug, hidden ones included: they are removed
+    // from RAG explicitly (and, when flagged, from search too, so the flag can
+    // be cleared). Archived latest copies have no entries to keep and are
+    // left to the sweep.
+    let documents: Vec<Document> = match document_repo.list_all().await {
+        Ok(docs) => latest_copies(docs)
+            .into_iter()
+            .filter(|d| !d.is_archived)
+            .collect(),
         Err(e) => {
             tracing::error!("RAG reindex: failed to list documents: {e}");
             listed = false;
@@ -92,7 +96,7 @@ pub async fn run_reindex(
 
     let live_slugs: HashSet<String> = documents
         .iter()
-        .filter(|d| !d.skip_rag)
+        .filter(|d| !d.skip_rag && !d.is_hidden)
         .map(|d| d.slug.clone())
         .collect();
     let live_attachment_keys: HashSet<String> = assets.iter().map(|a| a.key.clone()).collect();
@@ -125,6 +129,32 @@ pub async fn run_reindex(
             }
         }
     }
+}
+
+/// The copy of each slug that search and RAG carry: the one resolving to its
+/// source's `latest` release. Keeps the listing's order of first appearance.
+fn latest_copies(documents: Vec<Document>) -> Vec<Document> {
+    let mut order = Vec::new();
+    let mut by_slug = std::collections::HashMap::<String, Vec<Document>>::new();
+    for document in documents {
+        if !by_slug.contains_key(&document.slug) {
+            order.push(document.slug.clone());
+        }
+        by_slug
+            .entry(document.slug.clone())
+            .or_default()
+            .push(document);
+    }
+    order
+        .into_iter()
+        .filter_map(|slug| by_slug.remove(&slug))
+        .filter_map(|candidates| {
+            crate::db::repository::resolve_by_release(
+                candidates,
+                &crate::versioning::ReleasePins::default(),
+            )
+        })
+        .collect()
 }
 
 /// Re-index only the documents/attachments that failed in the previous run,
@@ -276,11 +306,12 @@ async fn reindex_items(
             rag: Some(rag),
         };
 
-        // A skip_rag document (e.g. a PDF upload stub) is deliberately excluded
-        // from RAG; a full reindex must respect that rather than silently
-        // re-adding it, and clean up any chunks left by an earlier ingest.
-        // `index_everywhere` does the same, but needs the body for search.
-        if doc.skip_rag && targets.search.is_none() {
+        // A hidden document must not be in RAG (nor search) at all. A skip_rag
+        // document (e.g. a PDF upload stub) is deliberately excluded from RAG;
+        // a full reindex must respect that rather than silently re-adding it,
+        // and clean up any chunks left by an earlier ingest. `index_everywhere`
+        // does the same for skip_rag, but needs the body for search.
+        if doc.is_hidden || (doc.skip_rag && targets.search.is_none()) {
             let failures = remove_everywhere(targets, &doc.slug).await;
             if record_document_outcome(reindex, document_repo, doc, "remove", failures).await {
                 failed += 1;
@@ -1040,5 +1071,48 @@ mod tests {
         )
         .await;
         assert_eq!(*doc_repo.cleared.lock().unwrap(), vec!["flagged"]);
+    }
+
+    #[tokio::test]
+    async fn run_reindex_removes_hidden_documents_instead_of_indexing_them() {
+        let storage = Arc::new(MockStorage::new());
+        storage
+            .objects
+            .lock()
+            .unwrap()
+            .insert("docs/visible.md".to_string(), b"# Body".to_vec());
+        let mut hidden = make_doc("hidden", false);
+        hidden.is_hidden = true;
+        let mut flagged_hidden = make_doc("flagged-hidden", false);
+        flagged_hidden.is_hidden = true;
+        flagged_hidden.needs_reindex = true;
+        let doc_repo = Arc::new(FakeDocRepo {
+            docs: vec![make_doc("visible", false), hidden, flagged_hidden],
+            ..Default::default()
+        });
+        let rag = Arc::new(RecordingRagService::default());
+        let search = Arc::new(crate::test_utils::RecordingSearch::default());
+
+        run_reindex(
+            Arc::new(ReindexState::default()),
+            doc_repo.clone(),
+            storage,
+            rag.clone(),
+            Arc::new(FakeAssetRepo::new(vec![])),
+            None,
+            Some(search.clone()),
+        )
+        .await;
+
+        assert_eq!(*rag.indexed_slugs.lock().unwrap(), vec!["visible"]);
+        assert_eq!(
+            *rag.deleted_slugs.lock().unwrap(),
+            vec!["hidden", "flagged-hidden"]
+        );
+        // Flagged: removed from search too, then cleared.
+        assert_eq!(search.deleted(), vec!["flagged-hidden"]);
+        assert_eq!(*doc_repo.cleared.lock().unwrap(), vec!["flagged-hidden"]);
+        // Hidden documents are not live: their chunks are swept.
+        assert_eq!(rag.sweeps.lock().unwrap()[0].0, vec!["visible".to_string()]);
     }
 }

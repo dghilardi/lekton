@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Keep hidden documents out of search and RAG: ingest, editor saves and release promotion indexed them, while reindexes excluded them. They are now removed from both indexes whenever written, including when a document becomes hidden.
+
 - Let search and RAG reindexes clear `needs_reindex`: a flagged document is indexed into every enabled index in the same pass and cleared once all succeeded, unless it was written again meanwhile. Previously the flag stayed set until the next ingest.
 
 - Sweep orphans in full reindexes: the search reindex removes Meilisearch documents and attachment pages MongoDB no longer knows, and the RAG reindex removes their Qdrant chunks, including chunks from the payload format before `source_kind`. Nothing is swept when listing MongoDB fails or finds no live document.

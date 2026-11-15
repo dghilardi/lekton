@@ -428,6 +428,19 @@ pub async fn reindex_promoted(
             continue;
         };
 
+        let targets = crate::indexing::IndexTargets { search, rag };
+
+        // A hidden document must not be in either index: remove the entry the
+        // previous latest copy left instead of indexing this one.
+        if doc.is_hidden {
+            let failures = crate::indexing::remove_everywhere(targets, slug).await;
+            for failure in &failures {
+                tracing::warn!(slug = %slug, "promotion reindex: removing hidden document failed: {failure}");
+            }
+            acknowledge_promoted(repo, release_repo, source_id, &doc, failures.is_empty()).await;
+            continue;
+        }
+
         let content = match storage.get_object(&doc.s3_key).await {
             Ok(Some(bytes)) => String::from_utf8_lossy(&bytes).into_owned(),
             Ok(None) => {
@@ -440,54 +453,40 @@ pub async fn reindex_promoted(
             }
         };
 
-        let mut ok = true;
-
-        if let Some(search) = search {
-            let search_doc = crate::search::client::build_search_document(&doc, &content);
-            if let Err(e) = search.index_document(&search_doc).await {
-                tracing::warn!(slug = %slug, "promotion reindex: search index failed: {e}");
-                ok = false;
-            }
+        let failures = crate::indexing::index_everywhere(targets, &doc, &content).await;
+        for failure in &failures {
+            tracing::warn!(slug = %slug, "promotion reindex: indexing failed: {failure}");
         }
+        acknowledge_promoted(repo, release_repo, source_id, &doc, failures.is_empty()).await;
+    }
+}
 
-        if let Some(rag) = rag {
-            let result = if doc.skip_rag {
-                rag.delete_document(slug).await
-            } else {
-                rag.index_document(
-                    &doc.slug,
-                    &doc.title,
-                    &content,
-                    &doc.access_level,
-                    doc.is_draft,
-                    &doc.tags,
-                    doc.source_id.as_deref(),
-                    doc.release.as_deref(),
-                )
-                .await
-            };
-            if let Err(e) = result {
-                tracing::warn!(slug = %slug, "promotion reindex: RAG index failed: {e}");
-                ok = false;
-            }
+/// After a promoted slug was reconciled: clear its stale flag and its backlog
+/// entry, but only if every index took it.
+#[cfg(feature = "ssr")]
+async fn acknowledge_promoted(
+    repo: &dyn crate::db::repository::DocumentRepository,
+    release_repo: &dyn crate::db::release_repository::ReleaseRepository,
+    source_id: &str,
+    doc: &crate::db::models::Document,
+    mut ok: bool,
+) {
+    let slug = &doc.slug;
+    // Field-scoped, never a full write: indexing may have taken long enough
+    // for another promotion to land, and replacing the document from this
+    // stale snapshot would undo it.
+    if ok && doc.needs_reindex {
+        if let Err(e) = repo
+            .clear_needs_reindex(&doc.slug, doc.release.as_deref())
+            .await
+        {
+            tracing::warn!(slug = %slug, "promotion reindex: cannot clear needs_reindex: {e}");
+            ok = false;
         }
-
-        // Field-scoped, never a full write: indexing above may have taken long
-        // enough for another promotion to land, and replacing the document from
-        // this stale snapshot would undo it.
-        if ok && doc.needs_reindex {
-            if let Err(e) = repo
-                .clear_needs_reindex(&doc.slug, doc.release.as_deref())
-                .await
-            {
-                tracing::warn!(slug = %slug, "promotion reindex: cannot clear needs_reindex: {e}");
-                ok = false;
-            }
-        }
-        if ok {
-            if let Err(e) = release_repo.clear_reindex_pending(source_id, slug).await {
-                tracing::warn!(slug = %slug, "promotion reindex: cannot acknowledge success: {e}");
-            }
+    }
+    if ok {
+        if let Err(e) = release_repo.clear_reindex_pending(source_id, slug).await {
+            tracing::warn!(slug = %slug, "promotion reindex: cannot acknowledge success: {e}");
         }
     }
 }

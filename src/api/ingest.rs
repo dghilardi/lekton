@@ -415,46 +415,24 @@ pub(crate) async fn process_authorized_ingest(
     //     not indexed at all. Note it must not *delete* either: the slug's index
     //     entry belongs to whichever release currently is latest, and clearing it
     //     would take that release's content down with it.
-    let search_doc = ctx
-        .search
-        .as_ref()
-        .filter(|_| doc.is_latest)
-        .map(|_| crate::search::client::build_search_document(&doc, &raw_content));
-
+    //     A hidden document must not be in either index at all, so it is
+    //     removed instead, which also clears out a document that just became
+    //     hidden.
     let mut indexed_ok = true;
-
-    if let (Some(search_svc), Some(search_doc)) = (ctx.search, search_doc) {
-        if let Err(e) = search_svc.index_document(&search_doc).await {
-            tracing::warn!(slug = %doc.slug, "Failed to index document in search: {e}");
-            indexed_ok = false;
+    if doc.is_latest {
+        let targets = crate::indexing::IndexTargets {
+            search: ctx.search,
+            rag: ctx.rag,
+        };
+        let failures = if doc.is_hidden {
+            crate::indexing::remove_everywhere(targets, &doc.slug).await
+        } else {
+            crate::indexing::index_everywhere(targets, &doc, &raw_content).await
+        };
+        for failure in &failures {
+            tracing::warn!(slug = %doc.slug, "Failed to reconcile document indexes: {failure}");
         }
-    }
-
-    if let Some(rag) = ctx.rag.filter(|_| doc.is_latest) {
-        if doc.skip_rag {
-            // Deliberately excluded from RAG (e.g. PDF upload stub — the linked
-            // attachment is indexed instead). Delete any chunks a previous
-            // ingest may have left, so opting out cleans up stale vectors.
-            if let Err(e) = rag.delete_document(&doc.slug).await {
-                tracing::warn!(slug = %doc.slug, "Failed to remove RAG chunks for skip_rag document: {e}");
-                indexed_ok = false;
-            }
-        } else if let Err(e) = rag
-            .index_document(
-                &doc.slug,
-                &doc.title,
-                &raw_content,
-                &doc.access_level,
-                doc.is_draft,
-                &doc.tags,
-                doc.source_id.as_deref(),
-                doc.release.as_deref(),
-            )
-            .await
-        {
-            tracing::warn!(slug = %doc.slug, "Failed to index document in RAG: {e}");
-            indexed_ok = false;
-        }
+        indexed_ok = failures.is_empty();
     }
 
     doc.needs_reindex = !indexed_ok;
@@ -465,15 +443,12 @@ pub(crate) async fn process_authorized_ingest(
     // A failure here is logged, not flagged on this document: its own entries
     // are fine, and the next full reindex sweeps the orphans.
     if let Some(old_slug) = renamed_from.as_deref().filter(|_| doc.is_latest) {
-        if let Some(search_svc) = ctx.search {
-            if let Err(e) = search_svc.delete_document(old_slug).await {
-                tracing::warn!(slug = %old_slug, "Failed to remove renamed slug from search: {e}");
-            }
-        }
-        if let Some(rag) = ctx.rag {
-            if let Err(e) = rag.delete_document(old_slug).await {
-                tracing::warn!(slug = %old_slug, "Failed to remove renamed slug from RAG: {e}");
-            }
+        let targets = crate::indexing::IndexTargets {
+            search: ctx.search,
+            rag: ctx.rag,
+        };
+        for failure in crate::indexing::remove_everywhere(targets, old_slug).await {
+            tracing::warn!(slug = %old_slug, "Failed to remove renamed slug: {failure}");
         }
     }
 
@@ -2533,5 +2508,35 @@ mod tests {
         assert!(outcome
             .assets_to_recompute
             .contains(&"assets/old.pdf".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_hidden_document_is_removed_from_search_and_rag_instead_of_indexed() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let search = crate::test_utils::RecordingSearch::default();
+        let rag = crate::test_utils::RecordingRag::default();
+        let mut ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+        ctx.search = Some(&search);
+        ctx.rag = Some(&rag);
+
+        process_ingest(&ctx, make_request("valid-token", "docs/page"))
+            .await
+            .unwrap();
+
+        // The document becomes hidden: its entries must go.
+        let mut hidden = make_request("valid-token", "docs/page");
+        hidden.is_hidden = true;
+        let outcome = process_ingest(&ctx, hidden).await.unwrap();
+
+        assert!(outcome.response.indexed);
+        assert_eq!(search.indexed(), vec!["docs/page"], "indexed once, visible");
+        assert_eq!(rag.indexed(), vec!["docs/page"]);
+        assert_eq!(search.deleted(), vec!["docs/page"]);
+        assert_eq!(rag.deleted(), vec!["docs/page"]);
+        let doc = repo.find_by_slug("docs/page").await.unwrap().unwrap();
+        assert!(doc.is_hidden);
+        assert!(!doc.needs_reindex);
     }
 }

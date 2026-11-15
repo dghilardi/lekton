@@ -299,13 +299,21 @@ async fn finalize_document_save(
     let slug = doc.slug.clone();
     let links_out = doc.links_out.clone();
 
-    let search_doc =
-        search_service.map(|_| crate::search::client::build_search_document(&doc, html_content));
-
     // Index into search before persisting so `needs_reindex` records whether
-    // the stored document is in sync with the index.
+    // the stored document is in sync with the index. A hidden page must not be
+    // in search or RAG at all, so it is removed from both instead.
     let mut warnings = Vec::new();
-    if let (Some(svc), Some(sdoc)) = (search_service, search_doc) {
+    if doc.is_hidden {
+        let targets = crate::indexing::IndexTargets {
+            search: search_service,
+            rag: rag_service,
+        };
+        for failure in crate::indexing::remove_everywhere(targets, &slug).await {
+            tracing::warn!(slug = %slug, "Failed to remove hidden document: {failure}");
+            warnings.push(format!("index removal failed: {failure}"));
+        }
+    } else if let Some(svc) = search_service {
+        let sdoc = crate::search::client::build_search_document(&doc, html_content);
         if let Err(e) = svc.index_document(&sdoc).await {
             tracing::warn!(slug = %slug, "Failed to index document in search: {e}");
             warnings.push(format!("search indexing failed: {e}"));
@@ -1237,6 +1245,37 @@ mod tests {
         assert_eq!(doc.source_id, None);
         assert!(!doc.is_draft);
         assert!(!doc.is_archived);
+    }
+
+    #[tokio::test]
+    async fn save_of_a_hidden_page_removes_it_from_search_and_rag() {
+        let doc_repo = CapturingDocumentRepo::default();
+        let asset_repo = StubAssetRepo::default();
+        let search = crate::test_utils::RecordingSearch::default();
+        let rag = crate::test_utils::RecordingRag::default();
+        let storage = MockStorage::new();
+        let mut hidden = make_doc();
+        hidden.is_hidden = true;
+
+        finalize_document_save(
+            &doc_repo,
+            &asset_repo,
+            Some(&search),
+            Some(&rag),
+            None,
+            &storage,
+            hidden,
+            "<p>body</p>",
+            &[],
+        )
+        .await
+        .unwrap();
+
+        assert!(search.indexed().is_empty());
+        assert_eq!(search.deleted(), vec!["guide"]);
+        assert_eq!(rag.deleted(), vec!["guide"]);
+        let saved = doc_repo.saved.lock().unwrap().clone().unwrap();
+        assert!(!saved.needs_reindex);
     }
 
     #[test]

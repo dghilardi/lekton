@@ -179,7 +179,13 @@ pub async fn run_reindex_failed(
         Vec::new()
     } else {
         match document_repo.find_by_slugs(&failed_docs).await {
-            Ok(docs) => docs,
+            // Every release copy of each slug comes back; only the latest one
+            // is indexed, exactly as in a full run. Indexing the others would
+            // overwrite the slug's chunks with an older release.
+            Ok(docs) => latest_copies(docs)
+                .into_iter()
+                .filter(|d| !d.is_archived)
+                .collect(),
             Err(e) => {
                 tracing::error!("RAG retry: failed to load documents: {e}");
                 Vec::new()
@@ -663,6 +669,8 @@ mod tests {
         fail_slugs: Mutex<Vec<String>>,
         /// The live sets each `sweep_orphans` call received.
         sweeps: Mutex<Vec<(Vec<String>, Vec<String>)>>,
+        /// (slug, release) of every successful `index_document`.
+        indexed_releases: Mutex<Vec<(String, Option<String>)>>,
     }
 
     #[async_trait]
@@ -676,13 +684,17 @@ mod tests {
             _: bool,
             _: &[String],
             _: Option<&str>,
-            _: Option<&str>,
+            release: Option<&str>,
         ) -> Result<(), AppError> {
             // Record every attempt, then fail the ones marked to fail.
             self.indexed_slugs.lock().unwrap().push(slug.to_string());
             if self.fail_slugs.lock().unwrap().iter().any(|s| s == slug) {
                 return Err(AppError::Internal(format!("index {slug} rejected")));
             }
+            self.indexed_releases
+                .lock()
+                .unwrap()
+                .push((slug.to_string(), release.map(str::to_string)));
             Ok(())
         }
         async fn delete_document(&self, slug: &str) -> Result<(), AppError> {
@@ -1114,5 +1126,51 @@ mod tests {
         assert_eq!(*doc_repo.cleared.lock().unwrap(), vec!["flagged-hidden"]);
         // Hidden documents are not live: their chunks are swept.
         assert_eq!(rag.sweeps.lock().unwrap()[0].0, vec!["visible".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn run_reindex_failed_indexes_only_the_latest_release_of_a_slug() {
+        let storage = Arc::new(MockStorage::new());
+        let mut old = make_doc("guide", false);
+        old.release = Some("1.0.0".to_string());
+        old.is_latest = false;
+        old.s3_key = "docs/1.0.0/guide.md".to_string();
+        let mut latest = make_doc("guide", false);
+        latest.release = Some("2.0.0".to_string());
+        latest.s3_key = "docs/2.0.0/guide.md".to_string();
+        for doc in [&old, &latest] {
+            storage
+                .objects
+                .lock()
+                .unwrap()
+                .insert(doc.s3_key.clone(), b"# Guide".to_vec());
+        }
+        let rag = Arc::new(RecordingRagService::default());
+        let reindex = Arc::new(ReindexState::default());
+        reindex
+            .failed_docs
+            .lock()
+            .unwrap()
+            .push("guide".to_string());
+
+        run_reindex_failed(
+            reindex,
+            Arc::new(FakeDocRepo {
+                // The older copy first, as a listing may return it.
+                docs: vec![old, latest],
+                ..Default::default()
+            }),
+            storage,
+            rag.clone(),
+            Arc::new(FakeAssetRepo::new(vec![])),
+            None,
+            None,
+        )
+        .await;
+
+        assert_eq!(
+            *rag.indexed_releases.lock().unwrap(),
+            vec![("guide".to_string(), Some("2.0.0".to_string()))]
+        );
     }
 }

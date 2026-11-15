@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Retry only the latest release of each failed document in the RAG “retry failed” run; it re-indexed every release copy, so an older release could overwrite the latest one's chunks.
+
 - Refuse to start when the Qdrant collection's vector size differs from `rag.embedding_dimensions`, with a message saying how to fix it, instead of starting and failing every RAG write.
 
 - Detect Meilisearch writes that are accepted but then fail: writes wait up to 10 seconds for their task, and a failed or unfinished task now reports an error, so ingest, editor saves and promotions set `needs_reindex` instead of recording a document search never received as in sync.

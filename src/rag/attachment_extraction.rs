@@ -446,8 +446,20 @@ impl AttachmentExtractionService {
                 return Ok(false);
             }
             Err(e) => {
-                tracing::warn!(key, "attachment extraction: cannot re-read references: {e}");
-                return Ok(true);
+                // The indexed ACL cannot be confirmed against the current
+                // references, so fail closed like a failed repair.
+                let failure = format!("cannot re-read references after indexing: {e}");
+                fail_closed_attachment_acl(
+                    key,
+                    self.asset_repo.as_ref(),
+                    self.rag.as_ref(),
+                    self.attachment_search.as_deref(),
+                    std::slice::from_ref(&failure),
+                )
+                .await;
+                return Err(AppError::Internal(format!(
+                    "attachment deindexed: {failure}"
+                )));
             }
         };
         let view = referencing_view(self.document_repo.as_ref(), &references).await;
@@ -955,6 +967,8 @@ mod tests {
         /// call, the way a document ingest lands while the worker is busy.
         arriving_reference: Mutex<Option<(usize, crate::db::models::DocumentReference)>>,
         find_calls: std::sync::atomic::AtomicUsize,
+        /// The (1-based) `find_by_key` call that fails.
+        fail_find_at: Mutex<Option<usize>>,
     }
 
     impl FakeAssetRepo {
@@ -963,6 +977,7 @@ mod tests {
                 assets: Mutex::new(assets),
                 arriving_reference: Mutex::new(None),
                 find_calls: Default::default(),
+                fail_find_at: Mutex::new(None),
             }
         }
 
@@ -989,6 +1004,9 @@ mod tests {
             let mut assets = self.assets.lock().unwrap();
             let found = assets.iter().find(|a| a.key == key).cloned();
             let call = self.find_calls.fetch_add(1, Ordering::SeqCst) + 1;
+            if *self.fail_find_at.lock().unwrap() == Some(call) {
+                return Err(AppError::Internal("asset lookup failed".to_string()));
+            }
             let mut arriving = self.arriving_reference.lock().unwrap();
             if arriving.as_ref().is_some_and(|(after, _)| *after == call) {
                 let (_, reference) = arriving.take().unwrap();
@@ -1594,6 +1612,32 @@ mod tests {
         assert_eq!(
             *search.updated_acl.lock().unwrap(),
             Some((key.to_string(), vec!["internal".to_string()]))
+        );
+    }
+
+    /// The references cannot be re-read after indexing: the indexed ACL cannot
+    /// be confirmed, so the attachment fails closed and the run reports it.
+    #[tokio::test]
+    async fn a_failed_reference_reread_after_indexing_fails_closed() {
+        let key = "attachments/docs/guide/reread.txt";
+        let (asset_repo, storage) = text_attachment(key, vec!["docs/guide".into()]).await;
+        // Reads: on start, after extraction, then the post-index one.
+        *asset_repo.fail_find_at.lock().unwrap() = Some(3);
+        let rag = Arc::new(RecordingRagService::default());
+
+        let service = AttachmentExtractionService::new(
+            storage,
+            asset_repo.clone(),
+            Arc::new(StaticDocumentRepo(vec![internal_doc("docs/guide")])),
+            rag.clone(),
+            None,
+            Arc::new(AttachmentExtractors::new(100, None)),
+        );
+        assert!(service.process_one(key, false).await.is_err());
+        assert!(rag.deleted_attachment.load(Ordering::SeqCst));
+        assert_eq!(
+            asset_repo.find_local(key).unwrap().extraction_status,
+            ExtractionStatus::Failed
         );
     }
 

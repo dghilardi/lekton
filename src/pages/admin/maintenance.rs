@@ -240,17 +240,31 @@ fn ConsistencySection() -> impl IntoView {
                             <div class="flex gap-4"><dt>{name}</dt><dd class="tabular-nums">{count}</dd></div>
                         }).collect_view()}</dl>
                         {report.skipped.into_iter().map(|s| view! { <p class="text-warning">{s}</p> }).collect_view()}
-                        <div class="space-y-4 mt-4">{report.findings.into_iter().map(|f| view! {
-                            <details class="border border-base-300 rounded-box p-4">
-                                <summary class="cursor-pointer font-medium">{f.title} ": " {f.count}</summary>
-                                <p class="text-sm mt-2">{f.description}</p>
-                                <ul class="list-disc pl-5 break-all text-sm">{f.samples.into_iter().map(|s| view! { <li>{s}</li> }).collect_view()}</ul>
-                            </details>
+                        <div class="space-y-4 mt-4">{report.findings.into_iter().map(|finding| view! {
+                            <ConsistencyFindingDetails finding=finding />
                         }).collect_view()}</div>
                     }.into_any(),
                 })}
             </div>
         </section>
+    }
+}
+
+#[component]
+fn ConsistencyFindingDetails(
+    finding: crate::server::maintenance::ConsistencyFinding,
+) -> impl IntoView {
+    view! {
+        <details class="border border-base-300 rounded-box p-4">
+            <summary class="cursor-pointer font-medium">
+                {finding.title} ": " {finding.count}
+                {finding.informational.then(|| view! {
+                    <span class="badge badge-info badge-sm ml-2">"Informational"</span>
+                })}
+            </summary>
+            <p class="text-sm mt-2">{finding.description}</p>
+            <ul class="list-disc pl-5 break-all text-sm">{finding.samples.into_iter().map(|s| view! { <li>{s}</li> }).collect_view()}</ul>
+        </details>
     }
 }
 
@@ -301,5 +315,30 @@ fn RevisionRetentionSection() -> impl IntoView {
                 on_cancel=Callback::new(move |_| confirm.set(false))
                 on_confirm=Callback::new(move |_| { confirm.set(false); prune.dispatch(()); }) />
         </section>
+    }
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn informational_findings_are_labeled_in_the_summary() {
+        for informational in [true, false] {
+            let finding = crate::server::maintenance::ConsistencyFinding {
+                id: "test".into(),
+                title: "Stored history".into(),
+                description: "Historical objects are expected.".into(),
+                count: 7,
+                samples: vec!["docs/history/example/1.md".into()],
+                informational,
+            };
+            let html = view! { <ConsistencyFindingDetails finding=finding /> }.to_html();
+            let summary = html.split("</summary>").next().unwrap();
+            assert_eq!(summary.contains("Informational"), informational, "{html}");
+            assert!(summary.contains("Stored history") && summary.contains('7'));
+            assert!(html.contains("Historical objects are expected."));
+            assert!(html.contains("docs/history/example/1.md"));
+        }
     }
 }

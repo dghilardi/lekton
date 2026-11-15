@@ -112,6 +112,12 @@ mod ssr {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
         let config = AppConfig::load().map_err(|e| format!("config load failed: {e}"))?;
+        if args.top_k > config.rag.context_chunk_limit {
+            eprintln!(
+                "warning: --top-k {} exceeds rag.context_chunk_limit {}; post-rerank metrics are limited by the final context budget. Use a smaller --top-k or raise context_chunk_limit for comparable pre/post metrics.",
+                args.top_k, config.rag.context_chunk_limit
+            );
+        }
         let ctx = RagEvalContext::from_config(&config)
             .await
             .map_err(|e| format!("RagEvalContext init failed: {e}"))?;

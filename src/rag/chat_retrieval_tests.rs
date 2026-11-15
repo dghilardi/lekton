@@ -500,7 +500,7 @@ async fn decomposition_and_hyde_only_expand_queries_and_filter_attachments_befor
     });
     let embedding = Arc::new(RecordingEmbedding::default());
     let reranker = Arc::new(RecordingReranker {
-        promote: "p14".into(),
+        promote: "p8".into(),
         ..Default::default()
     });
     let mut stale = chunk(999);
@@ -546,6 +546,7 @@ async fn decomposition_and_hyde_only_expand_queries_and_filter_attachments_befor
             && c.chunk_text.starts_with("stored passage")));
     assert_eq!(reranker.seen.lock().unwrap()[0].0, "original question");
     assert_eq!(result.post_rerank.len(), 3);
+    assert_eq!(result.post_rerank[0].point_id, "p8");
     drop(embedded);
     let thrifty_embedding = Arc::new(RecordingEmbedding::default());
     let thrifty_reranker = Arc::new(RecordingReranker::default());

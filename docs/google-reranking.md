@@ -61,7 +61,11 @@ LKN__RAG__CONTEXT_CHUNK_LIMIT=5
 These map to `rag.retrieval_candidate_limit` and `rag.context_chunk_limit`.
 Both are positive; the final context limit must not exceed the candidate limit,
 and the candidate limit must not exceed **100**. Defaults are 50 candidates and
-5 final chunks. The same fields work in `rag-bench` TOML. Invalid budgets are
+5 final chunks. The same fields work in `rag-bench` TOML. For CPU-hosted
+cross-encoders, lower `LKN__RAG__RETRIEVAL_CANDIDATE_LIMIT` if scoring 50 passages
+approaches the 30-second timeout. The analyzer's subquery count is not currently
+hard-capped: each subquery can fetch this many hits, while only the merged pool
+is capped. Consider decomposition latency when tuning the candidate limit. Invalid budgets are
 rejected at startup and in retrieval-only evaluation initialization.
 
 Each vector/subquery search fetches up to the candidate limit when reranking is
@@ -91,6 +95,7 @@ optional parent-section expansion still apply after chunk selection.
 `rag-eval` uses this same pipeline: `pre_rerank` exposes the bounded candidate pool
 and `post_rerank` the bounded final context. Choose a comparison `--top-k` no larger
 than the final context limit, or raise the context budget for larger-k evaluations.
+Both evaluation CLIs warn when `--top-k` exceeds the final context limit.
 No live Google quality evaluation is implied by the mock regression tests.
 
 The [ranking guide](https://docs.cloud.google.com/generative-ai-app-builder/docs/ranking)

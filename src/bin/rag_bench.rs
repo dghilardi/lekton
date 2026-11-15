@@ -503,6 +503,12 @@ mod ssr {
         keep_collections: bool,
     ) -> Result<ConfigReport, String> {
         bench.validate()?;
+        if top_k > bench.context_chunk_limit {
+            eprintln!(
+                "[{}] warning: --top-k {} exceeds context_chunk_limit {}; post-rerank metrics are limited by the final context budget. Use a smaller --top-k or raise context_chunk_limit for comparable pre/post metrics.",
+                bench.name, top_k, bench.context_chunk_limit
+            );
+        }
         let collection = bench.collection_name();
 
         let vectorstore = QdrantVectorStore::new(&bench.qdrant_url, &collection)

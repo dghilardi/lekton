@@ -200,7 +200,7 @@ pub struct RetrievalOutput {
 pub enum RetrievalMode {
     /// Every configured step.
     Full,
-    /// Vector search only: no rewriter, analyzer, HyDE or reranker.
+    /// Vector search only: no rewriter, analyzer, HyDE, lexical search or reranker.
     Thrifty,
 }
 

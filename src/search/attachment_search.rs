@@ -15,6 +15,8 @@ use crate::error::AppError;
 #[cfg(feature = "ssr")]
 use crate::rag::service::AttachmentPage;
 #[cfg(feature = "ssr")]
+use crate::search::client::wait_for_task;
+#[cfg(feature = "ssr")]
 use async_trait::async_trait;
 
 /// One indexed page of an attachment.
@@ -220,12 +222,19 @@ impl AttachmentSearchService for MeilisearchAttachmentService {
             return Ok(());
         }
 
-        self.index()
+        let task = self
+            .index()
             .add_documents(&docs, Some("id"))
             .await
             .map_err(|e| AppError::Internal(format!("Meilisearch attachment index error: {e}")))?;
 
-        Ok(())
+        // Tasks run in order per index, so this also covers the delete above.
+        wait_for_task(
+            &self.client,
+            task,
+            &format!("indexing attachment '{attachment_key}'"),
+        )
+        .await
     }
 
     async fn delete_attachment(&self, attachment_key: &str) -> Result<(), AppError> {
@@ -236,11 +245,20 @@ impl AttachmentSearchService for MeilisearchAttachmentService {
         let mut query = DocumentDeletionQuery::new(&index);
         query.with_filter(&filter);
 
-        match index.delete_documents_with(&query).await {
-            Ok(_) => Ok(()),
-            Err(e) => Err(AppError::Internal(format!(
-                "Meilisearch attachment delete error: {e}"
-            ))),
+        let task = index
+            .delete_documents_with(&query)
+            .await
+            .map_err(|e| AppError::Internal(format!("Meilisearch attachment delete error: {e}")))?;
+        match wait_for_task(
+            &self.client,
+            task,
+            &format!("deleting attachment '{attachment_key}'"),
+        )
+        .await
+        {
+            // Nothing indexed yet: there is nothing to delete either.
+            Err(e) if e.to_string().contains("index_not_found") => Ok(()),
+            result => result,
         }
     }
 
@@ -302,12 +320,19 @@ impl AttachmentSearchService for MeilisearchAttachmentService {
             // `add_or_update` merges by id (only the fields above are
             // overwritten, every other field is left untouched), unlike
             // `add_documents` which replaces the whole document.
-            self.index()
+            let task = self
+                .index()
                 .add_or_update(&updates, Some("id"))
                 .await
                 .map_err(|e| {
                     AppError::Internal(format!("Meilisearch attachment ACL update error: {e}"))
                 })?;
+            wait_for_task(
+                &self.client,
+                task,
+                &format!("updating attachment '{attachment_key}'"),
+            )
+            .await?;
 
             if results.results.len() < PAGE_SIZE {
                 return Ok(());

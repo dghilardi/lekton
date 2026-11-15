@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Detect Meilisearch writes that are accepted but then fail: writes wait up to 10 seconds for their task, and a failed or unfinished task now reports an error, so ingest, editor saves and promotions set `needs_reindex` instead of recording a document search never received as in sync.
+
 - Recompute effective access levels for users assigned a level that inherits from a changed one, not only for users assigned the changed level directly.
 
 - Index every chunk when a batch repeats a text: the embedding cache returned an empty vector for the second copy, so that chunk was skipped. Repeated texts are now also embedded only once.

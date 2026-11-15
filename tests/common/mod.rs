@@ -51,6 +51,9 @@ pub struct TestEnv {
     _mongo: ContainerAsync<Mongo>,
     _minio: ContainerAsync<MinIO>,
     _meili: ContainerAsync<Meilisearch>,
+    /// Base URL of the Meilisearch container, for tests that set up index
+    /// state the services cannot.
+    pub meili_url: String,
     pub router: Router,
     pub app_state: AppState,
     /// Raw handle to the test database. Migrations are **not** applied by
@@ -363,6 +366,7 @@ impl TestEnv {
             _mongo: mongo_container,
             _minio: minio_container,
             _meili: meili_container,
+            meili_url,
             router,
             app_state,
             db: mongo_db.clone(),

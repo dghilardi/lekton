@@ -141,4 +141,53 @@ mod search_index {
         })
         .await;
     }
+
+    /// Pre-create `index` with a primary key the services do not use, so every
+    /// write they send (which names `id` as the primary key) is rejected.
+    async fn break_index(url: &str, index: &str) {
+        let client = meilisearch_sdk::client::Client::new(url, None::<String>).unwrap();
+        let task = client
+            .create_index(index, Some("other"))
+            .await
+            .unwrap()
+            .wait_for_completion(&client, None, None)
+            .await
+            .unwrap();
+        assert!(task.is_success(), "index must not exist yet: {task:?}");
+    }
+
+    #[tokio::test]
+    async fn a_document_write_meilisearch_rejects_is_reported() {
+        let (_meili, url) = start_meilisearch().await;
+        let search = MeilisearchService::new(&url, None::<String>).unwrap();
+
+        // An id Meilisearch refuses.
+        let mut invalid = search_doc("docs/a");
+        invalid.id = "not a valid id!".to_string();
+        assert!(
+            search.index_document(&invalid).await.is_err(),
+            "a failed indexing task must not report success"
+        );
+
+        // The same write with a valid id goes through.
+        let valid = search_doc("docs/a");
+        search.index_document(&valid).await.unwrap();
+        assert_eq!(search.list_indexed_slugs().await.unwrap(), ["docs/a"]);
+    }
+
+    #[tokio::test]
+    async fn an_attachment_write_meilisearch_rejects_is_reported() {
+        let (_meili, url) = start_meilisearch().await;
+        let attachments = MeilisearchAttachmentService::new(&url, None::<String>).unwrap();
+        break_index(&url, "attachment_chunks").await;
+
+        let pages = [AttachmentPage {
+            page_number: Some(1),
+            text: "text".to_string(),
+        }];
+        assert!(attachments
+            .index_pages("x.pdf", "x.pdf", "docs/a", "A", &pages, &[])
+            .await
+            .is_err());
+    }
 }

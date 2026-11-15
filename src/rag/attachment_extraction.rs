@@ -170,7 +170,9 @@ static ACL_LOCKS: std::sync::LazyLock<
 /// the attachment's references and then write the ACL they imply. Run
 /// concurrently, the older read could land last and overwrite a newer,
 /// narrower ACL with a wider one. Each holds this guard from the read through
-/// the write, so the last write is always derived from the latest read.
+/// the write, so the last write is always derived from the latest read. The
+/// worker also holds it while replacing an attachment's keyword-search pages,
+/// so a writer updating those pages in place never interleaves with that.
 ///
 /// Process-wide: Lekton runs a single replica, and every ACL write path lives
 /// in this module, so no handle needs threading through the callers. The
@@ -358,6 +360,8 @@ impl AttachmentExtractionService {
             Ok(ExtractionOutcome::Extracted(pages)) => pages,
             Ok(ExtractionOutcome::Unsupported) => {
                 // Not indexable: drop any stale chunks and record it as skipped.
+                // Under the lock, like every other keyword-search page write.
+                let _acl_guard = lock_attachment_acl(key).await;
                 let _ = self.rag.delete_attachment(key).await;
                 if let Some(search) = &self.attachment_search {
                     let _ = search.delete_attachment(key).await;
@@ -401,6 +405,11 @@ impl AttachmentExtractionService {
                 // recompute that follows that ingest only updates pages that
                 // exist, so skipping them here would lose them for good.
                 let (document_slug, document_title) = view.link;
+                // Held from the page write through the final status write:
+                // the pages are replaced as a whole, so a writer updating them
+                // in place (an ACL update, the search re-index's page-text
+                // backfill) must land entirely before or after.
+                let acl_guard = lock_attachment_acl(key).await;
                 if let Some(search) = &self.attachment_search {
                     if let Err(e) = search
                         .index_pages(
@@ -419,7 +428,7 @@ impl AttachmentExtractionService {
                     }
                 }
                 let Some(_acl_guard) = self
-                    .reconcile_acl_after_index(key, &access_levels, &document_slug)
+                    .reconcile_acl_after_index(key, &access_levels, &document_slug, acl_guard)
                     .await?
                 else {
                     return Ok(());
@@ -435,7 +444,8 @@ impl AttachmentExtractionService {
 
     /// Apply the ACL and document link the attachment's references imply
     /// *now*, if they differ from the ones just indexed (`indexed`,
-    /// `indexed_slug`). Returns the attachment's ACL guard, still held, so the
+    /// `indexed_slug`). Takes the attachment's ACL guard, acquired before the
+    /// pages were written, and returns it, still held, so the
     /// caller records the final status before anyone else can withdraw it;
     /// `None` when the run must stop here (the asset is gone or was
     /// withdrawn), and an error when the update failed and the attachment was
@@ -452,9 +462,9 @@ impl AttachmentExtractionService {
         key: &str,
         indexed: &[String],
         indexed_slug: &str,
+        acl_guard: tokio::sync::OwnedMutexGuard<()>,
     ) -> Result<Option<tokio::sync::OwnedMutexGuard<()>>, AppError> {
         // Held from the read through the write; see `lock_attachment_acl`.
-        let acl_guard = lock_attachment_acl(key).await;
         let references = match self.asset_repo.find_by_key(key).await {
             Ok(Some(asset)) => asset.referenced_by,
             Ok(None) => {
@@ -1699,6 +1709,43 @@ mod tests {
         assert_eq!(
             *search.updated_acl.lock().unwrap(),
             Some((key.to_string(), vec!["internal".to_string()]))
+        );
+    }
+
+    /// Keyword-search page writes happen under the attachment's lock, so a
+    /// writer holding it (an ACL update, the search re-index's page-text
+    /// backfill) never interleaves with a re-extraction replacing the pages.
+    #[tokio::test]
+    async fn pages_are_written_to_keyword_search_under_the_attachment_lock() {
+        let key = "attachments/docs/guide/locked.txt";
+        let (asset_repo, storage) = text_attachment(key, vec!["docs/guide".into()]).await;
+        let search = Arc::new(RecordingAttachmentSearchService::default());
+        let service = Arc::new(AttachmentExtractionService::new(
+            storage,
+            asset_repo.clone(),
+            Arc::new(StaticDocumentRepo(vec![internal_doc("docs/guide")])),
+            Arc::new(RecordingRagService::default()),
+            Some(search.clone()),
+            Arc::new(AttachmentExtractors::new(100, None)),
+        ));
+
+        let held = lock_attachment_acl(key).await;
+        let worker = {
+            let service = service.clone();
+            tokio::spawn(async move { service.process_one(key, false).await })
+        };
+        sleep(Duration::from_millis(100)).await;
+        assert!(
+            search.indexed.lock().unwrap().is_empty(),
+            "no page write while another writer holds the lock"
+        );
+        drop(held);
+        worker.await.unwrap().unwrap();
+
+        assert_eq!(search.indexed.lock().unwrap().len(), 1);
+        assert_eq!(
+            asset_repo.find_local(key).unwrap().extraction_status,
+            ExtractionStatus::Done
         );
     }
 

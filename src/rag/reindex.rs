@@ -1303,4 +1303,44 @@ mod tests {
             vec!["p-gone".to_string(), "a-gone".to_string()]
         );
     }
+
+    #[tokio::test]
+    async fn run_reindex_records_an_attachment_that_failed_to_process() {
+        // Referenced, but its bytes are missing from storage: processing fails
+        // and marks the asset failed. The run must count it and keep it for
+        // "retry failed".
+        let storage = Arc::new(MockStorage::new());
+        let doc_repo = Arc::new(FakeDocRepo::default());
+        let rag = Arc::new(RecordingRagService::default());
+        let asset_repo = Arc::new(FakeAssetRepo::new(vec![make_asset(
+            "pdfs/missing.pdf",
+            vec!["docs/a".to_string()],
+        )]));
+        let service = Arc::new(AttachmentExtractionService::new(
+            storage.clone(),
+            asset_repo.clone(),
+            doc_repo.clone(),
+            rag.clone(),
+            None,
+            Arc::new(AttachmentExtractors::new(100, None)),
+        ));
+        let reindex = Arc::new(ReindexState::default());
+
+        run_reindex(
+            reindex.clone(),
+            doc_repo,
+            storage,
+            rag,
+            asset_repo,
+            Some(service),
+            None,
+        )
+        .await;
+
+        assert_eq!(
+            *reindex.failed_assets.lock().unwrap(),
+            vec!["pdfs/missing.pdf".to_string()]
+        );
+        assert_eq!(reindex.outcome.snapshot().0, 1);
+    }
 }

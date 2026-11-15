@@ -209,8 +209,10 @@ impl AttachmentExtractionService {
                 // recoverable — the sweep skips `Failed`.
                 wait_for_spend_headroom().await;
 
+                // Failures are recorded on the asset by `process_one`; the
+                // worker just moves on to the next key.
                 if let Err(e) = self.process_one(&key, false).await {
-                    tracing::error!(key, "attachment extraction worker error: {e}");
+                    tracing::warn!(key, "attachment extraction worker: {e}");
                 }
             }
         });
@@ -331,7 +333,7 @@ impl AttachmentExtractionService {
                 }
                 if !self
                     .reconcile_acl_after_index(key, &access_levels, &document_slug)
-                    .await
+                    .await?
                 {
                     return Ok(());
                 }
@@ -344,9 +346,9 @@ impl AttachmentExtractionService {
 
     /// Apply the ACL and document link the attachment's references imply
     /// *now*, if they differ from the ones just indexed (`indexed`,
-    /// `indexed_slug`). Returns `false` when the run must stop here
-    /// (the asset is gone, or the update failed and the attachment was
-    /// deindexed and marked failed).
+    /// `indexed_slug`). Returns `Ok(false)` when the run must stop here
+    /// because the asset is gone, and an error when the update failed and the
+    /// attachment was deindexed and marked failed.
     ///
     /// A document linking the attachment is typically ingested while the
     /// worker is still extracting it: the upload enqueues extraction first.
@@ -359,7 +361,7 @@ impl AttachmentExtractionService {
         key: &str,
         indexed: &[String],
         indexed_slug: &str,
-    ) -> bool {
+    ) -> Result<bool, AppError> {
         let references = match self.asset_repo.find_by_key(key).await {
             Ok(Some(asset)) => asset.referenced_by,
             Ok(None) => {
@@ -369,17 +371,17 @@ impl AttachmentExtractionService {
                 if let Some(search) = &self.attachment_search {
                     let _ = search.delete_attachment(key).await;
                 }
-                return false;
+                return Ok(false);
             }
             Err(e) => {
                 tracing::warn!(key, "attachment extraction: cannot re-read references: {e}");
-                return true;
+                return Ok(true);
             }
         };
         let (current, _tags) = referencing_acl(self.document_repo.as_ref(), &references).await;
         let (slug, title) = document_link(self.document_repo.as_ref(), &references).await;
         if current == indexed && slug == indexed_slug {
-            return true;
+            return Ok(true);
         }
 
         let mut failures = Vec::new();
@@ -396,7 +398,7 @@ impl AttachmentExtractionService {
             }
         }
         if failures.is_empty() {
-            return true;
+            return Ok(true);
         }
         fail_closed_attachment_acl(
             key,
@@ -406,7 +408,10 @@ impl AttachmentExtractionService {
             &failures,
         )
         .await;
-        false
+        Err(AppError::Internal(format!(
+            "attachment deindexed: {}",
+            failures.join("; ")
+        )))
     }
 
     /// Record a terminal success/skip state.
@@ -431,8 +436,10 @@ impl AttachmentExtractionService {
             .await
     }
 
-    /// Record a failure, logging the reason. Never propagates the status-write
-    /// error so the worker keeps draining the queue.
+    /// Record a failure and report it: the RAG reindex counts the error and
+    /// keeps the key for "retry failed"; the queue worker logs it and moves
+    /// on. A failure to write the status itself is ignored, so the reported
+    /// error stays the processing one.
     async fn fail(&self, key: &str, msg: &str) -> Result<(), AppError> {
         tracing::warn!(key, "attachment extraction failed: {msg}");
         let _ = self
@@ -448,7 +455,7 @@ impl AttachmentExtractionService {
                 },
             )
             .await;
-        Ok(())
+        Err(AppError::Internal(format!("attachment {key}: {msg}")))
     }
 }
 
@@ -1422,6 +1429,33 @@ mod tests {
         );
     }
 
+    /// The ACL repair after indexing fails: the attachment is deindexed and
+    /// marked failed, and the run reports it rather than succeeding.
+    #[tokio::test]
+    async fn a_failed_acl_repair_after_indexing_is_reported() {
+        let key = "attachments/docs/guide/spec.txt";
+        let (asset_repo, storage) = text_attachment(key, vec![]).await;
+        // Lands while indexing, so the post-index check has to repair the ACL.
+        *asset_repo.arriving_reference.lock().unwrap() = Some((2, "docs/guide".into()));
+        let rag = Arc::new(RecordingRagService::default());
+        rag.fail_update.store(true, Ordering::SeqCst);
+
+        let service = AttachmentExtractionService::new(
+            storage,
+            asset_repo.clone(),
+            Arc::new(StaticDocumentRepo(vec![internal_doc("docs/guide")])),
+            rag.clone(),
+            None,
+            Arc::new(AttachmentExtractors::new(100, None)),
+        );
+        assert!(service.process_one(key, false).await.is_err());
+        assert!(rag.deleted_attachment.load(Ordering::SeqCst));
+        assert_eq!(
+            asset_repo.find_local(key).unwrap().extraction_status,
+            ExtractionStatus::Failed
+        );
+    }
+
     /// Chunks already stored with an empty ACL are repaired by a forced
     /// re-process, which is what the RAG reindex runs for every attachment.
     #[tokio::test]
@@ -1475,7 +1509,9 @@ mod tests {
             Arc::new(AttachmentExtractors::new(100, None)),
         );
 
-        service.process_one(key, true).await.unwrap();
+        // Reported, so a reindex counts it and "retry failed" picks it up.
+        let err = service.process_one(key, true).await.unwrap_err();
+        assert!(err.to_string().contains("keyword-search indexing failed"));
 
         let asset = asset_repo.find_local(key).unwrap();
         assert_eq!(asset.extraction_status, ExtractionStatus::Failed);

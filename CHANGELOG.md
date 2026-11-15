@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Count attachments that fail to process as failures of the RAG reindex, so “retry failed” picks them up; they were reported as successes.
+
 - Re-index editor saves in RAG as well as search, honouring a page's RAG opt-out, and record `needs_reindex` from both. An access-level change made in the editor left the old chunks retrievable by the previous audience.
 
 - Retry only the latest release of each failed document in the RAG “retry failed” run; it re-indexed every release copy, so an older release could overwrite the latest one's chunks.

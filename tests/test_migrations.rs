@@ -392,3 +392,146 @@ async fn migration_021_replaces_raw_service_tokens_in_asset_uploaders() {
     );
     assert_eq!(uploader("editor/1_a.png").await, "editor@example.com");
 }
+
+async fn index_names(db: &mongodb::Database, collection: &str) -> Vec<String> {
+    db.collection::<mongodb::bson::Document>(collection)
+        .list_index_names()
+        .await
+        .unwrap_or_else(|e| panic!("list {collection} indexes: {e}"))
+}
+
+/// The query planner's winning plan for `filter` on `collection`, as text.
+async fn winning_plan(
+    db: &mongodb::Database,
+    collection: &str,
+    filter: mongodb::bson::Document,
+) -> String {
+    let explain = db
+        .run_command(doc! {
+            "explain": { "find": collection, "filter": filter },
+            "verbosity": "queryPlanner",
+        })
+        .await
+        .expect("explain");
+    format!(
+        "{:?}",
+        explain
+            .get_document("queryPlanner")
+            .and_then(|plan| plan.get_document("winningPlan"))
+            .expect("winning plan")
+    )
+}
+
+#[tokio::test]
+async fn migration_022_indexes_assets_refresh_tokens_and_learn_collections() {
+    let env = common::TestEnv::start().await;
+
+    run_plan(&env.db).await;
+
+    for (collection, expected) in [
+        (
+            "assets",
+            &["key_1", "referenced_by_1", "extraction_status_1"][..],
+        ),
+        ("refresh_tokens", &["id_1", "user_id_1", "family_id_1"][..]),
+        ("learn_paths", &["id_1", "user_id_1_updated_at_-1"][..]),
+        (
+            "learn_lessons",
+            &["id_1", "path_id_1_seq_1", "user_id_1"][..],
+        ),
+        (
+            "learn_records",
+            &["path_id_1_created_at_-1", "user_id_1"][..],
+        ),
+        ("learn_preferences", &["user_id_1"][..]),
+    ] {
+        let names = index_names(&env.db, collection).await;
+        for name in expected {
+            assert!(
+                names.iter().any(|n| n == name),
+                "{collection} needs index {name}, has {names:?}"
+            );
+        }
+    }
+
+    // Asset references are matched as whole `{slug, release}` subdocuments;
+    // the multikey index must actually serve that equality.
+    let assets = env.db.collection::<mongodb::bson::Document>("assets");
+    for i in 0..20 {
+        assets
+            .insert_one(doc! {
+                "key": format!("attachments/a/{i}.pdf"),
+                "referenced_by": [{ "slug": format!("docs/{i}"), "release": mongodb::bson::Bson::Null }],
+            })
+            .await
+            .unwrap();
+    }
+    let plan = winning_plan(
+        &env.db,
+        "assets",
+        doc! { "referenced_by": { "slug": "docs/3", "release": mongodb::bson::Bson::Null } },
+    )
+    .await;
+    assert!(
+        plan.contains("referenced_by_1") && plan.contains("IXSCAN"),
+        "reference lookup must use the referenced_by index, plan: {plan}"
+    );
+
+    let err = assets
+        .insert_one(doc! { "key": "attachments/a/3.pdf" })
+        .await
+        .expect_err("a second asset with the same key must be rejected");
+    assert!(
+        err.to_string().contains("E11000"),
+        "expected a duplicate-key error, got: {err}"
+    );
+
+    let preferences = env
+        .db
+        .collection::<mongodb::bson::Document>("learn_preferences");
+    preferences
+        .insert_one(doc! { "user_id": "u1", "persist": true })
+        .await
+        .unwrap();
+    preferences
+        .insert_one(doc! { "user_id": "u1", "persist": false })
+        .await
+        .expect_err("one learn preference per user");
+}
+
+/// Duplicate asset keys must stop 022 with a message naming the key, like the
+/// other unique-index migrations.
+#[tokio::test]
+async fn migration_022_refuses_duplicate_asset_keys() {
+    let env = common::TestEnv::start().await;
+    let assets = env.db.collection::<mongodb::bson::Document>("assets");
+    assets
+        .insert_many(vec![
+            doc! { "key": "attachments/dup/file.pdf" },
+            doc! { "key": "attachments/dup/file.pdf" },
+        ])
+        .await
+        .unwrap();
+
+    let err = lekton::db::migrations::build_plan()
+        .run(env.db.clone())
+        .await
+        .expect_err("the plan must refuse to build a unique key index over duplicates");
+    assert!(
+        err.to_string()
+            .contains("022_add_assets_refresh_tokens_learn_indexes"),
+        "the error must name the migration, got: {err}"
+    );
+
+    let entry = env
+        .db
+        .collection::<mongodb::bson::Document>("__migrations")
+        .find_one(doc! { "change_id": "022_add_assets_refresh_tokens_learn_indexes" })
+        .await
+        .unwrap()
+        .expect("a failed migration must be recorded");
+    assert!(
+        format!("{entry:?}").contains("attachments/dup/file.pdf"),
+        "the changelog must name the duplicate key, got: {entry:?}"
+    );
+}

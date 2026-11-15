@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Index the collections still answered by collection scans (migration `022`): assets by `key` (unique; the migration stops and names any duplicate key), by referencing document and by extraction status; refresh tokens by `id` (unique), user and family; and the Learn collections by the keys their queries use.
+
 ## [0.41.0] 2026-11-15
 
 ### Security

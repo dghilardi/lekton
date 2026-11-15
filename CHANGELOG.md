@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Use the correct Vertex AI hosts for global and EU/US multi-region chat endpoints.
+
 ### Upgrade
 
 - After deploying attachment full-text search, run one search reindex from Admin → Settings or authenticated `POST /api/v1/admin/search/reindex` (poll `GET /api/v1/admin/search/reindex/status`). This backfills existing indexed pages from S3 using only free native text extraction (`libpdfium` for PDFs), without VLM or embedding calls. Pages whose stored previews cannot be reproduced keep preview-only search; see `docs/operations.md` for explicit paid reprocessing options.

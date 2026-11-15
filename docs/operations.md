@@ -4,6 +4,20 @@ Runtime procedures for backup, recovery, token rotation, and dependency auditing
 
 ---
 
+## Vertex AI Chat Endpoints
+
+Set `rag.llm.vertex_location` (or the per-step override) to the location supported
+by the selected model. Single regions such as `europe-west1` use
+`europe-west1-aiplatform.googleapis.com`; `global` uses `aiplatform.googleapis.com`,
+and the `eu`/`us` multi-regions use `aiplatform.eu.rep.googleapis.com` and
+`aiplatform.us.rep.googleapis.com`. All use the OpenAI-compatible
+`/v1beta1/projects/PROJECT/locations/LOCATION/endpoints/openapi` path with the
+existing service account/ADC authentication and automatic token refresh.
+
+The endpoint correction requires an image newer than the original `0.41.0`.
+For Gemini 3.5 Flash-Lite in EU, use `google/gemini-3.5-flash-lite` and `eu`.
+Embedding location/model and the global Google Ranking API remain independent.
+
 ## Reverse Proxy And Rate Limiting
 
 Lekton rate-limits dynamic routes, not static fallback assets. By default the limiter uses the peer IP, but it can read `X-Forwarded-For`, `X-Real-IP`, and `Forwarded` only when the direct peer matches `LKN__SERVER__RATE_LIMIT_TRUSTED_PROXIES`.

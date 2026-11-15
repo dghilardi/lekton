@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -9,7 +10,9 @@ use crate::usage::UsageKey;
 
 use super::embedding::{build_embedding_service, EmbeddingService};
 use super::splitter::split_document;
-use super::vectorstore::{ChunkPayload, QdrantVectorStore, SourceKind, VectorPoint, VectorStore};
+use super::vectorstore::{
+    ChunkPayload, PointSource, QdrantVectorStore, SourceKind, VectorPoint, VectorStore,
+};
 
 // ── Data types ─────────────────────────────────────────────────────────────────
 
@@ -76,6 +79,72 @@ pub trait RagService: Send + Sync {
     /// Cheap reachability probe for readiness checks: `Ok(())` only if the
     /// vector store actually answers.
     async fn health_check(&self) -> Result<(), AppError>;
+
+    /// The chunks MongoDB's snapshot does not account for: document chunks
+    /// whose slug is not in `live_slugs`, attachment chunks whose key is not in
+    /// `live_attachment_keys` (see [`orphan_points`]). Only a full reindex
+    /// calls it, with sets built from a complete MongoDB listing, and it
+    /// rechecks the candidates against MongoDB before [`Self::delete_points`].
+    /// Defaults to none.
+    async fn list_orphans(
+        &self,
+        _live_slugs: &HashSet<String>,
+        _live_attachment_keys: &HashSet<String>,
+    ) -> Result<Vec<PointSource>, AppError> {
+        Ok(Vec::new())
+    }
+
+    /// Delete chunks by point id. Defaults to a no-op.
+    async fn delete_points(&self, _ids: &[String]) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    /// The id of every stored chunk. A full reindex lists them before it
+    /// starts indexing; its sweep may only delete chunks that already existed
+    /// then. Defaults to none, so nothing is ever swept.
+    async fn list_point_ids(&self) -> Result<HashSet<String>, AppError> {
+        Ok(HashSet::new())
+    }
+}
+
+/// Whether a point is an attachment chunk: its `source_kind` says so or,
+/// lacking one (points written before it existed), it carries an
+/// `attachment_key`. Every other point is a document chunk.
+pub fn is_attachment_point(point: &PointSource) -> bool {
+    match point.source_kind.as_deref() {
+        Some(kind) => kind == SourceKind::Attachment.as_str(),
+        None => point.attachment_key.is_some(),
+    }
+}
+
+/// The points that belong to no live document or attachment.
+///
+/// An attachment chunk (see [`is_attachment_point`]) is kept while its key is
+/// live; every other point is a document chunk — including those written
+/// before `source_kind` existed — and is kept while its `document_slug` is
+/// live. A missing or empty slug or key never matches, so such points go.
+/// Callers delete by id, never by slug filter: attachment chunks store an
+/// empty `document_slug`, so deleting "the empty slug" would take them all.
+pub fn orphan_points(
+    points: Vec<PointSource>,
+    live_slugs: &HashSet<String>,
+    live_attachment_keys: &HashSet<String>,
+) -> Vec<PointSource> {
+    let is_live = |value: &Option<String>, live: &HashSet<String>| {
+        value
+            .as_deref()
+            .is_some_and(|v| !v.is_empty() && live.contains(v))
+    };
+    points
+        .into_iter()
+        .filter(|point| {
+            if is_attachment_point(point) {
+                !is_live(&point.attachment_key, live_attachment_keys)
+            } else {
+                !is_live(&point.document_slug, live_slugs)
+            }
+        })
+        .collect()
 }
 
 // ── Default implementation ───────────────────────────────────────────────────
@@ -198,13 +267,14 @@ impl RagService for DefaultRagService {
             .collect();
 
         // All chunks failed to embed: leave the existing index untouched rather
-        // than wiping it on a degenerate embedding run (avoids silent data loss).
+        // than wiping it on a degenerate embedding run (avoids silent data loss),
+        // but report it: the stored chunks are now stale, so the caller must
+        // record `needs_reindex` (and may drop them if they grant too much).
         if points.is_empty() {
-            tracing::warn!(
-                slug,
-                "RAG: no embeddable chunks produced; existing index left intact"
-            );
-            return Ok(());
+            return Err(AppError::Internal(format!(
+                "all {} chunks of '{slug}' produced empty embeddings; existing chunks left in place",
+                embedding_texts.len()
+            )));
         }
 
         // 4. Upsert the new chunks, then 5. delete the stale ones (everything for
@@ -374,6 +444,32 @@ impl RagService for DefaultRagService {
 
     async fn health_check(&self) -> Result<(), AppError> {
         self.vectorstore.health_check().await
+    }
+
+    async fn list_orphans(
+        &self,
+        live_slugs: &HashSet<String>,
+        live_attachment_keys: &HashSet<String>,
+    ) -> Result<Vec<PointSource>, AppError> {
+        let points = self.vectorstore.list_point_sources().await?;
+        Ok(orphan_points(points, live_slugs, live_attachment_keys))
+    }
+
+    async fn delete_points(&self, ids: &[String]) -> Result<(), AppError> {
+        for batch in ids.chunks(1_000) {
+            self.vectorstore.delete_points(batch).await?;
+        }
+        Ok(())
+    }
+
+    async fn list_point_ids(&self) -> Result<HashSet<String>, AppError> {
+        Ok(self
+            .vectorstore
+            .list_point_sources()
+            .await?
+            .into_iter()
+            .map(|p| p.id)
+            .collect())
     }
 }
 
@@ -553,5 +649,192 @@ mod tests {
             attachment_page_text_threshold: 100,
         };
         assert!(DefaultRagService::from_rag_config(&config).await.is_err());
+    }
+
+    fn point(id: &str, kind: Option<&str>, slug: Option<&str>, key: Option<&str>) -> PointSource {
+        PointSource {
+            id: id.to_string(),
+            source_kind: kind.map(str::to_string),
+            document_slug: slug.map(str::to_string),
+            attachment_key: key.map(str::to_string),
+        }
+    }
+
+    fn set(values: &[&str]) -> HashSet<String> {
+        values.iter().map(|v| v.to_string()).collect()
+    }
+
+    #[test]
+    fn orphan_points_keeps_live_sources_and_drops_the_rest() {
+        let points = [
+            point("live-doc", Some("document"), Some("docs/live"), None),
+            point("renamed-doc", Some("document"), Some("docs/old"), None),
+            point("live-pdf", Some("attachment"), Some(""), Some("a.pdf")),
+            point("orphan-pdf", Some("attachment"), Some(""), Some("gone.pdf")),
+            // Written before `source_kind` existed.
+            point("legacy-live", None, Some("docs/live"), None),
+            point("legacy-orphan", None, Some("docs/old"), None),
+            point("legacy-no-slug", None, None, None),
+            point("legacy-pdf", None, None, Some("gone.pdf")),
+            point("doc-empty-slug", Some("document"), Some(""), None),
+        ];
+
+        let mut orphans: Vec<String> =
+            orphan_points(points.to_vec(), &set(&["docs/live"]), &set(&["a.pdf"]))
+                .into_iter()
+                .map(|p| p.id)
+                .collect();
+        orphans.sort();
+
+        assert_eq!(
+            orphans,
+            vec![
+                "doc-empty-slug",
+                "legacy-no-slug",
+                "legacy-orphan",
+                "legacy-pdf",
+                "orphan-pdf",
+                "renamed-doc",
+            ]
+        );
+    }
+
+    /// Lists a fixed set of points and records which ids get deleted.
+    #[derive(Default)]
+    struct ListingStore {
+        points: Vec<PointSource>,
+        deleted: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl VectorStore for ListingStore {
+        async fn ensure_collection(&self, _: u32) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn upsert_chunks(&self, _: Vec<VectorPoint>) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn delete_by_slug(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn delete_stale_chunks(&self, _: &str, _: &[String]) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn delete_by_attachment_key(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn delete_stale_attachment_chunks(
+            &self,
+            _: &str,
+            _: &[String],
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn set_attachment_access_levels(
+            &self,
+            _: &str,
+            _: &[String],
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn search(
+            &self,
+            _: Vec<f32>,
+            _: usize,
+            _: Option<&[String]>,
+            _: bool,
+        ) -> Result<Vec<VectorSearchResult>, AppError> {
+            Ok(vec![])
+        }
+        async fn get_section_chunks(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<&[String]>,
+            _: bool,
+        ) -> Result<Vec<VectorSearchResult>, AppError> {
+            Ok(vec![])
+        }
+        async fn search_document_chunks(
+            &self,
+            _: Vec<f32>,
+            _: &str,
+            _: usize,
+            _: Option<&[String]>,
+            _: bool,
+            _: bool,
+        ) -> Result<Vec<VectorSearchResult>, AppError> {
+            Ok(vec![])
+        }
+        async fn health_check(&self) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn list_point_sources(&self) -> Result<Vec<PointSource>, AppError> {
+            Ok(self.points.clone())
+        }
+        async fn delete_points(&self, ids: &[String]) -> Result<(), AppError> {
+            self.deleted.lock().unwrap().extend_from_slice(ids);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn list_orphans_then_delete_points_removes_only_orphaned_points() {
+        let store = Arc::new(ListingStore {
+            points: vec![
+                point("keep", Some("document"), Some("docs/live"), None),
+                point("drop", Some("document"), Some("docs/old"), None),
+            ],
+            ..Default::default()
+        });
+        let service = DefaultRagService::new(Arc::new(FakeEmbedding), store.clone(), 100, 10);
+
+        let orphans = service
+            .list_orphans(&set(&["docs/live"]), &HashSet::new())
+            .await
+            .unwrap();
+        let ids: Vec<String> = orphans.into_iter().map(|p| p.id).collect();
+        assert_eq!(ids, vec!["drop".to_string()]);
+        service.delete_points(&ids).await.unwrap();
+        assert_eq!(*store.deleted.lock().unwrap(), vec!["drop".to_string()]);
+    }
+
+    /// Returns an empty vector for every text, like a backend that cannot
+    /// embed the input.
+    struct EmptyEmbedding;
+
+    #[async_trait]
+    impl EmbeddingService for EmptyEmbedding {
+        async fn embed(
+            &self,
+            _key: &UsageKey,
+            texts: &[String],
+        ) -> Result<Vec<Vec<f32>>, AppError> {
+            Ok(texts.iter().map(|_| Vec::new()).collect())
+        }
+    }
+
+    #[tokio::test]
+    async fn index_document_fails_when_no_chunk_gets_a_vector() {
+        // Reported, so the caller records `needs_reindex`; the old chunks are
+        // left in place (no destructive write happened).
+        let store = Arc::new(ListingStore::default());
+        let service = DefaultRagService::new(Arc::new(EmptyEmbedding), store.clone(), 100, 10);
+
+        let result = service
+            .index_document(
+                "docs/a",
+                "A",
+                "Some text worth indexing.",
+                "internal",
+                false,
+                &[],
+                None,
+                None,
+            )
+            .await;
+
+        assert!(result.is_err(), "got {result:?}");
+        assert!(store.deleted.lock().unwrap().is_empty());
     }
 }

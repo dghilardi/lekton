@@ -428,6 +428,19 @@ pub async fn reindex_promoted(
             continue;
         };
 
+        let targets = crate::indexing::IndexTargets { search, rag };
+
+        // A hidden document must not be in either index: remove the entry the
+        // previous latest copy left instead of indexing this one.
+        if doc.is_hidden {
+            let failures = crate::indexing::remove_everywhere(targets, slug).await;
+            for failure in &failures {
+                tracing::warn!(slug = %slug, "promotion reindex: removing hidden document failed: {failure}");
+            }
+            acknowledge_promoted(repo, release_repo, source_id, &doc, failures.is_empty()).await;
+            continue;
+        }
+
         let content = match storage.get_object(&doc.s3_key).await {
             Ok(Some(bytes)) => String::from_utf8_lossy(&bytes).into_owned(),
             Ok(None) => {
@@ -440,54 +453,48 @@ pub async fn reindex_promoted(
             }
         };
 
-        let mut ok = true;
-
-        if let Some(search) = search {
-            let search_doc = crate::search::client::build_search_document(&doc, &content);
-            if let Err(e) = search.index_document(&search_doc).await {
-                tracing::warn!(slug = %slug, "promotion reindex: search index failed: {e}");
-                ok = false;
-            }
+        let failures = crate::indexing::index_everywhere(targets, &doc, &content).await;
+        for failure in &failures {
+            tracing::warn!(slug = %slug, "promotion reindex: indexing failed: {failure}");
         }
+        acknowledge_promoted(repo, release_repo, source_id, &doc, failures.is_empty()).await;
+    }
+}
 
-        if let Some(rag) = rag {
-            let result = if doc.skip_rag {
-                rag.delete_document(slug).await
-            } else {
-                rag.index_document(
-                    &doc.slug,
-                    &doc.title,
-                    &content,
-                    &doc.access_level,
-                    doc.is_draft,
-                    &doc.tags,
-                    doc.source_id.as_deref(),
-                    doc.release.as_deref(),
-                )
-                .await
-            };
-            if let Err(e) = result {
-                tracing::warn!(slug = %slug, "promotion reindex: RAG index failed: {e}");
-                ok = false;
-            }
-        }
-
-        // Field-scoped, never a full write: indexing above may have taken long
-        // enough for another promotion to land, and replacing the document from
-        // this stale snapshot would undo it.
-        if ok && doc.needs_reindex {
-            if let Err(e) = repo
-                .clear_needs_reindex(&doc.slug, doc.release.as_deref())
-                .await
-            {
-                tracing::warn!(slug = %slug, "promotion reindex: cannot clear needs_reindex: {e}");
-                ok = false;
-            }
-        }
-        if ok {
+/// After a promoted slug was reconciled: clear its stale flag and its backlog
+/// entry, but only if every index took it (`ok`) and the document is still as
+/// indexed. A write landing meanwhile (an ingest that may have failed to
+/// index, another promotion) keeps both, so the next pass revisits the slug.
+#[cfg(feature = "ssr")]
+async fn acknowledge_promoted(
+    repo: &dyn crate::db::repository::DocumentRepository,
+    release_repo: &dyn crate::db::release_repository::ReleaseRepository,
+    source_id: &str,
+    doc: &crate::db::models::Document,
+    ok: bool,
+) {
+    if !ok {
+        return;
+    }
+    let slug = &doc.slug;
+    // Field-scoped and conditional, never a full write: replacing the document
+    // from this stale snapshot would undo whatever landed meanwhile.
+    match repo.clear_needs_reindex_if_unchanged(doc).await {
+        Ok(true) => {
+            // Known limitation: this pulls the slug from the backlog whichever
+            // promotion added it, so with two overlapping promotions of one
+            // source the earlier run can acknowledge the later one's entry.
+            // Telling them apart needs a promotion generation; promotions are
+            // rare manual operations, so it is accepted.
             if let Err(e) = release_repo.clear_reindex_pending(source_id, slug).await {
                 tracing::warn!(slug = %slug, "promotion reindex: cannot acknowledge success: {e}");
             }
+        }
+        Ok(false) => {
+            tracing::info!(slug = %slug, "promotion reindex: document changed meanwhile, left pending");
+        }
+        Err(e) => {
+            tracing::warn!(slug = %slug, "promotion reindex: cannot clear needs_reindex: {e}");
         }
     }
 }
@@ -728,5 +735,103 @@ mod tests {
             &*release_repo.cleared.lock().unwrap(),
             &["docs/removed".to_string()]
         );
+    }
+
+    /// Answers the guarded clear with `matches` and records both kinds of clear.
+    struct AckRepo {
+        matches: bool,
+        conditional: Mutex<Vec<String>>,
+        unconditional: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl crate::db::repository::DocumentRepository for AckRepo {
+        async fn create_or_update(&self, _: Document) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn find_by_slug(&self, _: &str) -> Result<Option<Document>, AppError> {
+            Ok(None)
+        }
+        async fn find_by_slugs(&self, _: &[String]) -> Result<Vec<Document>, AppError> {
+            Ok(vec![])
+        }
+        async fn list_all(&self) -> Result<Vec<Document>, AppError> {
+            Ok(vec![])
+        }
+        async fn list_by_access_levels(
+            &self,
+            _: Option<&[String]>,
+            _: bool,
+            _: &crate::versioning::ReleasePins,
+        ) -> Result<Vec<Document>, AppError> {
+            Ok(vec![])
+        }
+        async fn update_backlinks(
+            &self,
+            _: &str,
+            _: &[String],
+            _: &[String],
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn find_by_slug_prefix(&self, _: &str) -> Result<Vec<Document>, AppError> {
+            Ok(vec![])
+        }
+        async fn set_archived(&self, _: &str, _: Option<&str>, _: bool) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn rename_slug(&self, _: &str, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn find_by_source_path(&self, _: &str) -> Result<Option<Document>, AppError> {
+            Ok(None)
+        }
+        async fn find_all_by_source_id(&self, _: &str) -> Result<Vec<Document>, AppError> {
+            Ok(vec![])
+        }
+        async fn clear_needs_reindex(&self, slug: &str, _: Option<&str>) -> Result<(), AppError> {
+            self.unconditional.lock().unwrap().push(slug.to_string());
+            Ok(())
+        }
+        async fn clear_needs_reindex_if_unchanged(
+            &self,
+            snapshot: &Document,
+        ) -> Result<bool, AppError> {
+            self.conditional.lock().unwrap().push(snapshot.slug.clone());
+            Ok(self.matches)
+        }
+    }
+
+    #[tokio::test]
+    async fn promotion_acknowledges_only_a_document_unchanged_since_its_snapshot() {
+        let mut indexed = document("docs/a", "2.0.0", "sha256:a");
+        indexed.needs_reindex = true;
+
+        // An ingest landed meanwhile (and may have failed): keep the flag and
+        // the backlog entry.
+        let repo = AckRepo {
+            matches: false,
+            conditional: Mutex::default(),
+            unconditional: Mutex::default(),
+        };
+        let release_repo = RecordingReleaseRepo::default();
+        acknowledge_promoted(&repo, &release_repo, "source", &indexed, true).await;
+        assert!(repo.unconditional.lock().unwrap().is_empty());
+        assert_eq!(*repo.conditional.lock().unwrap(), vec!["docs/a"]);
+        assert!(release_repo.cleared.lock().unwrap().is_empty());
+
+        // Unchanged: cleared, and the backlog entry acknowledged.
+        let repo = AckRepo {
+            matches: true,
+            conditional: Mutex::default(),
+            unconditional: Mutex::default(),
+        };
+        acknowledge_promoted(&repo, &release_repo, "source", &indexed, true).await;
+        assert_eq!(*release_repo.cleared.lock().unwrap(), vec!["docs/a"]);
+
+        // Indexing failed: nothing is acknowledged.
+        let release_repo = RecordingReleaseRepo::default();
+        acknowledge_promoted(&repo, &release_repo, "source", &indexed, false).await;
+        assert!(release_repo.cleared.lock().unwrap().is_empty());
     }
 }

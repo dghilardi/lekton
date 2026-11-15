@@ -887,6 +887,11 @@ async fn main() {
                     .ensure_collection(config.rag.embedding_dimensions)
                     .await
                 {
+                    // A configuration error, unlike Qdrant being down: running
+                    // with it would fail every RAG write.
+                    if lekton::rag::vectorstore::is_dimension_mismatch(&e) {
+                        panic!("{e}");
+                    }
                     tracing::warn!("Failed to ensure Qdrant collection: {e} — RAG disabled");
                     (None, None, None, None)
                 } else {

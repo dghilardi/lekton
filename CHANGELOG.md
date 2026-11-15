@@ -18,6 +18,36 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Bound the OpenAI-compatible embedding client: requests time out (30 seconds, 10 to connect) and retries of server errors and rate limits stop after a minute instead of fifteen, so an unhealthy endpoint fails an ingest, editor save or reindex step quickly and leaves `needs_reindex` set instead of stalling it.
+
+- Report a document whose chunks all came back without an embedding as a failed RAG index (setting `needs_reindex`) instead of a success. When RAG indexing fails on an ingest or editor save that changed the document's access, its old chunks are removed rather than left answering to the previous audience.
+
+- Count attachments that fail to process (including a failed ACL check after indexing, which deindexes them) as failures of the RAG reindex, so “retry failed” picks them up; they were reported as successes.
+
+- Re-index editor saves in RAG as well as search, honouring a page's RAG opt-out, and record `needs_reindex` from both. An access-level change made in the editor left the old chunks retrievable by the previous audience.
+
+- Retry only the latest release of each failed document in the RAG “retry failed” run; it re-indexed every release copy, so an older release could overwrite the latest one's chunks.
+
+- Refuse to start when the Qdrant collection's vector size differs from `rag.embedding_dimensions`, with a message saying how to fix it, instead of starting and failing every RAG write.
+
+- Detect Meilisearch writes that are accepted but then fail: writes wait up to 10 seconds for their task, and a failed or unfinished task now reports an error, so ingest, editor saves and promotions set `needs_reindex` instead of recording a document search never received as in sync.
+
+- Recompute effective access levels for users assigned a level that inherits from a changed one, not only for users assigned the changed level directly.
+
+- Index every chunk when a batch repeats a text: the embedding cache returned an empty vector for the second copy, so that chunk was skipped. Repeated texts are now also embedded only once.
+
+- Index extracted attachment pages into keyword search even before a document links the file, and point them at the document once it does. Extraction used to skip keyword search when the upload was processed before its document was ingested, and nothing added the pages later.
+
+- Stop attachments from being indexed with an empty ACL when the document linking them is ingested while they are being extracted: the worker now uses the references current after extraction and re-applies the ACL after indexing. ACL updates for one attachment are serialized, so an older read can no longer overwrite a newer, narrower ACL. A RAG reindex repairs attachments already affected.
+
+- Keep hidden documents out of search and RAG: ingest, editor saves and release promotion indexed them, while reindexes excluded them. They are now removed from both indexes whenever written, including when a document becomes hidden. Hidden documents also no longer grant their access level or link to the attachments they reference: an attachment linked only by hidden documents is withdrawn from both indexes (also when a reindex finds it there), and indexed again once a visible document links it.
+
+- Let search and RAG reindexes clear `needs_reindex`: a flagged document is indexed into every enabled index in the same pass and cleared once all succeeded, unless it was written, archived, hidden or promoted meanwhile. Release promotion clears the flag, and its re-index backlog entry, under the same condition instead of unconditionally. Previously the flag stayed set until the next ingest.
+
+- Sweep orphans in full reindexes: the search reindex removes Meilisearch documents and attachment pages MongoDB no longer knows, and the RAG reindex removes their Qdrant chunks, including chunks from the payload format before `source_kind`. Only entries already indexed when the run started can be swept, and candidates are rechecked against MongoDB right before deletion, so entries written during the run survive. Nothing is swept when listing MongoDB fails or finds no live document.
+
+- Remove a renamed document's old slug from search, RAG and its assets' references; they kept serving it and granting its readers access to the assets.
+
 - Cut the browser bundle a reader downloads by 43%: the release WASM goes from 5,488,834 bytes on `main` (5,656,054 with the other changes in this release) to 3,154,501 bytes. Chat answers are rendered with an escaping Markdown renderer (raw HTML shown as text, link and image targets limited to web, mail and in-page addresses, heading attributes dropped), so the HTML sanitizer and its parser are no longer compiled for the browser (−632 KB); and release builds type-erase component views like debug builds already do (`always-erase-components`, −1.87 MB), at the cost of a little dynamic dispatch when views are built.
 
 - Tighten the administration screens. New service tokens are read-only unless write access is chosen, and the form says which one is being created; its fields are labelled. Deactivating a service token, deleting an access level and deleting a personal access token ask in a portal dialog (named, Escape cancels, Cancel focused first) instead of the browser's `confirm()`. The users, sources, AI usage and index status panels show why they could not load instead of staying empty. Deactivated token rows are no longer faded below AA contrast, and editing panels use an existing surface colour instead of the undefined `bg-base-50`.

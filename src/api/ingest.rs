@@ -198,7 +198,7 @@ pub(crate) async fn process_authorized_ingest(
         .await?
         .into_iter()
         .find(|d| d.release.as_deref() == request.release.as_deref());
-    let (old_doc, old_s3_key_before_rename) = if by_slug
+    let (old_doc, old_s3_key_before_rename, renamed_from) = if by_slug
         .as_ref()
         .map(|d| d.is_archived)
         .unwrap_or(true)
@@ -217,19 +217,20 @@ pub(crate) async fn process_authorized_ingest(
                     .rename_slug_in_release(&found.slug, &request.slug, request.release.as_deref())
                     .await?;
                 let old_key = found.s3_key.clone();
+                let old_slug = found.slug.clone();
                 let renamed = Document {
                     slug: request.slug.clone(),
                     ..found
                 };
-                (Some(renamed), Some(old_key))
+                (Some(renamed), Some(old_key), Some(old_slug))
             } else {
-                (by_slug, None)
+                (by_slug, None, None)
             }
         } else {
-            (by_slug, None)
+            (by_slug, None, None)
         }
     } else {
-        (by_slug, None)
+        (by_slug, None, None)
     };
 
     let (old_links, old_backlinks, old_hash) = match &old_doc {
@@ -425,49 +426,50 @@ pub(crate) async fn process_authorized_ingest(
     //     not indexed at all. Note it must not *delete* either: the slug's index
     //     entry belongs to whichever release currently is latest, and clearing it
     //     would take that release's content down with it.
-    let search_doc = ctx
-        .search
-        .as_ref()
-        .filter(|_| doc.is_latest)
-        .map(|_| crate::search::client::build_search_document(&doc, &raw_content));
-
+    //     A hidden document must not be in either index at all, so it is
+    //     removed instead, which also clears out a document that just became
+    //     hidden.
     let mut indexed_ok = true;
-
-    if let (Some(search_svc), Some(search_doc)) = (ctx.search, search_doc) {
-        if let Err(e) = search_svc.index_document(&search_doc).await {
-            tracing::warn!(slug = %doc.slug, "Failed to index document in search: {e}");
-            indexed_ok = false;
-        }
-    }
-
-    if let Some(rag) = ctx.rag.filter(|_| doc.is_latest) {
-        if doc.skip_rag {
-            // Deliberately excluded from RAG (e.g. PDF upload stub — the linked
-            // attachment is indexed instead). Delete any chunks a previous
-            // ingest may have left, so opting out cleans up stale vectors.
-            if let Err(e) = rag.delete_document(&doc.slug).await {
-                tracing::warn!(slug = %doc.slug, "Failed to remove RAG chunks for skip_rag document: {e}");
-                indexed_ok = false;
-            }
-        } else if let Err(e) = rag
-            .index_document(
-                &doc.slug,
-                &doc.title,
+    if doc.is_latest {
+        let targets = crate::indexing::IndexTargets {
+            search: ctx.search,
+            rag: ctx.rag,
+        };
+        let failures = if doc.is_hidden {
+            crate::indexing::remove_everywhere(targets, &doc.slug).await
+        } else {
+            crate::indexing::index_everywhere_replacing(
+                targets,
+                &doc,
                 &raw_content,
-                &doc.access_level,
-                doc.is_draft,
-                &doc.tags,
-                doc.source_id.as_deref(),
-                doc.release.as_deref(),
+                old_doc
+                    .as_ref()
+                    .map(|old| (old.access_level.as_str(), old.is_draft)),
             )
             .await
-        {
-            tracing::warn!(slug = %doc.slug, "Failed to index document in RAG: {e}");
-            indexed_ok = false;
+        };
+        for failure in &failures {
+            tracing::warn!(slug = %doc.slug, "Failed to reconcile document indexes: {failure}");
         }
+        indexed_ok = failures.is_empty();
     }
 
     doc.needs_reindex = !indexed_ok;
+
+    // A rename leaves the old slug's entries behind: nothing else ever names
+    // that slug again. Removed after the new slug is indexed so the document
+    // never drops out of search. Only a latest copy owns the slug's entries.
+    // A failure here is logged, not flagged on this document: its own entries
+    // are fine, and the next full reindex sweeps the orphans.
+    if let Some(old_slug) = renamed_from.as_deref().filter(|_| doc.is_latest) {
+        let targets = crate::indexing::IndexTargets {
+            search: ctx.search,
+            rag: ctx.rag,
+        };
+        for failure in crate::indexing::remove_everywhere(targets, old_slug).await {
+            tracing::warn!(slug = %old_slug, "Failed to remove renamed slug: {failure}");
+        }
+    }
 
     // 11. Upsert document metadata in MongoDB (records `needs_reindex`).
     ctx.repo.create_or_update(doc).await?;
@@ -485,12 +487,33 @@ pub(crate) async fn process_authorized_ingest(
     //     This drives attachment access levels for RAG and asset-serve access.
     let asset_keys = extract_asset_keys(&raw_content);
     let document_reference = DocumentReference::new(request.slug.clone(), request.release.clone());
+    // The old slug's references would otherwise keep granting its readers
+    // access to the assets and pin them against orphan cleanup.
+    let mut detached_from_old_slug = Vec::new();
+    if let Some(old_slug) = renamed_from.as_deref() {
+        let old_reference = DocumentReference::new(old_slug, request.release.clone());
+        match ctx
+            .asset_repo
+            .set_release_references(&old_reference, &[])
+            .await
+        {
+            Ok(affected) => detached_from_old_slug = affected,
+            Err(e) => {
+                tracing::warn!(slug = %old_slug, "Failed to detach renamed slug from assets: {e}")
+            }
+        }
+    }
     let assets_to_recompute = match ctx
         .asset_repo
         .set_release_references(&document_reference, &asset_keys)
         .await
     {
-        Ok(affected) => {
+        Ok(mut affected) => {
+            for key in detached_from_old_slug {
+                if !affected.contains(&key) {
+                    affected.push(key);
+                }
+            }
             // Collect the full set of asset keys to recompute: changed references
             // plus all currently-referenced assets (so an access_level change on
             // the document propagates to existing attachment chunks even when the
@@ -2453,5 +2476,163 @@ mod tests {
             document_s3_key("api/auth", Some("release/2024-06")),
             "docs/api_auth@release_2024-06.md"
         );
+    }
+
+    /// Records every `set_release_references` call, so tests can see which
+    /// document references were attached to or detached from assets.
+    #[derive(Default)]
+    struct ReferenceRecordingAssetRepo {
+        calls: Mutex<Vec<(crate::db::models::DocumentReference, Vec<String>)>>,
+    }
+
+    #[async_trait]
+    impl crate::db::asset_repository::AssetRepository for ReferenceRecordingAssetRepo {
+        async fn create_or_update(&self, _: Asset) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn find_by_key(&self, _: &str) -> Result<Option<Asset>, AppError> {
+            Ok(None)
+        }
+        async fn find_by_keys(&self, _: &[String]) -> Result<Vec<Asset>, AppError> {
+            Ok(vec![])
+        }
+        async fn list_all(&self) -> Result<Vec<Asset>, AppError> {
+            Ok(vec![])
+        }
+        async fn list_by_prefix(&self, _: &str) -> Result<Vec<Asset>, AppError> {
+            Ok(vec![])
+        }
+        async fn delete(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn update_extraction(&self, _: &str, _: ExtractionUpdate) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn set_release_references(
+            &self,
+            source: &crate::db::models::DocumentReference,
+            keys: &[String],
+        ) -> Result<Vec<String>, AppError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((source.clone(), keys.to_vec()));
+            // The old slug's reference is what the rename detaches.
+            Ok(if keys.is_empty() {
+                vec!["assets/old.pdf".to_string()]
+            } else {
+                vec![]
+            })
+        }
+        async fn list_unfinished_extractions(&self) -> Result<Vec<Asset>, AppError> {
+            Ok(vec![])
+        }
+    }
+
+    #[tokio::test]
+    async fn test_slug_rename_removes_old_slug_from_indexes_and_asset_references() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let search = crate::test_utils::RecordingSearch::default();
+        let rag = crate::test_utils::RecordingRag::default();
+        let asset_repo = ReferenceRecordingAssetRepo::default();
+        let mut ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+        ctx.search = Some(&search);
+        ctx.rag = Some(&rag);
+        ctx.asset_repo = &asset_repo;
+
+        let mut first = make_request("valid-token", "docs/old-name");
+        first.source_path = "docs/guide.md".to_string();
+        process_ingest(&ctx, first).await.unwrap();
+
+        // Same source file, new slug: an in-place rename.
+        let mut renamed = make_request("valid-token", "docs/new-name");
+        renamed.source_path = "docs/guide.md".to_string();
+        let outcome = process_ingest(&ctx, renamed).await.unwrap();
+
+        assert!(outcome.response.indexed);
+        assert_eq!(search.indexed(), vec!["docs/old-name", "docs/new-name"]);
+        assert_eq!(search.deleted(), vec!["docs/old-name"]);
+        assert_eq!(rag.deleted(), vec!["docs/old-name"]);
+        let calls = asset_repo.calls.lock().unwrap().clone();
+        assert!(
+            calls.contains(&(
+                crate::db::models::DocumentReference::new("docs/old-name", None),
+                vec![]
+            )),
+            "the old slug must be detached from every asset, got {calls:?}"
+        );
+        // Assets that lost the old slug's reference get their ACL recomputed.
+        assert!(outcome
+            .assets_to_recompute
+            .contains(&"assets/old.pdf".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_hidden_document_is_removed_from_search_and_rag_instead_of_indexed() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let search = crate::test_utils::RecordingSearch::default();
+        let rag = crate::test_utils::RecordingRag::default();
+        let mut ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+        ctx.search = Some(&search);
+        ctx.rag = Some(&rag);
+
+        process_ingest(&ctx, make_request("valid-token", "docs/page"))
+            .await
+            .unwrap();
+
+        // The document becomes hidden: its entries must go.
+        let mut hidden = make_request("valid-token", "docs/page");
+        hidden.is_hidden = true;
+        let outcome = process_ingest(&ctx, hidden).await.unwrap();
+
+        assert!(outcome.response.indexed);
+        assert_eq!(search.indexed(), vec!["docs/page"], "indexed once, visible");
+        assert_eq!(rag.indexed(), vec!["docs/page"]);
+        assert_eq!(search.deleted(), vec!["docs/page"]);
+        assert_eq!(rag.deleted(), vec!["docs/page"]);
+        let doc = repo.find_by_slug("docs/page").await.unwrap().unwrap();
+        assert!(doc.is_hidden);
+        assert!(!doc.needs_reindex);
+    }
+
+    #[tokio::test]
+    async fn test_failed_rag_index_after_an_access_change_drops_the_old_chunks() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let rag = crate::test_utils::RecordingRag::default();
+        let mut ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+        ctx.rag = Some(&rag);
+
+        let mut public = make_request("valid-token", "docs/page");
+        public.access_level = "public".to_string();
+        process_ingest(&ctx, public).await.unwrap();
+
+        // Narrowed to internal while embedding fails: the public chunks would
+        // stay retrievable by everyone, so they go.
+        rag.fail_index
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let outcome = process_ingest(&ctx, make_request("valid-token", "docs/page"))
+            .await
+            .unwrap();
+        assert!(!outcome.response.indexed);
+        assert_eq!(rag.deleted(), vec!["docs/page"]);
+        assert!(
+            repo.find_by_slug("docs/page")
+                .await
+                .unwrap()
+                .unwrap()
+                .needs_reindex
+        );
+
+        // Same access, new body, still failing: the old chunks stay.
+        let mut changed = make_request("valid-token", "docs/page");
+        changed.content = "# Hello\nAgain".to_string();
+        process_ingest(&ctx, changed).await.unwrap();
+        assert_eq!(rag.deleted(), vec!["docs/page"]);
     }
 }

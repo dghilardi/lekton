@@ -120,4 +120,133 @@ mod rag_integration {
             results.iter().map(|r| &r.document_slug).collect::<Vec<_>>()
         );
     }
+
+    async fn start_qdrant() -> (testcontainers::ContainerAsync<GenericImage>, String) {
+        let qdrant = GenericImage::new("qdrant/qdrant", "v1.19.1")
+            .with_exposed_port(ContainerPort::Tcp(6334))
+            .with_wait_for(WaitFor::message_on_stdout("Qdrant gRPC listening"))
+            .start()
+            .await
+            .expect("failed to start Qdrant container");
+        let port = qdrant
+            .get_host_port_ipv4(6334)
+            .await
+            .expect("failed to get Qdrant gRPC port");
+        (qdrant, format!("http://localhost:{port}"))
+    }
+
+    #[tokio::test]
+    async fn orphan_points_mongo_no_longer_knows_can_be_listed_and_deleted() {
+        use lekton::rag::service::AttachmentPage;
+        use qdrant_client::qdrant::{PointStruct, UpsertPointsBuilder};
+        use std::collections::HashSet;
+
+        let (_qdrant, url) = start_qdrant().await;
+        let vectorstore = Arc::new(QdrantVectorStore::new(&url, COLLECTION).unwrap());
+        vectorstore.ensure_collection(DIMENSIONS).await.unwrap();
+        let svc = DefaultRagService::new(
+            Arc::new(DeterministicEmbedding),
+            vectorstore.clone(),
+            256,
+            32,
+        );
+
+        for slug in ["docs/live", "docs/renamed-away"] {
+            svc.index_document(
+                slug,
+                slug,
+                "Some body text.",
+                "internal",
+                false,
+                &[],
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        }
+        let page = [AttachmentPage {
+            page_number: Some(1),
+            text: "Datasheet text.".to_string(),
+        }];
+        for key in ["live.pdf", "gone.pdf"] {
+            svc.index_attachment(key, key, &page, &["internal".to_string()], &[])
+                .await
+                .unwrap();
+        }
+        // A point written before `source_kind` existed.
+        let client = qdrant_client::Qdrant::from_url(&url).build().unwrap();
+        let mut payload = qdrant_client::Payload::new();
+        payload.insert("document_slug", "docs/legacy-gone");
+        payload.insert("chunk_text", "old format");
+        client
+            .upsert_points(
+                UpsertPointsBuilder::new(
+                    COLLECTION,
+                    vec![PointStruct::new(
+                        42u64,
+                        vec![0.5f32; DIMENSIONS as usize],
+                        payload,
+                    )],
+                )
+                .wait(true),
+            )
+            .await
+            .unwrap();
+
+        let before = vectorstore.list_point_sources().await.unwrap();
+        assert_eq!(before.len(), 5);
+        // The ids a reindex lists at its start, before writing anything.
+        assert_eq!(svc.list_point_ids().await.unwrap().len(), 5);
+
+        let live_slugs: HashSet<String> = ["docs/live".to_string()].into();
+        let live_keys: HashSet<String> = ["live.pdf".to_string()].into();
+        let orphans: Vec<String> = svc
+            .list_orphans(&live_slugs, &live_keys)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|p| p.id)
+            .collect();
+        assert_eq!(orphans.len(), 3);
+        svc.delete_points(&orphans).await.unwrap();
+
+        let mut remaining: Vec<String> = vectorstore
+            .list_point_sources()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|p| match p.source_kind.as_deref() {
+                Some("attachment") => p.attachment_key.unwrap(),
+                _ => p.document_slug.unwrap_or_default(),
+            })
+            .collect();
+        remaining.sort();
+        assert_eq!(remaining, vec!["docs/live", "live.pdf"]);
+    }
+
+    #[tokio::test]
+    async fn ensure_collection_rejects_a_collection_of_another_dimension() {
+        let (_qdrant, url) = start_qdrant().await;
+        let vectorstore = QdrantVectorStore::new(&url, COLLECTION).unwrap();
+        vectorstore.ensure_collection(DIMENSIONS).await.unwrap();
+
+        // Same dimensions: the existing collection is fine.
+        vectorstore.ensure_collection(DIMENSIONS).await.unwrap();
+
+        // `embedding_dimensions` changed without recreating the collection:
+        // every upsert would fail later, so startup must refuse instead.
+        let err = vectorstore
+            .ensure_collection(DIMENSIONS * 2)
+            .await
+            .expect_err("a dimension mismatch must fail");
+        let message = err.to_string();
+        assert!(
+            lekton::rag::vectorstore::is_dimension_mismatch(&err),
+            "{message}"
+        );
+        assert!(message.contains(&DIMENSIONS.to_string()), "{message}");
+        assert!(message.contains(&(DIMENSIONS * 2).to_string()), "{message}");
+        assert!(message.contains("embedding_dimensions"), "{message}");
+    }
 }

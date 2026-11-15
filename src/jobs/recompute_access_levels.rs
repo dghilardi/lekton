@@ -1,5 +1,6 @@
 //! Background job: recompute `effective_access_levels` for all users whose
-//! `assigned_access_levels` contain a level whose inheritance chain was modified.
+//! `assigned_access_levels` contain a level whose inheritance chain was
+//! modified — the changed level itself or any level inheriting from it.
 //!
 //! Called (via `tokio::spawn`) whenever an access level's `inherits_from` changes.
 //! Errors are logged but not propagated — the caller should not block on this job.
@@ -12,9 +13,9 @@ use crate::db::user_repository::UserRepository;
 /// Spawn a background task that recomputes effective access levels for all users
 /// transitively affected by a change to `changed_level_name`.
 ///
-/// The task finds every user that has `changed_level_name` in their
-/// `assigned_access_levels`, recomputes their effective set through the current
-/// DAG, and persists the result.
+/// The task finds every user assigned `changed_level_name` or a level that
+/// inherits from it (transitively), recomputes their effective set through the
+/// current DAG, and persists the result.
 pub fn spawn_recompute_for_level(
     changed_level_name: String,
     access_level_repo: Arc<dyn AccessLevelRepository>,
@@ -38,9 +39,19 @@ async fn recompute_for_level(
     access_level_repo: &dyn AccessLevelRepository,
     user_repo: &dyn UserRepository,
 ) -> Result<(), crate::error::AppError> {
-    let affected_users = user_repo
-        .list_users_with_assigned_level(changed_level_name)
-        .await?;
+    // A user's effective set changes when any level they are assigned reaches
+    // the changed level through inheritance, not only when they are assigned
+    // it directly.
+    let levels = access_level_repo.list_all().await?;
+    let mut affected_users = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for level in levels_inheriting(changed_level_name, &levels) {
+        for user in user_repo.list_users_with_assigned_level(&level).await? {
+            if seen.insert(user.id.clone()) {
+                affected_users.push(user);
+            }
+        }
+    }
 
     tracing::info!(
         level = %changed_level_name,
@@ -59,6 +70,26 @@ async fn recompute_for_level(
     }
 
     Ok(())
+}
+
+/// `changed` plus every level that inherits from it, directly or through
+/// other levels, in the current hierarchy.
+fn levels_inheriting(
+    changed: &str,
+    levels: &[crate::db::auth_models::AccessLevelEntity],
+) -> Vec<String> {
+    let mut found = vec![changed.to_string()];
+    let mut next = 0;
+    while next < found.len() {
+        let current = found[next].clone();
+        next += 1;
+        for level in levels {
+            if level.inherits_from.contains(&current) && !found.contains(&level.name) {
+                found.push(level.name.clone());
+            }
+        }
+    }
+    found
 }
 
 #[cfg(test)]
@@ -92,7 +123,13 @@ mod tests {
             }))
         }
         async fn list_all(&self) -> Result<Vec<AccessLevelEntity>, AppError> {
-            Ok(vec![])
+            let mut names: Vec<_> = self.levels.keys().cloned().collect();
+            names.sort();
+            let mut all = Vec::new();
+            for name in names {
+                all.extend(self.find_by_name(&name).await?);
+            }
+            Ok(all)
         }
         async fn update(&self, _: AccessLevelEntity) -> Result<(), AppError> {
             Ok(())
@@ -284,5 +321,54 @@ mod tests {
         let mut effective = user.effective_access_levels.clone();
         effective.sort();
         assert_eq!(effective, vec!["cloud-dev", "developer", "internal"]);
+    }
+
+    #[tokio::test]
+    async fn test_recompute_reaches_users_assigned_a_level_inheriting_the_changed_one() {
+        // Graph: cloud-dev -> developer -> internal; `developer` now also
+        // inherits `secrets`.
+        let mut levels = HashMap::new();
+        levels.insert("cloud-dev".to_string(), vec!["developer".to_string()]);
+        levels.insert(
+            "developer".to_string(),
+            vec!["internal".to_string(), "secrets".to_string()],
+        );
+        levels.insert("internal".to_string(), vec![]);
+        levels.insert("secrets".to_string(), vec![]);
+        levels.insert("unrelated".to_string(), vec![]);
+        let access_repo = MockAccessLevelRepo { levels };
+
+        // Effective sets computed before the change.
+        let user_repo = MockUserRepo::with_user("u1", vec!["cloud-dev".to_string()]);
+        user_repo
+            .update_user_effective_levels(
+                "u1",
+                vec!["cloud-dev".into(), "developer".into(), "internal".into()],
+            )
+            .await
+            .unwrap();
+        user_repo
+            .create_user(User {
+                id: "u2".to_string(),
+                assigned_access_levels: vec!["unrelated".to_string()],
+                effective_access_levels: vec!["stale-but-untouched".to_string()],
+                ..user_repo.find_user_by_id("u1").await.unwrap().unwrap()
+            })
+            .await
+            .unwrap();
+
+        recompute_for_level("developer", &access_repo, &user_repo)
+            .await
+            .unwrap();
+
+        let user = user_repo.find_user_by_id("u1").await.unwrap().unwrap();
+        let mut effective = user.effective_access_levels.clone();
+        effective.sort();
+        assert_eq!(
+            effective,
+            vec!["cloud-dev", "developer", "internal", "secrets"]
+        );
+        let other = user_repo.find_user_by_id("u2").await.unwrap().unwrap();
+        assert_eq!(other.effective_access_levels, vec!["stale-but-untouched"]);
     }
 }

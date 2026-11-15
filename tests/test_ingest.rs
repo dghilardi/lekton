@@ -293,3 +293,47 @@ async fn ingest_indexes_in_meilisearch() {
         results
     );
 }
+
+/// Meilisearch accepts a write as a task and may still reject it. The ingest
+/// must notice, report `indexed: false` and leave `needs_reindex` set, instead
+/// of recording a document search never received as in sync.
+#[tokio::test]
+async fn ingest_records_needs_reindex_when_meilisearch_rejects_the_document() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+
+    // Recreate the index with a primary key the service does not use, so the
+    // indexing task fails after being accepted.
+    let client = meilisearch_sdk::client::Client::new(&env.meili_url, None::<String>).unwrap();
+    let deleted = client
+        .delete_index("documents")
+        .await
+        .unwrap()
+        .wait_for_completion(&client, None, None)
+        .await
+        .unwrap();
+    assert!(deleted.is_success(), "{deleted:?}");
+    let created = client
+        .create_index("documents", Some("other"))
+        .await
+        .unwrap()
+        .wait_for_completion(&client, None, None)
+        .await
+        .unwrap();
+    assert!(created.is_success(), "{created:?}");
+
+    let response = env
+        .ingest(&server, "docs/rejected", "Rejected", "# Rejected", "public")
+        .await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["indexed"], false, "{body}");
+
+    let doc = env
+        .repo
+        .find_by_slug("docs/rejected")
+        .await
+        .unwrap()
+        .expect("the document is still stored");
+    assert!(doc.needs_reindex);
+}

@@ -646,3 +646,190 @@ async fn a_stale_reindex_snapshot_cannot_undo_a_later_demotion() {
         "exactly one release may claim the alias"
     );
 }
+
+/// A reindex clears `needs_reindex` from a snapshot read long before. An ingest
+/// that landed in between and failed to index has set the flag again, and the
+/// late clear must not hide that failure.
+#[tokio::test]
+async fn a_reindex_clears_needs_reindex_only_if_the_document_is_unchanged() {
+    let env = common::TestEnv::start().await;
+
+    let mut flagged = doc("api/auth", "1.0.0", true);
+    flagged.needs_reindex = true;
+    env.repo.create_or_update(flagged).await.unwrap();
+    let snapshot = env
+        .repo
+        .find_all_by_slug("api/auth")
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+
+    // A newer ingest also failed to index.
+    let mut newer = snapshot.clone();
+    newer.last_updated = snapshot.last_updated + chrono::Duration::seconds(5);
+    env.repo.create_or_update(newer).await.unwrap();
+
+    assert!(!env
+        .repo
+        .clear_needs_reindex_if_unchanged(&snapshot)
+        .await
+        .unwrap());
+    let current = env
+        .repo
+        .find_all_by_slug("api/auth")
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert!(current.needs_reindex, "the newer failure must stay flagged");
+
+    // Unchanged since the snapshot: cleared.
+    assert!(env
+        .repo
+        .clear_needs_reindex_if_unchanged(&current)
+        .await
+        .unwrap());
+    let cleared = env
+        .repo
+        .find_all_by_slug("api/auth")
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert!(!cleared.needs_reindex);
+}
+
+/// Hidden documents stay out of search: a promotion whose new release hides a
+/// slug must remove that slug's entry rather than index the hidden copy.
+#[tokio::test]
+async fn promotion_reindex_removes_a_slug_the_new_release_hides() {
+    let env = common::TestEnv::start().await;
+
+    let visible = doc("api/secret", "1.0.0", true);
+    let hidden = Document {
+        is_hidden: true,
+        ..doc("api/secret", "1.2.0", false)
+    };
+    env.repo.create_or_update(visible.clone()).await.unwrap();
+    env.repo.create_or_update(hidden).await.unwrap();
+    env.storage
+        .put_object("docs/api_secret.md", b"# Secret\n\nbody".to_vec())
+        .await
+        .unwrap();
+    env.search
+        .index_document(&lekton::search::client::build_search_document(
+            &visible, "# Secret",
+        ))
+        .await
+        .unwrap();
+    env.wait_for_search_indexing().await;
+    assert_eq!(
+        env.search.list_indexed_slugs().await.unwrap(),
+        ["api/secret"]
+    );
+
+    let affected = env
+        .repo
+        .promote_release("assets-manager", "1.2.0")
+        .await
+        .unwrap();
+    lekton::api::releases::reindex_promoted(
+        env.repo.as_ref(),
+        env.release_repo.as_ref(),
+        "assets-manager",
+        env.storage.as_ref(),
+        Some(env.search.as_ref()),
+        None,
+        &affected,
+    )
+    .await;
+    env.wait_for_search_indexing().await;
+
+    assert!(
+        env.search.list_indexed_slugs().await.unwrap().is_empty(),
+        "the hidden copy must not be indexed"
+    );
+    let latest = env
+        .repo
+        .find_all_by_slug("api/secret")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|d| d.is_latest)
+        .unwrap();
+    assert!(!latest.needs_reindex);
+}
+
+/// Archiving and promotion change what a document's index entries should be
+/// without touching `last_updated`. A clear from a snapshot read before either
+/// must not match: the flag has to stay for the next pass.
+#[tokio::test]
+async fn a_reindex_clear_does_not_match_after_archiving_or_promotion() {
+    let env = common::TestEnv::start().await;
+
+    // Archived after the snapshot was indexed.
+    let mut flagged = doc("api/archived", "1.0.0", true);
+    flagged.needs_reindex = true;
+    env.repo.create_or_update(flagged).await.unwrap();
+    let snapshot = env
+        .repo
+        .find_all_by_slug("api/archived")
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    env.repo
+        .set_archived("api/archived", Some("1.0.0"), true)
+        .await
+        .unwrap();
+    assert!(!env
+        .repo
+        .clear_needs_reindex_if_unchanged(&snapshot)
+        .await
+        .unwrap());
+    let current = env
+        .repo
+        .find_all_by_slug("api/archived")
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert!(current.needs_reindex);
+
+    // Promoted to latest (and flagged) after the snapshot was read.
+    env.repo
+        .create_or_update(doc("api/promoted", "1.0.0", true))
+        .await
+        .unwrap();
+    env.repo
+        .create_or_update(doc("api/promoted", "1.2.0", false))
+        .await
+        .unwrap();
+    let snapshot = env
+        .repo
+        .find_all_by_slug("api/promoted")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|d| d.release.as_deref() == Some("1.2.0"))
+        .unwrap();
+    env.repo
+        .promote_release("assets-manager", "1.2.0")
+        .await
+        .unwrap();
+    assert!(!env
+        .repo
+        .clear_needs_reindex_if_unchanged(&snapshot)
+        .await
+        .unwrap());
+    let promoted = env
+        .repo
+        .find_all_by_slug("api/promoted")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|d| d.release.as_deref() == Some("1.2.0"))
+        .unwrap();
+    assert!(promoted.is_latest && promoted.needs_reindex);
+}

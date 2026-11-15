@@ -15,6 +15,8 @@ use crate::error::AppError;
 #[cfg(feature = "ssr")]
 use crate::rag::service::AttachmentPage;
 #[cfg(feature = "ssr")]
+use crate::search::client::wait_for_task;
+#[cfg(feature = "ssr")]
 use async_trait::async_trait;
 
 /// One indexed page of an attachment.
@@ -30,7 +32,8 @@ pub struct AttachmentChunkDocument {
     /// Display filename (last path segment of `attachment_key`).
     pub filename: String,
     /// Slug of the (first) document that references this attachment, used to
-    /// link a hit back to `/docs/{slug}`.
+    /// link a hit back to `/docs/{slug}`. Empty while no document references
+    /// it; such pages are not returned by search.
     pub document_slug: String,
     /// Title of that document, shown alongside the filename in results.
     pub document_title: String,
@@ -78,13 +81,16 @@ pub trait AttachmentSearchService: Send + Sync {
     /// Remove every indexed page for an attachment.
     async fn delete_attachment(&self, attachment_key: &str) -> Result<(), AppError>;
 
-    /// Update only the `access_levels` of every indexed page for an
-    /// attachment, without re-indexing its text — for when the referencing
-    /// document's access level changes but the attachment content did not.
-    /// A no-op if the attachment has no indexed pages.
-    async fn update_access_levels(
+    /// Update the linked document (`document_slug`, `document_title`) and the
+    /// `access_levels` of every indexed page for an attachment, without
+    /// re-indexing its text — for when the referencing documents change but
+    /// the attachment content did not. A no-op if the attachment has no
+    /// indexed pages.
+    async fn update_reference(
         &self,
         attachment_key: &str,
+        document_slug: &str,
+        document_title: &str,
         access_levels: &[String],
     ) -> Result<(), AppError>;
 
@@ -101,6 +107,12 @@ pub trait AttachmentSearchService: Send + Sync {
 
     /// Configure the index (filterable/searchable attributes). Call once on startup.
     async fn configure_index(&self) -> Result<(), AppError>;
+
+    /// Every distinct attachment key the index holds, for the full-reindex
+    /// orphan sweep. Defaults to nothing, so nothing is ever swept.
+    async fn list_indexed_attachment_keys(&self) -> Result<Vec<String>, AppError> {
+        Ok(Vec::new())
+    }
 }
 
 /// Truncate to at most `max_len` bytes, on a char boundary.
@@ -210,12 +222,19 @@ impl AttachmentSearchService for MeilisearchAttachmentService {
             return Ok(());
         }
 
-        self.index()
+        let task = self
+            .index()
             .add_documents(&docs, Some("id"))
             .await
             .map_err(|e| AppError::Internal(format!("Meilisearch attachment index error: {e}")))?;
 
-        Ok(())
+        // Tasks run in order per index, so this also covers the delete above.
+        wait_for_task(
+            &self.client,
+            task,
+            &format!("indexing attachment '{attachment_key}'"),
+        )
+        .await
     }
 
     async fn delete_attachment(&self, attachment_key: &str) -> Result<(), AppError> {
@@ -226,17 +245,28 @@ impl AttachmentSearchService for MeilisearchAttachmentService {
         let mut query = DocumentDeletionQuery::new(&index);
         query.with_filter(&filter);
 
-        match index.delete_documents_with(&query).await {
-            Ok(_) => Ok(()),
-            Err(e) => Err(AppError::Internal(format!(
-                "Meilisearch attachment delete error: {e}"
-            ))),
+        let task = index
+            .delete_documents_with(&query)
+            .await
+            .map_err(|e| AppError::Internal(format!("Meilisearch attachment delete error: {e}")))?;
+        match wait_for_task(
+            &self.client,
+            task,
+            &format!("deleting attachment '{attachment_key}'"),
+        )
+        .await
+        {
+            // Nothing indexed yet: there is nothing to delete either.
+            Err(e) if e.to_string().contains("index_not_found") => Ok(()),
+            result => result,
         }
     }
 
-    async fn update_access_levels(
+    async fn update_reference(
         &self,
         attachment_key: &str,
+        document_slug: &str,
+        document_title: &str,
         access_levels: &[String],
     ) -> Result<(), AppError> {
         use meilisearch_sdk::documents::DocumentsQuery;
@@ -251,6 +281,8 @@ impl AttachmentSearchService for MeilisearchAttachmentService {
         #[derive(Serialize)]
         struct PartialAcl<'a> {
             id: &'a str,
+            document_slug: &'a str,
+            document_title: &'a str,
             access_levels: &'a [String],
         }
 
@@ -279,19 +311,28 @@ impl AttachmentSearchService for MeilisearchAttachmentService {
                 .iter()
                 .map(|d| PartialAcl {
                     id: &d.id,
+                    document_slug,
+                    document_title,
                     access_levels,
                 })
                 .collect();
 
-            // `add_or_update` merges by id (only `access_levels` is overwritten,
-            // every other field is left untouched), unlike `add_documents` which
-            // replaces the whole document.
-            self.index()
+            // `add_or_update` merges by id (only the fields above are
+            // overwritten, every other field is left untouched), unlike
+            // `add_documents` which replaces the whole document.
+            let task = self
+                .index()
                 .add_or_update(&updates, Some("id"))
                 .await
                 .map_err(|e| {
                     AppError::Internal(format!("Meilisearch attachment ACL update error: {e}"))
                 })?;
+            wait_for_task(
+                &self.client,
+                task,
+                &format!("updating attachment '{attachment_key}'"),
+            )
+            .await?;
 
             if results.results.len() < PAGE_SIZE {
                 return Ok(());
@@ -333,6 +374,9 @@ impl AttachmentSearchService for MeilisearchAttachmentService {
         Ok(results
             .hits
             .into_iter()
+            // Pages of an attachment no document links yet have nowhere to
+            // point a hit at (and an empty ACL, so only admins would see them).
+            .filter(|hit| !hit.result.document_slug.is_empty())
             .map(|hit| AttachmentSearchHit {
                 document_slug: hit.result.document_slug,
                 document_title: hit.result.document_title,
@@ -358,6 +402,43 @@ impl AttachmentSearchService for MeilisearchAttachmentService {
             .map_err(|e| AppError::Internal(format!("Meilisearch attachment config error: {e}")))?;
 
         Ok(())
+    }
+
+    async fn list_indexed_attachment_keys(&self) -> Result<Vec<String>, AppError> {
+        use crate::search::client::{is_index_not_found, LIST_PAGE_SIZE};
+        use meilisearch_sdk::documents::{DocumentsQuery, DocumentsResults};
+
+        #[derive(Deserialize)]
+        struct KeyOnly {
+            attachment_key: String,
+        }
+
+        let index = self.index();
+        let mut keys = std::collections::BTreeSet::new();
+        let mut offset = 0;
+        loop {
+            let mut query = DocumentsQuery::new(&index);
+            query
+                .with_fields(["attachment_key"])
+                .with_limit(LIST_PAGE_SIZE)
+                .with_offset(offset);
+            let page: DocumentsResults<KeyOnly> = match index.get_documents_with(&query).await {
+                Ok(page) => page,
+                Err(e) if is_index_not_found(&e) => break,
+                Err(e) => {
+                    return Err(AppError::Internal(format!(
+                        "Meilisearch attachment list error: {e}"
+                    )))
+                }
+            };
+            let fetched = page.results.len();
+            offset += fetched;
+            keys.extend(page.results.into_iter().map(|d| d.attachment_key));
+            if fetched < LIST_PAGE_SIZE {
+                break;
+            }
+        }
+        Ok(keys.into_iter().collect())
     }
 }
 

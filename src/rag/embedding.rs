@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::RagConfig;
 use crate::error::AppError;
-use crate::rag::{build_oai_client, client::format_llm_error};
+use crate::rag::client::{build_embedding_oai_client, format_llm_error};
 use crate::usage;
 use crate::usage::UsageKey;
 
@@ -50,7 +50,7 @@ impl OpenAICompatibleEmbedding {
         }
 
         Ok(Self {
-            client: build_oai_client(
+            client: build_embedding_oai_client(
                 &config.embedding_url,
                 &config.embedding_api_key,
                 &config.embedding_headers,

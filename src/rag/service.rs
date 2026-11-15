@@ -509,6 +509,8 @@ mod tests {
             chunk_overlap_tokens: 64,
             expand_to_parent: false,
             hybrid_search_enabled: false,
+            retrieval_candidate_limit: 50,
+            context_chunk_limit: 5,
             reranker_vertex_project_id: String::new(),
             reranker_vertex_model: String::new(),
             reranker_url: String::new(),

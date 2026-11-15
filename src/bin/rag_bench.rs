@@ -152,6 +152,10 @@ mod ssr {
         expand_to_parent: bool,
         #[serde(default)]
         hybrid_search_enabled: bool,
+        #[serde(default = "lekton::config::default_retrieval_candidate_limit")]
+        retrieval_candidate_limit: usize,
+        #[serde(default = "lekton::config::default_context_chunk_limit")]
+        context_chunk_limit: usize,
         #[serde(default)]
         meilisearch_url: String,
         #[serde(default)]
@@ -233,6 +237,7 @@ mod ssr {
                     self.name
                 ));
             }
+            self.to_rag_config().validate()?;
             Ok(())
         }
 
@@ -253,6 +258,8 @@ mod ssr {
                 chunk_overlap_tokens: self.chunk_overlap_tokens,
                 expand_to_parent: self.expand_to_parent,
                 hybrid_search_enabled: self.hybrid_search_enabled,
+                retrieval_candidate_limit: self.retrieval_candidate_limit,
+                context_chunk_limit: self.context_chunk_limit,
                 reranker_vertex_project_id: self.reranker_vertex_project_id.clone(),
                 reranker_vertex_model: self.reranker_vertex_model.clone(),
                 reranker_url: self.reranker_url.clone(),

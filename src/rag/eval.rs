@@ -272,6 +272,7 @@ impl RagEvalContext {
         rag: &RagConfig,
         search: Option<&SearchConfig>,
     ) -> Result<Self, AppError> {
+        rag.validate().map_err(AppError::Internal)?;
         if !rag.is_enabled() {
             return Err(AppError::Internal(
                 "RAG is not enabled — set rag.qdrant_url, rag.embedding_url".into(),

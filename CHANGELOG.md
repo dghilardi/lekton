@@ -40,7 +40,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- Optional Google Ranking API reranking with automatically refreshed service account/ADC authentication and retrieval-order fallback on failures.
+- Optional Google Ranking API reranking with automatically refreshed service account/ADC authentication. Rerank a configurable pool of up to 100 unique merged candidates (default 50) before selecting final context chunks (default 5), with bounded retrieval-order fallback.
 
 ## [0.40.0] 2026-11-09
 

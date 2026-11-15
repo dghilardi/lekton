@@ -288,3 +288,18 @@ cargo run --bin rag-bench --features ssr --no-default-features -- \
 - Scoring types and logic: `src/rag/eval.rs`
 - `rag-eval` binary: `src/bin/rag_eval.rs`
 - `rag-bench` binary: `src/bin/rag_bench.rs`
+
+### Candidate and final-context budgets
+
+`rag.retrieval_candidate_limit` (default 50, maximum 100) controls the unique
+merged pool before reranking. `rag.context_chunk_limit` (default 5, positive and
+no greater than the candidate budget) controls the final context and error
+fallback. Both settings also work in `rag-bench` TOML. `pre_rerank` contains the
+candidate pool; `post_rerank` contains final context. For comparable pre/post
+metrics, use `--top-k` at or below the final-context limit, or increase that limit.
+When reranking is disabled or skipped in thrifty mode, both lists stay final sized.
+
+Hybrid search currently boosts vector-derived candidates using Meilisearch's
+document ranking. Lexical-only documents do not add chunks to the pool. HyDE
+changes embedding queries and never supplies synthetic context. See
+[retrieval behavior](google-reranking.md#limits-and-fallback) for details.

@@ -51,9 +51,47 @@ Use a project ID or project number; for legacy domain-scoped IDs such as
 
 ## Limits and fallback
 
-The current chat retrieval path passes at most five candidates to reranking.
-This option reorders those candidates; evaluate corpus-specific quality with
-`rag-eval`.
+All reranker providers use separate retrieval and final-context budgets:
+
+```sh
+LKN__RAG__RETRIEVAL_CANDIDATE_LIMIT=50
+LKN__RAG__CONTEXT_CHUNK_LIMIT=5
+```
+
+These map to `rag.retrieval_candidate_limit` and `rag.context_chunk_limit`.
+Both are positive; the final context limit must not exceed the candidate limit,
+and the candidate limit must not exceed **100**. Defaults are 50 candidates and
+5 final chunks. The same fields work in `rag-bench` TOML. Invalid budgets are
+rejected at startup and in retrieval-only evaluation initialization.
+
+Each vector/subquery search fetches up to the candidate limit when reranking is
+active. Results are merged with RRF, deduplicated by vector point (or source/chunk
+identity for legacy hits without IDs), and fused with the optional lexical signal
+**before** the merged candidate cap. Subquery top hits are reserved within that
+pool, subject to the configured cap. The reranker chooses the final context by
+relevance; subquery diversity is not forced again after reranking. Provider errors
+fall back to the first context-sized slice of the candidate pool. Attachments are
+filtered before fusion/reranking when attachment indexing is disabled, and all
+search calls retain caller access-level and draft filters.
+
+**Hybrid limitation:** the existing Meilisearch integration returns document slugs
+and short previews, not indexed chunk payloads. It boosts matching vector-derived
+candidates through RRF; lexical-only hits cannot enter this pool. Fetching their
+full chunks requires an additional chunk-retrieval interface. Keyword search still
+uses the original query when HyDE replaces embedding inputs. HyDE generates query
+embeddings only; its synthetic answers never become context chunks.
+
+Without a reranker, the pre/post lists stay final-context sized. Vector-only
+retrieval requests only that many hits. Hybrid retrieval retains its existing
+small overfetch (three times the final limit, capped by the candidate budget).
+Thrifty mode skips analyzer, HyDE, rewriting, lexical search and reranking, and
+requests only the final vector count. The existing prompt-character budget and
+optional parent-section expansion still apply after chunk selection.
+
+`rag-eval` uses this same pipeline: `pre_rerank` exposes the bounded candidate pool
+and `post_rerank` the bounded final context. Choose a comparison `--top-k` no larger
+than the final context limit, or raise the context budget for larger-k evaluations.
+No live Google quality evaluation is implied by the mock regression tests.
 
 The [ranking guide](https://docs.cloud.google.com/generative-ai-app-builder/docs/ranking)
 currently documents up to **1000 records** per request. Lekton rejects larger

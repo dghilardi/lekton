@@ -40,7 +40,7 @@ pub(crate) async fn rerank_or_fallback(
     top_n: usize,
 ) -> Vec<VectorSearchResult> {
     match reranker.rerank(query, chunks.to_vec(), top_n).await {
-        Ok(results) => results,
+        Ok(results) => results.into_iter().take(top_n).collect(),
         Err(error) => {
             tracing::warn!(%error, "reranker failed, falling back to retrieval order");
             chunks.iter().take(top_n).cloned().collect()
@@ -130,9 +130,10 @@ impl Reranker for CrossEncoderReranker {
         chunks: Vec<VectorSearchResult>,
         top_n: usize,
     ) -> Result<Vec<VectorSearchResult>, AppError> {
-        if chunks.is_empty() {
-            return Ok(chunks);
+        if chunks.is_empty() || top_n == 0 {
+            return Ok(Vec::new());
         }
+        let top_n = top_n.min(chunks.len());
 
         let documents: Vec<String> = chunks.iter().map(|c| c.chunk_text.clone()).collect();
 
@@ -172,8 +173,10 @@ impl Reranker for CrossEncoderReranker {
             .collect();
         scored.sort_by(|a, b| b.1.total_cmp(&a.1));
 
+        let mut seen = std::collections::HashSet::new();
         let reranked = scored
             .into_iter()
+            .filter(|(i, _)| seen.insert(*i))
             .take(top_n)
             .filter_map(|(i, _)| chunks.get(i).cloned())
             .collect();
@@ -204,6 +207,8 @@ mod tests {
             chunk_overlap_tokens: 64,
             expand_to_parent: false,
             hybrid_search_enabled: false,
+            retrieval_candidate_limit: 50,
+            context_chunk_limit: 5,
             reranker_vertex_project_id: String::new(),
             reranker_vertex_model: String::new(),
             reranker_url: url.to_string(),
@@ -293,6 +298,64 @@ mod tests {
             .await;
         task.abort();
         assert_eq!(result.unwrap()[0].chunk_text, "second");
+    }
+
+    #[tokio::test]
+    async fn url_provider_clamps_top_n_and_deduplicates_response_indices() {
+        use axum::{routing::post, Json, Router};
+        use serde_json::{json, Value};
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let received = calls.clone();
+        let app = Router::new().route(
+            "/rerank",
+            post(move |Json(body): Json<Value>| {
+                let received = received.clone();
+                async move {
+                    received.fetch_add(1, Ordering::SeqCst);
+                    assert_eq!(body["top_n"], 2);
+                    assert_eq!(body["documents"].as_array().unwrap().len(), 2);
+                    Json(json!({"results":[
+                        {"index":1,"relevance_score":0.9},
+                        {"index":1,"relevance_score":0.8},
+                        {"index":0,"relevance_score":0.7},
+                        {"index":99,"relevance_score":0.99}
+                    ]}))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = make_config(&format!("http://{}/rerank", listener.local_addr().unwrap()));
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let provider = build_reranker(&config).await.unwrap().unwrap();
+        let chunks = vec![
+            VectorSearchResult {
+                point_id: "first".into(),
+                chunk_text: "first".into(),
+                ..Default::default()
+            },
+            VectorSearchResult {
+                point_id: "second".into(),
+                chunk_text: "second".into(),
+                ..Default::default()
+            },
+        ];
+        let result = provider.rerank("q", chunks.clone(), 100).await.unwrap();
+        assert_eq!(
+            result
+                .iter()
+                .map(|c| c.point_id.as_str())
+                .collect::<Vec<_>>(),
+            ["second", "first"]
+        );
+        assert!(provider.rerank("q", chunks, 0).await.unwrap().is_empty());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        task.abort();
     }
 
     #[test]

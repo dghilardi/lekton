@@ -87,7 +87,7 @@ const RETRIEVED_ATTRIBUTES: [&str; 11] = [
 
 /// Words kept around a match when cropping the preview or a body snippet.
 #[cfg(feature = "ssr")]
-const SNIPPET_WORDS: usize = 24;
+pub(crate) const SNIPPET_WORDS: usize = 24;
 
 /// How long to wait for a settings update. Changing searchable attributes makes
 /// Meilisearch re-process every stored document.
@@ -231,6 +231,74 @@ pub(crate) async fn wait_for_task(
     }
 }
 
+/// Apply `settings` to `index` as one task and wait until the engine applied
+/// it, so searches and a following re-index use the new attributes and a
+/// rejected update is reported instead of silently ignored.
+#[cfg(feature = "ssr")]
+pub(crate) async fn apply_settings(
+    client: &meilisearch_sdk::client::Client,
+    index: &meilisearch_sdk::indexes::Index,
+    settings: &meilisearch_sdk::settings::Settings,
+) -> Result<(), AppError> {
+    let task = index
+        .set_settings(settings)
+        .await
+        .map_err(|e| AppError::Internal(format!("Meilisearch config error: {e}")))?;
+    let task = task
+        .wait_for_completion(
+            client,
+            Some(std::time::Duration::from_millis(250)),
+            Some(SETTINGS_TIMEOUT),
+        )
+        .await
+        .map_err(|e| {
+            AppError::Internal(format!(
+                "Meilisearch settings update of '{}' not confirmed within {}s: {e}",
+                index.uid,
+                SETTINGS_TIMEOUT.as_secs()
+            ))
+        })?;
+    if let meilisearch_sdk::tasks::Task::Failed { content } = task {
+        return Err(AppError::Internal(format!(
+            "Meilisearch settings update of '{}' failed: {}",
+            index.uid, content.error
+        )));
+    }
+    Ok(())
+}
+
+/// The highlighted (and cropped) value of `field` in a hit's formatted result,
+/// as plain text plus match ranges.
+#[cfg(feature = "ssr")]
+pub(crate) fn formatted_field(
+    formatted: Option<&serde_json::Map<String, serde_json::Value>>,
+    field: &str,
+) -> Option<(String, Vec<[usize; 2]>)> {
+    formatted
+        .and_then(|formatted| formatted.get(field))
+        .and_then(serde_json::Value::as_str)
+        .map(split_highlights)
+}
+
+/// The text a hit shows: the cropped `content_preview` with its matches, or,
+/// when only the full `content` matched, a snippet around that match instead.
+#[cfg(feature = "ssr")]
+pub(crate) fn preview_or_body_snippet(
+    formatted: Option<&serde_json::Map<String, serde_json::Value>>,
+    stored_preview: &str,
+) -> (String, Vec<[usize; 2]>) {
+    let preview = formatted_field(formatted, "content_preview")
+        .unwrap_or_else(|| (stored_preview.to_string(), vec![]));
+    if preview.1.is_empty() {
+        if let Some(snippet) =
+            formatted_field(formatted, "content").filter(|(_, matches)| !matches.is_empty())
+        {
+            return snippet;
+        }
+    }
+    preview
+}
+
 /// Meilisearch implementation of the SearchService.
 #[cfg(feature = "ssr")]
 pub struct MeilisearchService {
@@ -370,26 +438,11 @@ impl SearchService for MeilisearchService {
             .hits
             .into_iter()
             .map(|hit| {
-                let formatted = |field: &str| {
-                    hit.formatted_result
-                        .as_ref()
-                        .and_then(|formatted| formatted.get(field))
-                        .and_then(serde_json::Value::as_str)
-                        .map(split_highlights)
-                };
-                let (title, title_matches) =
-                    formatted("title").unwrap_or_else(|| (hit.result.title.clone(), vec![]));
-                let (mut content_preview, mut preview_matches) = formatted("content_preview")
-                    .unwrap_or_else(|| (hit.result.content_preview.clone(), vec![]));
-                // A match only in the body shows a snippet around it instead.
-                if preview_matches.is_empty() {
-                    if let Some((snippet, matches)) =
-                        formatted("content").filter(|(_, matches)| !matches.is_empty())
-                    {
-                        content_preview = snippet;
-                        preview_matches = matches;
-                    }
-                }
+                let formatted = hit.formatted_result.as_ref();
+                let (title, title_matches) = formatted_field(formatted, "title")
+                    .unwrap_or_else(|| (hit.result.title.clone(), vec![]));
+                let (content_preview, preview_matches) =
+                    preview_or_body_snippet(formatted, &hit.result.content_preview);
                 SearchHit {
                     slug: hit.result.slug,
                     title,
@@ -461,34 +514,7 @@ impl SearchService for MeilisearchService {
             .with_searchable_attributes(SEARCHABLE_ATTRIBUTES)
             .with_sortable_attributes(["last_updated"]);
 
-        let task = self
-            .index()
-            .set_settings(&settings)
-            .await
-            .map_err(|e| AppError::Internal(format!("Meilisearch config error: {e}")))?;
-        // Wait, so searches and a following re-index use the new attributes and
-        // a rejected update is reported instead of silently ignored.
-        let task = task
-            .wait_for_completion(
-                &self.client,
-                Some(std::time::Duration::from_millis(250)),
-                Some(SETTINGS_TIMEOUT),
-            )
-            .await
-            .map_err(|e| {
-                AppError::Internal(format!(
-                    "Meilisearch settings update not confirmed within {}s: {e}",
-                    SETTINGS_TIMEOUT.as_secs()
-                ))
-            })?;
-        if let meilisearch_sdk::tasks::Task::Failed { content } = task {
-            return Err(AppError::Internal(format!(
-                "Meilisearch settings update failed: {}",
-                content.error
-            )));
-        }
-
-        Ok(())
+        apply_settings(&self.client, &self.index(), &settings).await
     }
 
     async fn health_check(&self) -> Result<(), AppError> {

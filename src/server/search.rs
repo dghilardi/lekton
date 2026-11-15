@@ -28,15 +28,7 @@ pub async fn search_docs(query: String) -> Result<Vec<SearchHit>, ServerFnError>
             .search(&query, allowed_levels.as_deref())
             .await
         {
-            Ok(hits) => results.extend(hits.into_iter().map(|h| SearchHit {
-                slug: h.document_slug,
-                title: h.document_title,
-                tags: vec![],
-                content_preview: h.content_preview,
-                attachment_key: Some(h.attachment_key),
-                page: h.page,
-                ..SearchHit::default()
-            })),
+            Ok(hits) => results.extend(hits.into_iter().map(SearchHit::from)),
             Err(e) => tracing::warn!("Attachment search failed: {e}"),
         }
     }

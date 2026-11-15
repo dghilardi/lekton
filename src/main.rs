@@ -736,11 +736,18 @@ async fn main() {
         if config.features.search {
             match MeilisearchService::from_app_config(&config.search) {
                 Ok(service) => {
-                    if let Err(e) = service.configure_index().await {
-                        tracing::warn!("Failed to configure Meilisearch index: {e}");
-                    }
+                    let service = Arc::new(service);
+                    // Apply index settings without delaying startup: a changed
+                    // searchable attribute makes Meilisearch re-process every
+                    // entry, and earlier tasks may be queued ahead of it.
+                    let configuring = service.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = configuring.configure_index().await {
+                            tracing::warn!("Failed to configure Meilisearch index: {e}");
+                        }
+                    });
                     tracing::info!("Meilisearch search service initialized");
-                    Some(Arc::new(service))
+                    Some(service)
                 }
                 Err(e) => {
                     tracing::warn!("Meilisearch not available: {e} — search will be disabled");

@@ -58,7 +58,7 @@ pub(super) async fn lexical_candidates(
     let searches = queries
         .iter()
         .take(MAX_QUERY_VARIANTS)
-        .map(|q| bounded(search.search(q, levels, include_draft)));
+        .map(|q| bounded(search.discover(q, levels, include_draft)));
     let responses = futures::future::join_all(searches).await;
     let mut documents: HashMap<String, DocumentMatch> = HashMap::new();
     for (query_index, response) in responses.into_iter().enumerate() {

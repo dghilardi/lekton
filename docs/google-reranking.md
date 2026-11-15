@@ -115,7 +115,9 @@ still apply to the merged pool and final/fallback selection.
 **Index tradeoff:** Meilisearch indexes one entry per document: title, slug,
 tags, the short preview and the full plain-text body (see
 [search indexing](operations.md#full-text-indexing)), so an identifier deep in
-a document can discover it. Entries indexed before full-body search only match
+a document can discover it. Discovery requests only slugs, with Meilisearch's
+`frequency` matching strategy so common question words are dropped before rare
+identifiers. Entries indexed before full-body search only match
 their metadata and preview until a search re-index. Passage selection inside a
 discovered document uses dense semantic relevance, not chunk-level BM25, so no
 re-embedding or Qdrant change is needed.

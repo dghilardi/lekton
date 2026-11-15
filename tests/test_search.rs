@@ -370,17 +370,22 @@ async fn search_finds_body_only_terms_with_a_bounded_snippet_and_no_body() {
         .iter()
         .any(|r| r["slug"].as_str() == Some(public_slug.as_str())));
 
-    // Hybrid discovery calls the same service with the reader's visibility.
+    // Hybrid discovery: a natural-language question, the reader's visibility,
+    // slugs only.
     let levels = vec!["public".to_string()];
+    let question = format!("what should I do when the device reports {keyword}");
     let hits = env
         .search
-        .search(&keyword, Some(&levels), false)
+        .discover(&question, Some(&levels), false)
         .await
         .unwrap();
-    assert_eq!(
-        hits.iter().map(|h| h.slug.as_str()).collect::<Vec<_>>(),
-        [public_slug.as_str()]
-    );
+    assert!(hits.iter().any(|h| h.slug == public_slug), "{hits:?}");
+    assert!(hits
+        .iter()
+        .all(|h| h.slug != restricted_slug && h.slug != draft_slug));
+    assert!(hits
+        .iter()
+        .all(|h| h.title.is_empty() && h.content_preview.is_empty()));
     let hits = env.search.search(&keyword, None, true).await.unwrap();
     assert_eq!(hits.len(), 3, "admins see every copy, one hit per document");
 }

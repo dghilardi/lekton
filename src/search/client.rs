@@ -149,6 +149,18 @@ pub trait SearchService: Send + Sync {
         include_draft: bool,
     ) -> Result<Vec<SearchHit>, AppError>;
 
+    /// Slugs of documents matching a natural-language `query`, with the same
+    /// visibility as [`search`](Self::search), for retrieval discovery. Hits
+    /// carry only the slug: no highlights or snippets are computed.
+    async fn discover(
+        &self,
+        query: &str,
+        allowed_levels: Option<&[String]>,
+        include_draft: bool,
+    ) -> Result<Vec<SearchHit>, AppError> {
+        self.search(query, allowed_levels, include_draft).await
+    }
+
     /// Configure the search index (filterable/searchable attributes) and wait
     /// until the engine applies it. Called on startup and before a re-index.
     async fn configure_index(&self) -> Result<(), AppError>;
@@ -200,6 +212,27 @@ impl MeilisearchService {
     fn index(&self) -> meilisearch_sdk::indexes::Index {
         self.client.index(&self.index_name)
     }
+
+    /// The Meilisearch filter for the caller's visibility: `None` when the
+    /// caller can read nothing, an empty string when nothing is filtered.
+    fn visibility_filter(allowed_levels: Option<&[String]>, include_draft: bool) -> Option<String> {
+        let mut filters: Vec<String> = Vec::new();
+
+        if let Some(levels) = allowed_levels {
+            if levels.is_empty() {
+                return None;
+            }
+            // e.g. access_level IN ["public", "internal"]
+            let quoted: Vec<String> = levels.iter().map(|l| format!("\"{}\"", l)).collect();
+            filters.push(format!("access_level IN [{}]", quoted.join(", ")));
+        }
+
+        if !include_draft {
+            filters.push("is_draft = false".to_string());
+        }
+
+        Some(filters.join(" AND "))
+    }
 }
 
 #[cfg(feature = "ssr")]
@@ -230,24 +263,10 @@ impl SearchService for MeilisearchService {
         allowed_levels: Option<&[String]>,
         include_draft: bool,
     ) -> Result<Vec<SearchHit>, AppError> {
-        // Build a Meilisearch filter expression.
-        let mut filters: Vec<String> = Vec::new();
-
-        if let Some(levels) = allowed_levels {
-            if levels.is_empty() {
-                // The caller has no readable levels → return nothing.
-                return Ok(vec![]);
-            }
-            // e.g. access_level IN ["public", "internal"]
-            let quoted: Vec<String> = levels.iter().map(|l| format!("\"{}\"", l)).collect();
-            filters.push(format!("access_level IN [{}]", quoted.join(", ")));
-        }
-
-        if !include_draft {
-            filters.push("is_draft = false".to_string());
-        }
-
-        let filter_str = filters.join(" AND ");
+        let Some(filter_str) = Self::visibility_filter(allowed_levels, include_draft) else {
+            // The caller has no readable levels → return nothing.
+            return Ok(vec![]);
+        };
 
         let index = self.index();
         let mut search_query = index.search();
@@ -321,6 +340,46 @@ impl SearchService for MeilisearchService {
         Ok(hits)
     }
 
+    async fn discover(
+        &self,
+        query: &str,
+        allowed_levels: Option<&[String]>,
+        include_draft: bool,
+    ) -> Result<Vec<SearchHit>, AppError> {
+        #[derive(Deserialize)]
+        struct Slug {
+            slug: String,
+        }
+
+        let Some(filter) = Self::visibility_filter(allowed_levels, include_draft) else {
+            return Ok(vec![]);
+        };
+        let index = self.index();
+        let mut search_query = index.search();
+        search_query
+            .with_query(query)
+            .with_limit(20)
+            .with_attributes_to_retrieve(meilisearch_sdk::search::Selectors::Some(&["slug"]))
+            // Questions: drop the most common words first, not the last ones.
+            .with_matching_strategy(meilisearch_sdk::search::MatchingStrategies::FREQUENCY);
+        if !filter.is_empty() {
+            search_query.with_filter(&filter);
+        }
+
+        let results: meilisearch_sdk::search::SearchResults<Slug> = search_query
+            .execute()
+            .await
+            .map_err(|e| AppError::Internal(format!("Meilisearch search error: {e}")))?;
+        Ok(results
+            .hits
+            .into_iter()
+            .map(|hit| SearchHit {
+                slug: hit.result.slug,
+                ..SearchHit::default()
+            })
+            .collect())
+    }
+
     async fn configure_index(&self) -> Result<(), AppError> {
         let settings = meilisearch_sdk::settings::Settings::new()
             .with_filterable_attributes([
@@ -344,10 +403,17 @@ impl SearchService for MeilisearchService {
         // Wait, so searches and a following re-index use the new attributes and
         // a rejected update is reported instead of silently ignored.
         let task = task
-            .wait_for_completion(&self.client, None, Some(SETTINGS_TIMEOUT))
+            .wait_for_completion(
+                &self.client,
+                Some(std::time::Duration::from_millis(250)),
+                Some(SETTINGS_TIMEOUT),
+            )
             .await
             .map_err(|e| {
-                AppError::Internal(format!("Meilisearch settings update not applied: {e}"))
+                AppError::Internal(format!(
+                    "Meilisearch settings update not confirmed within {}s: {e}",
+                    SETTINGS_TIMEOUT.as_secs()
+                ))
             })?;
         if let meilisearch_sdk::tasks::Task::Failed { content } = task {
             return Err(AppError::Internal(format!(
@@ -445,14 +511,16 @@ fn truncate_on_char_boundary(text: &str, max_len: usize) -> String {
 struct HtmlText {
     /// The tag being read, from after `<`, when inside one.
     tag: Option<String>,
+    /// The quote of the attribute value being read inside a tag.
+    quote: Option<char>,
     /// The element whose body is skipped (`script` or `style`).
     skipping: Option<String>,
 }
 
 impl HtmlText {
-    const INLINE: [&'static str; 14] = [
-        "a", "abbr", "b", "code", "em", "i", "kbd", "mark", "s", "span", "strong", "sub", "sup",
-        "u",
+    const INLINE: [&'static str; 22] = [
+        "a", "abbr", "b", "cite", "code", "del", "em", "i", "ins", "kbd", "mark", "q", "s", "samp",
+        "small", "span", "strong", "sub", "sup", "time", "u", "var",
     ];
 
     fn feed(&mut self, html: &str, out: &mut String) {
@@ -466,7 +534,15 @@ impl HtmlText {
                 }
                 continue;
             };
-            if tag.is_empty() && ch.is_whitespace() {
+            if let Some(quote) = self.quote {
+                if ch == quote {
+                    self.quote = None;
+                }
+                tag.push(ch);
+            } else if (ch == '"' || ch == '\'') && !tag.starts_with('!') && tag.contains('=') {
+                self.quote = Some(ch);
+                tag.push(ch);
+            } else if tag.is_empty() && ch.is_whitespace() {
                 // A literal `<`, not a tag.
                 self.tag = None;
                 if self.skipping.is_none() {
@@ -500,7 +576,13 @@ impl HtmlText {
             .unwrap_or_default()
             .to_ascii_lowercase();
         if let Some(skipped) = &self.skipping {
-            if closing && *skipped == name {
+            // Script bodies may contain `<` (`i<n`), which opened a bogus
+            // tag that swallowed the real end tag; look for it at its end.
+            if tag
+                .to_ascii_lowercase()
+                .trim_end()
+                .ends_with(&format!("/{skipped}"))
+            {
                 self.skipping = None;
             }
             return;
@@ -520,7 +602,9 @@ fn decode_entities(text: &str) -> String {
     while let Some(start) = rest.find('&') {
         out.push_str(&rest[..start]);
         rest = &rest[start..];
-        let decoded = rest.find(';').filter(|end| *end <= 10).and_then(|end| {
+        // Entities are short; never scan the rest of the text for `;`.
+        let window = &rest.as_bytes()[..rest.len().min(12)];
+        let decoded = window.iter().position(|b| *b == b';').and_then(|end| {
             let entity = &rest[1..end];
             let ch = match entity {
                 "amp" => Some('&'),
@@ -534,7 +618,8 @@ fn decode_entities(text: &str) -> String {
                     .or_else(|| entity.strip_prefix("#X"))
                     .and_then(|hex| u32::from_str_radix(hex, 16).ok())
                     .or_else(|| entity.strip_prefix('#').and_then(|dec| dec.parse().ok()))
-                    .and_then(char::from_u32),
+                    .and_then(char::from_u32)
+                    .filter(|ch| *ch != '\0'),
             };
             ch.map(|ch| (ch, end))
         });
@@ -626,6 +711,16 @@ mod tests {
             "Device guide Reset the TP-200 with reset_device(). \
              if a < b && c > d { ERR_DEVICE_42 } first second "
         );
+    }
+
+    #[test]
+    fn html_text_survives_scripts_quotes_and_stray_entities() {
+        let html = "<script>for (i = 0; i<n; i++) {}</script><p title=\"a > b\">Visible</p>\
+                    <style>p { color: red }</style><p>AT&amp;T &#0; R&D & co &amp</p>";
+        assert_eq!(plain_text(html), "Visible AT&T &#0; R&D & co &amp ");
+        // A long run of bare ampersands stays linear and intact.
+        let many = format!("<p>{}</p>", "cmd && ".repeat(20_000));
+        assert!(plain_text(&many).ends_with("cmd && "));
     }
 
     #[test]

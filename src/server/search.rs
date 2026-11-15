@@ -22,7 +22,7 @@ pub async fn search_docs(query: String) -> Result<Vec<SearchHit>, ServerFnError>
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     // Keyword hits inside PDF attachments, appended after document hits so
-    // ordinary documents (matched on title/summary/tags) stay primary.
+    // ordinary documents (matched on title, tags or body) stay primary.
     if let Some(attachment_search) = &state.attachment_search_service {
         match attachment_search
             .search(&query, allowed_levels.as_deref())

@@ -40,7 +40,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- Optional Google Ranking API reranking with automatically refreshed service account/ADC authentication. Rerank a configurable pool of up to 100 unique merged candidates (default 50) before selecting final context chunks (default 5), with bounded retrieval-order fallback.
+- Optional Google Ranking API reranking with automatically refreshed service account/ADC authentication. Rerank a configurable pool of up to 100 unique merged candidates (default 50) before selecting final context chunks (default 5), with bounded retrieval-order fallback. Hybrid retrieval now admits independently discovered lexical documents through visibility-filtered, relevance-ranked Qdrant passage lookups, with shared pre-HyDE query variants and bounded fan-out.
 
 ## [0.40.0] 2026-11-09
 

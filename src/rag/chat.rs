@@ -21,7 +21,7 @@ use crate::db::chat_models::{
 };
 use crate::db::chat_repository::ChatRepository;
 use crate::error::AppError;
-use crate::rag::analyzer::{Complexity, QueryAnalyzer, QueryPlan};
+use crate::rag::analyzer::{QueryAnalyzer, QueryPlan};
 use crate::rag::client::format_llm_error;
 use crate::rag::embedding::EmbeddingService;
 use crate::rag::hyde::HydeService;
@@ -178,8 +178,8 @@ pub struct RetrievalOutput {
     /// the analyzer is disabled or fails).
     pub query_plan: QueryPlan,
     /// The exact set of query strings that was embedded — equal to
-    /// `[retrieval_query]` for simple plans, or the (optionally HyDE-expanded)
-    /// sub-queries for decomposed plans.
+    /// standalone query plus up to three unique analyzer subqueries, optionally
+    /// replaced with HyDE text for embedding only.
     pub queries_embedded: Vec<String>,
     /// Top-K candidates after vector search, dedup, and (optional) hybrid RRF
     /// — before reranking. Bounded by `retrieval_candidate_limit` when reranking
@@ -1034,17 +1034,14 @@ impl ChatService {
                 QueryPlan::simple()
             };
 
-        // The set of strings to embed: original query for simple plans,
-        // sub-queries for multi-entity / multi-hop decomposition.
-        let queries_to_embed: Vec<String> = match query_plan.complexity {
-            Complexity::Simple => vec![retrieval_query.clone()],
-            _ => query_plan.sub_queries.clone(),
-        };
+        // Keep the standalone query plus unique analyzer subqueries, bounded
+        // before either retrieval branch or optional HyDE generation.
+        let natural_queries =
+            super::hybrid::natural_queries(&retrieval_query, &query_plan.sub_queries);
+        let queries_to_embed = natural_queries.clone();
 
-        // HyDE: replace each query string with a synthetically generated
-        // hypothetical answer document before embedding. The Meilisearch text
-        // search (if enabled) still uses the original retrieval_query so that
-        // keyword recall is not degraded by the generative expansion.
+        // HyDE affects only embedding inputs. Lexical queries retain the
+        // original natural-language variants, including exact identifiers.
         let queries_to_embed = if let Some(hyde) = self.hyde.as_ref().filter(|_| !mode.is_thrifty())
         {
             tracing::debug!(
@@ -1067,22 +1064,25 @@ impl ChatService {
         // Drop (query, vector) pairs where the embedding returned an empty vector —
         // sending a zero-dim vector to Qdrant causes a hard dimension-mismatch error
         // that aborts the entire retrieval. Mirrors the index-time guard in service.rs.
-        let (queries_to_embed, all_vectors): (Vec<_>, Vec<_>) = queries_to_embed
+        let mut natural_filtered = Vec::new();
+        let mut embedded_filtered = Vec::new();
+        let mut vectors_filtered = Vec::new();
+        for ((natural, embedded), vector) in natural_queries
             .into_iter()
+            .zip(queries_to_embed)
             .zip(all_vectors)
-            .filter(|(q, vec)| {
-                if vec.is_empty() {
-                    tracing::warn!(
-                        session_id = %session_id,
-                        sub_query = %preview_text(q, 80),
-                        "RAG: empty query vector for sub-query, skipping"
-                    );
-                    false
-                } else {
-                    true
-                }
-            })
-            .unzip();
+        {
+            if vector.is_empty() {
+                tracing::warn!(session_id = %session_id, "RAG: skipping empty query embedding");
+                continue;
+            }
+            natural_filtered.push(natural);
+            embedded_filtered.push(embedded);
+            vectors_filtered.push(vector);
+        }
+        let natural_queries = natural_filtered;
+        let queries_to_embed = embedded_filtered;
+        let all_vectors = vectors_filtered;
 
         if queries_to_embed.is_empty() {
             return Err(AppError::Internal(
@@ -1118,41 +1118,35 @@ impl ChatService {
             "RAG: searching vector store"
         );
 
-        // Run one vector search per query in parallel, plus an optional single
-        // Meilisearch query (for the hybrid RRF signal) at the same time.
-        let vector_searches: Vec<_> = all_vectors
-            .into_iter()
-            .map(|vector| {
-                self.vectorstore.search(
-                    vector,
-                    vector_limit,
+        // Vector retrieval and lexical document discovery run concurrently.
+        // Lexical discovery independently resolves relevant, visible passages
+        // from its documents, even when global vector search missed them.
+        let vector_searches = all_vectors.iter().cloned().map(|vector| {
+            self.vectorstore.search(
+                vector,
+                vector_limit,
+                allowed_levels.as_deref(),
+                include_draft,
+            )
+        });
+        let lexical_search = async {
+            if let Some(search) = hybrid {
+                super::hybrid::lexical_candidates(
+                    search.as_ref(),
+                    self.vectorstore.as_ref(),
+                    &natural_queries,
+                    &all_vectors,
                     allowed_levels.as_deref(),
                     include_draft,
+                    self.include_attachments,
                 )
-            })
-            .collect();
-
-        let (vector_results_nested, text_slugs) = if let Some(svc) = hybrid {
-            let text_future =
-                svc.search(&retrieval_query, allowed_levels.as_deref(), include_draft);
-            let (vector_list, text_result) =
-                tokio::join!(futures::future::join_all(vector_searches), text_future);
-            let slugs: Vec<String> = text_result
-                .unwrap_or_else(|e| {
-                    tracing::warn!(
-                        session_id = %session_id,
-                        error = %e,
-                        "hybrid search: Meilisearch query failed, falling back to vector-only"
-                    );
-                    vec![]
-                })
-                .into_iter()
-                .map(|h| h.slug)
-                .collect();
-            (vector_list, slugs)
-        } else {
-            (futures::future::join_all(vector_searches).await, vec![])
+                .await
+            } else {
+                Vec::new()
+            }
         };
+        let (vector_results_nested, lexical_chunks) =
+            tokio::join!(futures::future::join_all(vector_searches), lexical_search);
 
         // Collect per-sub-query results, preserving the list structure needed
         // for RRF-based merging with per-sub-query diversity guarantees.
@@ -1176,7 +1170,7 @@ impl ChatService {
             chunks_per_subquery.push(chunks);
         }
 
-        let pre_rerank = select_candidates(chunks_per_subquery, &text_slugs, candidate_limit);
+        let pre_rerank = select_candidates(chunks_per_subquery, lexical_chunks, candidate_limit);
 
         tracing::debug!(
             session_id = %session_id,
@@ -1220,24 +1214,26 @@ impl ChatService {
     }
 }
 
-/// Fuse all retrieval lists before the unique candidate cap. Meilisearch
-/// currently supplies document-level boosts, not additional chunk payloads.
+/// Fuse vector and lexical passage rankings with equal branch weight. Query
+/// fan-out cannot give lexical retrieval more votes than the vector branch.
 fn select_candidates(
     lists: Vec<Vec<VectorSearchResult>>,
-    text_slugs: &[String],
+    lexical_chunks: Vec<VectorSearchResult>,
     limit: usize,
 ) -> Vec<VectorSearchResult> {
-    let (merged, guaranteed) = if lists.len() > 1 {
+    let (merged, vector_guarantees) = if lists.len() > 1 {
         merge_subquery_chunks(lists)
     } else {
         (lists.into_iter().flatten().collect(), Vec::new())
     };
-    let fused = if text_slugs.is_empty() {
-        merged
-    } else {
-        crate::rag::rrf::fuse(merged, text_slugs)
-    };
-    take_with_guarantee(fused, &guaranteed, limit)
+    if lexical_chunks.is_empty() {
+        return take_with_guarantee(merged, &vector_guarantees, limit);
+    }
+    let (fused, mut guarantees) = merge_subquery_chunks(vec![merged, lexical_chunks]);
+    // Reserve a top hit from each branch before additional vector subqueries,
+    // subject to the overall cap. With a one-slot budget vectors retain priority.
+    guarantees.extend(vector_guarantees);
+    take_with_guarantee(fused, &guarantees, limit)
 }
 
 fn chunk_identity(chunk: &VectorSearchResult) -> String {

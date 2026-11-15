@@ -2,6 +2,7 @@
 use super::*;
 use crate::auth::models::AuthenticatedUser;
 use crate::config::{AppConfig, LlmStepConfig};
+use crate::rag::analyzer::Complexity;
 use crate::rag::vectorstore::VectorPoint;
 use crate::search::client::{SearchDocument, SearchHit};
 use async_trait::async_trait;
@@ -39,6 +40,10 @@ mockall::mock! { Repo {}
 struct TestStore {
     lists: Vec<Vec<VectorSearchResult>>,
     expected_limit: usize,
+    lexical: HashMap<String, Vec<VectorSearchResult>>,
+    lexical_calls: Arc<Mutex<Vec<(String, usize, Vec<f32>)>>>,
+    lexical_failure: bool,
+    lexical_hang: bool,
 }
 #[async_trait]
 impl VectorStore for TestStore {
@@ -70,6 +75,41 @@ impl VectorStore for TestStore {
         _access_levels: &[String],
     ) -> Result<(), AppError> {
         unreachable!("not used in retrieval-only tests")
+    }
+    async fn search_document_chunks(
+        &self,
+        vector: Vec<f32>,
+        slug: &str,
+        limit: usize,
+        levels: Option<&[String]>,
+        draft: bool,
+        attachments: bool,
+    ) -> Result<Vec<VectorSearchResult>, AppError> {
+        assert_eq!(limit, super::super::hybrid::PASSAGES_PER_DOCUMENT);
+        let levels = levels.expect("lexical passage lookup must retain visibility");
+        for level in ["engineering", "public", "loggeduser"] {
+            assert!(levels.iter().any(|l| l == level));
+        }
+        assert!(!draft);
+        self.lexical_calls
+            .lock()
+            .unwrap()
+            .push((slug.into(), limit, vector));
+        if self.lexical_hang {
+            return std::future::pending().await;
+        }
+        if self.lexical_failure {
+            return Err(AppError::Internal("mock passage lookup unavailable".into()));
+        }
+        Ok(self
+            .lexical
+            .get(slug)
+            .into_iter()
+            .flatten()
+            .filter(|c| attachments || c.source_kind != SourceKind::Attachment)
+            .take(limit)
+            .cloned()
+            .collect())
     }
     async fn get_section_chunks(
         &self,
@@ -106,9 +146,12 @@ impl VectorStore for TestStore {
 #[derive(Default)]
 struct TestSearch {
     hits: Vec<SearchHit>,
+    query_hits: HashMap<String, Vec<SearchHit>>,
+    queries: Mutex<Vec<String>>,
     fail: bool,
     calls: std::sync::atomic::AtomicUsize,
     forbidden: bool,
+    hang: bool,
 }
 #[async_trait]
 impl SearchService for TestSearch {
@@ -132,13 +175,16 @@ impl SearchService for TestSearch {
     ) -> Result<Vec<SearchHit>, AppError> {
         assert!(!self.forbidden, "thrifty mode must skip lexical API work");
         self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        assert_eq!(query, "original question");
+        self.queries.lock().unwrap().push(query.to_string());
         assert!(levels.is_some());
         assert!(!draft);
+        if self.hang {
+            return std::future::pending().await;
+        }
         if self.fail {
             Err(AppError::Internal("mock lexical failure".into()))
         } else {
-            Ok(self.hits.clone())
+            Ok(self.query_hits.get(query).unwrap_or(&self.hits).clone())
         }
     }
 }
@@ -227,6 +273,10 @@ fn store(lists: Vec<Vec<VectorSearchResult>>, expected_limit: usize) -> TestStor
     TestStore {
         lists,
         expected_limit,
+        lexical: HashMap::new(),
+        lexical_calls: Default::default(),
+        lexical_failure: false,
+        lexical_hang: false,
     }
 }
 async fn service(
@@ -332,7 +382,7 @@ async fn no_reranker_and_thrifty_keep_small_vector_work_and_final_context() {
 }
 
 #[tokio::test]
-async fn hybrid_boosts_vector_hits_before_cap_but_does_not_invent_lexical_only_chunks() {
+async fn lexical_only_document_reaches_reranker_and_final_context() {
     let mut config = config();
     config.hybrid_search_enabled = true;
     config.retrieval_candidate_limit = 10;
@@ -351,23 +401,47 @@ async fn hybrid_boosts_vector_hits_before_cap_but_does_not_invent_lexical_only_c
             .collect(),
         ..Default::default()
     });
-    let reranker = Arc::new(RecordingReranker::default());
+    let reranker = Arc::new(RecordingReranker {
+        promote: "p99".into(),
+        ..Default::default()
+    });
+    let mut backend = store(vec![(0..20).map(chunk).collect()], 10);
+    let mut lexical = chunk(99);
+    lexical.document_slug = "lexical-only".into();
+    lexical.chunk_index = 999;
+    backend.lexical.insert("lexical-only".into(), vec![lexical]);
+    backend.lexical.insert("doc-9".into(), vec![chunk(9)]);
+    let calls = backend.lexical_calls.clone();
     let service = service(
         &config,
-        store(vec![(0..20).map(chunk).collect()], 10),
+        backend,
         Arc::default(),
         Some(search.clone()),
-        Some(reranker),
+        Some(reranker.clone()),
         true,
     )
     .await;
     let result = retrieve(&service, RetrievalMode::Full).await;
-    assert_eq!(result.pre_rerank[0].point_id, "p9");
     assert!(result
         .pre_rerank
         .iter()
-        .all(|c| c.document_slug != "lexical-only"));
+        .any(|c| c.document_slug == "lexical-only"));
+    assert!(result.pre_rerank.iter().any(|c| c.point_id == "p0"));
+    assert_eq!(
+        result
+            .pre_rerank
+            .iter()
+            .filter(|c| c.point_id == "p9")
+            .count(),
+        1
+    );
+    assert!(reranker.seen.lock().unwrap()[0]
+        .1
+        .contains(&"p99".to_string()));
+    assert_eq!(result.post_rerank[0].point_id, "p99");
+    assert_eq!(result.post_rerank[0].chunk_index, 999);
     assert_eq!(result.post_rerank.len(), 3);
+    assert_eq!(calls.lock().unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -412,7 +486,7 @@ fn merged_pool_is_unique_bounded_and_preserves_subquery_top_hits_after_hybrid_fu
             (50..125).map(chunk).collect(),
             (100..175).map(chunk).collect(),
         ];
-        let result = select_candidates(lists, &["doc-74".into(), "doc-124".into()], limit);
+        let result = select_candidates(lists, vec![chunk(74), chunk(124)], limit);
         assert_eq!(result.len(), limit);
         assert_eq!(
             result
@@ -430,7 +504,7 @@ fn merged_pool_is_unique_bounded_and_preserves_subquery_top_hits_after_hybrid_fu
     legacy.point_id.clear();
     let mut other = chunk(2);
     other.point_id.clear();
-    let result = select_candidates(vec![vec![legacy.clone(), legacy, other]], &[], 50);
+    let result = select_candidates(vec![vec![legacy.clone(), legacy, other]], vec![], 50);
     assert_eq!(result.len(), 2);
 }
 
@@ -481,6 +555,7 @@ async fn decomposition_and_hyde_only_expand_queries_and_filter_attachments_befor
     use serde_json::{json, Value};
     let app = Router::new().route("/v1/chat/completions", post(|Json(body): Json<Value>| async move {
         let content = if body["model"] == "analyzer" {
+            assert!(body["messages"][0]["content"].as_str().unwrap().contains("Preserve exact product names, API paths and error identifiers verbatim"));
             json!({"complexity":"multi_entity","sub_queries":["one", "two"]}).to_string()
         } else {
             format!("hypothetical answer to {}", body["messages"].as_array().unwrap().last().unwrap()["content"].as_str().unwrap())
@@ -493,6 +568,7 @@ async fn decomposition_and_hyde_only_expand_queries_and_filter_attachments_befor
     config.analyzer =
         Some(serde_json::from_value::<LlmStepConfig>(json!({"model":"analyzer"})).unwrap());
     config.hyde = Some(serde_json::from_value::<LlmStepConfig>(json!({"model":"hyde"})).unwrap());
+    config.hybrid_search_enabled = true;
     config.retrieval_candidate_limit = 10;
     config.context_chunk_limit = 3;
     let task = tokio::spawn(async move {
@@ -506,16 +582,30 @@ async fn decomposition_and_hyde_only_expand_queries_and_filter_attachments_befor
     let mut stale = chunk(999);
     stale.source_kind = SourceKind::Attachment;
     let lists = vec![
+        vec![stale.clone(), chunk(50)],
         std::iter::once(stale.clone())
             .chain((0..9).map(chunk))
             .collect(),
         std::iter::once(stale).chain((7..16).map(chunk)).collect(),
     ];
+    let search = Arc::new(TestSearch {
+        query_hits: ["original question", "one", "two"]
+            .into_iter()
+            .enumerate()
+            .map(|(i, q)| (q.into(), vec![hit(&format!("doc-{}", 90 + i))]))
+            .collect(),
+        ..Default::default()
+    });
+    let mut backend = store(lists, 10);
+    for i in 90..93 {
+        backend.lexical.insert(format!("doc-{i}"), vec![chunk(i)]);
+    }
+    let lookups = backend.lexical_calls.clone();
     let chat = service(
         &config,
-        store(lists, 10),
+        backend,
         embedding.clone(),
-        None,
+        Some(search.clone()),
         Some(reranker.clone()),
         false,
     )
@@ -524,7 +614,24 @@ async fn decomposition_and_hyde_only_expand_queries_and_filter_attachments_befor
     task.abort();
     assert_eq!(result.query_plan.sub_queries, ["one", "two"]);
     let embedded = embedding.0.lock().unwrap();
-    assert_eq!(embedded.len(), 2);
+    assert_eq!(embedded.len(), 3);
+    assert_eq!(
+        *search.queries.lock().unwrap(),
+        ["original question", "one", "two"]
+    );
+    assert!(search
+        .queries
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|q| !q.contains("hypothetical")));
+    let lookups = lookups.lock().unwrap();
+    assert_eq!(lookups.len(), 3);
+    for i in 0..3 {
+        assert!(lookups.iter().any(
+            |(slug, _, vector)| slug == &format!("doc-{}", 90 + i) && vector == &vec![i as f32]
+        ));
+    }
     assert!(embedded.iter().all(|q| q.contains("hypothetical answer")));
     assert_eq!(result.pre_rerank.len(), 10);
     assert_eq!(
@@ -576,4 +683,217 @@ async fn invalid_evaluation_budgets_fail_before_backend_initialization() {
         .err()
         .unwrap();
     assert!(error.to_string().contains("context_chunk_limit"));
+}
+
+fn hit(slug: &str) -> SearchHit {
+    SearchHit {
+        slug: slug.into(),
+        title: slug.into(),
+        tags: vec![],
+        content_preview: "untrusted search preview".into(),
+        attachment_key: None,
+        page: None,
+    }
+}
+
+#[test]
+fn natural_query_fanout_is_bounded_deduplicated_and_keeps_identifiers() {
+    let original = "TP-200 POST /api/v1/devices ERR_DEVICE_42";
+    let mut subqueries = vec![
+        original.into(),
+        "   ".into(),
+        " TP-200 ".into(),
+        "TP-200".into(),
+    ];
+    subqueries.extend((0..100).map(|i| format!("question {i}")));
+    let queries = super::super::hybrid::natural_queries(original, &subqueries);
+    assert_eq!(queries, [original, "TP-200", "question 0", "question 1"]);
+}
+
+#[tokio::test]
+async fn lexical_queries_preserve_identifiers_and_document_passage_work_is_bounded() {
+    let query = "TP-200 POST /api/v1/devices ERR_DEVICE_42";
+    let queries: Vec<_> = std::iter::once(query.to_string())
+        .chain((0..20).map(|i| format!("variant {i}")))
+        .collect();
+    let search = Arc::new(TestSearch {
+        hits: (0..100).map(|i| hit(&format!("doc-{i}"))).collect(),
+        ..Default::default()
+    });
+    let mut backend = store(vec![], 0);
+    for i in 0..100 {
+        backend.lexical.insert(
+            format!("doc-{i}"),
+            (0..20)
+                .map(|j| {
+                    let mut c = chunk(i * 100 + j);
+                    c.document_slug = format!("doc-{i}");
+                    c
+                })
+                .collect(),
+        );
+    }
+    let candidates = super::super::hybrid::lexical_candidates(
+        search.as_ref(),
+        &backend,
+        &queries,
+        &vec![vec![0.0]; queries.len()],
+        Some(&user().document_visibility().0.unwrap()),
+        false,
+        false,
+    )
+    .await;
+    assert_eq!(search.calls.load(std::sync::atomic::Ordering::SeqCst), 4);
+    assert_eq!(search.queries.lock().unwrap()[0], query);
+    let lookups = backend.lexical_calls.lock().unwrap();
+    assert_eq!(lookups.len(), 8);
+    assert!(lookups.iter().all(|(_, limit, _)| *limit == 3));
+    assert_eq!(candidates.len(), 24);
+    let mut per_doc = HashMap::new();
+    for c in &candidates {
+        *per_doc.entry(&c.document_slug).or_insert(0) += 1;
+    }
+    assert!(per_doc.values().all(|count| *count == 3));
+    let fused = select_candidates(vec![(0..100).map(chunk).collect()], candidates, 50);
+    assert_eq!(fused.len(), 50);
+    assert_eq!(
+        fused
+            .iter()
+            .map(chunk_identity)
+            .collect::<HashSet<_>>()
+            .len(),
+        50
+    );
+    assert!(fused.iter().any(|c| c.point_id == "p0"));
+}
+
+#[tokio::test]
+async fn unavailable_or_unreadable_lexical_passages_fall_back_without_trusting_previews() {
+    for unavailable in [false, true] {
+        let mut config = config();
+        config.hybrid_search_enabled = true;
+        let search = Arc::new(TestSearch {
+            hits: vec![hit("forbidden"), hit("draft"), hit("visible")],
+            ..Default::default()
+        });
+        let mut backend = store(vec![(0..50).map(chunk).collect()], 50);
+        backend.lexical_failure = unavailable;
+        let mut attachment = chunk(1000);
+        attachment.source_kind = SourceKind::Attachment;
+        attachment.document_slug = "visible".into();
+        let mut visible = chunk(1001);
+        visible.document_slug = "visible".into();
+        // Unreadable documents return nothing from the visibility-enforcing store.
+        backend
+            .lexical
+            .insert("visible".into(), vec![attachment, visible]);
+        let lookups = backend.lexical_calls.clone();
+        let reranker = Arc::new(RecordingReranker {
+            promote: "p1001".into(),
+            ..Default::default()
+        });
+        let chat = service(
+            &config,
+            backend,
+            Arc::default(),
+            Some(search),
+            Some(reranker),
+            false,
+        )
+        .await;
+        let result = retrieve(&chat, RetrievalMode::Full).await;
+        assert_eq!(lookups.lock().unwrap().len(), 3);
+        assert!(result
+            .pre_rerank
+            .iter()
+            .all(|c| c.document_slug != "forbidden"
+                && c.document_slug != "draft"
+                && c.source_kind != SourceKind::Attachment));
+        assert!(result
+            .post_rerank
+            .iter()
+            .all(|c| c.chunk_text.starts_with("stored passage")));
+        if unavailable {
+            assert_eq!(result.post_rerank[0].point_id, "p0");
+        } else {
+            assert_eq!(result.post_rerank[0].point_id, "p1001");
+        }
+    }
+}
+
+#[tokio::test]
+async fn lexical_passages_work_with_no_global_vector_hits() {
+    let mut config = config();
+    config.hybrid_search_enabled = true;
+    let search = Arc::new(TestSearch {
+        hits: vec![hit("doc-99")],
+        ..Default::default()
+    });
+    let mut backend = store(vec![vec![]], 50);
+    backend.lexical.insert("doc-99".into(), vec![chunk(99)]);
+    let chat = service(
+        &config,
+        backend,
+        Arc::default(),
+        Some(search),
+        Some(Arc::new(RecordingReranker::default())),
+        true,
+    )
+    .await;
+    let result = retrieve(&chat, RetrievalMode::Full).await;
+    assert_eq!(result.pre_rerank.len(), 1);
+    assert_eq!(result.post_rerank[0].point_id, "p99");
+}
+
+#[tokio::test(start_paused = true)]
+async fn hanging_lexical_discovery_or_passage_lookup_has_bounded_vector_fallback() {
+    for discovery_hangs in [true, false] {
+        let mut config = config();
+        config.hybrid_search_enabled = true;
+        let search = Arc::new(TestSearch {
+            hits: vec![hit("doc-999")],
+            hang: discovery_hangs,
+            ..Default::default()
+        });
+        let mut backend = store(vec![(0..50).map(chunk).collect()], 50);
+        backend.lexical_hang = !discovery_hangs;
+        let chat = service(
+            &config,
+            backend,
+            Arc::default(),
+            Some(search),
+            Some(Arc::new(RecordingReranker::default())),
+            true,
+        )
+        .await;
+        let start = tokio::time::Instant::now();
+        let result = retrieve(&chat, RetrievalMode::Full).await;
+        assert!(start.elapsed() <= std::time::Duration::from_secs(20));
+        assert_eq!(result.post_rerank.len(), 5);
+        assert_eq!(result.post_rerank[0].point_id, "p0");
+    }
+}
+
+#[test]
+fn mixed_branch_fusion_caps_unique_chunks_and_reserves_vector_and_lexical_evidence() {
+    for limit in [1, 2, 5, 50, 100] {
+        let lexical: Vec<_> = (100..124)
+            .map(chunk)
+            .chain(std::iter::once(chunk(7)))
+            .collect();
+        let candidates = select_candidates(vec![(0..100).map(chunk).collect()], lexical, limit);
+        assert_eq!(candidates.len(), limit);
+        assert_eq!(
+            candidates
+                .iter()
+                .map(chunk_identity)
+                .collect::<HashSet<_>>()
+                .len(),
+            limit
+        );
+        assert!(candidates.iter().any(|c| c.point_id == "p0"));
+        if limit > 1 {
+            assert!(candidates.iter().any(|c| c.point_id == "p100"));
+        }
+    }
 }

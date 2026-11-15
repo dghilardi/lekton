@@ -28,6 +28,7 @@ const REWRITE_SYSTEM: &str = "\
 You are a query-rewriting assistant. \
 Given a conversation history and a follow-up question, rewrite the follow-up question \
 as a fully self-contained standalone question that preserves all intent and context. \
+Preserve exact product names, API paths and error identifiers verbatim. \
 Output ONLY the rewritten question — no explanations, no prefixes, no punctuation changes \
 beyond what is necessary.";
 
@@ -173,6 +174,39 @@ mod tests {
             sources: None,
             status: Default::default(),
             created_at: Utc::now(),
+        }
+    }
+
+    #[tokio::test]
+    async fn rewrite_prompt_and_query_retain_exact_identifiers() {
+        use axum::{routing::post, Json, Router};
+        use serde_json::{json, Value};
+        let app = Router::new().route("/v1/chat/completions", post(|Json(body): Json<Value>| async move {
+            assert!(body["messages"][0]["content"].as_str().unwrap().contains("Preserve exact product names, API paths and error identifiers verbatim"));
+            let follow_up = body["messages"][1]["content"].as_str().unwrap();
+            for identifier in ["TP-200", "/api/v1/devices", "ERR_DEVICE_42"] { assert!(follow_up.contains(identifier)); }
+            Json(json!({"id":"test","object":"chat.completion","created":0,"model":"mock","choices":[{"index":0,"message":{"role":"assistant","content":"Why does TP-200 POST /api/v1/devices return ERR_DEVICE_42?"},"finish_reason":"stop"}]}))
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let provider = Arc::new(LlmProvider::OpenAiCompatible {
+            api_base: format!("http://{}/v1", listener.local_addr().unwrap()),
+            api_key: String::new(),
+        });
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let rewriter = QueryRewriter::new(provider, "mock".into(), 80, HashMap::new());
+        let query = rewriter
+            .rewrite(
+                &UsageKey::System,
+                "Why does TP-200 POST /api/v1/devices return ERR_DEVICE_42?",
+                &[make_msg("user", "Explain the device API")],
+            )
+            .await
+            .unwrap();
+        task.abort();
+        for identifier in ["TP-200", "/api/v1/devices", "ERR_DEVICE_42"] {
+            assert!(query.contains(identifier));
         }
     }
 

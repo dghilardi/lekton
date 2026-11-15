@@ -63,9 +63,10 @@ Both are positive; the final context limit must not exceed the candidate limit,
 and the candidate limit must not exceed **100**. Defaults are 50 candidates and
 5 final chunks. The same fields work in `rag-bench` TOML. For CPU-hosted
 cross-encoders, lower `LKN__RAG__RETRIEVAL_CANDIDATE_LIMIT` if scoring 50 passages
-approaches the 30-second timeout. The analyzer's subquery count is not currently
-hard-capped: each subquery can fetch this many hits, while only the merged pool
-is capped. Consider decomposition latency when tuning the candidate limit. Invalid budgets are
+approaches the 30-second timeout. Query fan-out is deduplicated and capped at
+four variants: the standalone original plus at most three analyzer subqueries.
+Each vector query can fetch the candidate limit; the merged unique pool is capped
+separately. Invalid budgets are
 rejected at startup and in retrieval-only evaluation initialization.
 
 Each vector/subquery search fetches up to the candidate limit when reranking is
@@ -78,16 +79,45 @@ fall back to the first context-sized slice of the candidate pool. Attachments ar
 filtered before fusion/reranking when attachment indexing is disabled, and all
 search calls retain caller access-level and draft filters.
 
-**Hybrid limitation:** the existing Meilisearch integration returns document slugs
-and short previews, not indexed chunk payloads. It boosts matching vector-derived
-candidates through RRF; lexical-only hits cannot enter this pool. Fetching their
-full chunks requires an additional chunk-retrieval interface. Keyword search still
-uses the original query when HyDE replaces embedding inputs. HyDE generates query
-embeddings only; its synthetic answers never become context chunks.
+**Independent hybrid retrieval:** the same pre-HyDE natural-language variants
+query Meilisearch and drive vector retrieval. The original standalone question
+is always retained, preserving identifiers/intent that decomposition could omit.
+No additional LLM planner or lexical-routing schema is used. The analyzer and
+rewriter prompts request verbatim product names, API paths and error identifiers.
+HyDE affects embedding inputs only; hypothetical answer text is never a lexical
+query or context passage.
+
+Meilisearch document ranks are fused across query variants. At most eight unique
+documents are then resolved through `VectorStore::search_document_chunks`, using
+the strongest matching query's embedding to select at most three relevant
+passages **anywhere** in each document. This is a scoped relevance search, not a
+scroll of the first chunks. Every lookup reapplies Qdrant access-level, draft,
+document and attachment filters; a Meilisearch hit alone grants no access.
+Each optional discovery/passage request has a 10-second deadline. Failures and
+timeouts retain the other retrieval results; an unavailable lexical branch falls
+back to vector retrieval.
+
+Lexical document rank and within-document passage relevance form one passage
+ranking (round-robin first passages across documents before second/third).
+That ranking and the merged vector ranking receive equal RRF weight, with stable
+chunk-ID deduplication. A top vector hit and a top lexical hit are reserved when
+the candidate cap permits; a one-slot budget retains vector priority. Additional
+vector-subquery anchors follow. Lexical-only documents can reach the reranker and
+final context even with no global vector hits. Existing candidate/context budgets
+still apply to the merged pool and final/fallback selection.
+
+**Index tradeoff:** Meilisearch currently indexes title, slug, tags and a short
+(~200-character) content preview, not full document bodies. Discovery can miss an
+identifier appearing only deep in a document unless its metadata/preview matches.
+Passage selection inside a discovered document uses dense semantic relevance,
+not chunk-level BM25. This keeps existing indexes and stable Qdrant payloads;
+no reindex, re-embedding or synthetic preview chunks are required. Full-body or
+chunk-level lexical indexing would require a separate indexing change.
 
 Without a reranker, the pre/post lists stay final-context sized. Vector-only
 retrieval requests only that many hits. Hybrid retrieval retains its existing
-small overfetch (three times the final limit, capped by the candidate budget).
+small vector overfetch (three times the final limit, capped by the candidate
+budget), plus the same bounded independent lexical passage lookups.
 Thrifty mode skips analyzer, HyDE, rewriting, lexical search and reranking, and
 requests only the final vector count. The existing prompt-character budget and
 optional parent-section expansion still apply after chunk selection.

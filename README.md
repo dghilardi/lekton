@@ -108,7 +108,7 @@ cargo leptos watch
 The development setup can also enable the new RAG retrieval features introduced in this branch. They are all optional and disabled by default.
 
 **Available options**
-- Hybrid search: fuse Qdrant vector results with Meilisearch BM25 via RRF by setting `LKN__RAG__HYBRID_SEARCH_ENABLED=true`
+- Hybrid search: fuse vector candidates with relevant Qdrant passages from independently discovered Meilisearch documents via equal-weight RRF (bounded pre-HyDE queries and visibility-filtered passage lookups) by setting `LKN__RAG__HYBRID_SEARCH_ENABLED=true`
 - Reranking budgets: keep up to 50 merged unique candidates before selecting 5 final context chunks; configure `LKN__RAG__RETRIEVAL_CANDIDATE_LIMIT` (up to 100) and `LKN__RAG__CONTEXT_CHUNK_LIMIT` (see [retrieval behavior](docs/google-reranking.md#limits-and-fallback)).
 - Google Ranking API: set `LKN__RAG__RERANKER_VERTEX_PROJECT_ID` to opt in using existing service account/ADC authentication (see [setup and IAM](docs/google-reranking.md)).
 - Cross-encoder reranker: start `infinity` and set `LKN__RAG__RERANKER_URL=http://localhost:7997/rerank`

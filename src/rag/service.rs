@@ -449,6 +449,17 @@ mod tests {
         ) -> Result<Vec<VectorSearchResult>, AppError> {
             Ok(vec![])
         }
+        async fn search_document_chunks(
+            &self,
+            _: Vec<f32>,
+            _: &str,
+            _: usize,
+            _: Option<&[String]>,
+            _: bool,
+            _: bool,
+        ) -> Result<Vec<VectorSearchResult>, AppError> {
+            Ok(vec![])
+        }
         async fn get_section_chunks(
             &self,
             _: &str,

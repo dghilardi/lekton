@@ -50,3 +50,6 @@ pub use provider::LlmProvider;
 
 #[cfg(feature = "ssr")]
 mod vertex_reranker;
+
+#[cfg(feature = "ssr")]
+mod hybrid;

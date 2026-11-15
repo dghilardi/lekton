@@ -143,6 +143,63 @@ mod search_index {
         .await;
     }
 
+    #[tokio::test]
+    async fn attachment_search_finds_page_text_past_the_preview_with_a_snippet() {
+        let (_meili, url) = start_meilisearch().await;
+        let attachments = MeilisearchAttachmentService::new(&url, None::<String>).unwrap();
+        attachments.configure_index().await.unwrap();
+
+        let text = format!(
+            "{} The torquecode E4711 means the sensor is loose. {} pagetailmarker",
+            "Opening filler about the device housing. ".repeat(10),
+            "Closing filler about warranty terms. ".repeat(40),
+        );
+        assert!(text.find("E4711").unwrap() > 300);
+        let pages = [AttachmentPage {
+            page_number: Some(7),
+            text,
+        }];
+        let public = ["public".to_string()];
+        attachments
+            .index_pages(
+                "manual.pdf",
+                "manual.pdf",
+                "docs/m",
+                "Manual",
+                &pages,
+                &public,
+            )
+            .await
+            .unwrap();
+
+        let hits = attachments.search("E4711", Some(&public)).await.unwrap();
+        assert_eq!(hits.len(), 1, "a term past the preview is searchable");
+        let hit = &hits[0];
+        assert_eq!(hit.page, Some(7));
+        // A snippet around the match, never the whole page.
+        assert!(hit.content_preview.contains("E4711"), "{hit:?}");
+        assert!(!hit.content_preview.contains("pagetailmarker"), "{hit:?}");
+        assert!(
+            hit.content_preview.split_whitespace().count() <= 30,
+            "{hit:?}"
+        );
+        let [start, end] = hit.preview_matches[0];
+        let matched: String = hit
+            .content_preview
+            .chars()
+            .skip(start)
+            .take(end - start)
+            .collect();
+        assert_eq!(matched, "E4711");
+
+        // Hidden from a reader without the level, as before.
+        assert!(attachments
+            .search("E4711", Some(&["internal".to_string()]))
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
     /// Pre-create `index` with a primary key the services do not use, so every
     /// write they send (which names `id` as the primary key) is rejected.
     async fn break_index(url: &str, index: &str) {

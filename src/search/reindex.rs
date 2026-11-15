@@ -60,13 +60,22 @@ pub async fn run_reindex(
     reindex.progress.store(0, Ordering::Relaxed);
     reindex.outcome.reset();
 
-    // Apply the index settings first, so documents re-indexed below become
-    // searchable on every configured attribute (including the full body).
+    // Apply the index settings first, so documents and attachment pages
+    // re-indexed below become searchable on every configured attribute
+    // (including the full body and page text).
     if let Err(e) = search.configure_index().await {
         tracing::warn!("Search reindex: failed to configure Meilisearch index: {e}");
         reindex
             .outcome
             .record_failure(format!("configure index: {e}"));
+    }
+    if let Some(attachment_search) = &attachment_search {
+        if let Err(e) = attachment_search.configure_index().await {
+            tracing::warn!("Search reindex: failed to configure the attachment index: {e}");
+            reindex
+                .outcome
+                .record_failure(format!("configure attachment index: {e}"));
+        }
     }
 
     // What the indexes hold before this run writes anything. The sweep may
@@ -560,6 +569,7 @@ mod tests {
         /// the `RecordingSearch` of the same run.
         listed_at_start: Option<Vec<String>>,
         started: Arc<AtomicBool>,
+        fail_configure: bool,
     }
 
     #[async_trait]
@@ -596,6 +606,9 @@ mod tests {
             Ok(vec![])
         }
         async fn configure_index(&self) -> Result<(), AppError> {
+            if self.fail_configure {
+                return Err(AppError::Internal("settings update failed".into()));
+            }
             Ok(())
         }
         async fn list_indexed_attachment_keys(&self) -> Result<Vec<String>, AppError> {
@@ -725,6 +738,47 @@ mod tests {
             .unwrap()
             .as_deref()
             .is_some_and(|e| e.starts_with("configure index")));
+    }
+
+    #[tokio::test]
+    async fn reindex_reports_a_failed_attachment_settings_update() {
+        let doc = make_doc("docs/a", false, false);
+        let repo = Arc::new(MockDocumentRepo {
+            documents: vec![doc.clone()],
+            ..Default::default()
+        });
+        let storage = Arc::new(MockStorage::default());
+        storage
+            .put_object(&doc.s3_key, b"# A".to_vec())
+            .await
+            .unwrap();
+        let search = Arc::new(RecordingSearch::default());
+        let attachments = Arc::new(RecordingAttachmentSearch {
+            fail_configure: true,
+            ..Default::default()
+        });
+        let state = Arc::new(SearchReindexState::default());
+
+        run_reindex(
+            state.clone(),
+            repo,
+            storage,
+            search.clone(),
+            no_assets(),
+            Some(attachments),
+            None,
+        )
+        .await;
+
+        assert_eq!(search.indexed.lock().unwrap().len(), 1);
+        assert_eq!(state.outcome.failed.load(Ordering::Relaxed), 1);
+        assert!(state
+            .outcome
+            .last_error
+            .lock()
+            .unwrap()
+            .as_deref()
+            .is_some_and(|e| e.starts_with("configure attachment index")));
     }
 
     #[tokio::test]

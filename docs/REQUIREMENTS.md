@@ -142,6 +142,7 @@ an archiving sync, finalize or promote a release.
 
 * **Engine:** Meilisearch.
 * **Full text:** One entry per document, searchable by title, preview, slug, tags and the full plain-text body (Markdown or editor HTML; code kept verbatim). Attribute order favours metadata over body-only matches after Meilisearch's word, typo and proximity rules. Results carry the preview, or a cropped snippet around a body match, never the body itself. Meilisearch stores every indexed body, so direct (tenant-token) clients would need their own attribute restrictions.
+* **Attachment text:** Extracted attachment text (PDF pages, plain-text files) lives in a separate `attachment_chunks` index, one entry per page, searchable by preview, filename, linking document title and the page's full text. Hits link to the first linking document and show a snippet around the match, never the whole page.
 * **Scoped Search:** When a user logs in, generate a temporary Meilisearch Tenant Token containing the filter: `filter = "role IN ['public', 'user_role']"`.
 * **Vector Readiness:** Ingestion pipeline must be extensible to generate embeddings (via `rust-bert` or OpenAI API) and store them for future RAG (Chat with Docs) features.
 

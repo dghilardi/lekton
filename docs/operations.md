@@ -259,6 +259,8 @@ Meilisearch therefore stores the full text of every indexed document, including 
 
 Startup applies the index settings in the background; a search re-index applies them first and waits up to 60 seconds for Meilisearch to confirm them. A failure is logged and, during a re-index, shown as the job's last error. Changing searchable attributes makes Meilisearch re-process all stored entries, so searches use the old settings for a while after the first upgraded start.
 
+Extracted attachment text has its own index, `attachment_chunks`, with one entry per PDF page (or per plain-text file). Each entry is searchable by preview, filename, linking document title and the page's full text (`content`), in that order; searches return every field except `content`, with the same 24-word snippet and highlight ranges as documents. Hybrid chat retrieval does not read this index: attachment passages reach chat only through vector search. The search re-index applies this index's settings too.
+
 **After upgrading to full-body search, run one search re-index.** Entries written earlier have no `content`: they stay searchable by title, preview, slug and tags, but body-only words do not match until the re-index rewrites them. Saving or syncing an unchanged document does not, so do not wait for routine syncs. The re-index reads stored bodies from S3; it needs no embedding calls and does not touch Qdrant.
 
 ### Upgrading

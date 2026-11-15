@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Search the full text of attachment pages, not only their first 200 characters: each indexed PDF page or text file now carries its whole extracted text as a searchable field, and a match deep in a page shows a snippet around it with the matched words marked. The page text is never returned whole.
+
 ## [0.41.0] 2026-11-15
 
 ### Security

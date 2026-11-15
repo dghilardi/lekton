@@ -193,6 +193,16 @@ pub struct PointSource {
 
 // ── Qdrant implementation ────────────────────────────────────────────────────
 
+/// Prefix of the error [`QdrantVectorStore::ensure_collection`] returns when
+/// the existing collection's vector size differs from the configured one.
+const DIMENSION_MISMATCH: &str = "Qdrant collection dimension mismatch";
+
+/// Whether `error` is the dimension mismatch reported by `ensure_collection`:
+/// a configuration error to stop on, unlike Qdrant being unreachable.
+pub fn is_dimension_mismatch(error: &AppError) -> bool {
+    error.to_string().contains(DIMENSION_MISMATCH)
+}
+
 pub struct QdrantVectorStore {
     client: Qdrant,
     collection: String,
@@ -283,6 +293,38 @@ impl VectorStore for QdrantVectorStore {
                 dimensions,
                 "created Qdrant collection"
             );
+            return Ok(());
+        }
+
+        // An existing collection keeps the vector size it was created with;
+        // a changed `embedding_dimensions` would make every upsert fail later.
+        use qdrant_client::qdrant::vectors_config::Config;
+        let info = self
+            .client
+            .collection_info(&self.collection)
+            .await
+            .map_err(|e| AppError::Internal(format!("qdrant collection_info: {e}")))?;
+        let existing = info
+            .result
+            .and_then(|info| info.config)
+            .and_then(|config| config.params)
+            .and_then(|params| params.vectors_config)
+            .and_then(|vectors| vectors.config);
+        let existing_size = match existing {
+            Some(Config::Params(params)) => Some(params.size),
+            // Named vectors, or no readable config: not what this store writes.
+            _ => None,
+        };
+        if existing_size != Some(dimensions as u64) {
+            let existing = existing_size.map_or("an unreadable or named-vector".to_string(), |s| {
+                format!("{s}-dimensional")
+            });
+            return Err(AppError::Internal(format!(
+                "{DIMENSION_MISMATCH}: '{}' holds {existing} vectors but rag.embedding_dimensions \
+                 is {dimensions}. Set embedding_dimensions back to match the collection, or point \
+                 rag.qdrant_collection at a new collection and run a full RAG reindex.",
+                self.collection
+            )));
         }
 
         Ok(())

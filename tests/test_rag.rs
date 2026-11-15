@@ -215,4 +215,29 @@ mod rag_integration {
         remaining.sort();
         assert_eq!(remaining, vec!["docs/live", "live.pdf"]);
     }
+
+    #[tokio::test]
+    async fn ensure_collection_rejects_a_collection_of_another_dimension() {
+        let (_qdrant, url) = start_qdrant().await;
+        let vectorstore = QdrantVectorStore::new(&url, COLLECTION).unwrap();
+        vectorstore.ensure_collection(DIMENSIONS).await.unwrap();
+
+        // Same dimensions: the existing collection is fine.
+        vectorstore.ensure_collection(DIMENSIONS).await.unwrap();
+
+        // `embedding_dimensions` changed without recreating the collection:
+        // every upsert would fail later, so startup must refuse instead.
+        let err = vectorstore
+            .ensure_collection(DIMENSIONS * 2)
+            .await
+            .expect_err("a dimension mismatch must fail");
+        let message = err.to_string();
+        assert!(
+            lekton::rag::vectorstore::is_dimension_mismatch(&err),
+            "{message}"
+        );
+        assert!(message.contains(&DIMENSIONS.to_string()), "{message}");
+        assert!(message.contains(&(DIMENSIONS * 2).to_string()), "{message}");
+        assert!(message.contains("embedding_dimensions"), "{message}");
+    }
 }

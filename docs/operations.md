@@ -4,6 +4,32 @@ Runtime procedures for backup, recovery, token rotation, and dependency auditing
 
 ---
 
+## Release Build Pipeline
+
+`Build Binaries` warms Rust dependency caches on `main` when manifests, the lockfile,
+toolchain, npm dependencies or its workflow change. Source-only pushes skip this
+matrix. Tags and PRs restore main's caches without saving ref-specific copies:
+a cache written on one release tag cannot be restored by a later tag. After a
+cache eviction, run `Build Binaries` manually on `main` to warm it again.
+
+The publish workflow uses the Linux server and static CLI binaries plus the site
+artifact from the same run to assemble the three `linux/amd64` Docker images.
+It does not recompile Rust inside Docker. Each image has a separate cache scope.
+Server binaries use the same component-erasure compiler flag as cargo-leptos,
+matching the site's `always-erase-components` setting.
+Integration and E2E tests, platform builds, packaging and release-image smoke tests
+must succeed before images are pushed. The smoke tests start the server against MongoDB,
+check SSR and static assets, and run both CLI images (including the CI shell).
+
+The default Docker builds and the existing `runtime` / `ci` targets still compile
+from source. To check the artifact-based targets locally, download the `site`,
+`bin-x86_64-unknown-linux-gnu` and `bin-x86_64-unknown-linux-musl` artifacts from
+one run into matching subdirectories of `artifacts/`, then run:
+
+```bash
+bash scripts/smoke-release-images.sh artifacts
+```
+
 ## Vertex AI Chat Endpoints
 
 Set `rag.llm.vertex_location` (or the per-step override) to the location supported

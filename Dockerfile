@@ -47,7 +47,7 @@ RUN bash scripts/stage-site-assets.sh
 # =============================================================================
 # Stage 4: Runtime — minimal image with just the binary
 # =============================================================================
-FROM debian:bookworm-slim AS runtime
+FROM debian:bookworm-slim AS runtime-base
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -74,20 +74,23 @@ RUN curl -fsSL --retry 5 --retry-all-errors "https://github.com/bblanchon/pdfium
 
 WORKDIR /app
 
-# Copy the server binary
-COPY --from=builder /app/target/release/lekton /app/lekton
-
-# Copy the generated site assets (JS, WASM, CSS)
-COPY --from=builder /app/target/site /app/target/site
-
-# Copy the Cargo.toml (needed by cargo-leptos for runtime config)
-COPY --from=builder /app/Cargo.toml /app/Cargo.toml
-
-# Copy public assets
-COPY --from=builder /app/public /app/public
-
 ENV LEPTOS_SITE_ADDR="0.0.0.0:3000"
 ENV LEPTOS_SITE_ROOT="target/site"
 EXPOSE 3000
 
 CMD ["/app/lekton"]
+
+# Release builds provide the artifacts from build-binaries.yml as a named
+# context: --build-context release-artifacts=./artifacts. No Rust build runs.
+FROM runtime-base AS release
+COPY --from=release-artifacts --chmod=755 /bin-x86_64-unknown-linux-gnu/lekton /app/lekton
+COPY --from=release-artifacts /site /app/target/site
+COPY Cargo.toml /app/Cargo.toml
+COPY public /app/public
+
+# Keep a plain `docker build .` building from source.
+FROM runtime-base AS runtime
+COPY --from=builder /app/target/release/lekton /app/lekton
+COPY --from=builder /app/target/site /app/target/site
+COPY --from=builder /app/Cargo.toml /app/Cargo.toml
+COPY --from=builder /app/public /app/public

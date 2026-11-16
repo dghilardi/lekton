@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- Warm release-build dependency caches on main for reuse by release tags.
+- Speed up releases by warming dependency caches on main and building Docker images from tested release artifacts, with separate image caches.
 
 ## [0.42.0] 2026-11-16
 

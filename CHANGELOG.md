@@ -8,6 +8,10 @@ All notable changes to this project will be documented in this file.
 
 - Speed up releases by warming dependency caches on main and building Docker images from tested release artifacts, with separate image caches.
 
+### Added
+
+- Consistency report lists active documents that share a source file and content under different slugs.
+
 ### Fixed
 
 - Show chat source previews and section titles as plain text, without heading attributes, inline HTML anchors, emphasis markers, images or table pipes.

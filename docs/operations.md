@@ -419,6 +419,9 @@ The report caps samples at 20 per category. Disabled or unavailable indexes are
 reported as skipped, and concurrent imports can produce temporary findings.
 It does not delete or repair anything. Inline editor images have no Mongo owner
 and are listed separately rather than treated as unowned objects to delete.
+Active documents that share a source path and content hash under different
+slugs (usually stale copies from an import made before source ids) are listed
+as an informational finding; archive the stale copy by hand once confirmed.
 
 `LKN__STORAGE__REVISION_KEEP_LAST` controls the number of historical revisions kept
 per slug: the default is **10**, an omitted setting uses that default, and **0**

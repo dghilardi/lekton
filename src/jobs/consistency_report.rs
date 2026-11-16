@@ -105,10 +105,12 @@ pub async fn build_report(sources: Sources<'_>) -> Result<ConsistencyReport, App
         .filter(|asset| attachment_is_live(asset, &hidden))
         .map(|asset| asset.key.clone())
         .collect();
-    let live: Vec<_> = crate::rag::reindex::latest_copies(documents)
+    let active: Vec<_> = crate::rag::reindex::latest_copies(documents)
         .into_iter()
-        .filter(|d| !d.is_archived && !d.is_hidden)
+        .filter(|d| !d.is_archived)
         .collect();
+    let duplicates = duplicate_copies(&active);
+    let live: Vec<_> = active.into_iter().filter(|d| !d.is_hidden).collect();
     let expected = Expected {
         search_slugs: live.iter().map(|d| d.slug.clone()).collect(),
         rag_slugs: live
@@ -128,6 +130,16 @@ pub async fn build_report(sources: Sources<'_>) -> Result<ConsistencyReport, App
     compare_attachment_search(&sources, &expected, &mut report).await;
     compare_rag(&sources, &expected, &mut report).await;
 
+    let mut duplicates = duplicates.finding(
+        "duplicate_documents",
+        "Same source file and content under several slugs",
+        "These active documents share their source path and content hash but have different \
+         slugs, so search and chat show the same text twice. They are typically left over \
+         from an import made before source ids, later replaced under new slugs. Archive the \
+         stale copy once confirmed; nothing is changed automatically.",
+    );
+    duplicates.informational = true;
+    report.findings.push(duplicates);
     report.findings.push(flagged.finding(
         "needs_reindex",
         "Documents flagged for reindex",
@@ -135,6 +147,31 @@ pub async fn build_report(sources: Sources<'_>) -> Result<ConsistencyReport, App
          saving the document again, retries them.",
     ));
     Ok(report)
+}
+
+/// Groups of active documents with the same `source_path` and `content_hash`
+/// under different slugs, one sample per group: `path: slug-a, slug-b`.
+fn duplicate_copies(active: &[crate::db::models::Document]) -> Tally {
+    let mut groups = BTreeMap::<(&str, &str), BTreeSet<&str>>::new();
+    for document in active {
+        if let (Some(path), Some(hash)) = (&document.source_path, &document.content_hash) {
+            groups
+                .entry((path.as_str(), hash.as_str()))
+                .or_default()
+                .insert(document.slug.as_str());
+        }
+    }
+    Tally::of(
+        groups
+            .into_iter()
+            .filter(|(_, slugs)| slugs.len() > 1)
+            .map(|((path, _), slugs)| {
+                format!(
+                    "{path}: {}",
+                    slugs.into_iter().collect::<Vec<_>>().join(", ")
+                )
+            }),
+    )
 }
 
 async fn compare_storage(

@@ -2,8 +2,20 @@ name: Build Binaries
 
 # Builds the release binaries for every supported platform and packages them
 # (archives, .deb, SHA256SUMS) into the `release-assets` artifact.
-# Called by publish.yml on tags; runs on pull requests touching the packaging.
+# Warm dependency caches on main so tags and PRs can restore them. A tag's
+# own cache is not accessible to the next tag, even if saving it is enabled.
+# Source-only changes reuse these dependency caches without rebuilding the matrix.
 on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/build-binaries.yml
+      - Cargo.toml
+      - Cargo.lock
+      - cli/Cargo.toml
+      - rust-toolchain.toml
+      - package.json
+      - package-lock.json
   pull_request:
     branches: [main]
     paths:
@@ -30,8 +42,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          # Only main saves caches: PR-scoped caches are unreachable from other
-          # refs and evict main's under the 10 GB repository limit.
+          # Main primes the caches; PRs and tags only restore them.
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29

@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Warm release-build dependency caches on main for reuse by release tags.
+
 ## [0.42.0] 2026-11-16
 
 ### Added

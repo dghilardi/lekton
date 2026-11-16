@@ -8,6 +8,10 @@ All notable changes to this project will be documented in this file.
 
 - Speed up releases by warming dependency caches on main and building Docker images from tested release artifacts, with separate image caches.
 
+### Fixed
+
+- Delete the old S3 body when an import renames a document and changes its content, instead of leaving an unowned object behind.
+
 ## [0.42.0] 2026-11-16
 
 ### Added

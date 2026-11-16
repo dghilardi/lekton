@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Chat answers cite their sources as `[n]` links, and the sources list shows only the cited ones; an answer that cites nothing keeps the retrieved sources folded away as related reading.
 - Consistency report lists active documents that share a source file and content under different slugs.
 
 ### Fixed

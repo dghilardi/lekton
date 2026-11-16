@@ -173,6 +173,7 @@ mod tests {
             content: content.into(),
             sources: None,
             status: Default::default(),
+            cited_sources: None,
             created_at: Utc::now(),
         }
     }

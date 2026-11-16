@@ -28,6 +28,12 @@ pub struct SourceReference {
     /// 1-based page number within the attachment, when applicable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_page: Option<u32>,
+    /// The number the model saw for this source in its context (`[n]`).
+    /// Kept on the source so citations still point at it after other
+    /// sources are filtered out. `None` for messages saved before citations:
+    /// those number sources by position.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number: Option<u32>,
 }
 
 /// Fewest words a source preview needs to say more than a heading does.
@@ -199,6 +205,165 @@ impl SourceReference {
     }
 }
 
+/// `[n]` and `[n, m]` citation markers outside code, links, footnotes and
+/// reference definitions: their byte ranges and numbers.
+fn citation_markers(text: &str) -> Vec<(std::ops::Range<usize>, Vec<u32>)> {
+    let mut markers = Vec::new();
+    let mut fence: Option<char> = None;
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let start = offset;
+        offset += line.len();
+        let trimmed = line.trim_start();
+        if let Some(marker) = ['`', '~']
+            .into_iter()
+            .find(|&c| trimmed.starts_with(&c.to_string().repeat(3)))
+        {
+            match fence {
+                None => fence = Some(marker),
+                Some(open) if open == marker => fence = None,
+                Some(_) => {}
+            }
+            continue;
+        }
+        if fence.is_some() {
+            continue;
+        }
+        let bytes = line.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'`' => {
+                    let run = bytes[i..].iter().take_while(|&&b| b == b'`').count();
+                    let closer = "`".repeat(run);
+                    i = match line[i + run..].find(&closer) {
+                        Some(end) => i + run + end + run,
+                        None => i + run,
+                    };
+                }
+                b'\\' => i += 2,
+                b'[' => {
+                    let Some(len) = line[i + 1..].find(']') else {
+                        break;
+                    };
+                    let inner = &line[i + 1..i + 1 + len];
+                    let end = i + len + 2;
+                    let follows = bytes.get(end).copied();
+                    let numbers: Option<Vec<u32>> = inner
+                        .split([',', ';'])
+                        .map(|n| {
+                            n.trim()
+                                .parse::<u32>()
+                                .ok()
+                                .filter(|_| !n.trim().is_empty())
+                        })
+                        .collect();
+                    match numbers {
+                        Some(numbers)
+                            if !numbers.is_empty()
+                                && inner
+                                    .bytes()
+                                    .all(|b| b.is_ascii_digit() || b",; ".contains(&b))
+                                && !matches!(follows, Some(b'(' | b':')) =>
+                        {
+                            markers.push((start + i..start + end, numbers));
+                        }
+                        _ => {}
+                    }
+                    i = end;
+                }
+                _ => i += 1,
+            }
+        }
+    }
+    markers
+}
+
+/// The source numbers an answer cites, once each in citation order. Numbers
+/// outside `1..=source_count` are ignored.
+pub fn parse_citations(answer: &str, source_count: usize) -> Vec<u32> {
+    let mut cited = Vec::new();
+    for (_, numbers) in citation_markers(answer) {
+        for n in numbers {
+            if n >= 1 && n as usize <= source_count && !cited.contains(&n) {
+                cited.push(n);
+            }
+        }
+    }
+    cited
+}
+
+/// Turn each citation into a Markdown link to its source. A marker with a
+/// number `href` does not know is left as written.
+pub fn link_citations(answer: &str, href: impl Fn(u32) -> Option<String>) -> String {
+    let mut out = String::with_capacity(answer.len());
+    let mut last = 0;
+    for (range, numbers) in citation_markers(answer) {
+        let Some(links) = numbers
+            .iter()
+            .map(|&n| href(n).map(|url| format!("[\\[{n}\\]](<{url}>)")))
+            .collect::<Option<Vec<_>>>()
+        else {
+            continue;
+        };
+        out.push_str(&answer[last..range.start]);
+        out.push_str(&links.concat());
+        last = range.end;
+    }
+    out.push_str(&answer[last..]);
+    out
+}
+
+/// How the sources under an answer are presented.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceListingKind {
+    /// A message saved before citations: every source, as before.
+    All,
+    /// Only the sources the answer cites.
+    Cited,
+    /// The answer cites nothing: the sources were retrieved but not used.
+    Uncited,
+}
+
+/// The sources to show under an answer, each with its citation number.
+#[derive(Debug, Clone)]
+pub struct SourceListing {
+    pub kind: SourceListingKind,
+    pub sources: Vec<(u32, SourceReference)>,
+}
+
+/// Pick the sources to show for an answer citing `cited` (`None` when the
+/// message predates citations).
+pub fn source_listing(sources: &[SourceReference], cited: Option<&[u32]>) -> SourceListing {
+    let numbered = sources
+        .iter()
+        .enumerate()
+        .map(|(i, source)| (source.number.unwrap_or(i as u32 + 1), source.clone()));
+    match cited {
+        None => SourceListing {
+            kind: SourceListingKind::All,
+            sources: numbered.collect(),
+        },
+        Some(cited) => {
+            let used: Vec<_> = numbered
+                .clone()
+                .filter(|(n, _)| cited.contains(n))
+                .collect();
+            if used.is_empty() {
+                SourceListing {
+                    kind: SourceListingKind::Uncited,
+                    sources: numbered.collect(),
+                }
+            } else {
+                SourceListing {
+                    kind: SourceListingKind::Cited,
+                    sources: used,
+                }
+            }
+        }
+    }
+}
+
 /// Feedback rating for an AI response.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -287,6 +452,10 @@ pub struct ChatMessage {
     /// Whether the answer is complete. Always `Complete` for user messages.
     #[serde(default)]
     pub status: ChatMessageStatus,
+    /// Source numbers the answer cites as `[n]`, in citation order. `None`
+    /// for messages saved before citations, which show every source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cited_sources: Option<Vec<u32>>,
     #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub created_at: DateTime<Utc>,
 }
@@ -311,8 +480,10 @@ mod tests {
                 snippet: Some("Quick start guide".into()),
                 attachment_key: None,
                 source_page: None,
+                number: None,
             }]),
             status: ChatMessageStatus::Complete,
+            cited_sources: None,
             created_at: Utc::now(),
         };
 
@@ -371,6 +542,7 @@ mod tests {
             snippet: Some("## Usage".into()),
             attachment_key: None,
             source_page: None,
+            number: None,
         };
         assert_eq!(source.display_snippet(), None);
         source.snippet = Some("## Usage Run the sync from CI.".into());
@@ -434,11 +606,94 @@ mod tests {
             snippet: Some("**Open** a <a id=\"x\"></a>stable branch {#flux} now".into()),
             attachment_key: None,
             source_page: None,
+            number: None,
         };
         assert_eq!(
             source.display_snippet().as_deref(),
             Some("Open a stable branch now")
         );
+    }
+
+    #[test]
+    fn citations_are_parsed_once_in_order_and_bounded() {
+        let answer = "Use feature branches [2]. Squash fixups [1, 3][2]. See [9] and [0].";
+        assert_eq!(parse_citations(answer, 3), vec![2, 1, 3]);
+        assert_eq!(parse_citations(answer, 0), Vec::<u32>::new());
+    }
+
+    #[test]
+    fn citations_ignore_code_links_footnotes_and_text() {
+        let answer = "Index `arr[1]` here.\n\n```rust\nlet x = v[2];\n```\n\
+            ~~~\n[3]\n~~~\n[a link](https://x) and [4](https://y), footnote[^5], \\[2\\], [x], [1-2].\n\n\
+            [6]: https://ref";
+        assert_eq!(parse_citations(answer, 10), Vec::<u32>::new());
+        assert_eq!(
+            parse_citations("Il contesto non contiene questa informazione.", 5),
+            Vec::<u32>::new()
+        );
+    }
+
+    #[test]
+    fn citations_become_links_to_their_source() {
+        let linked = link_citations("Squash [1, 3] but not `[1]`; [2] is unknown.", |n| {
+            (n != 2).then(|| format!("/docs/s{n}#a(b)"))
+        });
+        assert_eq!(
+            linked,
+            "Squash [\\[1\\]](</docs/s1#a(b)>)[\\[3\\]](</docs/s3#a(b)>) but not `[1]`; [2] is unknown."
+        );
+    }
+
+    fn numbered(slug: &str, number: Option<u32>) -> SourceReference {
+        SourceReference {
+            document_slug: slug.into(),
+            document_title: slug.into(),
+            section_title: None,
+            section_anchor: None,
+            score: 0.5,
+            snippet: None,
+            attachment_key: None,
+            source_page: None,
+            number,
+        }
+    }
+
+    #[test]
+    fn listing_keeps_the_numbers_the_model_saw() {
+        // Source 2 was filtered out on reload: 3 must stay 3.
+        let sources = vec![numbered("a", Some(1)), numbered("c", Some(3))];
+        let listing = source_listing(&sources, Some(&[3]));
+        assert_eq!(listing.kind, SourceListingKind::Cited);
+        assert_eq!(
+            listing
+                .sources
+                .iter()
+                .map(|(n, s)| (*n, s.document_slug.as_str()))
+                .collect::<Vec<_>>(),
+            [(3, "c")]
+        );
+        let uncited = source_listing(&sources, Some(&[]));
+        assert_eq!(uncited.kind, SourceListingKind::Uncited);
+        assert_eq!(uncited.sources.len(), 2);
+        // Messages saved before citations: every source, numbered by position.
+        let legacy = vec![numbered("a", None), numbered("b", None)];
+        let all = source_listing(&legacy, None);
+        assert_eq!(all.kind, SourceListingKind::All);
+        assert_eq!(
+            all.sources.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
+            [1, 2]
+        );
+        assert_eq!(source_listing(&[], Some(&[])).sources.len(), 0);
+    }
+
+    #[test]
+    fn messages_without_citations_deserialize_as_legacy() {
+        let json = r#"{"id":"m1","session_id":"s1","role":"assistant","content":"A",
+            "sources":[{"document_slug":"a","document_title":"A","score":0.5}],
+            "created_at":{"$date":{"$numberLong":"1704067200000"}}}"#;
+        let decoded: ChatMessage = serde_json::from_str(json).unwrap();
+        assert_eq!(decoded.cited_sources, None);
+        assert_eq!(decoded.sources.unwrap()[0].number, None);
     }
 
     #[test]

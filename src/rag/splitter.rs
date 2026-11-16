@@ -320,6 +320,42 @@ mod tests {
     }
 
     #[test]
+    fn comment_lines_in_any_fenced_code_block_never_become_headings() {
+        let body = "Real content about the development flow. ".repeat(5);
+        let fences = [
+            "```gitattributes\n# denote all files that are truly binary\n*.png binary\n```",
+            "~~~\n# tilde comment\n## tilde section\n~~~",
+            "~~~~ shell\n# long tilde fence\n~~~\n# still code\n~~~~",
+            "````md\n```\n# nested backticks\n```\n# still code\n````",
+            "1. Configure git:\n\n   ```\n   # indented in a list\n   ```",
+        ];
+        for fence in fences {
+            let content = format!(
+                "# Guidelines\n\n## Development Flux\n\n{body}\n\n{fence}\n\n{body}\n\n## After\n\n{body}"
+            );
+            let chunks = split_document(&content, TOKENS, OVERLAP);
+            let fence_chunk = chunks
+                .iter()
+                .find(|c| c.text.contains(fence.lines().nth(1).unwrap().trim()))
+                .unwrap_or_else(|| panic!("fence body missing for {fence:?}"));
+            assert_eq!(
+                fence_chunk.section_path,
+                vec!["Guidelines", "Development Flux"],
+                "{fence:?}"
+            );
+            assert_eq!(
+                fence_chunk.section_anchor, "guidelines-development-flux",
+                "{fence:?}"
+            );
+            let paths: Vec<_> = chunks.iter().map(|c| c.section_path.clone()).collect();
+            assert!(
+                paths.contains(&vec!["Guidelines".to_string(), "After".to_string()]),
+                "headings after the fence still split sections: {fence:?}"
+            );
+        }
+    }
+
+    #[test]
     fn large_code_fence_is_not_split() {
         // Code fence body >> chunk_size_tokens should be one oversize chunk.
         let fence_body = "    let x = 1;\n".repeat(250); // ~3750 chars ≈ 937 tokens

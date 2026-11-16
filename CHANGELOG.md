@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Ignore `#` lines inside any code block (tilde, indented or nested fences) when splitting documents into RAG sections, so code comments no longer become section headings and anchors.
 - Collapse duplicate passages and cap chunks per document in the chat context, so copies of one page no longer crowd out other relevant documents.
 - Header section links that do not fit beside the search bar now move under "More" instead of being cut off.
 - Switching a document to an older release now works when the source id is a URL; the pin was split on the URL's scheme colon and silently ignored.

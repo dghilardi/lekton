@@ -23,22 +23,21 @@ fn parse_heading(line: &str) -> Option<(u8, &str)> {
 }
 
 /// Split a Markdown document by H1/H2 headings into raw sections.
-/// Headings inside fenced code blocks are ignored.
+/// Lines inside code blocks (e.g. `# comment` in a shell fence) are ignored.
 pub(in crate::rag) fn split_into_sections(content: &str) -> Vec<RawSection> {
+    let code_blocks = super::splitter_blocks::code_block_ranges(content);
     let mut sections: Vec<RawSection> = Vec::new();
     let mut current_byte_offset = 0usize;
     let mut current_text = String::new();
     let mut current_h1: Option<String> = None;
     let mut current_heading_path: Vec<String> = Vec::new();
-    let mut in_code_block = false;
     let mut line_byte_offset = 0usize;
 
     for line in content.split_inclusive('\n') {
         let trimmed = line.trim_end_matches(['\n', '\r']);
-
-        if trimmed.starts_with("```") {
-            in_code_block = !in_code_block;
-        }
+        let in_code_block = code_blocks
+            .iter()
+            .any(|block| block.contains(&line_byte_offset));
 
         if !in_code_block {
             if let Some((level, heading_text)) = parse_heading(trimmed) {

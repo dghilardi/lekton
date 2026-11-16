@@ -17,7 +17,7 @@ use uuid::Uuid;
 use crate::auth::models::UserContext;
 use crate::config::RagConfig;
 use crate::db::chat_models::{
-    source_snippet, ChatMessage, ChatMessageStatus, ChatSession, SourceReference,
+    plain_text_line, source_snippet, ChatMessage, ChatMessageStatus, ChatSession, SourceReference,
 };
 use crate::db::chat_repository::ChatRepository;
 use crate::error::AppError;
@@ -1647,7 +1647,11 @@ fn build_source_references(
         let section_title = if is_attachment {
             result.source_page.map(|p| format!("p. {p}"))
         } else {
-            result.section_path.last().cloned()
+            result
+                .section_path
+                .last()
+                .map(|heading| plain_text_line(heading))
+                .filter(|heading| !heading.is_empty())
         };
         let section_anchor = if is_attachment || result.section_anchor.is_empty() {
             None
@@ -2041,6 +2045,28 @@ mod tests {
         assert_eq!(
             sources[1].section_anchor.as_deref(),
             Some("architecture-deployment")
+        );
+    }
+
+    #[test]
+    fn build_source_references_shows_plain_text_previews() {
+        let sources = build_source_references(&[VectorSearchResult {
+            point_id: "p1".into(),
+            chunk_text: "<a id=\"_open_stable_branch\"></a>\n**Open** the `stable` branch from ![image.png](a.png) main.".into(),
+            document_slug: "docs/flow".into(),
+            document_title: "Flow".into(),
+            section_path: vec!["3. Development Flux {#_development_flux}".into()],
+            section_anchor: "3-development-flux-developmentflux".into(),
+            score: 0.8,
+            ..Default::default()
+        }]);
+        assert_eq!(
+            sources[0].section_title.as_deref(),
+            Some("3. Development Flux")
+        );
+        assert_eq!(
+            sources[0].snippet.as_deref(),
+            Some("Open the stable branch from main.")
         );
     }
 

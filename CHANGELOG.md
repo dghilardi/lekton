@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Show chat source previews and section titles as plain text, without heading attributes, inline HTML anchors, emphasis markers, images or table pipes.
 - Ignore `#` lines inside any code block (tilde, indented or nested fences) when splitting documents into RAG sections, so code comments no longer become section headings and anchors.
 - Collapse duplicate passages and cap chunks per document in the chat context, so copies of one page no longer crowd out other relevant documents.
 - Header section links that do not fit beside the search bar now move under "More" instead of being cut off.

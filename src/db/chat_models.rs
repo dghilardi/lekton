@@ -37,14 +37,18 @@ const MIN_SNIPPET_WORDS: usize = 4;
 ///
 /// Markdown structure that says nothing on its own — headings, code fences,
 /// table and horizontal rules — is dropped, so a chunk starting with
-/// `## Usage` previews its first sentence instead. `None` when nothing
-/// readable is left.
+/// `## Usage` previews its first sentence instead, and the remaining lines
+/// are read through [`plain_text_line`]. `None` when nothing readable is left.
 pub fn source_snippet(text: &str, max_chars: usize) -> Option<String> {
     let prose = text
         .lines()
         .map(str::trim)
         .filter(|line| !is_markup_only(line))
-        .flat_map(str::split_whitespace)
+        .map(plain_text_line)
+        .collect::<Vec<_>>();
+    let prose = prose
+        .iter()
+        .flat_map(|line| line.split_whitespace())
         .collect::<Vec<_>>();
     if word_count(prose.iter().copied()) < MIN_SNIPPET_WORDS {
         return None;
@@ -57,6 +61,113 @@ pub fn source_snippet(text: &str, max_chars: usize) -> Option<String> {
     } else {
         preview
     })
+}
+
+/// One Markdown line as plain text: heading attributes (`{#id}`), inline HTML,
+/// images, emphasis markers, link targets, list bullets and quote markers are
+/// dropped, and a table row becomes its cells joined by ` · `. Inline code is
+/// kept verbatim without its backticks.
+pub fn plain_text_line(line: &str) -> String {
+    let mut line = line.trim();
+    while let Some(rest) = ["> ", ">", "- ", "* ", "+ "]
+        .iter()
+        .find_map(|prefix| line.strip_prefix(prefix))
+    {
+        line = rest.trim_start();
+    }
+    if line.starts_with('|') {
+        return line
+            .trim_matches('|')
+            .split('|')
+            .map(plain_inline)
+            .filter(|cell| !cell.is_empty())
+            .collect::<Vec<_>>()
+            .join(" · ");
+    }
+    plain_inline(line)
+}
+
+fn plain_inline(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let find = |from: usize, target: char| chars[from..].iter().position(|&c| c == target);
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        match c {
+            '`' => {
+                if let Some(len) = find(i + 1, '`') {
+                    out.extend(&chars[i + 1..i + 1 + len]);
+                    i += len + 2;
+                    continue;
+                }
+            }
+            '!' | '[' if c == '[' || next == Some('[') => {
+                let open = if c == '!' { i + 1 } else { i };
+                if let Some(target) = link_target(&chars, open) {
+                    if c == '[' {
+                        let label: String = chars[open + 1..target.0].iter().collect();
+                        out.push_str(&plain_inline(&label));
+                    }
+                    i = target.1 + 1;
+                    continue;
+                }
+            }
+            '{' if matches!(next, Some('#' | '.')) => {
+                if let Some(len) = find(i, '}') {
+                    i += len + 1;
+                    continue;
+                }
+            }
+            '<' if next.is_some_and(|n| n.is_ascii_alphabetic() || n == '/' || n == '!') => {
+                if let Some(len) = find(i, '>') {
+                    let inner: String = chars[i + 1..i + len].iter().collect();
+                    if inner.starts_with("http://") || inner.starts_with("https://") {
+                        out.push_str(&inner);
+                    }
+                    out.push(' ');
+                    i += len + 1;
+                    continue;
+                }
+            }
+            '*' | '_' | '~' => {
+                let run = chars[i..].iter().take_while(|&&r| r == c).count();
+                let before = i.checked_sub(1).map(|p| chars[p]);
+                let after = chars.get(i + run).copied();
+                let is_word = |ch: Option<char>| ch.is_some_and(char::is_alphanumeric);
+                let emphasis = if run >= 2 {
+                    c != '~' || run == 2
+                } else {
+                    c != '~'
+                        && ((!is_word(before) && is_word(after))
+                            || (is_word(before) && !is_word(after)))
+                };
+                if emphasis {
+                    i += run;
+                    continue;
+                }
+                out.extend(&chars[i..i + run]);
+                i += run;
+                continue;
+            }
+            _ => {}
+        }
+        out.push(c);
+        i += 1;
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// For a `[label](target)` starting at `open`, the indexes of the closing
+/// `]` and `)`.
+fn link_target(chars: &[char], open: usize) -> Option<(usize, usize)> {
+    let close = open + chars[open..].iter().position(|&c| c == ']')?;
+    if chars.get(close + 1) != Some(&'(') {
+        return None;
+    }
+    let end = close + 1 + chars[close + 1..].iter().position(|&c| c == ')')?;
+    Some((close, end))
 }
 
 /// Words with at least one letter or digit, so table pipes and list
@@ -79,11 +190,12 @@ fn is_markup_only(line: &str) -> bool {
 
 impl SourceReference {
     /// The preview to show. Also cleans previews saved before
-    /// [`source_snippet`] existed, such as a bare `## Usage`.
+    /// [`source_snippet`] existed or stripped inline markup, such as a bare
+    /// `## Usage` or `**bold**`.
     pub fn display_snippet(&self) -> Option<String> {
         let snippet = self.snippet.as_deref()?.trim();
-        let snippet = snippet.trim_start_matches('#').trim_start();
-        (word_count(snippet.split_whitespace()) >= MIN_SNIPPET_WORDS).then(|| snippet.to_string())
+        let snippet = plain_inline(snippet.trim_start_matches('#'));
+        (word_count(snippet.split_whitespace()) >= MIN_SNIPPET_WORDS).then_some(snippet)
     }
 }
 
@@ -265,6 +377,67 @@ mod tests {
         assert_eq!(
             source.display_snippet().as_deref(),
             Some("Usage Run the sync from CI.")
+        );
+    }
+
+    #[test]
+    fn plain_text_line_strips_inline_markup() {
+        for (line, expected) in [
+            (
+                "3. Development Flux {#_development_flux}",
+                "3. Development Flux",
+            ),
+            (
+                r#"<a id="_open_stable_branch"></a>Open a stable branch"#,
+                "Open a stable branch",
+            ),
+            (
+                "Use **bold** and *italic* and __strong__ text",
+                "Use bold and italic and strong text",
+            ),
+            ("See ![image.png](assets/image.png) above", "See above"),
+            (
+                "Read [the guide](/docs/guide) first",
+                "Read the guide first",
+            ),
+            ("| Id | Parameter |", "Id · Parameter"),
+            ("- **Owner**: team", "Owner: team"),
+            ("> quoted ~~old~~ text", "quoted old text"),
+            (
+                "Call `__init__` and keep snake_case and *.png",
+                "Call __init__ and keep snake_case and *.png",
+            ),
+            ("if a < b then <br/> go", "if a < b then go"),
+        ] {
+            assert_eq!(plain_text_line(line), expected, "{line:?}");
+        }
+    }
+
+    #[test]
+    fn snippet_reads_as_plain_text() {
+        let chunk = "## 3. Development Flux {#_development_flux}\n\n<a id=\"_open_stable_branch\"></a>\n\
+            **Open** the stable branch.\n\n| Id | Parameter |\n|----|-----------|\n| 1 | timeout |\n\n![image.png](a.png)";
+        assert_eq!(
+            source_snippet(chunk, 180).as_deref(),
+            Some("Open the stable branch. Id · Parameter 1 · timeout")
+        );
+    }
+
+    #[test]
+    fn stored_snippets_are_cleaned_for_display() {
+        let source = SourceReference {
+            document_slug: "docs/a".into(),
+            document_title: "A".into(),
+            section_title: None,
+            section_anchor: None,
+            score: 0.7,
+            snippet: Some("**Open** a <a id=\"x\"></a>stable branch {#flux} now".into()),
+            attachment_key: None,
+            source_page: None,
+        };
+        assert_eq!(
+            source.display_snippet().as_deref(),
+            Some("Open a stable branch now")
         );
     }
 

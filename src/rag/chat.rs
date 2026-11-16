@@ -1269,8 +1269,9 @@ fn select_candidates(
 /// identities: a page and its `.md` copy attached elsewhere (whose relative
 /// links the page rewrites to asset URLs), or two active documents with the
 /// same content under different slugs. Comparing the plain text, without link
-/// targets, markup or whitespace differences, recognises all of them. Code is
-/// compared verbatim: `Vec<u8>` is not HTML, and differs from `Vec<u64>`.
+/// targets, markup or whitespace differences, recognises all of them. Code,
+/// blocks and inline spans alike, is compared verbatim: `Vec<u8>` is not HTML,
+/// and differs from `Vec<u64>`.
 fn text_identity(chunk: &VectorSearchResult) -> String {
     let text = chunk.chunk_text.as_str();
     let prose = |segment: &str| {
@@ -1285,14 +1286,31 @@ fn text_identity(chunk: &VectorSearchResult) -> String {
     };
     let mut parts = Vec::new();
     let mut cursor = 0;
-    for block in super::splitter_blocks::code_block_ranges(text) {
-        parts.push(prose(&text[cursor..block.start]));
-        parts.push(text[block.clone()].trim_end().to_string());
-        cursor = block.end;
+    for code in code_ranges(text) {
+        parts.push(prose(&text[cursor..code.start]));
+        parts.push(text[code.clone()].trim_end().to_string());
+        cursor = code.end;
     }
     parts.push(prose(&text[cursor..]));
     parts.retain(|part| !part.is_empty());
     parts.join("\n")
+}
+
+/// Byte ranges of all code in `text`, blocks and inline spans (any number of
+/// backticks, wrapped across lines), as the page renderer parses it.
+fn code_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
+    use pulldown_cmark::{Event, Parser, Tag};
+
+    let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
+    for (event, range) in
+        Parser::new_ext(text, crate::rendering::markdown::MARKDOWN_OPTIONS).into_offset_iter()
+    {
+        let is_code = matches!(event, Event::Start(Tag::CodeBlock(_)) | Event::Code(_));
+        if is_code && ranges.last().is_none_or(|last| range.start >= last.end) {
+            ranges.push(range);
+        }
+    }
+    ranges
 }
 
 /// Keep the best-ranked chunk of each distinct text. Returns the dropped

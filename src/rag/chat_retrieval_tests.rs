@@ -1161,3 +1161,25 @@ async fn per_document_cap_sees_the_whole_fused_pool_without_hybrid_or_reranker()
     );
     assert_eq!(ids(&result.post_rerank), ["a0", "a1", "a2", "b0", "c0"]);
 }
+
+#[test]
+fn inline_code_in_any_form_is_compared_verbatim() {
+    let pool = vec![
+        adr_chunk("dbl-u8", "a", "Use ``Vec<u8>`` here.", 0.9),
+        adr_chunk("dbl-u64", "b", "Use ``Vec<u64>`` here.", 0.8),
+        adr_chunk("wrap-u8", "c", "Use `HashMap<String,\nVec<u8>>` here.", 0.7),
+        adr_chunk(
+            "wrap-u64",
+            "d",
+            "Use `HashMap<String,\nVec<u64>>` here.",
+            0.6,
+        ),
+        // Prose-only markup differences still collapse onto the first copy.
+        adr_chunk("copy", "e", "**Use** ``Vec<u8>`` [here](/x).", 0.5),
+    ];
+    let candidates = select_candidates(vec![pool], vec![], 10);
+    assert_eq!(
+        ids(&candidates),
+        ["dbl-u8", "dbl-u64", "wrap-u8", "wrap-u64"]
+    );
+}

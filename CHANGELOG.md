@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.42.0] 2026-11-16
+
 ### Added
 
 - Search full attachment page text and show bounded snippets around matching words.

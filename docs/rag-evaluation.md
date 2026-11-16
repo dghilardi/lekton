@@ -300,6 +300,13 @@ metrics, use `--top-k` at or below the final-context limit, or increase that lim
 Both evaluation CLIs warn when the requested cutoff exceeds the context budget.
 When reranking is disabled or skipped in thrifty mode, both lists stay final sized.
 
+Chunks with identical whitespace-normalized text (a page and its `.md` copy
+attached elsewhere, or duplicate documents) are collapsed to the best-ranked copy
+before the candidate cutoff. The reranker orders the whole pool; the final context
+then keeps that order but caps each document (or attachment) at
+`max(2, ceil(context_chunk_limit / 3))` chunks, giving free slots back to capped
+documents only when no other candidate is left.
+
 Hybrid retrieval searches Meilisearch with the original standalone question and
 bounded, deduplicated analyzer subqueries before HyDE. Lexical-only documents
 contribute relevance-ranked Qdrant passages under the same visibility filters.

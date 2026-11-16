@@ -185,8 +185,8 @@ pub struct RetrievalOutput {
     /// — before reranking. Bounded by `retrieval_candidate_limit` when reranking
     /// is active, otherwise by `context_chunk_limit`.
     pub pre_rerank: Vec<VectorSearchResult>,
-    /// Final context, bounded by `context_chunk_limit`. On reranker failure,
-    /// this is the first context-sized slice of `pre_rerank`.
+    /// Final context, bounded by `context_chunk_limit` and capped per
+    /// document. On reranker failure, it is selected from `pre_rerank` order.
     pub post_rerank: Vec<VectorSearchResult>,
 }
 
@@ -1179,22 +1179,20 @@ impl ChatService {
             "RAG: pre-rerank candidates"
         );
 
-        // Rerank the enlarged pool, then select the independent final context budget.
-        let post_rerank = if let Some(reranker) = reranker {
+        // Rank the whole enlarged pool, then select the independent final
+        // context budget with a per-document cap.
+        let ranked = if let Some(reranker) = reranker {
             super::reranker::rerank_or_fallback(
                 reranker,
                 &retrieval_query,
                 &pre_rerank,
-                self.context_chunk_limit,
+                pre_rerank.len(),
             )
             .await
         } else {
-            pre_rerank
-                .iter()
-                .take(self.context_chunk_limit)
-                .cloned()
-                .collect()
+            pre_rerank.clone()
         };
+        let post_rerank = select_context(ranked, self.context_chunk_limit);
 
         let post_rerank_summary = summarize_search_results(&post_rerank);
         tracing::debug!(
@@ -1226,14 +1224,107 @@ fn select_candidates(
     } else {
         (lists.into_iter().flatten().collect(), Vec::new())
     };
-    if lexical_chunks.is_empty() {
-        return take_with_guarantee(merged, &vector_guarantees, limit);
-    }
-    let (fused, mut guarantees) = merge_subquery_chunks(vec![merged, lexical_chunks]);
-    // Reserve a top hit from each branch before additional vector subqueries,
-    // subject to the overall cap. With a one-slot budget vectors retain priority.
-    guarantees.extend(vector_guarantees);
+    let (fused, guarantees) = if lexical_chunks.is_empty() {
+        (merged, vector_guarantees)
+    } else {
+        let (fused, mut guarantees) = merge_subquery_chunks(vec![merged, lexical_chunks]);
+        // Reserve a top hit from each branch before additional vector subqueries,
+        // subject to the overall cap. With a one-slot budget vectors retain priority.
+        guarantees.extend(vector_guarantees);
+        (fused, guarantees)
+    };
+    // Collapse copies before the cutoff so they cannot take candidate slots.
+    let (fused, replaced) = collapse_duplicate_text(fused);
+    let guarantees: Vec<String> = guarantees
+        .into_iter()
+        .map(|id| replaced.get(&id).cloned().unwrap_or(id))
+        .collect();
     take_with_guarantee(fused, &guarantees, limit)
+}
+
+/// Whitespace-insensitive chunk text. The same passage is often indexed under
+/// several identities: a page and its `.md` copy attached elsewhere, or two
+/// active documents with the same content under different slugs.
+fn text_identity(chunk: &VectorSearchResult) -> String {
+    chunk
+        .chunk_text
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Keep the best-ranked chunk of each distinct text. Returns the dropped
+/// chunk identities mapped to the identity of the copy that was kept.
+fn collapse_duplicate_text(
+    chunks: Vec<VectorSearchResult>,
+) -> (Vec<VectorSearchResult>, HashMap<String, String>) {
+    let mut kept_by_text: HashMap<String, String> = HashMap::new();
+    let mut replaced = HashMap::new();
+    let mut kept = Vec::with_capacity(chunks.len());
+    for chunk in chunks {
+        let text = text_identity(&chunk);
+        if text.is_empty() {
+            kept.push(chunk);
+            continue;
+        }
+        match kept_by_text.get(&text) {
+            Some(original) => {
+                replaced.insert(chunk_identity(&chunk), original.clone());
+            }
+            None => {
+                kept_by_text.insert(text, chunk_identity(&chunk));
+                kept.push(chunk);
+            }
+        }
+    }
+    (kept, replaced)
+}
+
+/// Most chunks a single document may contribute to a `limit`-sized context
+/// while other relevant documents are still waiting for a slot.
+fn per_document_cap(limit: usize) -> usize {
+    limit.div_ceil(3).max(2)
+}
+
+/// Pick the final context from ranked candidates: the existing order is kept,
+/// but one document cannot take more than [`per_document_cap`] slots unless
+/// there are not enough other candidates to fill the budget.
+fn select_context(ranked: Vec<VectorSearchResult>, limit: usize) -> Vec<VectorSearchResult> {
+    let cap = per_document_cap(limit);
+    let mut per_document: HashMap<(&str, &str), usize> = HashMap::new();
+    let mut selected = vec![false; ranked.len()];
+    let mut taken = 0;
+    for (i, chunk) in ranked.iter().enumerate() {
+        if taken == limit {
+            break;
+        }
+        let document = match (chunk.source_kind, &chunk.attachment_key) {
+            (SourceKind::Attachment, Some(key)) => ("attachment", key.as_str()),
+            (kind, _) => (kind.as_str(), chunk.document_slug.as_str()),
+        };
+        let count = per_document.entry(document).or_default();
+        if *count < cap {
+            *count += 1;
+            selected[i] = true;
+            taken += 1;
+        }
+    }
+    // Not enough distinct documents: give the free slots back to the best
+    // capped chunks.
+    for flag in selected.iter_mut() {
+        if taken == limit {
+            break;
+        }
+        if !*flag {
+            *flag = true;
+            taken += 1;
+        }
+    }
+    ranked
+        .into_iter()
+        .zip(selected)
+        .filter_map(|(chunk, keep)| keep.then_some(chunk))
+        .collect()
 }
 
 fn chunk_identity(chunk: &VectorSearchResult) -> String {

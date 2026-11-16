@@ -331,7 +331,7 @@ async fn candidate_below_fifth_reaches_final_context_in_retrieval_only_path() {
     assert_eq!(result.post_rerank[0].point_id, "p49");
     let seen = reranker.seen.lock().unwrap();
     assert_eq!(seen[0].1.len(), 50);
-    assert_eq!(seen[0].2, 5);
+    assert_eq!(seen[0].2, 50, "the whole pool is ranked");
 }
 
 #[tokio::test]
@@ -923,4 +923,126 @@ fn mixed_branch_fusion_caps_unique_chunks_and_reserves_vector_and_lexical_eviden
             assert!(candidates.iter().any(|c| c.point_id == "p100"));
         }
     }
+}
+
+fn adr_chunk(id: &str, slug: &str, text: &str, score: f32) -> VectorSearchResult {
+    VectorSearchResult {
+        point_id: id.into(),
+        document_slug: slug.into(),
+        document_title: slug.into(),
+        chunk_text: text.into(),
+        score,
+        ..Default::default()
+    }
+}
+
+fn attached_copy(id: &str, key: &str, text: &str, score: f32) -> VectorSearchResult {
+    VectorSearchResult {
+        source_kind: SourceKind::Attachment,
+        attachment_key: Some(key.into()),
+        ..adr_chunk(id, "", text, score)
+    }
+}
+
+/// Ranked pool reproducing the mediator ADR question: ADR-0001 is indexed as a
+/// page, as a `.md` attachment of ADR-0002 and under a duplicate slug, so its
+/// copies crowd ADR-0002 out of a five-chunk context.
+fn adr_pool() -> Vec<VectorSearchResult> {
+    let adr1 = [
+        "ADR-0001 decision",
+        "ADR-0001 context",
+        "ADR-0001 consequences",
+    ];
+    vec![
+        adr_chunk("a1-0", "adr-0001", adr1[0], 0.95),
+        attached_copy("att-0", "adr-0002/adr-0001.md", adr1[0], 0.94),
+        adr_chunk("dup-0", "adr-0001-copy", &format!("  {}\n", adr1[0]), 0.93),
+        adr_chunk("a1-1", "adr-0001", adr1[1], 0.92),
+        attached_copy("att-1", "adr-0002/adr-0001.md", adr1[1], 0.91),
+        adr_chunk("a1-2", "adr-0001", adr1[2], 0.90),
+        adr_chunk("a3-0", "adr-0003", "ADR-0003 decision", 0.89),
+        adr_chunk("a3-1", "adr-0003", "ADR-0003 context", 0.88),
+        adr_chunk("a2-0", "adr-0002", "ADR-0002 decision", 0.87),
+        adr_chunk("a2-1", "adr-0002", "ADR-0002 context", 0.86),
+    ]
+}
+
+fn ids(chunks: &[VectorSearchResult]) -> Vec<&str> {
+    chunks.iter().map(|c| c.point_id.as_str()).collect()
+}
+
+#[test]
+fn duplicate_text_is_collapsed_before_the_candidate_cutoff() {
+    let candidates = select_candidates(vec![adr_pool()], vec![], 6);
+    assert_eq!(
+        ids(&candidates),
+        ["a1-0", "a1-1", "a1-2", "a3-0", "a3-1", "a2-0"]
+    );
+}
+
+#[test]
+fn collapsed_subquery_top_hit_is_represented_by_its_surviving_copy() {
+    let first = vec![
+        adr_chunk("x0", "x", "shared passage", 0.9),
+        adr_chunk("x1", "x", "x only", 0.8),
+        adr_chunk("x2", "x", "x more", 0.7),
+    ];
+    // The second subquery's top hit is a copy of a passage from the first one.
+    let second = vec![
+        attached_copy("copy", "y/x.md", "shared passage", 0.6),
+        adr_chunk("y1", "y", "y only", 0.5),
+    ];
+    let result = select_candidates(vec![first, second], vec![], 2);
+    assert_eq!(ids(&result), ["x0", "x1"]);
+}
+
+#[test]
+fn context_selection_caps_chunks_per_document() {
+    let candidates = select_candidates(vec![adr_pool()], vec![], 50);
+    let context = select_context(candidates, 5);
+    assert_eq!(ids(&context), ["a1-0", "a1-1", "a3-0", "a3-1", "a2-0"]);
+}
+
+#[test]
+fn context_selection_fills_free_slots_from_capped_documents() {
+    let only_two_documents = vec![
+        adr_chunk("a0", "a", "a0", 0.9),
+        adr_chunk("a1", "a", "a1", 0.8),
+        adr_chunk("a2", "a", "a2", 0.7),
+        adr_chunk("a3", "a", "a3", 0.6),
+        adr_chunk("b0", "b", "b0", 0.5),
+    ];
+    let context = select_context(only_two_documents, 4);
+    assert_eq!(ids(&context), ["a0", "a1", "a2", "b0"]);
+}
+
+#[test]
+fn per_document_cap_grows_with_the_context_budget() {
+    assert_eq!([1, 3, 5, 8, 10].map(per_document_cap), [2, 2, 2, 3, 4]);
+}
+
+#[tokio::test]
+async fn duplicate_copies_do_not_crowd_a_relevant_document_out_of_the_context() {
+    let reranker = Arc::new(RecordingReranker::default());
+    let service = service(
+        &config(),
+        store(vec![adr_pool()], 50),
+        Arc::default(),
+        None,
+        Some(reranker.clone()),
+        true,
+    )
+    .await;
+    let result = retrieve(&service, RetrievalMode::Full).await;
+    assert_eq!(
+        result.pre_rerank.len(),
+        7,
+        "text copies are not reranked twice"
+    );
+    assert_eq!(
+        ids(&result.post_rerank),
+        ["a1-0", "a1-1", "a3-0", "a3-1", "a2-0"]
+    );
+    // The whole pool is ranked so the cap can reach past the first five.
+    assert_eq!(reranker.seen.lock().unwrap()[0].2, 7);
 }

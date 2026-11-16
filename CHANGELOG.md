@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Collapse duplicate passages and cap chunks per document in the chat context, so copies of one page no longer crowd out other relevant documents.
 - Header section links that do not fit beside the search bar now move under "More" instead of being cut off.
 - Switching a document to an older release now works when the source id is a URL; the pin was split on the URL's scheme colon and silently ignored.
 - Delete the old S3 object when a schema version is re-imported in another format (YAML/JSON), and keep the stored key when only metadata changes.

@@ -388,7 +388,7 @@ Advisories without a patched release are accepted only after weighing their impa
 Administrators can use **Settings → Data Maintenance** to inspect embedding-cache
 namespaces, purge selected unused namespaces, and run a read-only consistency
 report across MongoDB, S3, Meilisearch and Qdrant. Active cache namespaces are
-protected on the server. Sizes are estimates; namespace counts do not load vectors.
+protected on the server even when RAG is temporarily disabled. Sizes are estimates; namespace counts do not load vectors.
 The report caps samples at 20 per category. Disabled or unavailable indexes are
 reported as skipped, and concurrent imports can produce temporary findings.
 It does not delete or repair anything. Inline editor images have no Mongo owner
@@ -408,3 +408,13 @@ Pruning removes each Mongo row first and then its S3 object, preserving objects
 still referenced by other revisions (legacy escaped slug keys can collide). Failures are logged
 and never fail ingestion; S3 failures leave orphan objects visible in the report.
 Editor saves currently do not create historical revisions.
+
+Before upgrading, back up MongoDB if legacy permission grants must be retained: migration
+`023` permanently drops the unused `user_permissions` collection. No application code
+reads that collection. Retention previews fail on unreadable revision records rather
+than showing an incomplete deletion count; repair the records before confirming cleanup.
+
+Legacy history keys escape slashes as underscores, so distinct slugs such as `a/b`
+and `a_b` can share a key. The ownership check preserves recorded references, but
+a concurrent archive upload before its Mongo row is created can still race pruning.
+Avoid concurrent history cleanup and imports for these colliding legacy slugs.

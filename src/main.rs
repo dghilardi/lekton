@@ -705,11 +705,9 @@ async fn main() {
     // The namespaces this configuration uses, protected from the admin purge.
     // Taken from the configuration rather than from a successful RAG start,
     // so a backend that is down at startup does not expose its cache.
-    let embedding_cache_namespaces = if config.features.rag {
-        lekton::rag::cached_embedding::configured_cache_namespaces(&config.rag)
-    } else {
-        Vec::new()
-    };
+    // Temporarily disabling RAG must not make its configured cache purgeable.
+    let embedding_cache_namespaces =
+        lekton::rag::cached_embedding::configured_cache_namespaces(&config.rag);
 
     // Run database migrations before seeding or serving traffic.
     lekton::db::migrations::build_plan()

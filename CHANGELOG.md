@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.43.0] 2026-11-16
+
 ### Changed
 
 - Speed up releases by warming dependency caches on main and building Docker images from tested release artifacts, with separate image caches.

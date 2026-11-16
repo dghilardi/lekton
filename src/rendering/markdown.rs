@@ -62,7 +62,9 @@ pub fn render_markdown_escaped(raw: &str) -> String {
     add_heading_ids_simple(&render_events(events))
 }
 
-const MARKDOWN_OPTIONS: Options = Options::ENABLE_TABLES
+/// The portal's Markdown dialect, shared by everything that must read an
+/// answer or document the way the renderer does.
+pub(crate) const MARKDOWN_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_FOOTNOTES)
     .union(Options::ENABLE_STRIKETHROUGH)
     .union(Options::ENABLE_TASKLISTS)

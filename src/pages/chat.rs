@@ -1704,6 +1704,25 @@ mod tests {
     }
 
     #[test]
+    fn answer_rendering_leaves_code_and_reference_links_untouched() {
+        // Used both while streaming and for saved answers.
+        let sources = vec![
+            source("docs/a", None, Some(1)),
+            source("docs/b", None, Some(2)),
+        ];
+        for answer in [
+            "````md\n```\nlet x = v[1];\n```\n````",
+            "See the [1][manual].\n\n[manual]: https://example.com/manual",
+        ] {
+            assert_eq!(
+                render_answer(answer, &sources),
+                render_markdown(answer),
+                "{answer:?}"
+            );
+        }
+    }
+
+    #[test]
     fn answer_citations_link_to_the_source_with_that_number() {
         // Source 2 is no longer visible to the reader: [3] still means docs/c.
         let sources = vec![

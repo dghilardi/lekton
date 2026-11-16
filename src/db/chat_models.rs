@@ -206,74 +206,63 @@ impl SourceReference {
 }
 
 /// `[n]` and `[n, m]` citation markers outside code, links, footnotes and
-/// reference definitions: their byte ranges and numbers.
+/// reference definitions: their byte ranges and numbers. The answer is parsed
+/// with the renderer's Markdown options, so what counts as code or a link here
+/// is exactly what the reader sees as code or a link.
 fn citation_markers(text: &str) -> Vec<(std::ops::Range<usize>, Vec<u32>)> {
+    use pulldown_cmark::{Event, Parser, Tag};
+
+    let excluded: Vec<std::ops::Range<usize>> =
+        Parser::new_ext(text, crate::rendering::markdown::MARKDOWN_OPTIONS)
+            .into_offset_iter()
+            .filter_map(|(event, range)| match event {
+                Event::Start(
+                    Tag::CodeBlock(_) | Tag::Link { .. } | Tag::Image { .. } | Tag::HtmlBlock,
+                )
+                | Event::Code(_)
+                | Event::Html(_)
+                | Event::InlineHtml(_)
+                | Event::FootnoteReference(_) => Some(range),
+                _ => None,
+            })
+            .collect();
+    let is_excluded = |at: usize| excluded.iter().any(|range| range.contains(&at));
+
+    let bytes = text.as_bytes();
     let mut markers = Vec::new();
-    let mut fence: Option<char> = None;
-    let mut offset = 0;
-    for line in text.split_inclusive('\n') {
-        let start = offset;
-        offset += line.len();
-        let trimmed = line.trim_start();
-        if let Some(marker) = ['`', '~']
-            .into_iter()
-            .find(|&c| trimmed.starts_with(&c.to_string().repeat(3)))
-        {
-            match fence {
-                None => fence = Some(marker),
-                Some(open) if open == marker => fence = None,
-                Some(_) => {}
-            }
-            continue;
-        }
-        if fence.is_some() {
-            continue;
-        }
-        let bytes = line.as_bytes();
-        let mut i = 0;
-        while i < bytes.len() {
-            match bytes[i] {
-                b'`' => {
-                    let run = bytes[i..].iter().take_while(|&&b| b == b'`').count();
-                    let closer = "`".repeat(run);
-                    i = match line[i + run..].find(&closer) {
-                        Some(end) => i + run + end + run,
-                        None => i + run,
-                    };
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 2,
+            b'[' if !is_excluded(i) => {
+                let Some(len) = text[i + 1..].find([']', '\n']) else {
+                    break;
+                };
+                let end = i + len + 2;
+                if bytes[i + 1 + len] != b']' {
+                    i += 1;
+                    continue;
                 }
-                b'\\' => i += 2,
-                b'[' => {
-                    let Some(len) = line[i + 1..].find(']') else {
-                        break;
-                    };
-                    let inner = &line[i + 1..i + 1 + len];
-                    let end = i + len + 2;
-                    let follows = bytes.get(end).copied();
-                    let numbers: Option<Vec<u32>> = inner
-                        .split([',', ';'])
-                        .map(|n| {
-                            n.trim()
-                                .parse::<u32>()
-                                .ok()
-                                .filter(|_| !n.trim().is_empty())
-                        })
-                        .collect();
-                    match numbers {
-                        Some(numbers)
-                            if !numbers.is_empty()
-                                && inner
-                                    .bytes()
-                                    .all(|b| b.is_ascii_digit() || b",; ".contains(&b))
-                                && !matches!(follows, Some(b'(' | b':')) =>
-                        {
-                            markers.push((start + i..start + end, numbers));
-                        }
-                        _ => {}
+                let inner = &text[i + 1..i + 1 + len];
+                let numbers: Option<Vec<u32>> = inner
+                    .split([',', ';'])
+                    .map(|n| n.trim().parse::<u32>().ok())
+                    .collect();
+                let well_formed = !inner.trim().is_empty()
+                    && inner
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || b",; ".contains(&b));
+                // `[1]: url` is a reference definition, `[1](url)` a link.
+                let follows = bytes.get(end).copied();
+                match numbers {
+                    Some(numbers) if well_formed && !matches!(follows, Some(b'(' | b':')) => {
+                        markers.push((i..end, numbers));
                     }
-                    i = end;
+                    _ => {}
                 }
-                _ => i += 1,
+                i = end;
             }
+            _ => i += 1,
         }
     }
     markers
@@ -631,6 +620,26 @@ mod tests {
             parse_citations("Il contesto non contiene questa informazione.", 5),
             Vec::<u32>::new()
         );
+    }
+
+    #[test]
+    fn citations_inside_longer_fences_and_reference_links_are_left_alone() {
+        let nested = "Example:\n\n````md\n```\nlet x = v[1];\n```\n[2]\n````\n\nDone [3].";
+        assert_eq!(parse_citations(nested, 5), vec![3]);
+        let linked = link_citations(nested, |n| Some(format!("/s{n}")));
+        assert!(
+            linked.contains("```\nlet x = v[1];\n```\n[2]\n````"),
+            "{linked}"
+        );
+
+        let reference = "See the [1][manual] first.\n\n[manual]: https://example.com/manual";
+        assert_eq!(parse_citations(reference, 5), Vec::<u32>::new());
+        assert_eq!(
+            link_citations(reference, |n| Some(format!("/s{n}"))),
+            reference
+        );
+
+        assert_eq!(parse_citations("Prose [1] and [1, 2].", 5), vec![1, 2]);
     }
 
     #[test]

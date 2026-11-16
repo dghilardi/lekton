@@ -1269,14 +1269,30 @@ fn select_candidates(
 /// identities: a page and its `.md` copy attached elsewhere (whose relative
 /// links the page rewrites to asset URLs), or two active documents with the
 /// same content under different slugs. Comparing the plain text, without link
-/// targets, markup or whitespace differences, recognises all of them.
+/// targets, markup or whitespace differences, recognises all of them. Code is
+/// compared verbatim: `Vec<u8>` is not HTML, and differs from `Vec<u64>`.
 fn text_identity(chunk: &VectorSearchResult) -> String {
-    chunk
-        .chunk_text
-        .lines()
-        .map(plain_text_line)
-        .collect::<Vec<_>>()
-        .join(" ")
+    let text = chunk.chunk_text.as_str();
+    let prose = |segment: &str| {
+        segment
+            .lines()
+            .map(plain_text_line)
+            .collect::<Vec<_>>()
+            .join(" ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let mut parts = Vec::new();
+    let mut cursor = 0;
+    for block in super::splitter_blocks::code_block_ranges(text) {
+        parts.push(prose(&text[cursor..block.start]));
+        parts.push(text[block.clone()].trim_end().to_string());
+        cursor = block.end;
+    }
+    parts.push(prose(&text[cursor..]));
+    parts.retain(|part| !part.is_empty());
+    parts.join("\n")
 }
 
 /// Keep the best-ranked chunk of each distinct text. Returns the dropped

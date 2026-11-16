@@ -1057,3 +1057,24 @@ async fn duplicate_copies_do_not_crowd_a_relevant_document_out_of_the_context() 
     // The whole pool is ranked so the cap can reach past the first five.
     assert_eq!(reranker.seen.lock().unwrap()[0].2, 7);
 }
+
+#[test]
+fn code_that_differs_only_in_markup_like_text_is_not_collapsed() {
+    let fenced = |ty: &str| format!("Identifiers:\n\n```rust\ntype Id = {ty};\n```\n");
+    let inline = |ty: &str| format!("Use `{ty}` for identifiers.");
+    let pool = vec![
+        adr_chunk("u8", "a", &fenced("Vec<u8>"), 0.9),
+        adr_chunk("u64", "b", &fenced("Vec<u64>"), 0.8),
+        adr_chunk("i-u8", "c", &inline("Vec<u8>"), 0.7),
+        adr_chunk("i-u64", "d", &inline("Vec<u64>"), 0.6),
+        // Copies still collapse when only the prose markup differs.
+        adr_chunk(
+            "copy",
+            "e",
+            &format!("**Identifiers:**\n\n```rust\ntype Id = Vec<u8>;\n```"),
+            0.5,
+        ),
+    ];
+    let candidates = select_candidates(vec![pool], vec![], 10);
+    assert_eq!(ids(&candidates), ["u8", "u64", "i-u8", "i-u64"]);
+}

@@ -206,26 +206,33 @@ impl SourceReference {
 }
 
 /// `[n]` and `[n, m]` citation markers outside code, links, footnotes and
-/// reference definitions: their byte ranges and numbers. The answer is parsed
+/// link reference definitions: their byte ranges and numbers. The answer is parsed
 /// with the renderer's Markdown options, so what counts as code or a link here
 /// is exactly what the reader sees as code or a link.
 fn citation_markers(text: &str) -> Vec<(std::ops::Range<usize>, Vec<u32>)> {
     use pulldown_cmark::{Event, Parser, Tag};
 
-    let excluded: Vec<std::ops::Range<usize>> =
-        Parser::new_ext(text, crate::rendering::markdown::MARKDOWN_OPTIONS)
-            .into_offset_iter()
-            .filter_map(|(event, range)| match event {
-                Event::Start(
-                    Tag::CodeBlock(_) | Tag::Link { .. } | Tag::Image { .. } | Tag::HtmlBlock,
-                )
-                | Event::Code(_)
-                | Event::Html(_)
-                | Event::InlineHtml(_)
-                | Event::FootnoteReference(_) => Some(range),
-                _ => None,
-            })
-            .collect();
+    let parser = Parser::new_ext(text, crate::rendering::markdown::MARKDOWN_OPTIONS);
+    // Reference definitions (`[id]: /url "title"`) produce no events.
+    let definitions: Vec<std::ops::Range<usize>> = parser
+        .reference_definitions()
+        .iter()
+        .map(|(_, definition)| definition.span.clone())
+        .collect();
+    let excluded: Vec<std::ops::Range<usize>> = parser
+        .into_offset_iter()
+        .filter_map(|(event, range)| match event {
+            Event::Start(
+                Tag::CodeBlock(_) | Tag::Link { .. } | Tag::Image { .. } | Tag::HtmlBlock,
+            )
+            | Event::Code(_)
+            | Event::Html(_)
+            | Event::InlineHtml(_)
+            | Event::FootnoteReference(_) => Some(range),
+            _ => None,
+        })
+        .chain(definitions)
+        .collect();
     let is_excluded = |at: usize| excluded.iter().any(|range| range.contains(&at));
 
     let bytes = text.as_bytes();
@@ -640,6 +647,18 @@ mod tests {
         );
 
         assert_eq!(parse_citations("Prose [1] and [1, 2].", 5), vec![1, 2]);
+    }
+
+    #[test]
+    fn reference_definitions_are_not_scanned_for_citations() {
+        let answer = "See [1][manual] and [4].\n\n[manual]: /v[2] \"Read [3]\"\n";
+        assert_eq!(parse_citations(answer, 5), vec![4]);
+        let linked = link_citations(answer, |n| Some(format!("/s{n}")));
+        assert!(
+            linked.ends_with("\n\n[manual]: /v[2] \"Read [3]\"\n"),
+            "{linked}"
+        );
+        assert!(linked.contains("[\\[4\\]](</s4>)"), "{linked}");
     }
 
     #[test]

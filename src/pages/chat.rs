@@ -1713,6 +1713,7 @@ mod tests {
         for answer in [
             "````md\n```\nlet x = v[1];\n```\n````",
             "See the [1][manual].\n\n[manual]: https://example.com/manual",
+            "See [1][manual].\n\n[manual]: /v[2] \"Read [3]\"",
         ] {
             assert_eq!(
                 render_answer(answer, &sources),

@@ -945,20 +945,31 @@ fn attached_copy(id: &str, key: &str, text: &str, score: f32) -> VectorSearchRes
 }
 
 /// Ranked pool reproducing the mediator ADR question: ADR-0001 is indexed as a
-/// page, as a `.md` attachment of ADR-0002 and under a duplicate slug, so its
-/// copies crowd ADR-0002 out of a five-chunk context.
+/// page, as a `.md` attachment of ADR-0002 (with relative links) and under a
+/// duplicate slug, so its copies crowd ADR-0002 out of a five-chunk context.
 fn adr_pool() -> Vec<VectorSearchResult> {
     let adr1 = [
         "ADR-0001 decision",
-        "ADR-0001 context",
+        "ADR-0001 context, extended by [ADR-0002](/api/v1/assets/adr-0001/adr-0002.md)",
         "ADR-0001 consequences",
     ];
     vec![
         adr_chunk("a1-0", "adr-0001", adr1[0], 0.95),
         attached_copy("att-0", "adr-0002/adr-0001.md", adr1[0], 0.94),
-        adr_chunk("dup-0", "adr-0001-copy", &format!("  {}\n", adr1[0]), 0.93),
+        adr_chunk(
+            "dup-0",
+            "adr-0001-copy",
+            &format!("  **{}**\n", adr1[0]),
+            0.93,
+        ),
         adr_chunk("a1-1", "adr-0001", adr1[1], 0.92),
-        attached_copy("att-1", "adr-0002/adr-0001.md", adr1[1], 0.91),
+        // The page rewrote the attached copy's relative link to an asset URL.
+        attached_copy(
+            "att-1",
+            "adr-0002/adr-0001.md",
+            "ADR-0001 context, extended by [ADR-0002](adr-0002.md)",
+            0.91,
+        ),
         adr_chunk("a1-2", "adr-0001", adr1[2], 0.90),
         adr_chunk("a3-0", "adr-0003", "ADR-0003 decision", 0.89),
         adr_chunk("a3-1", "adr-0003", "ADR-0003 context", 0.88),

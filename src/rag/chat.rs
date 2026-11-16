@@ -1242,13 +1242,16 @@ fn select_candidates(
     take_with_guarantee(fused, &guarantees, limit)
 }
 
-/// Whitespace-insensitive chunk text. The same passage is often indexed under
-/// several identities: a page and its `.md` copy attached elsewhere, or two
-/// active documents with the same content under different slugs.
+/// Chunk text as plain words. The same passage is often indexed under several
+/// identities: a page and its `.md` copy attached elsewhere (whose relative
+/// links the page rewrites to asset URLs), or two active documents with the
+/// same content under different slugs. Comparing the plain text, without link
+/// targets, markup or whitespace differences, recognises all of them.
 fn text_identity(chunk: &VectorSearchResult) -> String {
     chunk
         .chunk_text
-        .split_whitespace()
+        .lines()
+        .map(plain_text_line)
         .collect::<Vec<_>>()
         .join(" ")
 }

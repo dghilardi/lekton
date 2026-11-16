@@ -10,6 +10,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Header section links that do not fit beside the search bar now move under "More" instead of being cut off.
+- Switching a document to an older release now works when the source id is a URL; the pin was split on the URL's scheme colon and silently ignored.
 - Delete the old S3 object when a schema version is re-imported in another format (YAML/JSON), and keep the stored key when only metadata changes.
 - Delete the old S3 body when an import renames a document and changes its content, instead of leaving an unowned object behind.
 

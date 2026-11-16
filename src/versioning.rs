@@ -24,11 +24,14 @@ pub struct ReleasePin {
 impl ReleasePin {
     /// Parse a single `source_id:release` pin.
     ///
+    /// Splits on the *last* colon: source ids are often repository URLs
+    /// (`https://host/repo`), while release names are tag-like and colon-free.
+    ///
     /// Returns `None` when either side is empty or the separator is missing —
     /// a malformed pin is dropped rather than failing the request, because it
     /// typically arrives from a hand-edited or stale shared link.
     pub fn parse(raw: &str) -> Option<Self> {
-        let (source_id, release) = raw.split_once(':')?;
+        let (source_id, release) = raw.rsplit_once(':')?;
         let source_id = source_id.trim();
         let release = release.trim();
         if source_id.is_empty() || release.is_empty() {
@@ -231,13 +234,17 @@ mod tests {
         }
     }
 
-    /// Release tags can contain a colon-free but dot-heavy form; only the first
-    /// colon separates, so a release may itself contain colons.
+    /// Source ids are commonly repository URLs, so only the last colon
+    /// separates the source from the (colon-free) release name.
     #[test]
-    fn splits_on_the_first_colon_only() {
-        let pin = ReleasePin::parse("svc:2024-06:rc1").expect("valid pin");
-        assert_eq!(pin.source_id, "svc");
-        assert_eq!(pin.release, "2024-06:rc1");
+    fn source_id_may_be_a_url_with_colons() {
+        let pin = ReleasePin::parse("https://bitbucket.org/acme/repo:beta").expect("valid pin");
+        assert_eq!(pin.source_id, "https://bitbucket.org/acme/repo");
+        assert_eq!(pin.release, "beta");
+
+        let pin = ReleasePin::parse("ssh://git@host:7999/acme/repo.git:1.2.0").expect("valid pin");
+        assert_eq!(pin.source_id, "ssh://git@host:7999/acme/repo.git");
+        assert_eq!(pin.release, "1.2.0");
     }
 
     #[test]

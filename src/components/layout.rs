@@ -43,6 +43,39 @@ pub fn TopNavbarLinks() -> impl IntoView {
     let schema_enabled = crate::app::use_feature(|f| f.schema_registry);
     let learn_enabled = crate::app::use_feature(|f| f.learn);
 
+    // How many tier-1 entries fit in the row; the rest move under "More".
+    // Titles and the space left beside the search bar vary, so a fixed count
+    // cannot work — measure in the browser. SSR shows them all (clipped).
+    let row_ref = NodeRef::<leptos::html::Div>::new();
+    let fit = RwSignal::new(usize::MAX);
+    let measure = move || {
+        #[cfg(feature = "hydrate")]
+        if let Some(row) = row_ref.get_untracked() {
+            let limit = row.get_bounding_client_rect().right() + 0.5;
+            let mut n = 0;
+            let mut child = row.first_element_child();
+            while let Some(el) = child {
+                if el.get_bounding_client_rect().right() > limit {
+                    break;
+                }
+                n += 1;
+                child = el.next_element_sibling();
+            }
+            if fit.get_untracked() != n {
+                fit.set(n);
+            }
+        }
+    };
+    // Re-measure after a change too: showing "More" narrows the row.
+    Effect::new(move |_| {
+        fit.track();
+        let _ = row_ref.get();
+        request_animation_frame(measure);
+    });
+    window_event_listener(leptos::ev::resize, move |_| measure());
+    // Web fonts can land after hydration and widen the titles.
+    window_event_listener(leptos::ev::load, move |_| measure());
+
     view! {
         <Suspense fallback=move || view! { <TopNavbarLinksSkeleton /> }>
             {move || {
@@ -64,7 +97,9 @@ pub fn TopNavbarLinks() -> impl IntoView {
                     let t1_groups = groups[..vis_g].to_vec();
                     let altro_standalone = standalone[vis_s..].to_vec();
                     let altro_groups = groups[vis_g..].to_vec();
-                    let has_overflow = !altro_standalone.is_empty() || !altro_groups.is_empty();
+                    let has_altro = !altro_standalone.is_empty() || !altro_groups.is_empty();
+                    let n_t1 = vis_s + vis_g;
+                    let show_more = move || has_altro || fit.get() < n_t1;
 
                     // Clones for each tier
                     let t2_standalone = standalone.clone();
@@ -72,23 +107,28 @@ pub fn TopNavbarLinks() -> impl IntoView {
 
                     // Items for group filtering per tier
                     let items_t1g = items.clone();
+                    let items_more = items.clone();
+                    let more_standalone = t1_standalone.clone();
+                    let more_groups = t1_groups.clone();
                     let items_altro = items.clone();
                     let items_t2 = items;
 
                     view! {
                         // ── TIER 1: xl+ — full text, max items, "More" overflow ──────────────
                         <div class="hidden xl:flex w-full items-center gap-3 min-w-0">
-                            <div class="flex flex-1 items-center gap-2 min-w-0 overflow-x-clip">
-                            {t1_standalone.into_iter().map(|item| {
+                            <div node_ref=row_ref class="flex flex-1 items-center gap-2 min-w-0 overflow-x-clip">
+                            {t1_standalone.into_iter().enumerate().map(|(idx, item)| {
                                 view! {
                                     <a href=crate::components::pinned_doc_href(&format!("/docs/{}", item.slug))
+                                       class:invisible=Signal::derive(move || idx >= fit.get())
                                        class="btn btn-ghost btn-sm font-normal lekton-header-link">
                                         {item.title}
                                     </a>
                                 }
                             }).collect::<Vec<_>>()}
 
-                            {t1_groups.into_iter().map(|group| {
+                            {t1_groups.into_iter().enumerate().map(|(j, group)| {
+                                let idx = vis_s + j;
                                 let group_items: Vec<_> = items_t1g.iter()
                                     .filter(|i| group.items.contains(&i.slug))
                                     .cloned()
@@ -97,7 +137,8 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                     return view! { <span></span> }.into_any();
                                 }
                                 view! {
-                                    <div class="dropdown dropdown-hover dropdown-bottom">
+                                    <div class="dropdown dropdown-hover dropdown-bottom"
+                                         class:invisible=Signal::derive(move || idx >= fit.get())>
                                         <div tabindex="0" role="button" aria-haspopup="menu"
                                              class="btn btn-ghost btn-sm font-normal lekton-header-link m-1">
                                             {group.title.clone()}
@@ -116,15 +157,34 @@ pub fn TopNavbarLinks() -> impl IntoView {
                             // "More" overflow dropdown — kept outside the clipped row (shrink-0) so
                             // it never gets squeezed out when the centered search bar (2xl+) halves
                             // the space available to the nav-links row.
-                            {if has_overflow {
+                            {
                                 view! {
-                                    <div class="dropdown dropdown-hover dropdown-bottom shrink-0">
+                                    <div class="dropdown dropdown-hover dropdown-bottom shrink-0"
+                                         class:hidden=move || !show_more()>
                                         <div tabindex="0" role="button" aria-haspopup="menu"
                                              class="btn btn-ghost btn-sm font-normal lekton-header-link m-1">
                                             "More"
                                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="ml-1 opacity-60"><path d="m6 9 6 6 6-6"/></svg>
                                         </div>
                                         <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52 border border-base-200">
+                                            // Tier-1 entries that did not fit in the row.
+                                            {more_standalone.into_iter().enumerate().map(|(idx, item)| view! {
+                                                <li class:hidden=move || idx < fit.get()><a href=crate::components::pinned_doc_href(&format!("/docs/{}", item.slug)) class="active:!bg-primary active:!text-primary-content">{item.title}</a></li>
+                                            }).collect::<Vec<_>>()}
+                                            {more_groups.into_iter().enumerate().flat_map(|(j, group)| {
+                                                let idx = vis_s + j;
+                                                let gis: Vec<_> = items_more.iter()
+                                                    .filter(|i| group.items.contains(&i.slug))
+                                                    .cloned()
+                                                    .collect();
+                                                let mut all = vec![
+                                                    view! { <li class="menu-title" class:hidden=move || idx < fit.get()>{group.title}</li> }.into_any()
+                                                ];
+                                                all.extend(gis.into_iter().map(|i| view! {
+                                                    <li class:hidden=move || idx < fit.get()><a href=crate::components::pinned_doc_href(&format!("/docs/{}", i.slug)) class="active:!bg-primary active:!text-primary-content">{i.title}</a></li>
+                                                }.into_any()));
+                                                all
+                                            }).collect::<Vec<_>>()}
                                             {altro_standalone.into_iter().map(|item| view! {
                                                 <li><a href=crate::components::pinned_doc_href(&format!("/docs/{}", item.slug)) class="active:!bg-primary active:!text-primary-content">{item.title}</a></li>
                                             }).collect::<Vec<_>>()}
@@ -143,10 +203,8 @@ pub fn TopNavbarLinks() -> impl IntoView {
                                             }).collect::<Vec<_>>()}
                                         </ul>
                                     </div>
-                                }.into_any()
-                            } else {
-                                view! { <span></span> }.into_any()
-                            }}
+                                }
+                            }
 
                             <div class="w-px h-5 bg-base-300 self-center shrink-0"></div>
 

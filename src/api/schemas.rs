@@ -333,6 +333,17 @@ pub async fn process_schema_ingest(
         });
     }
 
+    // The key follows the content format, so a version re-ingested as JSON
+    // after YAML (or the reverse) moves to a new object.
+    // Only new content is uploaded: an unchanged body keeps the key it has.
+    let replaced_key = existing_version
+        .map(|v| v.s3_key.clone())
+        .filter(|old| *old != s3_key);
+    let (s3_key, replaced_key) = match replaced_key {
+        Some(old) if !content_changed => (old, None),
+        other => (s3_key, other),
+    };
+
     let endpoints = extract_schema_endpoints(&request.schema_type, &request.content);
 
     if content_changed {
@@ -371,6 +382,12 @@ pub async fn process_schema_ingest(
         versions,
     };
     ctx.schema_repo.create_or_update(schema).await?;
+
+    if let Some(old_key) = replaced_key {
+        if let Err(e) = ctx.storage.delete_object(&old_key).await {
+            tracing::warn!(key = %old_key, "Failed to delete the schema version's old object: {e}");
+        }
+    }
 
     Ok(IngestSchemaResponse {
         message: "Schema version ingested successfully".to_string(),
@@ -1220,6 +1237,69 @@ mod tests {
         assert_eq!(schema.versions.len(), 1);
         assert_eq!(schema.versions[0].access_level, "public");
         assert!(!schema.versions[0].is_archived);
+    }
+
+    #[tokio::test]
+    async fn test_reingest_in_another_format_deletes_the_old_object() {
+        let repo = MockSchemaRepo::new();
+        let storage = MockStorage::new();
+        let ctx = ingest_context(&repo, &storage);
+
+        let mut yaml = make_schema_request("valid-token", "test-api", "1.0.0");
+        yaml.content = "openapi: 3.0.0\npaths: {}".to_string();
+        process_schema_ingest(&ctx, yaml).await.unwrap();
+
+        // Same version, now JSON: the content moves to a `.json` key.
+        let json = make_schema_request("valid-token", "test-api", "1.0.0");
+        process_schema_ingest(&ctx, json).await.unwrap();
+
+        let schema = repo.find_by_name("test-api").await.unwrap().unwrap();
+        assert_eq!(schema.versions[0].s3_key, "schemas/test-api/1.0.0.json");
+        let objects = storage.objects.lock().unwrap();
+        assert!(objects.contains_key("schemas/test-api/1.0.0.json"));
+        assert!(
+            !objects.contains_key("schemas/test-api/1.0.0.yaml"),
+            "no version points at the YAML object any more, so it must not be left behind"
+        );
+    }
+
+    /// A body stored under an outdated extension is not re-uploaded when only
+    /// metadata changes, so the version must keep pointing at that object.
+    #[tokio::test]
+    async fn test_metadata_only_change_keeps_the_stored_object() {
+        let repo = MockSchemaRepo::new();
+        let storage = MockStorage::new();
+        let ctx = ingest_context(&repo, &storage);
+
+        let request = make_schema_request("valid-token", "test-api", "1.0.0");
+        process_schema_ingest(&ctx, request).await.unwrap();
+        // Simulate a key written by an older extension heuristic.
+        let mut schema = repo.find_by_name("test-api").await.unwrap().unwrap();
+        let body = storage
+            .objects
+            .lock()
+            .unwrap()
+            .remove("schemas/test-api/1.0.0.json")
+            .unwrap();
+        storage
+            .objects
+            .lock()
+            .unwrap()
+            .insert("schemas/test-api/1.0.0.yaml".to_string(), body);
+        schema.versions[0].s3_key = "schemas/test-api/1.0.0.yaml".to_string();
+        repo.create_or_update(schema).await.unwrap();
+
+        let mut deprecated = make_schema_request("valid-token", "test-api", "1.0.0");
+        deprecated.status = "deprecated".to_string();
+        process_schema_ingest(&ctx, deprecated).await.unwrap();
+
+        let schema = repo.find_by_name("test-api").await.unwrap().unwrap();
+        assert_eq!(schema.versions[0].s3_key, "schemas/test-api/1.0.0.yaml");
+        assert!(storage
+            .objects
+            .lock()
+            .unwrap()
+            .contains_key("schemas/test-api/1.0.0.yaml"));
     }
 
     #[tokio::test]

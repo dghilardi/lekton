@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Delete the old S3 object when a schema version is re-imported in another format (YAML/JSON), and keep the stored key when only metadata changes.
 - Delete the old S3 body when an import renames a document and changes its content, instead of leaving an unowned object behind.
 
 ## [0.42.0] 2026-11-16

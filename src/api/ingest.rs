@@ -500,6 +500,14 @@ pub(crate) async fn process_authorized_ingest(
     // 11. Upsert document metadata in MongoDB (records `needs_reindex`).
     ctx.repo.create_or_update(doc).await?;
 
+    // A rename that also changed the content wrote the body to the new slug's
+    // key; the old body is already copied to history and no row points at it.
+    if let Some(old_key) = old_s3_key_before_rename.filter(|k| *k != s3_key) {
+        if let Err(e) = ctx.storage.delete_object(&old_key).await {
+            tracing::warn!(key = %old_key, "Failed to delete the renamed document's old body: {e}");
+        }
+    }
+
     // 12. Update backlinks on referenced documents.
     //     Note: this is not atomic with the create_or_update above.
     //     Both operations are idempotent, so partial failure leaves
@@ -2817,6 +2825,33 @@ mod tests {
         assert!(outcome
             .assets_to_recompute
             .contains(&"assets/old.pdf".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_slug_rename_with_new_content_deletes_the_old_body() {
+        let storage = MockStorage::new();
+        let repo = MockRepo::new();
+        let token_repo = MockServiceTokenRepo::new();
+        let ctx = make_ctx(&repo, &storage, &token_repo, Some("valid-token"));
+
+        let mut first = make_request("valid-token", "docs/old-name");
+        first.source_path = "docs/guide.md".to_string();
+        process_ingest(&ctx, first).await.unwrap();
+
+        // Renamed and edited in one sync: the body moves to the new slug's key.
+        let mut renamed = make_request("valid-token", "docs/new-name");
+        renamed.source_path = "docs/guide.md".to_string();
+        renamed.content = "# Hello\nEdited".to_string();
+        process_ingest(&ctx, renamed).await.unwrap();
+
+        let doc = repo.find_by_slug("docs/new-name").await.unwrap().unwrap();
+        assert_eq!(doc.s3_key, "docs/docs_new-name.md");
+        let objects = storage.objects.lock().unwrap();
+        assert!(objects.contains_key("docs/docs_new-name.md"));
+        assert!(
+            !objects.contains_key("docs/docs_old-name.md"),
+            "no row owns the old body any more, so it must not be left behind"
+        );
     }
 
     #[tokio::test]

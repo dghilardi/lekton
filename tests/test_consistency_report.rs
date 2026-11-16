@@ -78,3 +78,57 @@ async fn reports_missing_and_stale_search_entries_without_repairing_them() {
     assert_eq!(finding("search_missing").samples, vec![doc.slug]);
     assert_eq!(env.search.list_indexed_slugs().await.unwrap(), before);
 }
+
+#[tokio::test]
+async fn reports_active_duplicates_of_one_source_file_without_archiving_them() {
+    let env = common::TestEnv::start().await;
+    let server = env.server();
+    for slug in [
+        "incidents/2025-12-13",
+        "incidents/13-12-2025-post-mortem",
+        "incidents/archived-copy",
+        "incidents/other",
+    ] {
+        env.ingest(&server, slug, "Incident", "# Same body", "public")
+            .await;
+    }
+    // A pre-source-id import left the first copy behind with the same file.
+    let path = "docs/incidents/13-12-2025-post-mortem.md";
+    for (slug, archived) in [
+        ("incidents/2025-12-13", false),
+        ("incidents/archived-copy", true),
+    ] {
+        let mut doc = env.repo.find_by_slug(slug).await.unwrap().unwrap();
+        doc.source_path = Some(path.into());
+        doc.is_archived = archived;
+        env.repo.create_or_update(doc).await.unwrap();
+    }
+    let report = build_report(Sources {
+        references: env.app_state.storage_reference_repo.as_ref(),
+        documents: env.repo.as_ref(),
+        assets: env.app_state.asset_repo.as_ref(),
+        storage: env.storage.as_ref(),
+        search: None,
+        attachment_search: None,
+        rag: None,
+    })
+    .await
+    .unwrap();
+    let finding = report
+        .findings
+        .iter()
+        .find(|f| f.id == "duplicate_documents")
+        .unwrap();
+    assert!(finding.informational);
+    assert_eq!(finding.count, 1);
+    assert_eq!(
+        finding.samples,
+        vec![format!(
+            "{path}: incidents/13-12-2025-post-mortem, incidents/2025-12-13"
+        )]
+    );
+    for slug in ["incidents/2025-12-13", "incidents/13-12-2025-post-mortem"] {
+        let doc = env.repo.find_by_slug(slug).await.unwrap().unwrap();
+        assert!(!doc.is_archived, "{slug} must be left untouched");
+    }
+}

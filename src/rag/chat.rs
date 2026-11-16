@@ -17,7 +17,8 @@ use uuid::Uuid;
 use crate::auth::models::UserContext;
 use crate::config::RagConfig;
 use crate::db::chat_models::{
-    source_snippet, ChatMessage, ChatMessageStatus, ChatSession, SourceReference,
+    parse_citations, plain_text_line, source_snippet, ChatMessage, ChatMessageStatus, ChatSession,
+    SourceReference,
 };
 use crate::db::chat_repository::ChatRepository;
 use crate::error::AppError;
@@ -44,6 +45,15 @@ const MAX_CONTEXT_PROMPT_CHARS: usize = 12_000;
 /// Small hybrid overfetch when no reranker is active. Reranking uses its
 /// independent configured candidate limit instead.
 const CANDIDATE_MULTIPLIER: usize = 3;
+/// Appended to every chat system prompt, whatever template a deployment
+/// configures: the numbers match the `[n]` labels of the context documents
+/// and the numbers of the sources the UI lists.
+const CITATION_INSTRUCTIONS: &str = "\n\nCitations:\n\
+- Each context document is numbered in its marker: \"--- BEGIN DOCUMENT [n]: …\". \
+After each statement taken from the context, cite the documents that support it \
+with their numbers in square brackets, e.g. [1] or [2][3].\n\
+- Cite only documents you actually used. Never put citations inside code blocks.\n\
+- If the context does not contain the answer, say so and cite nothing.";
 /// Upper bound on characters fed to [`ChatService::summarize`], to keep the
 /// prompt within the model's context window regardless of input size.
 const SUMMARY_INPUT_CHAR_LIMIT: usize = 12_000;
@@ -182,11 +192,12 @@ pub struct RetrievalOutput {
     /// replaced with HyDE text for embedding only.
     pub queries_embedded: Vec<String>,
     /// Top-K candidates after vector search, dedup, and (optional) hybrid RRF
-    /// — before reranking. Bounded by `retrieval_candidate_limit` when reranking
-    /// is active, otherwise by `context_chunk_limit`.
+    /// — before reranking. Bounded by `retrieval_candidate_limit`; without a
+    /// reranker the smaller vector fetches (`context_chunk_limit` per query, or
+    /// three times it with hybrid search) usually keep it below that.
     pub pre_rerank: Vec<VectorSearchResult>,
-    /// Final context, bounded by `context_chunk_limit`. On reranker failure,
-    /// this is the first context-sized slice of `pre_rerank`.
+    /// Final context, bounded by `context_chunk_limit` and capped per
+    /// document. On reranker failure, it is selected from `pre_rerank` order.
     pub post_rerank: Vec<VectorSearchResult>,
 }
 
@@ -230,6 +241,8 @@ pub enum ChatEvent {
     Done {
         message_id: Option<String>,
         status: ChatMessageStatus,
+        /// Source numbers the answer cites (see [`parse_citations`]).
+        cited_sources: Vec<u32>,
     },
     /// An error occurred.
     #[serde(rename = "error")]
@@ -661,6 +674,7 @@ impl ChatService {
                         content: user_message.clone(),
                         sources: None,
                         status: ChatMessageStatus::Complete,
+                        cited_sources: None,
                         created_at: Utc::now(),
                     })
                     .await?;
@@ -699,16 +713,21 @@ impl ChatService {
         // mitigates prompt-injection carried inside the corpus ("ignore previous
         // instructions…"). The default system template instructs the model not
         // to follow directives found between these markers.
-        let context = build_context_prompt(&search_results, MAX_CONTEXT_PROMPT_CHARS);
+        let context = build_context_prompt(
+            &search_results,
+            &source_references,
+            MAX_CONTEXT_PROMPT_CHARS,
+        );
 
         // 8. Render system prompt via Tera
         let mut tera_ctx = tera::Context::new();
         tera_ctx.insert("context", &context);
         tera_ctx.insert("question", &user_message);
-        let system_prompt = self
+        let mut system_prompt = self
             .tera
             .render(&self.system_template_name, &tera_ctx)
             .map_err(|e| AppError::Internal(format!("tera render failed: {e}")))?;
+        system_prompt.push_str(CITATION_INSTRUCTIONS);
 
         // 9. Build message array: system prompt + history + current user message
         let mut messages: Vec<ChatCompletionRequestMessage> = Vec::new();
@@ -882,6 +901,10 @@ impl ChatService {
                 yield ChatEvent::Delta { content: OUTPUT_CAP_NOTICE.to_string() };
             }
 
+            // Read the citations from the whole answer, not per delta: a
+            // marker can be split across stream chunks.
+            let cited_sources = parse_citations(&answer.content, sources.len());
+
             // Save the assistant response. An unfinished one is saved even when
             // empty, so a reload still shows that the question went unanswered
             // and the client can regenerate it.
@@ -901,6 +924,7 @@ impl ChatService {
                     content: answer.content,
                     sources: Some(sources.clone()),
                     status,
+                    cited_sources: Some(cited_sources.clone()),
                     created_at: Utc::now(),
                 };
                 if let Err(e) = chat_repo.add_message(msg).await {
@@ -914,7 +938,7 @@ impl ChatService {
                 None
             };
 
-            yield ChatEvent::Done { message_id: saved_message_id, status };
+            yield ChatEvent::Done { message_id: saved_message_id, status, cited_sources };
         };
 
         Ok(Box::pin(event_stream))
@@ -1092,13 +1116,8 @@ impl ChatService {
 
         let reranker = self.reranker.as_deref().filter(|_| !mode.is_thrifty());
         let hybrid = self.search_service.as_ref().filter(|_| !mode.is_thrifty());
-        let candidate_limit = if reranker.is_some() {
-            self.retrieval_candidate_limit
-        } else {
-            self.context_chunk_limit
-        };
         let vector_limit = if reranker.is_some() {
-            candidate_limit
+            self.retrieval_candidate_limit
         } else if hybrid.is_some() {
             // Preserve the existing small hybrid overfetch without paying for
             // the enlarged reranker pool when no reranker is active.
@@ -1106,6 +1125,10 @@ impl ChatService {
         } else {
             self.context_chunk_limit
         };
+        // The whole fused pool reaches the final selection in every mode, so
+        // the per-document cap can reach past the first chunks of any query.
+        // The fetch sizes above keep the pool small without a reranker.
+        let candidate_limit = self.retrieval_candidate_limit;
         tracing::debug!(
             session_id = %session_id,
             retrieval_query = %retrieval_query,
@@ -1179,22 +1202,20 @@ impl ChatService {
             "RAG: pre-rerank candidates"
         );
 
-        // Rerank the enlarged pool, then select the independent final context budget.
-        let post_rerank = if let Some(reranker) = reranker {
+        // Rank the whole enlarged pool, then select the independent final
+        // context budget with a per-document cap.
+        let ranked = if let Some(reranker) = reranker {
             super::reranker::rerank_or_fallback(
                 reranker,
                 &retrieval_query,
                 &pre_rerank,
-                self.context_chunk_limit,
+                pre_rerank.len(),
             )
             .await
         } else {
-            pre_rerank
-                .iter()
-                .take(self.context_chunk_limit)
-                .cloned()
-                .collect()
+            pre_rerank.clone()
         };
+        let post_rerank = select_context(ranked, self.context_chunk_limit);
 
         let post_rerank_summary = summarize_search_results(&post_rerank);
         tracing::debug!(
@@ -1226,14 +1247,144 @@ fn select_candidates(
     } else {
         (lists.into_iter().flatten().collect(), Vec::new())
     };
-    if lexical_chunks.is_empty() {
-        return take_with_guarantee(merged, &vector_guarantees, limit);
-    }
-    let (fused, mut guarantees) = merge_subquery_chunks(vec![merged, lexical_chunks]);
-    // Reserve a top hit from each branch before additional vector subqueries,
-    // subject to the overall cap. With a one-slot budget vectors retain priority.
-    guarantees.extend(vector_guarantees);
+    let (fused, guarantees) = if lexical_chunks.is_empty() {
+        (merged, vector_guarantees)
+    } else {
+        let (fused, mut guarantees) = merge_subquery_chunks(vec![merged, lexical_chunks]);
+        // Reserve a top hit from each branch before additional vector subqueries,
+        // subject to the overall cap. With a one-slot budget vectors retain priority.
+        guarantees.extend(vector_guarantees);
+        (fused, guarantees)
+    };
+    // Collapse copies before the cutoff so they cannot take candidate slots.
+    let (fused, replaced) = collapse_duplicate_text(fused);
+    let guarantees: Vec<String> = guarantees
+        .into_iter()
+        .map(|id| replaced.get(&id).cloned().unwrap_or(id))
+        .collect();
     take_with_guarantee(fused, &guarantees, limit)
+}
+
+/// Chunk text as plain words. The same passage is often indexed under several
+/// identities: a page and its `.md` copy attached elsewhere (whose relative
+/// links the page rewrites to asset URLs), or two active documents with the
+/// same content under different slugs. Comparing the plain text, without link
+/// targets, markup or whitespace differences, recognises all of them. Code,
+/// blocks and inline spans alike, is compared verbatim: `Vec<u8>` is not HTML,
+/// and differs from `Vec<u64>`.
+fn text_identity(chunk: &VectorSearchResult) -> String {
+    let text = chunk.chunk_text.as_str();
+    let prose = |segment: &str| {
+        segment
+            .lines()
+            .map(plain_text_line)
+            .collect::<Vec<_>>()
+            .join(" ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let mut parts = Vec::new();
+    let mut cursor = 0;
+    for code in code_ranges(text) {
+        parts.push(prose(&text[cursor..code.start]));
+        parts.push(text[code.clone()].trim_end().to_string());
+        cursor = code.end;
+    }
+    parts.push(prose(&text[cursor..]));
+    parts.retain(|part| !part.is_empty());
+    parts.join("\n")
+}
+
+/// Byte ranges of all code in `text`, blocks and inline spans (any number of
+/// backticks, wrapped across lines), as the page renderer parses it.
+fn code_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
+    use pulldown_cmark::{Event, Parser, Tag};
+
+    let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
+    for (event, range) in
+        Parser::new_ext(text, crate::rendering::markdown::MARKDOWN_OPTIONS).into_offset_iter()
+    {
+        let is_code = matches!(event, Event::Start(Tag::CodeBlock(_)) | Event::Code(_));
+        if is_code && ranges.last().is_none_or(|last| range.start >= last.end) {
+            ranges.push(range);
+        }
+    }
+    ranges
+}
+
+/// Keep the best-ranked chunk of each distinct text. Returns the dropped
+/// chunk identities mapped to the identity of the copy that was kept.
+fn collapse_duplicate_text(
+    chunks: Vec<VectorSearchResult>,
+) -> (Vec<VectorSearchResult>, HashMap<String, String>) {
+    let mut kept_by_text: HashMap<String, String> = HashMap::new();
+    let mut replaced = HashMap::new();
+    let mut kept = Vec::with_capacity(chunks.len());
+    for chunk in chunks {
+        let text = text_identity(&chunk);
+        if text.is_empty() {
+            kept.push(chunk);
+            continue;
+        }
+        match kept_by_text.get(&text) {
+            Some(original) => {
+                replaced.insert(chunk_identity(&chunk), original.clone());
+            }
+            None => {
+                kept_by_text.insert(text, chunk_identity(&chunk));
+                kept.push(chunk);
+            }
+        }
+    }
+    (kept, replaced)
+}
+
+/// Most chunks a single document may contribute to a `limit`-sized context
+/// while other relevant documents are still waiting for a slot.
+fn per_document_cap(limit: usize) -> usize {
+    limit.div_ceil(3).max(2)
+}
+
+/// Pick the final context from ranked candidates: the existing order is kept,
+/// but one document cannot take more than [`per_document_cap`] slots unless
+/// there are not enough other candidates to fill the budget.
+fn select_context(ranked: Vec<VectorSearchResult>, limit: usize) -> Vec<VectorSearchResult> {
+    let cap = per_document_cap(limit);
+    let mut per_document: HashMap<(&str, &str), usize> = HashMap::new();
+    let mut selected = vec![false; ranked.len()];
+    let mut taken = 0;
+    for (i, chunk) in ranked.iter().enumerate() {
+        if taken == limit {
+            break;
+        }
+        let document = match (chunk.source_kind, &chunk.attachment_key) {
+            (SourceKind::Attachment, Some(key)) => ("attachment", key.as_str()),
+            (kind, _) => (kind.as_str(), chunk.document_slug.as_str()),
+        };
+        let count = per_document.entry(document).or_default();
+        if *count < cap {
+            *count += 1;
+            selected[i] = true;
+            taken += 1;
+        }
+    }
+    // Not enough distinct documents: give the free slots back to the best
+    // capped chunks.
+    for flag in selected.iter_mut() {
+        if taken == limit {
+            break;
+        }
+        if !*flag {
+            *flag = true;
+            taken += 1;
+        }
+    }
+    ranked
+        .into_iter()
+        .zip(selected)
+        .filter_map(|(chunk, keep)| keep.then_some(chunk))
+        .collect()
 }
 
 fn chunk_identity(chunk: &VectorSearchResult) -> String {
@@ -1556,7 +1707,11 @@ fn build_source_references(
         let section_title = if is_attachment {
             result.source_page.map(|p| format!("p. {p}"))
         } else {
-            result.section_path.last().cloned()
+            result
+                .section_path
+                .last()
+                .map(|heading| plain_text_line(heading))
+                .filter(|heading| !heading.is_empty())
         };
         let section_anchor = if is_attachment || result.section_anchor.is_empty() {
             None
@@ -1572,22 +1727,9 @@ fn build_source_references(
             snippet: source_snippet(&result.chunk_text, 180),
             attachment_key: result.attachment_key.clone(),
             source_page: result.source_page,
+            number: None,
         };
-        // Attachments dedupe by (key, page); documents by (slug, section).
-        let dedupe_key = if is_attachment {
-            (
-                result.attachment_key.clone().unwrap_or_default(),
-                result
-                    .source_page
-                    .map(|p| p.to_string())
-                    .unwrap_or_default(),
-            )
-        } else {
-            (
-                result.document_slug.clone(),
-                section_anchor.clone().unwrap_or_default(),
-            )
-        };
+        let dedupe_key = source_key(result);
 
         match deduped.get(&dedupe_key) {
             Some(existing) if existing.score >= candidate.score => {}
@@ -1604,7 +1746,26 @@ fn build_source_references(
             .then_with(|| a.document_slug.cmp(&b.document_slug))
             .then_with(|| a.section_anchor.cmp(&b.section_anchor))
     });
+    for (i, source) in sources.iter_mut().enumerate() {
+        source.number = Some(i as u32 + 1);
+    }
     sources
+}
+
+/// The source a retrieved chunk is listed under: attachments by (key, page),
+/// documents by (slug, section).
+fn source_key(result: &VectorSearchResult) -> (String, String) {
+    if result.source_kind == SourceKind::Attachment {
+        (
+            result.attachment_key.clone().unwrap_or_default(),
+            result
+                .source_page
+                .map(|p| p.to_string())
+                .unwrap_or_default(),
+        )
+    } else {
+        (result.document_slug.clone(), result.section_anchor.clone())
+    }
 }
 
 fn preview_text(text: &str, max_chars: usize) -> String {
@@ -1618,24 +1779,45 @@ fn preview_text(text: &str, max_chars: usize) -> String {
     }
 }
 
+/// The context documents, each labelled with the number of its entry in
+/// `sources` (from [`build_source_references`] over the same results) and
+/// ordered by it, so `[n]` means the same thing to the model and the reader.
 fn build_context_prompt(
     results: &[crate::rag::vectorstore::VectorSearchResult],
+    sources: &[SourceReference],
     max_chars: usize,
 ) -> String {
     if max_chars == 0 {
         return String::new();
     }
 
+    let numbers: HashMap<(String, String), u32> = results
+        .iter()
+        .filter_map(|result| {
+            let key = source_key(result);
+            sources
+                .iter()
+                .find(|source| source_matches(source, &key))
+                .and_then(|source| source.number)
+                .map(|n| (key, n))
+        })
+        .collect();
+    let mut numbered: Vec<(u32, &VectorSearchResult)> = results
+        .iter()
+        .filter_map(|result| numbers.get(&source_key(result)).map(|&n| (n, result)))
+        .collect();
+    numbered.sort_by_key(|(n, _)| *n);
+
     let mut context = String::new();
     let mut used = 0usize;
 
-    for result in results {
+    for (number, result) in numbered {
         if used >= max_chars {
             break;
         }
 
         let header = format!(
-            "--- BEGIN DOCUMENT: {} ({}) ---\n",
+            "--- BEGIN DOCUMENT [{number}]: {} ({}) ---\n",
             result.document_title, result.document_slug
         );
         let footer = "\n--- END DOCUMENT ---";
@@ -1658,6 +1840,24 @@ fn build_context_prompt(
     }
 
     context
+}
+
+fn source_matches(source: &SourceReference, key: &(String, String)) -> bool {
+    match &source.attachment_key {
+        Some(attachment) => {
+            (
+                attachment.as_str(),
+                source
+                    .source_page
+                    .map(|p| p.to_string())
+                    .unwrap_or_default(),
+            ) == (key.0.as_str(), key.1.clone())
+        }
+        None => {
+            source.document_slug == key.0
+                && source.section_anchor.clone().unwrap_or_default() == key.1
+        }
+    }
 }
 
 /// What a chat turn asks the model to do.
@@ -1954,6 +2154,28 @@ mod tests {
     }
 
     #[test]
+    fn build_source_references_shows_plain_text_previews() {
+        let sources = build_source_references(&[VectorSearchResult {
+            point_id: "p1".into(),
+            chunk_text: "<a id=\"_open_stable_branch\"></a>\n**Open** the `stable` branch from ![image.png](a.png) main.".into(),
+            document_slug: "docs/flow".into(),
+            document_title: "Flow".into(),
+            section_path: vec!["3. Development Flux {#_development_flux}".into()],
+            section_anchor: "3-development-flux-developmentflux".into(),
+            score: 0.8,
+            ..Default::default()
+        }]);
+        assert_eq!(
+            sources[0].section_title.as_deref(),
+            Some("3. Development Flux")
+        );
+        assert_eq!(
+            sources[0].snippet.as_deref(),
+            Some("Open the stable branch from main.")
+        );
+    }
+
+    #[test]
     fn merge_chunk_texts_trims_overlapping_prefix() {
         let merged = merge_chunk_texts(&[
             "## Storage\n\nFirst half of the section.",
@@ -2196,6 +2418,7 @@ mod tests {
                 content: "12345".into(),
                 sources: None,
                 status: Default::default(),
+                cited_sources: None,
                 created_at: Utc::now(),
             },
             ChatMessage {
@@ -2205,6 +2428,7 @@ mod tests {
                 content: "6789".into(),
                 sources: None,
                 status: Default::default(),
+                cited_sources: None,
                 created_at: Utc::now(),
             },
             ChatMessage {
@@ -2214,6 +2438,7 @@ mod tests {
                 content: "abc".into(),
                 sources: None,
                 status: Default::default(),
+                cited_sources: None,
                 created_at: Utc::now(),
             },
         ];
@@ -2233,11 +2458,75 @@ mod tests {
             ..Default::default()
         }];
 
-        let context = build_context_prompt(&results, 80);
+        let context = build_context_prompt(&results, &build_source_references(&results), 80);
 
         assert!(context.chars().count() <= 80);
-        assert!(context.starts_with("--- BEGIN DOCUMENT: Doc A (docs/a) ---\n"));
+        assert!(context.starts_with("--- BEGIN DOCUMENT [1]: Doc A (docs/a) ---\n"));
         assert!(context.ends_with("\n--- END DOCUMENT ---"));
+    }
+
+    #[test]
+    fn context_numbers_match_the_listed_sources() {
+        let doc = |slug: &str, anchor: &str, text: &str, score: f32| VectorSearchResult {
+            document_slug: slug.into(),
+            document_title: format!("Title {slug}"),
+            section_anchor: anchor.into(),
+            chunk_text: text.into(),
+            score,
+            ..Default::default()
+        };
+        // Retrieval order differs from score order, a section appears twice
+        // and an attachment page sits between them.
+        let results = vec![
+            doc("docs/b", "setup", "b setup text", 0.4),
+            doc("docs/a", "", "a intro text", 0.9),
+            VectorSearchResult {
+                document_title: "guide.pdf".into(),
+                chunk_text: "pdf page text".into(),
+                source_kind: SourceKind::Attachment,
+                attachment_key: Some("att/guide.pdf".into()),
+                source_page: Some(3),
+                score: 0.6,
+                ..Default::default()
+            },
+            doc("docs/b", "setup", "more b setup text", 0.3),
+        ];
+        let sources = build_source_references(&results);
+        let context = build_context_prompt(&results, &sources, MAX_CONTEXT_PROMPT_CHARS);
+
+        let blocks: Vec<&str> = context.split("--- BEGIN DOCUMENT ").skip(1).collect();
+        assert_eq!(blocks.len(), results.len());
+        let mut previous = 0;
+        for block in blocks {
+            let number: u32 = block[1..block.find(']').unwrap()].parse().unwrap();
+            assert!(number >= previous, "blocks are ordered by source number");
+            previous = number;
+            let source = &sources[number as usize - 1];
+            assert_eq!(source.number, Some(number));
+            let text = block.split_once("---\n").unwrap().1;
+            let result = results
+                .iter()
+                .find(|r| text.starts_with(r.chunk_text.as_str()))
+                .unwrap();
+            assert_eq!(
+                source_key(result).0,
+                match &source.attachment_key {
+                    Some(key) => key.clone(),
+                    None => source.document_slug.clone(),
+                }
+            );
+        }
+        assert_eq!(
+            sources
+                .iter()
+                .map(|s| (s.number, s.document_title.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                (Some(1), "Title docs/a"),
+                (Some(2), "guide.pdf"),
+                (Some(3), "Title docs/b")
+            ]
+        );
     }
 
     fn stream_chunk(
@@ -2282,6 +2571,7 @@ mod tests {
             content: content.into(),
             sources: None,
             status,
+            cited_sources: None,
             created_at: Utc::now(),
         }
     }
@@ -2418,10 +2708,12 @@ mod tests {
         let event = ChatEvent::Done {
             message_id: Some("m1".into()),
             status: ChatMessageStatus::Interrupted,
+            cited_sources: vec![2, 1],
         };
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(json["type"], "done");
         assert_eq!(json["status"], "interrupted");
+        assert_eq!(json["cited_sources"], serde_json::json!([2, 1]));
     }
 }
 

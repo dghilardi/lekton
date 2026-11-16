@@ -99,6 +99,18 @@ impl MermaidDiagramType {
     }
 }
 
+/// Byte ranges of every code block (fenced with backticks or tildes, any info
+/// string or indentation, and indented code), as CommonMark parses them.
+pub(in crate::rag) fn code_block_ranges(text: &str) -> Vec<Range<usize>> {
+    Parser::new_ext(text, markdown_options())
+        .into_offset_iter()
+        .filter_map(|(event, range)| match event {
+            Event::Start(Tag::CodeBlock(_)) => Some(range),
+            _ => None,
+        })
+        .collect()
+}
+
 fn is_mermaid_info_string(info: &str) -> bool {
     info.split_whitespace()
         .next()

@@ -36,6 +36,21 @@ pub fn render_markdown(raw: &str) -> String {
     sanitize_html(&add_heading_ids_simple(&html_output))
 }
 
+/// The `id` a page gets for a Markdown heading line (`## Title {#id}`): its
+/// explicit id attribute, or the slug [`render_markdown`] derives from the
+/// rendered text. H1 headings carry no id on the page; they get the same slug
+/// so section anchors stay distinct.
+pub fn heading_id(heading_line: &str) -> String {
+    let html = add_heading_ids_simple(&render_events(Parser::new_ext(
+        heading_line,
+        MARKDOWN_OPTIONS,
+    )));
+    html.split_once(" id=\"")
+        .and_then(|(_, rest)| rest.split_once('"'))
+        .map(|(id, _)| id.to_string())
+        .unwrap_or_else(|| slugify(&strip_html_tags(&html)))
+}
+
 /// Render Markdown to HTML that is safe by construction, for the browser
 /// (chat answers): raw HTML in the source is shown as text, link and image
 /// targets are limited to web, mail and in-page addresses, and heading
@@ -47,7 +62,9 @@ pub fn render_markdown_escaped(raw: &str) -> String {
     add_heading_ids_simple(&render_events(events))
 }
 
-const MARKDOWN_OPTIONS: Options = Options::ENABLE_TABLES
+/// The portal's Markdown dialect, shared by everything that must read an
+/// answer or document the way the renderer does.
+pub(crate) const MARKDOWN_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_FOOTNOTES)
     .union(Options::ENABLE_STRIKETHROUGH)
     .union(Options::ENABLE_TASKLISTS)
@@ -493,6 +510,24 @@ fn find_syntax<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn heading_id_matches_the_rendered_page() {
+        for line in [
+            "## 3. Development flux {#_development_flux}",
+            "## Storage Layer",
+            "### API (v2)",
+            "## Use `cargo fmt` & **clippy**",
+        ] {
+            let id = heading_id(line);
+            assert!(
+                render_markdown(line).contains(&format!("id=\"{id}\"")),
+                "{line:?} -> {id}"
+            );
+        }
+        assert_eq!(heading_id("## 3. Flux {#_flux}"), "_flux");
+        assert_eq!(heading_id("# Code Guidelines"), "code-guidelines");
+    }
 
     const HOSTILE: &[&str] = &[
         "<script>alert(1)</script>",

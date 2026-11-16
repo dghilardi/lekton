@@ -331,7 +331,7 @@ async fn candidate_below_fifth_reaches_final_context_in_retrieval_only_path() {
     assert_eq!(result.post_rerank[0].point_id, "p49");
     let seen = reranker.seen.lock().unwrap();
     assert_eq!(seen[0].1.len(), 50);
-    assert_eq!(seen[0].2, 5);
+    assert_eq!(seen[0].2, 50, "the whole pool is ranked");
 }
 
 #[tokio::test]
@@ -470,7 +470,8 @@ async fn hybrid_without_reranker_keeps_existing_small_overfetch_and_thrifty_skip
         )
         .await;
         let result = retrieve(&service, mode).await;
-        assert_eq!(result.pre_rerank.len(), 5);
+        // The fetched pool reaches the final selection, which keeps five.
+        assert_eq!(result.pre_rerank.len(), limit);
         assert_eq!(result.post_rerank.len(), 5);
         assert_eq!(
             search.calls.load(std::sync::atomic::Ordering::SeqCst),
@@ -501,8 +502,11 @@ async fn hybrid_without_reranker_admits_lexical_passage_beside_top_vector_hit() 
     };
     // Without a reranker the final context keeps the top vector hit first,
     // then the top lexical passage, then the fused ranking.
-    assert_eq!(ids(&result.pre_rerank), ["p0", "p99", "p1", "p2", "p3"]);
-    assert_eq!(ids(&result.post_rerank), ids(&result.pre_rerank));
+    assert_eq!(
+        ids(&result.pre_rerank[..5]),
+        ["p0", "p99", "p1", "p2", "p3"]
+    );
+    assert_eq!(ids(&result.post_rerank), ids(&result.pre_rerank[..5]));
 }
 
 #[test]
@@ -923,4 +927,259 @@ fn mixed_branch_fusion_caps_unique_chunks_and_reserves_vector_and_lexical_eviden
             assert!(candidates.iter().any(|c| c.point_id == "p100"));
         }
     }
+}
+
+fn adr_chunk(id: &str, slug: &str, text: &str, score: f32) -> VectorSearchResult {
+    VectorSearchResult {
+        point_id: id.into(),
+        document_slug: slug.into(),
+        document_title: slug.into(),
+        chunk_text: text.into(),
+        score,
+        ..Default::default()
+    }
+}
+
+fn attached_copy(id: &str, key: &str, text: &str, score: f32) -> VectorSearchResult {
+    VectorSearchResult {
+        source_kind: SourceKind::Attachment,
+        attachment_key: Some(key.into()),
+        ..adr_chunk(id, "", text, score)
+    }
+}
+
+/// Ranked pool reproducing the mediator ADR question: ADR-0001 is indexed as a
+/// page, as a `.md` attachment of ADR-0002 (with relative links) and under a
+/// duplicate slug, so its copies crowd ADR-0002 out of a five-chunk context.
+fn adr_pool() -> Vec<VectorSearchResult> {
+    let adr1 = [
+        "ADR-0001 decision",
+        "ADR-0001 context, extended by [ADR-0002](/api/v1/assets/adr-0001/adr-0002.md)",
+        "ADR-0001 consequences",
+    ];
+    vec![
+        adr_chunk("a1-0", "adr-0001", adr1[0], 0.95),
+        attached_copy("att-0", "adr-0002/adr-0001.md", adr1[0], 0.94),
+        adr_chunk(
+            "dup-0",
+            "adr-0001-copy",
+            &format!("  **{}**\n", adr1[0]),
+            0.93,
+        ),
+        adr_chunk("a1-1", "adr-0001", adr1[1], 0.92),
+        // The page rewrote the attached copy's relative link to an asset URL.
+        attached_copy(
+            "att-1",
+            "adr-0002/adr-0001.md",
+            "ADR-0001 context, extended by [ADR-0002](adr-0002.md)",
+            0.91,
+        ),
+        adr_chunk("a1-2", "adr-0001", adr1[2], 0.90),
+        adr_chunk("a3-0", "adr-0003", "ADR-0003 decision", 0.89),
+        adr_chunk("a3-1", "adr-0003", "ADR-0003 context", 0.88),
+        adr_chunk("a2-0", "adr-0002", "ADR-0002 decision", 0.87),
+        adr_chunk("a2-1", "adr-0002", "ADR-0002 context", 0.86),
+    ]
+}
+
+fn ids(chunks: &[VectorSearchResult]) -> Vec<&str> {
+    chunks.iter().map(|c| c.point_id.as_str()).collect()
+}
+
+#[test]
+fn duplicate_text_is_collapsed_before_the_candidate_cutoff() {
+    let candidates = select_candidates(vec![adr_pool()], vec![], 6);
+    assert_eq!(
+        ids(&candidates),
+        ["a1-0", "a1-1", "a1-2", "a3-0", "a3-1", "a2-0"]
+    );
+}
+
+#[test]
+fn collapsed_subquery_top_hit_is_represented_by_its_surviving_copy() {
+    let first = vec![
+        adr_chunk("x0", "x", "shared passage", 0.9),
+        adr_chunk("x1", "x", "x only", 0.8),
+        adr_chunk("x2", "x", "x more", 0.7),
+    ];
+    // The second subquery's top hit is a copy of a passage from the first one.
+    let second = vec![
+        attached_copy("copy", "y/x.md", "shared passage", 0.6),
+        adr_chunk("y1", "y", "y only", 0.5),
+    ];
+    let result = select_candidates(vec![first, second], vec![], 2);
+    assert_eq!(ids(&result), ["x0", "x1"]);
+}
+
+#[test]
+fn context_selection_caps_chunks_per_document() {
+    let candidates = select_candidates(vec![adr_pool()], vec![], 50);
+    let context = select_context(candidates, 5);
+    assert_eq!(ids(&context), ["a1-0", "a1-1", "a3-0", "a3-1", "a2-0"]);
+}
+
+#[test]
+fn context_selection_fills_free_slots_from_capped_documents() {
+    let only_two_documents = vec![
+        adr_chunk("a0", "a", "a0", 0.9),
+        adr_chunk("a1", "a", "a1", 0.8),
+        adr_chunk("a2", "a", "a2", 0.7),
+        adr_chunk("a3", "a", "a3", 0.6),
+        adr_chunk("b0", "b", "b0", 0.5),
+    ];
+    let context = select_context(only_two_documents, 4);
+    assert_eq!(ids(&context), ["a0", "a1", "a2", "b0"]);
+}
+
+#[test]
+fn per_document_cap_grows_with_the_context_budget() {
+    assert_eq!([1, 3, 5, 8, 10].map(per_document_cap), [2, 2, 2, 3, 4]);
+}
+
+#[tokio::test]
+async fn duplicate_copies_do_not_crowd_a_relevant_document_out_of_the_context() {
+    let reranker = Arc::new(RecordingReranker::default());
+    let service = service(
+        &config(),
+        store(vec![adr_pool()], 50),
+        Arc::default(),
+        None,
+        Some(reranker.clone()),
+        true,
+    )
+    .await;
+    let result = retrieve(&service, RetrievalMode::Full).await;
+    assert_eq!(
+        result.pre_rerank.len(),
+        7,
+        "text copies are not reranked twice"
+    );
+    assert_eq!(
+        ids(&result.post_rerank),
+        ["a1-0", "a1-1", "a3-0", "a3-1", "a2-0"]
+    );
+    // The whole pool is ranked so the cap can reach past the first five.
+    assert_eq!(reranker.seen.lock().unwrap()[0].2, 7);
+}
+
+#[test]
+fn code_that_differs_only_in_markup_like_text_is_not_collapsed() {
+    let fenced = |ty: &str| format!("Identifiers:\n\n```rust\ntype Id = {ty};\n```\n");
+    let inline = |ty: &str| format!("Use `{ty}` for identifiers.");
+    let pool = vec![
+        adr_chunk("u8", "a", &fenced("Vec<u8>"), 0.9),
+        adr_chunk("u64", "b", &fenced("Vec<u64>"), 0.8),
+        adr_chunk("i-u8", "c", &inline("Vec<u8>"), 0.7),
+        adr_chunk("i-u64", "d", &inline("Vec<u64>"), 0.6),
+        // Copies still collapse when only the prose markup differs.
+        adr_chunk(
+            "copy",
+            "e",
+            &format!("**Identifiers:**\n\n```rust\ntype Id = Vec<u8>;\n```"),
+            0.5,
+        ),
+    ];
+    let candidates = select_candidates(vec![pool], vec![], 10);
+    assert_eq!(ids(&candidates), ["u8", "u64", "i-u8", "i-u64"]);
+}
+
+#[tokio::test]
+async fn per_document_cap_applies_with_and_without_a_reranker() {
+    let mut pool: Vec<_> = (0..5)
+        .map(|i| {
+            adr_chunk(
+                &format!("a{i}"),
+                "a",
+                &format!("a passage {i}"),
+                0.9 - i as f32 / 100.0,
+            )
+        })
+        .collect();
+    pool.push(adr_chunk("b0", "b", "b passage", 0.5));
+    pool.push(adr_chunk("c0", "c", "c passage", 0.4));
+    for with_reranker in [false, true] {
+        let mut config = config();
+        config.hybrid_search_enabled = true;
+        // The vector overfetch sees B and C; lexical search finds nothing.
+        let expected_limit = if with_reranker { 50 } else { 15 };
+        let service = service(
+            &config,
+            store(vec![pool.clone()], expected_limit),
+            Arc::default(),
+            Some(Arc::new(TestSearch::default())),
+            with_reranker.then(|| Arc::new(RecordingReranker::default()) as Arc<dyn Reranker>),
+            true,
+        )
+        .await;
+        let result = retrieve(&service, RetrievalMode::Full).await;
+        assert_eq!(
+            ids(&result.post_rerank),
+            ["a0", "a1", "a2", "b0", "c0"],
+            "reranker: {with_reranker}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn per_document_cap_sees_the_whole_fused_pool_without_hybrid_or_reranker() {
+    use axum::{routing::post, Json, Router};
+    use serde_json::{json, Value};
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post(|Json(_): Json<Value>| async move {
+            let content = json!({"complexity":"multi_entity","sub_queries":["two"]}).to_string();
+            Json(json!({"id":"test","object":"chat.completion","created":0,"model":"mock","choices":[{"index":0,"message":{"role":"assistant","content":content},"finish_reason":"stop"}]}))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut config = config();
+    config.llm.url = format!("http://{}/v1", listener.local_addr().unwrap());
+    config.analyzer =
+        Some(serde_json::from_value::<LlmStepConfig>(json!({"model":"analyzer"})).unwrap());
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let a = |i: usize| adr_chunk(&format!("a{i}"), "a", &format!("a passage {i}"), 0.9);
+    let lists = vec![
+        (0..5).map(a).collect(),
+        vec![
+            a(0),
+            a(1),
+            a(2),
+            adr_chunk("b0", "b", "b passage", 0.5),
+            adr_chunk("c0", "c", "c passage", 0.4),
+        ],
+    ];
+    let chat = service(&config, store(lists, 5), Arc::default(), None, None, true).await;
+    let result = retrieve(&chat, RetrievalMode::Full).await;
+    task.abort();
+    assert_eq!(result.queries_embedded.len(), 2);
+    assert_eq!(
+        result.pre_rerank.len(),
+        7,
+        "every fused passage is a candidate"
+    );
+    assert_eq!(ids(&result.post_rerank), ["a0", "a1", "a2", "b0", "c0"]);
+}
+
+#[test]
+fn inline_code_in_any_form_is_compared_verbatim() {
+    let pool = vec![
+        adr_chunk("dbl-u8", "a", "Use ``Vec<u8>`` here.", 0.9),
+        adr_chunk("dbl-u64", "b", "Use ``Vec<u64>`` here.", 0.8),
+        adr_chunk("wrap-u8", "c", "Use `HashMap<String,\nVec<u8>>` here.", 0.7),
+        adr_chunk(
+            "wrap-u64",
+            "d",
+            "Use `HashMap<String,\nVec<u64>>` here.",
+            0.6,
+        ),
+        // Prose-only markup differences still collapse onto the first copy.
+        adr_chunk("copy", "e", "**Use** ``Vec<u8>`` [here](/x).", 0.5),
+    ];
+    let candidates = select_candidates(vec![pool], vec![], 10);
+    assert_eq!(
+        ids(&candidates),
+        ["dbl-u8", "dbl-u64", "wrap-u8", "wrap-u64"]
+    );
 }

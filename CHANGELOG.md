@@ -8,8 +8,17 @@ All notable changes to this project will be documented in this file.
 
 - Speed up releases by warming dependency caches on main and building Docker images from tested release artifacts, with separate image caches.
 
+### Added
+
+- Chat answers cite their sources as `[n]` links, and the sources list shows only the cited ones; an answer that cites nothing keeps the retrieved sources folded away as related reading.
+- Consistency report lists active documents that share a source file and content under different slugs.
+
 ### Fixed
 
+- Chat source links now land on the cited section: RAG section anchors use the same heading ids as the rendered page, including explicit `{#id}` attributes. Existing chunks keep their old anchors until they are reindexed.
+- Show chat source previews and section titles as plain text, without heading attributes, inline HTML anchors, emphasis markers, images or table pipes.
+- Ignore `#` lines inside any code block (tilde, indented or nested fences) when splitting documents into RAG sections, so code comments no longer become section headings and anchors.
+- Collapse duplicate passages and cap chunks per document in the chat context, so copies of one page no longer crowd out other relevant documents.
 - Header section links that do not fit beside the search bar now move under "More" instead of being cut off.
 - Switching a document to an older release now works when the source id is a URL; the pin was split on the URL's scheme colon and silently ignored.
 - Delete the old S3 object when a schema version is re-imported in another format (YAML/JSON), and keep the stored key when only metadata changes.

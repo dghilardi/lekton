@@ -175,6 +175,10 @@ pub struct SessionMessageResponse {
     pub feedback: Option<serde_json::Value>,
     /// Whether the answer is complete, interrupted or failed.
     pub status: ChatMessageStatus,
+    /// Source numbers the answer cites; absent for answers saved before
+    /// citations, which show every source.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cited_sources: Option<Vec<u32>>,
 }
 
 /// `POST /api/v1/rag/chat` — stream a RAG chat response (requires auth).
@@ -320,6 +324,7 @@ pub async fn get_session_messages_handler(
             sources,
             feedback,
             status: m.status,
+            cited_sources: m.cited_sources,
         });
     }
 

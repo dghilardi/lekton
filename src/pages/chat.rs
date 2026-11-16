@@ -55,7 +55,10 @@ fn next_client_msg_id() -> String {
 use crate::app::BudgetStatus;
 use crate::auth::refresh_client::with_auth_retry;
 use crate::components::MarkdownContent;
-use crate::db::chat_models::{ChatMessageStatus, SourceReference};
+use crate::db::chat_models::{
+    link_citations, parse_citations, source_listing, ChatMessageStatus, SourceListing,
+    SourceListingKind, SourceReference,
+};
 use crate::rendering::markdown::render_markdown_escaped as render_markdown;
 
 /// Feedback state on a single assistant message.
@@ -81,6 +84,10 @@ pub struct UiMessage {
     /// regenerated instead of passing for a complete one.
     #[serde(default)]
     pub status: ChatMessageStatus,
+    /// Source numbers the answer cites; `None` for answers saved before
+    /// citations, which list every source.
+    #[serde(default)]
+    pub cited_sources: Option<Vec<u32>>,
 }
 
 /// Session summary for the sidebar.
@@ -265,14 +272,16 @@ fn ChatContent() -> impl IntoView {
             leptos::task::spawn_local(async move {
                 gloo_timers::future::TimeoutFuture::new(STREAM_RENDER_THROTTLE_MS).await;
                 if stream_render_version.get_untracked() == version {
-                    set_streaming_html.set(render_markdown(&content));
+                    let sources = streaming_sources.get_untracked();
+                    set_streaming_html.set(render_answer(&content, &sources));
                 }
             });
         }
 
         #[cfg(not(feature = "hydrate"))]
         {
-            set_streaming_html.set(render_markdown(&content));
+            let sources = streaming_sources.get_untracked();
+            set_streaming_html.set(render_answer(&content, &sources));
         }
     });
 
@@ -308,6 +317,11 @@ fn ChatContent() -> impl IntoView {
                         let content = streaming_content.get_untracked();
                         if !content.is_empty() || !outcome.status.is_complete() {
                             let sources = optional_sources(streaming_sources.get_untracked());
+                            // The server parses the saved answer; a stream that
+                            // broke before `done` is parsed the same way here.
+                            let cited_sources = outcome.cited_sources.unwrap_or_else(|| {
+                                parse_citations(&content, sources.as_ref().map_or(0, Vec::len))
+                            });
                             messages.update(|msgs| {
                                 msgs.push(UiMessage {
                                     id: outcome.message_id,
@@ -316,6 +330,7 @@ fn ChatContent() -> impl IntoView {
                                     sources,
                                     feedback: None,
                                     status: outcome.status,
+                                    cited_sources: Some(cited_sources),
                                 });
                             });
                         }
@@ -353,6 +368,7 @@ fn ChatContent() -> impl IntoView {
                 sources: None,
                 feedback: None,
                 status: ChatMessageStatus::Complete,
+                cited_sources: None,
             });
         });
 
@@ -547,6 +563,7 @@ fn ChatContent() -> impl IntoView {
                             let notice_id = msg.id.clone();
                             let initial_feedback = msg.feedback.clone();
                             let msg_sources = msg.sources.clone();
+                            let cited_sources = msg.cited_sources.clone();
                             view! {
                                 <div class=format!(
                                     "flex w-full group {}",
@@ -583,7 +600,7 @@ fn ChatContent() -> impl IntoView {
                                                 } else if msg.content.is_empty() {
                                                     view! { <p class="italic text-base-content/70">"No answer was received."</p> }.into_any()
                                                 } else {
-                                                    view! { <MarkdownContent html=render_markdown(&msg.content) /> }.into_any()
+                                                    view! { <MarkdownContent html=render_answer(&msg.content, msg_sources.as_deref().unwrap_or_default()) /> }.into_any()
                                                 }}
                                             </div>
 
@@ -601,7 +618,8 @@ fn ChatContent() -> impl IntoView {
                                             {if is_user {
                                                 view! { <div></div> }.into_any()
                                             } else if let Some(sources) = msg_sources.clone().filter(|sources| !sources.is_empty()) {
-                                                view! { <SourceReferencesBlock sources=sources /> }.into_any()
+                                                let listing = source_listing(&sources, cited_sources.as_deref());
+                                                view! { <SourceReferencesBlock listing=listing /> }.into_any()
                                             } else {
                                                 view! { <div></div> }.into_any()
                                             }}
@@ -664,7 +682,11 @@ fn ChatContent() -> impl IntoView {
                                         }}
                                     </div>
                                     <Show when=move || !streaming_sources.get().is_empty() fallback=|| ()>
-                                        <SourceReferencesBlock sources=streaming_sources.get() />
+                                        {move || {
+                                            let sources = streaming_sources.get();
+                                            let cited = parse_citations(&streaming_content.get(), sources.len());
+                                            view! { <SourceReferencesBlock listing=source_listing(&sources, Some(&cited)) /> }
+                                        }}
                                     </Show>
                                 </div>
                             </div>
@@ -890,73 +912,111 @@ fn UnfinishedAnswerNotice(
     }
 }
 
-/// The pages an answer drew on, listed under it in relevance order.
+/// Where a source opens: attachments in a new tab (optionally at a page),
+/// documents in the in-app viewer at their section.
+fn source_href(source: &SourceReference) -> (String, &'static str) {
+    match source.attachment_key.as_deref() {
+        Some(key) => {
+            let href = match source.source_page {
+                Some(page) => format!("/api/v1/assets/{}#page={}", key, page),
+                None => format!("/api/v1/assets/{}", key),
+            };
+            (href, "_blank")
+        }
+        None => {
+            let href = match source.section_anchor.as_deref() {
+                Some(anchor) if !anchor.is_empty() => {
+                    format!("/docs/{}#{}", source.document_slug, anchor)
+                }
+                _ => format!("/docs/{}", source.document_slug),
+            };
+            (crate::components::pinned_doc_href(&href), "_self")
+        }
+    }
+}
+
+/// An answer as HTML, its `[n]` citations linked to the sources they name.
+fn render_answer(content: &str, sources: &[SourceReference]) -> String {
+    let numbered = source_listing(sources, None).sources;
+    let linked = link_citations(content, |n| {
+        numbered
+            .iter()
+            .find(|(number, _)| *number == n)
+            .map(|(_, source)| source_href(source).0)
+    });
+    render_markdown(&linked)
+}
+
+/// The pages an answer drew on, listed under it: the ones it cites, or all of
+/// them for answers saved before citations. An answer citing nothing keeps
+/// them folded away as related reading.
 #[component]
-fn SourceReferencesBlock(sources: Vec<SourceReference>) -> impl IntoView {
-    view! {
-        <section class="rounded-xl border border-base-300/80 bg-base-100/70 px-3 py-2.5" aria-label="Sources">
-            <h3 class="mb-2 text-xs font-semibold text-base-content/75">
-                "Sources" <span class="font-normal text-base-content/70">" · most relevant first"</span>
-            </h3>
-            <ol class="flex flex-col gap-1.5">
-                <For
-                    each=move || { sources.clone().into_iter().enumerate().collect::<Vec<_>>() }
-                    key=|(idx, source)| format!(
-                        "{idx}-{}-{}",
-                        source.document_slug,
-                        source.section_anchor.clone().unwrap_or_default()
-                    )
-                    children=move |(idx, source)| {
-                        let document_slug = source.document_slug.clone();
-                        let document_title = source.document_title.clone();
-                        let section_title = source.section_title.clone();
-                        let section_anchor = source.section_anchor.clone();
-                        // The retrieval score is not shown: its scale depends on the
-                        // retrieval mode (cosine, fused rank, reranker), so a bare
-                        // "0.70" means nothing to a reader. The order carries it.
-                        let snippet = source.display_snippet().filter(|s| !s.is_empty());
-                        let display_title = section_title.clone().unwrap_or_else(|| document_title.clone());
-                        let document_line = (display_title != document_title).then(|| document_title.clone());
-                        // Attachments link to the raw asset (optionally at a page);
-                        // documents link into the in-app docs viewer by slug.
-                        let (href, link_target) = match source.attachment_key.as_deref() {
-                            Some(key) => {
-                                let href = match source.source_page {
-                                    Some(page) => format!("/api/v1/assets/{}#page={}", key, page),
-                                    None => format!("/api/v1/assets/{}", key),
-                                };
-                                (href, "_blank")
-                            }
-                            None => {
-                                let href = match section_anchor.as_deref() {
-                                    Some(anchor) if !anchor.is_empty() => {
-                                        format!("/docs/{}#{}", document_slug, anchor)
-                                    }
-                                    _ => format!("/docs/{}", document_slug),
-                                };
-                                (crate::components::pinned_doc_href(&href), "_self")
-                            }
-                        };
-                        view! {
-                            <li>
-                                <a
-                                    href=href
-                                    target=link_target
-                                    class="flex gap-2.5 rounded-lg px-2 py-1.5 no-underline transition-colors hover:bg-base-200"
-                                >
-                                    <span class="mt-0.5 flex h-5 min-w-5 shrink-0 items-center justify-center rounded bg-base-200 text-[0.75rem] font-semibold text-base-content/80" aria-hidden="true">{idx + 1}</span>
-                                    <span class="min-w-0">
-                                        <span class="block text-sm font-medium text-base-content">{display_title}</span>
-                                        {document_line.map(|title| view! { <span class="block text-xs text-base-content/70">{title}</span> })}
-                                        {snippet.map(|text| view! { <span class="mt-0.5 block text-xs leading-5 text-base-content/70 line-clamp-2">{text}</span> })}
-                                    </span>
-                                </a>
-                            </li>
-                        }
+fn SourceReferencesBlock(listing: SourceListing) -> impl IntoView {
+    let subtitle = match listing.kind {
+        SourceListingKind::All => " · most relevant first",
+        SourceListingKind::Cited => " · cited in the answer",
+        SourceListingKind::Uncited => " · not cited in the answer",
+    };
+    let sources = listing.sources;
+    let list = view! {
+        <ol class="flex flex-col gap-1.5">
+            <For
+                each=move || sources.clone()
+                key=|(number, source)| format!(
+                    "{number}-{}-{}",
+                    source.document_slug,
+                    source.section_anchor.clone().unwrap_or_default()
+                )
+                children=move |(number, source)| {
+                    let document_title = source.document_title.clone();
+                    let section_title = source.section_title.clone();
+                    // The retrieval score is not shown: its scale depends on the
+                    // retrieval mode (cosine, fused rank, reranker), so a bare
+                    // "0.70" means nothing to a reader. The order carries it.
+                    let snippet = source.display_snippet().filter(|s| !s.is_empty());
+                    let display_title = section_title.clone().unwrap_or_else(|| document_title.clone());
+                    let document_line = (display_title != document_title).then(|| document_title.clone());
+                    let (href, link_target) = source_href(&source);
+                    view! {
+                        <li>
+                            <a
+                                href=href
+                                target=link_target
+                                class="flex gap-2.5 rounded-lg px-2 py-1.5 no-underline transition-colors hover:bg-base-200"
+                            >
+                                <span class="mt-0.5 flex h-5 min-w-5 shrink-0 items-center justify-center rounded bg-base-200 text-[0.75rem] font-semibold text-base-content/80" aria-hidden="true">{number}</span>
+                                <span class="min-w-0">
+                                    <span class="block text-sm font-medium text-base-content">{display_title}</span>
+                                    {document_line.map(|title| view! { <span class="block text-xs text-base-content/70">{title}</span> })}
+                                    {snippet.map(|text| view! { <span class="mt-0.5 block text-xs leading-5 text-base-content/70 line-clamp-2">{text}</span> })}
+                                </span>
+                            </a>
+                        </li>
                     }
-                />
-            </ol>
-        </section>
+                }
+            />
+        </ol>
+    };
+    if listing.kind == SourceListingKind::Uncited {
+        view! {
+            <details class="rounded-xl border border-base-300/80 bg-base-100/70 px-3 py-2.5" aria-label="Related sources">
+                <summary class="cursor-pointer text-xs font-semibold text-base-content/75">
+                    "Related sources" <span class="font-normal text-base-content/70">{subtitle}</span>
+                </summary>
+                <div class="mt-2">{list}</div>
+            </details>
+        }
+        .into_any()
+    } else {
+        view! {
+            <section class="rounded-xl border border-base-300/80 bg-base-100/70 px-3 py-2.5" aria-label="Sources">
+                <h3 class="mb-2 text-xs font-semibold text-base-content/75">
+                    "Sources" <span class="font-normal text-base-content/70">{subtitle}</span>
+                </h3>
+                {list}
+            </section>
+        }
+        .into_any()
     }
 }
 
@@ -1291,6 +1351,8 @@ pub async fn fetch_session_messages(session_id: &str) -> Result<Vec<UiMessage>, 
         feedback: Option<UiFeedback>,
         #[serde(default)]
         status: ChatMessageStatus,
+        #[serde(default)]
+        cited_sources: Option<Vec<u32>>,
     }
     let msgs: Vec<MsgResp> = serde_wasm_bindgen::from_value(json).map_err(|e| format!("{e}"))?;
     Ok(msgs
@@ -1302,6 +1364,7 @@ pub async fn fetch_session_messages(session_id: &str) -> Result<Vec<UiMessage>, 
             sources: m.sources,
             feedback: m.feedback,
             status: m.status,
+            cited_sources: m.cited_sources,
         })
         .collect())
 }
@@ -1433,6 +1496,8 @@ pub struct StreamOutcome {
     pub status: ChatMessageStatus,
     /// Error reported by the server during the stream, if any.
     pub error: Option<String>,
+    /// Source numbers the saved answer cites (from the `done` event).
+    pub cited_sources: Option<Vec<u32>>,
 }
 
 /// Stream chat response via fetch + ReadableStream.
@@ -1585,10 +1650,14 @@ pub async fn fetch_chat_stream(
                                     } else {
                                         ChatMessageStatus::Complete
                                     });
+                                let cited_sources = event
+                                    .get("cited_sources")
+                                    .and_then(|v| serde_json::from_value(v.clone()).ok());
                                 return Ok(StreamOutcome {
                                     message_id,
                                     status,
                                     error: stream_error,
+                                    cited_sources,
                                 });
                             }
                             _ => {}
@@ -1603,6 +1672,7 @@ pub async fn fetch_chat_stream(
         message_id: None,
         status: ChatMessageStatus::Interrupted,
         error: stream_error,
+        cited_sources: None,
     })
 }
 
@@ -1618,6 +1688,58 @@ fn optional_sources(sources: Vec<SourceReference>) -> Option<Vec<SourceReference
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn source(slug: &str, anchor: Option<&str>, number: Option<u32>) -> SourceReference {
+        SourceReference {
+            document_slug: slug.into(),
+            document_title: slug.into(),
+            section_title: None,
+            section_anchor: anchor.map(str::to_string),
+            score: 0.5,
+            snippet: None,
+            attachment_key: None,
+            source_page: None,
+            number,
+        }
+    }
+
+    #[test]
+    fn answer_rendering_leaves_code_and_reference_links_untouched() {
+        // Used both while streaming and for saved answers.
+        let sources = vec![
+            source("docs/a", None, Some(1)),
+            source("docs/b", None, Some(2)),
+        ];
+        for answer in [
+            "````md\n```\nlet x = v[1];\n```\n````",
+            "See the [1][manual].\n\n[manual]: https://example.com/manual",
+            "See [1][manual].\n\n[manual]: /v[2] \"Read [3]\"",
+        ] {
+            assert_eq!(
+                render_answer(answer, &sources),
+                render_markdown(answer),
+                "{answer:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn answer_citations_link_to_the_source_with_that_number() {
+        // Source 2 is no longer visible to the reader: [3] still means docs/c.
+        let sources = vec![
+            source("docs/a", None, Some(1)),
+            source("docs/c", Some("_flux"), Some(3)),
+        ];
+        let html = render_answer("Branch from main [3]. Unknown [2].", &sources);
+        assert!(html.contains(r#"href="/docs/docs/c#_flux""#), "{html}");
+        assert!(
+            html.contains("[2]") && !html.contains(r#"href="/docs/docs/b"#),
+            "{html}"
+        );
+        // Answers saved before numbering resolve by position.
+        let legacy = vec![source("docs/a", None, None), source("docs/b", None, None)];
+        assert!(render_answer("See [2].", &legacy).contains(r#"href="/docs/docs/b""#));
+    }
 
     #[test]
     fn lmltfy_question_trims_the_value() {

@@ -14,8 +14,9 @@ pub struct SplitChunk {
     pub text: String,
     /// Heading hierarchy above this chunk (e.g. `["Architecture", "Storage Layer"]`).
     pub section_path: Vec<String>,
-    /// URL-safe anchor derived from the full heading path joined with `-`.
-    /// e.g. `"architecture-storage-layer"` for `["Architecture", "Storage Layer"]`.
+    /// The page id of the deepest heading, as the document renderer emits it
+    /// (e.g. `"storage-layer"`, or `"_flux"` for `## Flux {#_flux}`), so
+    /// `/docs/{slug}#{anchor}` lands on the section.
     pub section_anchor: String,
     /// Byte offset of this chunk's start in the original document.
     pub byte_offset: usize,
@@ -23,24 +24,6 @@ pub struct SplitChunk {
     pub char_offset: usize,
     /// Zero-based index of this chunk within the document.
     pub chunk_index: u32,
-}
-
-/// Convert a heading string into a URL-safe anchor slug.
-/// `"Storage Layer"` → `"storage-layer"`
-pub fn anchor_from_heading(heading: &str) -> String {
-    let raw: String = heading
-        .chars()
-        .filter_map(|c| {
-            if c.is_alphanumeric() {
-                Some(c.to_lowercase().next().unwrap())
-            } else if c == ' ' || c == '-' {
-                Some('-')
-            } else {
-                None
-            }
-        })
-        .collect();
-    raw.trim_matches('-').to_string()
 }
 
 // Public API
@@ -77,12 +60,7 @@ pub fn split_document(
     let mut chunks: Vec<SplitChunk> = Vec::new();
 
     for section in sections {
-        let section_anchor = section
-            .heading_path
-            .iter()
-            .map(|h| anchor_from_heading(h))
-            .collect::<Vec<_>>()
-            .join("-");
+        let section_anchor = section.anchor.clone();
 
         let split_regular = |segment: &str, base_offset: usize| -> Vec<(usize, String)> {
             let protected = protected_ranges(segment);
@@ -287,10 +265,37 @@ mod tests {
             storage_chunks[0].section_path,
             vec!["Architecture", "Storage Layer"]
         );
-        assert_eq!(
-            storage_chunks[0].section_anchor,
-            "architecture-storage-layer"
+        assert_eq!(storage_chunks[0].section_anchor, "storage-layer");
+    }
+
+    #[test]
+    fn section_anchors_are_the_ids_the_page_renderer_emits() {
+        let body = "Enough words to make this section stand on its own. ".repeat(4);
+        let content = format!(
+            "# Code Guidelines\n\n{body}\n\n## 3. Development flux {{#_development_flux}}\n\n{body}\n\n\
+             ## Use `cargo fmt` & **clippy**\n\n{body}\n\n## Plain Section\n\n{body}"
         );
+        let html = crate::rendering::markdown::render_markdown(&content);
+        let chunks = split_document(&content, TOKENS, OVERLAP);
+        let anchors: Vec<&str> = chunks
+            .iter()
+            .filter(|c| c.section_path.len() == 2)
+            .map(|c| c.section_anchor.as_str())
+            .collect();
+        assert_eq!(
+            anchors,
+            [
+                "_development_flux",
+                "use-cargo-fmt-amp-clippy",
+                "plain-section"
+            ]
+        );
+        for anchor in anchors {
+            assert!(
+                html.contains(&format!("id=\"{anchor}\"")),
+                "{anchor} is not an id of the rendered page: {html}"
+            );
+        }
     }
 
     #[test]
@@ -315,6 +320,39 @@ mod tests {
                 chunk.section_path,
                 vec!["Real Heading"],
                 "heading inside code block should not split sections"
+            );
+        }
+    }
+
+    #[test]
+    fn comment_lines_in_any_fenced_code_block_never_become_headings() {
+        let body = "Real content about the development flow. ".repeat(5);
+        let fences = [
+            "```gitattributes\n# denote all files that are truly binary\n*.png binary\n```",
+            "~~~\n# tilde comment\n## tilde section\n~~~",
+            "~~~~ shell\n# long tilde fence\n~~~\n# still code\n~~~~",
+            "````md\n```\n# nested backticks\n```\n# still code\n````",
+            "1. Configure git:\n\n   ```\n   # indented in a list\n   ```",
+        ];
+        for fence in fences {
+            let content = format!(
+                "# Guidelines\n\n## Development Flux\n\n{body}\n\n{fence}\n\n{body}\n\n## After\n\n{body}"
+            );
+            let chunks = split_document(&content, TOKENS, OVERLAP);
+            let fence_chunk = chunks
+                .iter()
+                .find(|c| c.text.contains(fence.lines().nth(1).unwrap().trim()))
+                .unwrap_or_else(|| panic!("fence body missing for {fence:?}"));
+            assert_eq!(
+                fence_chunk.section_path,
+                vec!["Guidelines", "Development Flux"],
+                "{fence:?}"
+            );
+            assert_eq!(fence_chunk.section_anchor, "development-flux", "{fence:?}");
+            let paths: Vec<_> = chunks.iter().map(|c| c.section_path.clone()).collect();
+            assert!(
+                paths.contains(&vec!["Guidelines".to_string(), "After".to_string()]),
+                "headings after the fence still split sections: {fence:?}"
             );
         }
     }
@@ -482,19 +520,6 @@ mod tests {
                 total_chars
             );
         }
-    }
-
-    #[test]
-    fn anchor_from_heading_basic() {
-        assert_eq!(anchor_from_heading("Storage Layer"), "storage-layer");
-        assert_eq!(anchor_from_heading("Hello World"), "hello-world");
-        assert_eq!(anchor_from_heading("  Trim  "), "trim");
-    }
-
-    #[test]
-    fn anchor_from_heading_strips_special_chars() {
-        assert_eq!(anchor_from_heading("API (v2)"), "api-v2");
-        assert_eq!(anchor_from_heading("C++ Guide"), "c-guide");
     }
 
     #[derive(Debug, Clone, Copy)]

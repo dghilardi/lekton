@@ -192,9 +192,9 @@ pub struct RetrievalOutput {
     /// replaced with HyDE text for embedding only.
     pub queries_embedded: Vec<String>,
     /// Top-K candidates after vector search, dedup, and (optional) hybrid RRF
-    /// — before reranking. Bounded by `retrieval_candidate_limit` when reranking
-    /// is active, otherwise by the vector fetch size (`context_chunk_limit`, or
-    /// three times it with hybrid search).
+    /// — before reranking. Bounded by `retrieval_candidate_limit`; without a
+    /// reranker the smaller vector fetches (`context_chunk_limit` per query, or
+    /// three times it with hybrid search) usually keep it below that.
     pub pre_rerank: Vec<VectorSearchResult>,
     /// Final context, bounded by `context_chunk_limit` and capped per
     /// document. On reranker failure, it is selected from `pre_rerank` order.
@@ -1125,9 +1125,10 @@ impl ChatService {
         } else {
             self.context_chunk_limit
         };
-        // Without a reranker the whole fetched pool still reaches the final
-        // selection, so the per-document cap can reach past the first chunks.
-        let candidate_limit = vector_limit;
+        // The whole fused pool reaches the final selection in every mode, so
+        // the per-document cap can reach past the first chunks of any query.
+        // The fetch sizes above keep the pool small without a reranker.
+        let candidate_limit = self.retrieval_candidate_limit;
         tracing::debug!(
             session_id = %session_id,
             retrieval_query = %retrieval_query,

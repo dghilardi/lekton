@@ -1119,3 +1119,45 @@ async fn per_document_cap_applies_with_and_without_a_reranker() {
         );
     }
 }
+
+#[tokio::test]
+async fn per_document_cap_sees_the_whole_fused_pool_without_hybrid_or_reranker() {
+    use axum::{routing::post, Json, Router};
+    use serde_json::{json, Value};
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post(|Json(_): Json<Value>| async move {
+            let content = json!({"complexity":"multi_entity","sub_queries":["two"]}).to_string();
+            Json(json!({"id":"test","object":"chat.completion","created":0,"model":"mock","choices":[{"index":0,"message":{"role":"assistant","content":content},"finish_reason":"stop"}]}))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut config = config();
+    config.llm.url = format!("http://{}/v1", listener.local_addr().unwrap());
+    config.analyzer =
+        Some(serde_json::from_value::<LlmStepConfig>(json!({"model":"analyzer"})).unwrap());
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let a = |i: usize| adr_chunk(&format!("a{i}"), "a", &format!("a passage {i}"), 0.9);
+    let lists = vec![
+        (0..5).map(a).collect(),
+        vec![
+            a(0),
+            a(1),
+            a(2),
+            adr_chunk("b0", "b", "b passage", 0.5),
+            adr_chunk("c0", "c", "c passage", 0.4),
+        ],
+    ];
+    let chat = service(&config, store(lists, 5), Arc::default(), None, None, true).await;
+    let result = retrieve(&chat, RetrievalMode::Full).await;
+    task.abort();
+    assert_eq!(result.queries_embedded.len(), 2);
+    assert_eq!(
+        result.pre_rerank.len(),
+        7,
+        "every fused passage is a candidate"
+    );
+    assert_eq!(ids(&result.post_rerank), ["a0", "a1", "a2", "b0", "c0"]);
+}

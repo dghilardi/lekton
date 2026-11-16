@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Switching a document to an older release now works when the source id is a URL; the pin was split on the URL's scheme colon and silently ignored.
 - Delete the old S3 body when an import renames a document and changes its content, instead of leaving an unowned object behind.
 
 ## [0.42.0] 2026-11-16

@@ -298,7 +298,9 @@ fallback. Both settings also work in `rag-bench` TOML. `pre_rerank` contains the
 candidate pool; `post_rerank` contains final context. For comparable pre/post
 metrics, use `--top-k` at or below the final-context limit, or increase that limit.
 Both evaluation CLIs warn when the requested cutoff exceeds the context budget.
-When reranking is disabled or skipped in thrifty mode, both lists stay final sized.
+When reranking is disabled or skipped in thrifty mode, `pre_rerank` is the vector
+fetch (`context_chunk_limit`, or three times it with hybrid search) and only
+`post_rerank` is final sized, so the per-document cap still has candidates to use.
 
 Chunks with identical plain text, ignoring whitespace, markup and link targets
 (a page and its `.md` copy attached elsewhere, or duplicate documents) are collapsed to the best-ranked copy

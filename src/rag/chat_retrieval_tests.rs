@@ -470,7 +470,8 @@ async fn hybrid_without_reranker_keeps_existing_small_overfetch_and_thrifty_skip
         )
         .await;
         let result = retrieve(&service, mode).await;
-        assert_eq!(result.pre_rerank.len(), 5);
+        // The fetched pool reaches the final selection, which keeps five.
+        assert_eq!(result.pre_rerank.len(), limit);
         assert_eq!(result.post_rerank.len(), 5);
         assert_eq!(
             search.calls.load(std::sync::atomic::Ordering::SeqCst),
@@ -501,8 +502,11 @@ async fn hybrid_without_reranker_admits_lexical_passage_beside_top_vector_hit() 
     };
     // Without a reranker the final context keeps the top vector hit first,
     // then the top lexical passage, then the fused ranking.
-    assert_eq!(ids(&result.pre_rerank), ["p0", "p99", "p1", "p2", "p3"]);
-    assert_eq!(ids(&result.post_rerank), ids(&result.pre_rerank));
+    assert_eq!(
+        ids(&result.pre_rerank[..5]),
+        ["p0", "p99", "p1", "p2", "p3"]
+    );
+    assert_eq!(ids(&result.post_rerank), ids(&result.pre_rerank[..5]));
 }
 
 #[test]
@@ -1077,4 +1081,41 @@ fn code_that_differs_only_in_markup_like_text_is_not_collapsed() {
     ];
     let candidates = select_candidates(vec![pool], vec![], 10);
     assert_eq!(ids(&candidates), ["u8", "u64", "i-u8", "i-u64"]);
+}
+
+#[tokio::test]
+async fn per_document_cap_applies_with_and_without_a_reranker() {
+    let mut pool: Vec<_> = (0..5)
+        .map(|i| {
+            adr_chunk(
+                &format!("a{i}"),
+                "a",
+                &format!("a passage {i}"),
+                0.9 - i as f32 / 100.0,
+            )
+        })
+        .collect();
+    pool.push(adr_chunk("b0", "b", "b passage", 0.5));
+    pool.push(adr_chunk("c0", "c", "c passage", 0.4));
+    for with_reranker in [false, true] {
+        let mut config = config();
+        config.hybrid_search_enabled = true;
+        // The vector overfetch sees B and C; lexical search finds nothing.
+        let expected_limit = if with_reranker { 50 } else { 15 };
+        let service = service(
+            &config,
+            store(vec![pool.clone()], expected_limit),
+            Arc::default(),
+            Some(Arc::new(TestSearch::default())),
+            with_reranker.then(|| Arc::new(RecordingReranker::default()) as Arc<dyn Reranker>),
+            true,
+        )
+        .await;
+        let result = retrieve(&service, RetrievalMode::Full).await;
+        assert_eq!(
+            ids(&result.post_rerank),
+            ["a0", "a1", "a2", "b0", "c0"],
+            "reranker: {with_reranker}"
+        );
+    }
 }

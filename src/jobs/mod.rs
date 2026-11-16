@@ -1,4 +1,8 @@
 #[cfg(feature = "ssr")]
+pub mod consistency_report;
+#[cfg(feature = "ssr")]
+pub mod embedding_cache;
+#[cfg(feature = "ssr")]
 pub mod ingest;
 pub mod recompute_access_levels;
 
@@ -148,3 +152,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(feature = "ssr")]
+pub mod revision_retention;

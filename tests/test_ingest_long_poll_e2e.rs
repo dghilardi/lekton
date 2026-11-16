@@ -28,6 +28,14 @@ impl StorageClient for SlowStagingStorage {
     async fn delete_object(&self, key: &str) -> Result<(), lekton::error::AppError> {
         self.0.delete_object(key).await
     }
+
+    async fn list(
+        &self,
+        prefix: &str,
+        continuation: Option<&str>,
+    ) -> Result<lekton::storage::client::ListPage, lekton::error::AppError> {
+        self.0.list(prefix, continuation).await
+    }
 }
 
 struct Workspace(std::path::PathBuf);

@@ -105,6 +105,12 @@ pub trait RagService: Send + Sync {
     async fn list_point_ids(&self) -> Result<HashSet<String>, AppError> {
         Ok(HashSet::new())
     }
+
+    /// The source of every stored chunk, for the read-only consistency
+    /// report. Defaults to none.
+    async fn list_point_sources(&self) -> Result<Vec<PointSource>, AppError> {
+        Ok(Vec::new())
+    }
 }
 
 /// Whether a point is an attachment chunk: its `source_kind` says so or,
@@ -470,6 +476,10 @@ impl RagService for DefaultRagService {
             .into_iter()
             .map(|p| p.id)
             .collect())
+    }
+
+    async fn list_point_sources(&self) -> Result<Vec<PointSource>, AppError> {
+        self.vectorstore.list_point_sources().await
     }
 }
 

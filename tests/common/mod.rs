@@ -207,6 +207,7 @@ impl TestEnv {
             schema_repo: schema_repo.clone(),
             settings_repo: settings_repo.clone(),
             asset_repo: asset_repo.clone(),
+            revision_keep_last: 10,
             storage_client: storage.clone(),
             search_service: Some(search.clone()),
             features: lekton::app::FeatureFlags {
@@ -253,6 +254,12 @@ impl TestEnv {
             document_source_repo: document_source_repo.clone(),
             usage_event_repo: None,
             embedding_cache_repo: None,
+            embedding_cache_namespaces: Vec::new(),
+            storage_reference_repo: Arc::new(
+                lekton::db::storage_reference_repository::MongoStorageReferenceRepository::new(
+                    &mongo_db,
+                ),
+            ),
             schema_endpoint_reindex_state: Arc::new(
                 lekton::schema::reindex::SchemaEndpointReindexState::default(),
             ),
@@ -546,6 +553,7 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
         schema_repo: env.schema_repo.clone(),
         settings_repo: env.settings_repo.clone(),
         asset_repo: env.asset_repo.clone(),
+        revision_keep_last: 10,
         storage_client: env.storage.clone(),
         search_service: None,
         features: lekton::app::FeatureFlags {
@@ -592,6 +600,10 @@ pub fn server_without_search(env: &TestEnv) -> axum_test::TestServer {
         document_source_repo: env.document_source_repo.clone(),
         usage_event_repo: None,
         embedding_cache_repo: None,
+        embedding_cache_namespaces: Vec::new(),
+        storage_reference_repo: Arc::new(
+            lekton::db::storage_reference_repository::MongoStorageReferenceRepository::new(&env.db),
+        ),
         schema_endpoint_reindex_state: Arc::new(
             lekton::schema::reindex::SchemaEndpointReindexState::default(),
         ),

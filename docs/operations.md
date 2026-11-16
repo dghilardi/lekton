@@ -160,6 +160,21 @@ Built-in demo accounts resolve to their demo email only while demo mode is enabl
 The admin-only `ListTopConsumers` server function includes an optional
 `actor_email` alongside `actor_id`; usage events continue to store IDs.
 
+### Embedding cache
+
+`embedding_cache` stores one vector per chunk text and *namespace*
+(`model|dimensions|endpoint-hash`, in the `model` field). Changing the embedding
+model, dimensions, URL or Vertex project starts a new namespace; the old one is
+never read again but stays on disk, and it is usually most of the database.
+
+*Admin → Data Maintenance → Embedding cache* lists the namespaces with their
+entry count and an approximate size, marks the ones the running configuration
+uses, and deletes the selected unused ones after a confirmation. Namespaces in
+use cannot be deleted (the server refuses the whole request). Counting reads
+only the `(hash, model)` index; deleting fetches only the entries it removes.
+MongoDB reuses the freed space for new data but does not shrink its files; run
+`compact` on the collection to return it to the operating system.
+
 ### Backup
 
 ```bash
@@ -217,7 +232,7 @@ rclone sync garage:lekton-bucket-backup garage:lekton-bucket \
 
 ## Qdrant
 
-Vector embeddings are stored in the collection configured via `LKN__RAG__QDRANT_COLLECTION` (default: `lekton`).
+Vector embeddings are stored in the collection configured via `LKN__RAG__QDRANT_COLLECTION` (default: `docs_collection`).
 
 ### Snapshot (backup)
 
@@ -283,10 +298,21 @@ A native page must reproduce its stored preview before its full text is accepted
 
 ### Upgrading
 
-Lekton is tested against Meilisearch 1.54. A Meilisearch database only opens with the version that created it, so a new image needs one of:
+Lekton is tested against Meilisearch 1.54.3. A Meilisearch database only opens with the version that created it, so a new image needs one of:
 
 - **In-place upgrade**: take a snapshot (`POST /snapshots`), then start the new version with `MEILI_UPGRADE_DB=true` (`docker-compose.yml` sets it). Works for databases created by Meilisearch 1.12 or later; the upgrade is not atomic, so keep the snapshot until it succeeds.
-- **Fresh index**: start the new version on an empty data directory and run a full re-index. Use this for databases older than 1.12 or if the in-place upgrade fails.
+- **Dump/import**: on the old server, `POST /dumps`, wait for its task to succeed, then copy the resulting `.dump` file. Stop the old server and start 1.54.3 with an empty data directory and `--import-dump /path/to/file.dump`. Keep the old directory for rollback. A snapshot is a backup for the same version, not a cross-version import.
+- **Fresh index**: start the new version on an empty data directory and run a full search re-index if MongoDB/S3 can reconstruct every index you need.
+
+For a server on **1.17**, first back up and verify the snapshot task completed,
+then stop it and start **1.54.3** with `MEILI_UPGRADE_DB=true`; monitor the
+`UpgradeDatabase` task until it succeeds before resuming writes. The target
+version uses `--upgrade-db` (stabilized in 1.51); earlier targets used
+`--experimental-dumpless-upgrade`. If startup rejects the database, use the
+old binary to export a dump and follow dump/import above. See the
+[official upgrade procedure](https://www.meilisearch.com/docs/resources/migration/updating)
+and review version-specific warnings before the upgrade. No operational
+upgrade is performed by Lekton's Mongo migrations.
 
 ---
 
@@ -356,3 +382,39 @@ Advisories without a patched release are accepted only after weighing their impa
 |----------|---------------|--------|---------|
 | RUSTSEC-2023-0071 (`rsa` timing side channel) | `openidconnect` 4 | Lekton only verifies RS256 ID-token signatures with public keys; the attack needs private-key operations. | Move to `rsa` 0.10 once it is stable and `openidconnect` adopts it. |
 | GHSA-866g-f22w-33x8 (low, `@ai-sdk/provider-utils` resource consumption) | `@scalar/api-reference` → `@scalar/agent-chat`, which pins `ai` 6.0.33 | The Scalar agent chat is not configured by Lekton; the shipped viewer is Scalar's prebuilt bundle, so an npm override would not change it. | Wait for a Scalar release that bumps the pin, or pass `agent: { disabled: true }` to the viewer. |
+
+## Data maintenance
+
+Administrators can use **Settings → Data Maintenance** to inspect embedding-cache
+namespaces, purge selected unused namespaces, and run a read-only consistency
+report across MongoDB, S3, Meilisearch and Qdrant. Active cache namespaces are
+protected on the server even when RAG is temporarily disabled. Sizes are estimates; namespace counts do not load vectors.
+The report caps samples at 20 per category. Disabled or unavailable indexes are
+reported as skipped, and concurrent imports can produce temporary findings.
+It does not delete or repair anything. Inline editor images have no Mongo owner
+and are listed separately rather than treated as unowned objects to delete.
+
+`LKN__STORAGE__REVISION_KEEP_LAST` controls the number of historical revisions kept
+per slug: the default is **10**, an omitted setting uses that default, and **0**
+keeps unlimited history. This counts outgoing historical bodies, not the current
+document. Revision numbers keep increasing because the newest revision is retained.
+Outgoing bodies must be successfully archived to S3 before a revision is recorded
+and retention runs. Read errors, missing bodies and archive write errors are logged;
+ingestion continues without adding a broken revision or pruning valid history.
+Changing the limit applies when the next revision is created. To apply it to all
+existing history, preview retention in Data Maintenance, then confirm the sweep.
+The count is a preview; concurrent edits may change it before the sweep runs.
+Pruning removes each Mongo row first and then its S3 object, preserving objects
+still referenced by other revisions (legacy escaped slug keys can collide). Failures are logged
+and never fail ingestion; S3 failures leave orphan objects visible in the report.
+Editor saves currently do not create historical revisions.
+
+Before upgrading, back up MongoDB if legacy permission grants must be retained: migration
+`023` permanently drops the unused `user_permissions` collection. No application code
+reads that collection. Retention previews fail on unreadable revision records rather
+than showing an incomplete deletion count; repair the records before confirming cleanup.
+
+Legacy history keys escape slashes as underscores, so distinct slugs such as `a/b`
+and `a_b` can share a key. The ownership check preserves recorded references, but
+a concurrent archive upload before its Mongo row is created can still race pruning.
+Avoid concurrent history cleanup and imports for these colliding legacy slugs.

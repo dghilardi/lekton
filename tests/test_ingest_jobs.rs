@@ -23,6 +23,13 @@ impl lekton::storage::client::StorageClient for HangingReadStorage {
     async fn delete_object(&self, key: &str) -> Result<(), lekton::error::AppError> {
         self.0.delete_object(key).await
     }
+    async fn list(
+        &self,
+        prefix: &str,
+        continuation: Option<&str>,
+    ) -> Result<lekton::storage::client::ListPage, lekton::error::AppError> {
+        self.0.list(prefix, continuation).await
+    }
 }
 
 /// Exercise the HTTP contract, real unique indexes, durable recovery and the

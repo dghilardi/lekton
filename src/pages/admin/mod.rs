@@ -9,6 +9,7 @@ mod ai_usage;
 mod custom_css;
 mod document_upload;
 mod documentation_feedback;
+mod maintenance;
 mod navigation_order;
 mod pats;
 mod reindex;
@@ -21,6 +22,7 @@ use ai_usage::AiUsageReport;
 use custom_css::CustomCssEditor;
 use document_upload::DocumentUploadManager;
 use documentation_feedback::DocumentationFeedbackAdminPanel;
+use maintenance::DataMaintenancePanel;
 use navigation_order::NavigationOrderEditor;
 use pats::AdminPatManager;
 use reindex::{RagReindexSection, SchemaEndpointReindexSection, SearchReindexSection};
@@ -51,6 +53,8 @@ fn section_icon_path(section: &str) -> &'static str {
         "rag" => "M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4",
         // shield-check
         "access-levels" => "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z",
+        // database (stacked cylinder)
+        "maintenance" => "M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 12c0 2.21 3.582 4 8 4s8-1.79 8-4",
         // chart bars
         "ai-usage" => "M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z",
         // users
@@ -79,6 +83,7 @@ fn section_title(section: &str) -> &'static str {
         "ai-usage" => "AI Usage",
         "upload" => "Upload Document",
         "sources" => "Documentation Sources",
+        "maintenance" => "Data Maintenance",
         _ => "Administration",
     }
 }
@@ -157,6 +162,7 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
                            "rag" => "Rebuild derived search and retrieval indexes from the canonical document store.",
                            "upload" => "Upload a PDF and publish it as a page with a description and download link.",
                            "sources" => "Attach repository metadata and maintainers to the import sources your documents come from.",
+                           "maintenance" => "Reclaim storage that the current configuration no longer uses.",
                            _ => "Manage your instance configuration, service tokens, and theming.",
                        };
                        view! {
@@ -195,6 +201,7 @@ fn AdminSettingsContent(section: impl Fn() -> String + Send + Sync + 'static) ->
                         }.into_any()
                     }
                     "access-levels" => view! { <AccessLevelManager /> }.into_any(),
+                    "maintenance" => view! { <DataMaintenancePanel /> }.into_any(),
                     "users" => view! { <UserManager /> }.into_any(),
                     "ai-usage" => {
                         let rag_enabled = crate::app::use_feature(|f| f.rag);

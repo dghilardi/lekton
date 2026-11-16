@@ -115,6 +115,172 @@ mod inner {
                 "davide.ghilardi@comelit.it",
                 scrub_raw_tokens_from_asset_uploaders,
             )
+            .register(
+                "022_add_assets_refresh_tokens_learn_indexes",
+                "davide.ghilardi@comelit.it",
+                add_assets_refresh_tokens_learn_indexes,
+            )
+            .register(
+                "023_drop_unused_user_permissions",
+                "ghilardi.davide@gmail.com",
+                |db| crate::db::migration::drop_collection_if_exists(db, "user_permissions"),
+            )
+            .register(
+                "024_add_revision_retention_indexes",
+                "ghilardi.davide@gmail.com",
+                add_revision_retention_indexes,
+            )
+    }
+
+    /// Retention deletes by logical ID and checks surviving owners by S3 key.
+    /// Keys are deliberately non-unique because legacy slug escaping can collide.
+    async fn add_revision_retention_indexes(db: Database) -> Result<(), mongodb::error::Error> {
+        use mongodb::{options::IndexOptions, IndexModel};
+
+        let revisions = db.collection::<bson::Document>("document_revisions");
+        fail_on_duplicate_keys(
+            &revisions,
+            "024_add_revision_retention_indexes",
+            "document_revisions",
+            bson::Bson::String("$id".into()),
+        )
+        .await?;
+        revisions
+            .create_indexes(vec![
+                IndexModel::builder()
+                    .keys(bson::doc! { "id": 1 })
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+                IndexModel::builder()
+                    .keys(bson::doc! { "s3_key": 1 })
+                    .build(),
+            ])
+            .await?;
+        Ok(())
+    }
+
+    /// Indexes for the collections still answered by collection scans, each
+    /// derived from the repository queries that hit it:
+    ///
+    /// - `assets`: unique `key` (every lookup, upsert and delete, and the
+    ///   `$in` filter of the reference `$pull`/`$addToSet`); a multikey index
+    ///   on the whole `referenced_by` entry, because
+    ///   `set_release_references` matches a `{slug, release}` subdocument by
+    ///   exact equality, which a dotted `referenced_by.slug` index cannot
+    ///   serve; and `extraction_status` for the startup sweep of unfinished
+    ///   extractions.
+    /// - `refresh_tokens`: unique `id` (revocation), `user_id` (revoke all of
+    ///   a user's tokens) and `family_id` (reuse detection revokes a family).
+    /// - Learn mode: unique `id` on paths and lessons, a user's paths by
+    ///   recency, a path's lessons by `seq` and records by recency (both also
+    ///   serve deleting a path), `user_id` on lessons and records for the
+    ///   privacy wipe, and a unique `user_id` on preferences so concurrent
+    ///   upserts cannot create two rows. Records are never fetched by `id`, so
+    ///   that key gets no index.
+    async fn add_assets_refresh_tokens_learn_indexes(
+        db: Database,
+    ) -> Result<(), mongodb::error::Error> {
+        use mongodb::options::IndexOptions;
+        use mongodb::IndexModel;
+
+        const CHANGE_ID: &str = "022";
+        let unique = || IndexOptions::builder().unique(true).build();
+        let field = |name: &str| bson::Bson::String(format!("${name}"));
+
+        let assets = db.collection::<bson::Document>("assets");
+        fail_on_duplicate_keys(&assets, CHANGE_ID, "assets", field("key")).await?;
+        assets
+            .create_indexes(vec![
+                IndexModel::builder()
+                    .keys(bson::doc! { "key": 1 })
+                    .options(unique())
+                    .build(),
+                IndexModel::builder()
+                    .keys(bson::doc! { "referenced_by": 1 })
+                    .build(),
+                IndexModel::builder()
+                    .keys(bson::doc! { "extraction_status": 1 })
+                    .build(),
+            ])
+            .await?;
+
+        let refresh_tokens = db.collection::<bson::Document>("refresh_tokens");
+        fail_on_duplicate_keys(&refresh_tokens, CHANGE_ID, "refresh_tokens", field("id")).await?;
+        refresh_tokens
+            .create_indexes(vec![
+                IndexModel::builder()
+                    .keys(bson::doc! { "id": 1 })
+                    .options(unique())
+                    .build(),
+                IndexModel::builder()
+                    .keys(bson::doc! { "user_id": 1 })
+                    .build(),
+                IndexModel::builder()
+                    .keys(bson::doc! { "family_id": 1 })
+                    .build(),
+            ])
+            .await?;
+
+        let paths = db.collection::<bson::Document>("learn_paths");
+        fail_on_duplicate_keys(&paths, CHANGE_ID, "learn_paths", field("id")).await?;
+        paths
+            .create_indexes(vec![
+                IndexModel::builder()
+                    .keys(bson::doc! { "id": 1 })
+                    .options(unique())
+                    .build(),
+                IndexModel::builder()
+                    .keys(bson::doc! { "user_id": 1, "updated_at": -1 })
+                    .build(),
+            ])
+            .await?;
+
+        let lessons = db.collection::<bson::Document>("learn_lessons");
+        fail_on_duplicate_keys(&lessons, CHANGE_ID, "learn_lessons", field("id")).await?;
+        lessons
+            .create_indexes(vec![
+                IndexModel::builder()
+                    .keys(bson::doc! { "id": 1 })
+                    .options(unique())
+                    .build(),
+                IndexModel::builder()
+                    .keys(bson::doc! { "path_id": 1, "seq": 1 })
+                    .build(),
+                IndexModel::builder()
+                    .keys(bson::doc! { "user_id": 1 })
+                    .build(),
+            ])
+            .await?;
+
+        db.collection::<bson::Document>("learn_records")
+            .create_indexes(vec![
+                IndexModel::builder()
+                    .keys(bson::doc! { "path_id": 1, "created_at": -1 })
+                    .build(),
+                IndexModel::builder()
+                    .keys(bson::doc! { "user_id": 1 })
+                    .build(),
+            ])
+            .await?;
+
+        let preferences = db.collection::<bson::Document>("learn_preferences");
+        fail_on_duplicate_keys(
+            &preferences,
+            CHANGE_ID,
+            "learn_preferences",
+            field("user_id"),
+        )
+        .await?;
+        preferences
+            .create_index(
+                IndexModel::builder()
+                    .keys(bson::doc! { "user_id": 1 })
+                    .options(unique())
+                    .build(),
+            )
+            .await?;
+
+        Ok(())
     }
 
     /// The service-token asset API used to store the raw token as `uploaded_by`.

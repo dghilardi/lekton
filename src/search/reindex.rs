@@ -534,6 +534,18 @@ mod tests {
         async fn delete_object(&self, _: &str) -> Result<(), AppError> {
             Ok(())
         }
+
+        async fn list(
+            &self,
+            prefix: &str,
+            continuation: Option<&str>,
+        ) -> Result<crate::storage::client::ListPage, AppError> {
+            Ok(crate::storage::client::list_keys_page(
+                self.objects.lock().unwrap().keys(),
+                prefix,
+                continuation,
+            ))
+        }
     }
 
     #[derive(Default)]

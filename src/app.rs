@@ -18,6 +18,7 @@ pub use crate::server::custom_css::*;
 pub use crate::server::docs::*;
 pub use crate::server::feedback::*;
 pub use crate::server::learn::*;
+pub use crate::server::maintenance::*;
 pub use crate::server::nav::NavigationOrderEntry;
 pub use crate::server::nav::*;
 pub use crate::server::pats::*;
@@ -121,6 +122,7 @@ pub struct AppState {
     pub schema_repo: Arc<dyn crate::db::schema_repository::SchemaRepository>,
     pub settings_repo: Arc<dyn crate::db::settings_repository::SettingsRepository>,
     pub asset_repo: Arc<dyn crate::db::asset_repository::AssetRepository>,
+    pub revision_keep_last: usize,
     pub storage_client: Arc<dyn crate::storage::client::StorageClient>,
     pub search_service: Option<Arc<dyn crate::search::client::SearchService>>,
     pub service_token: String,
@@ -174,6 +176,13 @@ pub struct AppState {
     pub usage_event_repo: Option<Arc<dyn crate::db::usage_repository::UsageEventRepository>>,
     pub embedding_cache_repo:
         Option<Arc<dyn crate::db::embedding_cache_repository::EmbeddingCacheRepository>>,
+    /// The embedding-cache namespaces the running configuration uses (empty
+    /// with RAG off). The admin purge refuses to delete them.
+    #[from_ref(skip)]
+    pub embedding_cache_namespaces: Vec<String>,
+    /// Every S3 key MongoDB points at, for the consistency report.
+    pub storage_reference_repo:
+        Arc<dyn crate::db::storage_reference_repository::StorageReferenceRepository>,
     #[from_ref(skip)]
     pub insecure_cookies: bool,
     #[from_ref(skip)]

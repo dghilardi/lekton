@@ -695,15 +695,19 @@ async fn main() {
     > = Arc::new(MongoDocumentationFeedbackRepository::new(&mongo_db));
     let document_source_repo: Arc<dyn lekton::db::source_repository::DocumentSourceRepository> =
         Arc::new(lekton::db::source_repository::MongoDocumentSourceRepository::new(&mongo_db));
+    // Built even with RAG off, so the admin can purge a cache left behind by an
+    // earlier configuration; only the RAG pipeline below writes to it.
     let embedding_cache_repo: Option<
         Arc<dyn lekton::db::embedding_cache_repository::EmbeddingCacheRepository>,
-    > = if config.features.rag {
-        Some(Arc::new(
-            lekton::db::embedding_cache_repository::MongoEmbeddingCacheRepository::new(&mongo_db),
-        ))
-    } else {
-        None
-    };
+    > = Some(Arc::new(
+        lekton::db::embedding_cache_repository::MongoEmbeddingCacheRepository::new(&mongo_db),
+    ));
+    // The namespaces this configuration uses, protected from the admin purge.
+    // Taken from the configuration rather than from a successful RAG start,
+    // so a backend that is down at startup does not expose its cache.
+    // Temporarily disabling RAG must not make its configured cache purgeable.
+    let embedding_cache_namespaces =
+        lekton::rag::cached_embedding::configured_cache_namespaces(&config.rag);
 
     // Run database migrations before seeding or serving traffic.
     lekton::db::migrations::build_plan()
@@ -853,27 +857,10 @@ async fn main() {
                 // Wrap raw embedding with the cache for chunk indexing.
                 let cached_embedding: Arc<dyn lekton::rag::embedding::EmbeddingService> =
                     if let Some(ref cache_repo) = embedding_cache_repo {
-                        // Endpoint identity: distinct per backend so repointing the URL
-                        // (or Vertex project) busts the cache instead of returning stale
-                        // vectors from the old backend.
-                        let endpoint = if config.rag.embedding_vertex_project_id.is_empty() {
-                            format!("oai:{}", config.rag.embedding_url)
-                        } else {
-                            format!(
-                                "vertex:{}/{}",
-                                config.rag.embedding_vertex_project_id,
-                                config.rag.embedding_vertex_location
-                            )
-                        };
-                        let namespace = lekton::rag::cached_embedding::cache_namespace(
-                            &config.rag.embedding_model,
-                            config.rag.embedding_dimensions,
-                            &endpoint,
-                        );
                         Arc::new(CachedEmbeddingService::new(
                             raw_embedding.clone(),
                             cache_repo.clone(),
-                            namespace,
+                            embedding_cache_namespaces[0].clone(),
                             config.rag.embedding_cache_store_text,
                         ))
                     } else {
@@ -1100,6 +1087,7 @@ async fn main() {
         schema_repo,
         settings_repo,
         asset_repo,
+        revision_keep_last: config.storage.revision_keep_last,
         storage_client,
         search_service,
         leptos_options: leptos_options.clone(),
@@ -1135,6 +1123,12 @@ async fn main() {
         document_source_repo,
         usage_event_repo,
         embedding_cache_repo,
+        embedding_cache_namespaces,
+        storage_reference_repo: Arc::new(
+            lekton::db::storage_reference_repository::MongoStorageReferenceRepository::new(
+                &mongo_db,
+            ),
+        ),
         insecure_cookies: config.server.insecure_cookies,
         max_attachment_size_bytes: config.server.max_attachment_size_mb * 1024 * 1024,
         features,

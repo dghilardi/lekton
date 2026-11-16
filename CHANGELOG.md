@@ -4,19 +4,32 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Search full attachment page text and show bounded snippets around matching words.
+- Configurable revision retention (last 10 by default) and an admin preview and prune action for existing history; failed S3 archives leave valid history intact.
+- Read-only admin consistency report for MongoDB, S3 and search indexes, with paginated storage listing and explicit labels for informational findings.
+- Admin embedding-cache inventory and confirmed purge of unused namespaces, with server-side protection for configured models even while RAG is disabled.
+
+### Changed
+
+- Migrations `022` and `024` add missing asset, refresh-token, Learn and revision-retention indexes, with duplicate checks before unique indexes.
+
 ### Fixed
 
 - Keep chat answers in the user's language even when sources or previous assistant replies use another language.
 
 - Use the correct Vertex AI hosts for global and EU/US multi-region chat endpoints.
 
+- Corrected Qdrant collection defaults and documented Meilisearch 1.17 upgrades.
+
+### Removed
+
+- Retired tenant-token helper and unused user permissions collection.
+
 ### Upgrade
 
 - After deploying attachment full-text search, run one search reindex from Admin → Settings or authenticated `POST /api/v1/admin/search/reindex` (poll `GET /api/v1/admin/search/reindex/status`). This backfills existing indexed pages from S3 using only free native text extraction (`libpdfium` for PDFs), without VLM or embedding calls. Pages whose stored previews cannot be reproduced keep preview-only search; see `docs/operations.md` for explicit paid reprocessing options.
-
-### Added
-
-- Search full attachment page text and show bounded snippets around matching words.
 
 ## [0.41.0] 2026-11-15
 

@@ -54,7 +54,7 @@ publishing it does not deploy the portal backend. See [website.md](website.md).
 ### 4.1. Authentication & Authorization (RBAC)
 
 *   **Auth Provider:** Integration with company OIDC/OAuth provider (e.g., Keycloak, Okta, Google Workspace).
-*   **Access Levels:** Rather than a fixed role enum, Lekton uses a **dynamic `access_levels` collection** (e.g. `public`, `internal`, `developer`, `architect`) plus a per-user `user_permissions` table granting `can_read` / `can_write` / `can_read_draft` / `can_write_draft` per level. `public` and `loggeduser` are implicit. Admins are a boolean flag on the user. (See §5 data models.)
+*   **Access Levels:** Rather than a fixed role enum, Lekton uses a **dynamic `access_levels` collection** (e.g. `public`, `internal`, `developer`, `architect`) with per-user read, write and draft grants stored on each user. `public` and `loggeduser` are implicit. Admins are a boolean flag on the user. (See §5 data models.)
 *   **Granularity:**
 *   Every document and schema version must have a `min_access_level` field in MongoDB.
 *   The Axum middleware must reject requests to restricted paths before fetching content from S3.
@@ -148,6 +148,23 @@ an archiving sync, finalize or promote a release.
 * **Vector Readiness:** Ingestion pipeline must be extensible to generate embeddings (via `rust-bert` or OpenAI API) and store them for future RAG (Chat with Docs) features.
 
 ---
+
+### 4.6. Data Maintenance
+
+* Administrators can list embedding-cache namespaces with counts and estimated
+  sizes, and confirm deletion of unused namespaces. Every namespace produced by
+  the running configuration is protected on the server.
+* A read-only consistency report compares MongoDB ownership and live content
+  with paginated S3 listings, Meilisearch and Qdrant. It provides counts and at
+  most 20 examples per category, and identifies disabled or unavailable stores.
+* Historical revisions are retained per slug: keep the newest 10 by default,
+  with `LKN__STORAGE__REVISION_KEEP_LAST=0` meaning unlimited. Missing configuration
+  uses the default. Pruning deletes Mongo metadata before S3, preserves objects
+  shared by surviving revisions, and never fails ingestion. A revision is recorded
+  and retention runs only after its outgoing body is successfully archived to S3;
+  archive failures are logged while ingestion continues. Administrators can
+  preview the count and confirm a sweep of existing history. Revision numbering
+  remains monotonic because the latest revision is always retained.
 
 ## 5. Data Models (MongoDB Draft)
 
@@ -245,21 +262,6 @@ instead of indexing it, and both reindexes do the same.
 
 Default levels seeded on first startup: `public` (system), `internal`,
 `developer`, `architect`.
-
-### Collection: `user_permissions`
-
-```json
-{
-  "_id": "ObjectId(...)",
-  "id": "uuid-v4",
-  "user_id": "references users.id",
-  "access_level_name": "references access_levels.name",
-  "can_read": true,
-  "can_write": false,
-  "can_read_draft": false,
-  "can_write_draft": false
-}
-```
 
 ### Collection: `refresh_tokens`
 

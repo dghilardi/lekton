@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Vertex AI embedding calls retry rate limits and server errors with backoff, like the OpenAI-compatible client; a chat question that still hits the rate limit gets a "try again" message instead of an internal error.
+- Chat citations followed by a colon (`[3]:`) now count: their sources are listed and the marker links to them.
+
 ## [0.43.1] 2026-11-17
 
 ### Fixed

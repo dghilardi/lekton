@@ -259,10 +259,11 @@ fn citation_markers(text: &str) -> Vec<(std::ops::Range<usize>, Vec<u32>)> {
                     && inner
                         .bytes()
                         .all(|b| b.is_ascii_digit() || b",; ".contains(&b));
-                // `[1]: url` is a reference definition, `[1](url)` a link.
+                // `[1](url)` is a link. A real `[1]: url` definition is
+                // already excluded above, so a `[1]:` in prose is a citation.
                 let follows = bytes.get(end).copied();
                 match numbers {
-                    Some(numbers) if well_formed && !matches!(follows, Some(b'(' | b':')) => {
+                    Some(numbers) if well_formed && follows != Some(b'(') => {
                         markers.push((i..end, numbers));
                     }
                     _ => {}
@@ -659,6 +660,14 @@ mod tests {
             "{linked}"
         );
         assert!(linked.contains("[\\[4\\]](</s4>)"), "{linked}");
+    }
+
+    #[test]
+    fn citations_before_a_colon_still_count() {
+        let answer = "Use the helper [4][5]:\n\n```bash\n./sync.sh\n```\n\nRun the script [3]:";
+        assert_eq!(parse_citations(answer, 5), vec![4, 5, 3]);
+        let linked = link_citations(answer, |n| Some(format!("/s{n}")));
+        assert!(linked.contains("[\\[5\\]](</s5>):"), "{linked}");
     }
 
     #[test]

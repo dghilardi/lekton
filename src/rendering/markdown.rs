@@ -38,8 +38,7 @@ pub fn render_markdown(raw: &str) -> String {
 
 /// The `id` a page gets for a Markdown heading line (`## Title {#id}`): its
 /// explicit id attribute, or the slug [`render_markdown`] derives from the
-/// rendered text. H1 headings carry no id on the page; they get the same slug
-/// so section anchors stay distinct.
+/// rendered text.
 pub fn heading_id(heading_line: &str) -> String {
     let html = add_heading_ids_simple(&render_events(Parser::new_ext(
         heading_line,
@@ -244,10 +243,11 @@ pub(crate) fn escape_html(s: &str) -> String {
 
 /// Simple post-processing to add IDs to heading tags.
 fn add_heading_ids_simple(html: &str) -> String {
-    // For h2-h6 tags, add id attribute based on text content
+    // Add an id attribute based on text content. H1 included: some sources use
+    // `#` for their sections, and chat citations link to those anchors.
     let mut result = html.to_string();
 
-    for level in 2..=6 {
+    for level in 1..=6 {
         let pattern = format!("<h{}>", level);
         let closing = format!("</h{}>", level);
 
@@ -518,6 +518,7 @@ mod tests {
             "## Storage Layer",
             "### API (v2)",
             "## Use `cargo fmt` & **clippy**",
+            "# Branches per release",
         ] {
             let id = heading_id(line);
             assert!(
@@ -621,7 +622,7 @@ mod tests {
     #[test]
     fn test_heading() {
         let result = render_markdown("# Title");
-        assert_eq!(result.trim(), "<h1>Title</h1>");
+        assert_eq!(result.trim(), "<h1 id=\"title\">Title</h1>");
     }
 
     #[test]
@@ -840,8 +841,7 @@ cargo install lekton
 - Dynamic
 "#;
         let result = render_markdown(input);
-        assert!(result.contains("<h1>Getting Started</h1>"));
-        // h2 and above now have IDs
+        assert!(result.contains("<h1 id=\"getting-started\">Getting Started</h1>"));
         assert!(result.contains("<h2 id=\"installation\">Installation</h2>"));
         assert!(result.contains("<strong>Lekton</strong>"));
         assert!(result.contains("<li>Fast</li>"));

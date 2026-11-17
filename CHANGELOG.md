@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Chat citations followed by a colon (`[3]:`) now count: their sources are listed and the marker links to them.
+
 ## [0.43.1] 2026-11-17
 
 ### Fixed

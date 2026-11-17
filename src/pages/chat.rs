@@ -1553,7 +1553,21 @@ pub async fn fetch_chat_stream(
     .await?;
 
     if !resp.ok() {
-        return Err(format!("Chat request failed: {}", resp.status()));
+        // The API explains a refusal (rate limit, spending cap) in `error`.
+        let status = resp.status();
+        let reason = match resp.text() {
+            Ok(text) => JsFuture::from(text)
+                .await
+                .ok()
+                .and_then(|body| body.as_string())
+                .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
+                .and_then(|body| body["error"].as_str().map(str::to_string)),
+            Err(_) => None,
+        };
+        return Err(match reason {
+            Some(reason) if status == 429 => reason,
+            _ => format!("Chat request failed: {status}"),
+        });
     }
 
     // Read the SSE stream

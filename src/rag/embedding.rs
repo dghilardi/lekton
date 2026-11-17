@@ -11,9 +11,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::RagConfig;
 use crate::error::AppError;
-use crate::rag::client::{build_embedding_oai_client, format_llm_error};
+use crate::rag::client::{build_embedding_oai_client, embedding_backoff, format_llm_error};
 use crate::usage;
 use crate::usage::UsageKey;
+use backoff::backoff::Backoff;
 
 const DEFAULT_VERTEX_LOCATION: &str = "us-central1";
 const GCP_SCOPE_CLOUD_PLATFORM: &str = "https://www.googleapis.com/auth/cloud-platform";
@@ -180,28 +181,40 @@ impl EmbeddingService for VertexAIEmbedding {
 
         for batch in texts.chunks(batch_size) {
             let request = vertex_embedding_request(batch, self.dimensions);
-            let response = self
-                .client
-                .post(&self.endpoint_url)
-                .bearer_auth(token.as_str())
-                .json(&request)
-                .send()
-                .await
-                .map_err(|e| {
-                    AppError::Internal(format!(
-                        "Vertex AI embedding request failed for project '{}' in '{}': {e}",
-                        self.project_id, self.location
-                    ))
-                })?;
+            // Rate limits and server errors are retried like the
+            // OpenAI-compatible client does (see `embedding_backoff`).
+            let mut backoff = embedding_backoff();
+            let response = loop {
+                let response = self
+                    .client
+                    .post(&self.endpoint_url)
+                    .bearer_auth(token.as_str())
+                    .json(&request)
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        AppError::Internal(format!(
+                            "Vertex AI embedding request failed for project '{}' in '{}': {e}",
+                            self.project_id, self.location
+                        ))
+                    })?;
 
-            let status = response.status();
-            if !status.is_success() {
+                let status = response.status();
+                if status.is_success() {
+                    break response;
+                }
+                let retryable =
+                    status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error();
+                if retryable {
+                    if let Some(wait) = backoff.next_backoff() {
+                        tracing::debug!(%status, ?wait, "Vertex AI embedding: retrying");
+                        tokio::time::sleep(wait).await;
+                        continue;
+                    }
+                }
                 let body = response.text().await.unwrap_or_default();
-                return Err(AppError::Internal(format!(
-                    "Vertex AI embedding request failed for model '{}' with {status}: {body}",
-                    self.model
-                )));
-            }
+                return Err(vertex_embedding_error(&self.model, status, &body));
+            };
 
             let response: VertexEmbeddingResponse = response.json().await.map_err(|e| {
                 AppError::Internal(format!("Vertex AI embedding response parse error: {e}"))
@@ -310,6 +323,21 @@ impl VertexEmbeddingResponse {
             })
             .collect()
     }
+}
+
+/// The error for a failed Vertex AI embedding call. A rate limit that outlasted
+/// the retries is reported as one, so the caller is told to try again later
+/// instead of seeing a server fault.
+fn vertex_embedding_error(model: &str, status: reqwest::StatusCode, body: &str) -> AppError {
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        tracing::warn!("Vertex AI embedding rate limit for model '{model}': {body}");
+        return AppError::TooManyRequests(
+            "The AI provider is rate limiting requests. Please try again in a moment.".into(),
+        );
+    }
+    AppError::Internal(format!(
+        "Vertex AI embedding request failed for model '{model}' with {status}: {body}"
+    ))
 }
 
 fn vertex_embedding_request(texts: &[String], dimensions: u32) -> VertexEmbeddingRequest {
@@ -504,6 +532,88 @@ mod tests {
                 }
             })
         );
+    }
+
+    struct StaticToken;
+
+    #[async_trait]
+    impl TokenProvider for StaticToken {
+        async fn token(&self, _: &[&str]) -> Result<Arc<gcp_auth::Token>, gcp_auth::Error> {
+            Ok(Arc::new(
+                serde_json::from_value(
+                    serde_json::json!({ "access_token": "t", "expires_in": 3600 }),
+                )
+                .unwrap(),
+            ))
+        }
+        async fn project_id(&self) -> Result<Arc<str>, gcp_auth::Error> {
+            Ok("test-project".into())
+        }
+    }
+
+    /// A Vertex endpoint that rate-limits the first `throttled` calls.
+    async fn vertex_embedding_with_throttle(
+        throttled: usize,
+    ) -> (VertexAIEmbedding, Arc<std::sync::atomic::AtomicUsize>) {
+        use axum::{http::StatusCode, routing::post, Json, Router};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let app = Router::new().route(
+            "/predict",
+            post(move || {
+                let call = counter.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if call < throttled {
+                        (StatusCode::TOO_MANY_REQUESTS, Json(serde_json::json!({})))
+                    } else {
+                        (
+                            StatusCode::OK,
+                            Json(serde_json::json!({
+                                "predictions": [{ "embeddings": { "values": [1.0, 2.0] } }]
+                            })),
+                        )
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint_url = format!("http://{}/predict", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let service = VertexAIEmbedding {
+            auth_manager: Arc::new(StaticToken),
+            client: reqwest::Client::new(),
+            project_id: "test-project".into(),
+            location: "us-central1".into(),
+            model: "gemini-embedding-001".into(),
+            dimensions: 2,
+            endpoint_url,
+        };
+        (service, calls)
+    }
+
+    #[tokio::test]
+    async fn vertex_embedding_retries_a_rate_limit() {
+        let (service, calls) = vertex_embedding_with_throttle(2).await;
+        let vectors = service
+            .embed(&UsageKey::System, &["hello".to_string()])
+            .await
+            .expect("the call should succeed after the rate limit clears");
+        assert_eq!(vectors, vec![vec![1.0, 2.0]]);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn vertex_rate_limit_is_reported_as_too_many_requests() {
+        assert!(matches!(
+            vertex_embedding_error("m", reqwest::StatusCode::TOO_MANY_REQUESTS, "quota"),
+            AppError::TooManyRequests(_)
+        ));
+        assert!(matches!(
+            vertex_embedding_error("m", reqwest::StatusCode::BAD_REQUEST, "bad"),
+            AppError::Internal(_)
+        ));
     }
 
     #[test]

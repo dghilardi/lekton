@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.44.0] 2026-11-17
+
 ### Changed
 
 - Chat answers draw on more context by default: `rag.context_chunk_limit` 5 → 10 and the context prompt budget 12,000 → 20,000 characters, so questions spanning several documents see more of them. Deployments that set the limit explicitly keep their value.

@@ -751,7 +751,7 @@ pub fn default_retrieval_candidate_limit() -> usize {
     50
 }
 pub fn default_context_chunk_limit() -> usize {
-    5
+    10
 }
 
 fn default_attachment_page_text_threshold() -> usize {

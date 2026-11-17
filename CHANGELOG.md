@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Chat answers draw on more context by default: `rag.context_chunk_limit` 5 → 10 and the context prompt budget 12,000 → 20,000 characters, so questions spanning several documents see more of them. Deployments that set the limit explicitly keep their value.
+
 ### Fixed
 
 - Vertex AI embedding calls retry rate limits and server errors with backoff, like the OpenAI-compatible client; a chat question that still hits the rate limit gets a "try again" message instead of an internal error.

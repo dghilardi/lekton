@@ -234,7 +234,8 @@ impl Reranker for RecordingReranker {
     }
 }
 
-fn config() -> RagConfig {
+/// The shipped defaults, with placeholder LLM endpoints.
+fn default_config() -> RagConfig {
     let mut app: AppConfig = config::Config::builder()
         .add_source(config::File::from_str(
             include_str!("../../config/default.toml"),
@@ -248,6 +249,14 @@ fn config() -> RagConfig {
     app.rag.llm.model = "unused-chat".into();
     app.rag
 }
+
+/// The scenarios below are sized for a five-chunk context.
+fn config() -> RagConfig {
+    let mut config = default_config();
+    config.context_chunk_limit = 5;
+    config
+}
+
 fn user() -> UserContext {
     let mut user = UserContext::for_user(
         AuthenticatedUser {
@@ -541,11 +550,15 @@ fn merged_pool_is_unique_bounded_and_preserves_subquery_top_hits_after_hybrid_fu
 
 #[test]
 fn validates_budget_defaults_boundaries_and_legacy_configuration() {
-    let mut config = config();
+    let defaults = default_config();
     assert_eq!(
-        (config.retrieval_candidate_limit, config.context_chunk_limit),
-        (50, 5)
+        (
+            defaults.retrieval_candidate_limit,
+            defaults.context_chunk_limit
+        ),
+        (50, 10)
     );
+    let mut config = config();
     for (candidates, context, valid) in [
         (0, 5, false),
         (101, 5, false),
@@ -576,7 +589,7 @@ fn validates_budget_defaults_boundaries_and_legacy_configuration() {
             app.rag.retrieval_candidate_limit,
             app.rag.context_chunk_limit
         ),
-        (50, 5)
+        (50, 10)
     );
 }
 

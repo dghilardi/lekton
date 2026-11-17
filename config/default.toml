@@ -204,7 +204,7 @@ hybrid_search_enabled = false
 # Unique merged candidates before reranking; final context is selected afterward.
 # 1 <= context_chunk_limit <= retrieval_candidate_limit <= 100.
 retrieval_candidate_limit = 50
-context_chunk_limit = 5
+context_chunk_limit = 10
 
 # Cross-encoder reranker endpoint (Jina/Infinity/Cohere-compatible /rerank API).
 # Leave both URL and Google project empty to disable reranking.

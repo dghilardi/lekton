@@ -292,7 +292,7 @@ cargo run --bin rag-bench --features ssr --no-default-features -- \
 ### Candidate and final-context budgets
 
 `rag.retrieval_candidate_limit` (default 50, maximum 100) controls the unique
-merged pool before reranking. `rag.context_chunk_limit` (default 5, positive and
+merged pool before reranking. `rag.context_chunk_limit` (default 10, positive and
 no greater than the candidate budget) controls the final context and error
 fallback. Both settings also work in `rag-bench` TOML. `pre_rerank` contains the
 candidate pool; `post_rerank` contains final context. For comparable pre/post

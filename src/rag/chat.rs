@@ -41,7 +41,8 @@ const MAX_HISTORY_MESSAGES: usize = 20;
 const MAX_HISTORY_PROMPT_CHARS: usize = 8_000;
 /// Upper bound on retrieved-document characters forwarded to the LLM prompt.
 /// Prevents parent expansion and large chunks from blowing up prompt size.
-const MAX_CONTEXT_PROMPT_CHARS: usize = 12_000;
+/// Sized for the default 10 chunks of ~256 tokens with their headers.
+const MAX_CONTEXT_PROMPT_CHARS: usize = 20_000;
 /// Small hybrid overfetch when no reranker is active. Reranking uses its
 /// independent configured candidate limit instead.
 const CANDIDATE_MULTIPLIER: usize = 3;

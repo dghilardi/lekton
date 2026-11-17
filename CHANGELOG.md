@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.43.1] 2026-11-17
+
 ### Fixed
 
 - Top-level (`#`) headings in documents now get an id, so chat source links to sections under them land on the section instead of the top of the page.

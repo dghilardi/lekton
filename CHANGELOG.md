@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.44.1] 2026-11-25
+
 ### Changed
 
 - Dependency audit accepts the new "unmaintained" advisories for `chrono` and `chrono-tz` (no vulnerability; required by the MongoDB driver, OIDC and templating crates) until upstream migrates.

@@ -3826,7 +3826,7 @@ dependencies = [
 
 [[package]]
 name = "lekton"
-version = "0.44.0"
+version = "0.44.1"
 dependencies = [
  "ammonia",
  "anyhow",
@@ -3906,7 +3906,7 @@ dependencies = [
 
 [[package]]
 name = "lekton-sync"
-version = "0.44.0"
+version = "0.44.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

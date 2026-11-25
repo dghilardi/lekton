@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Windows documentation syncs keep source paths relative to the repository so links between Markdown files resolve correctly.
 - `lekton://docs/{slug}[#anchor]` links in documents are navigable in the web UI: they become `/docs/{slug}[#anchor]` during sanitization, which used to drop the unknown scheme and leave `<a>` tags without `href`. They now resolve in documents without a source too; MCP resources keep the `lekton://` URIs unchanged.
 
 ### Security

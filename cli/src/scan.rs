@@ -655,6 +655,31 @@ mod tests {
     }
 
     #[test]
+    fn scan_canonicalized_git_subdirectory_keeps_relative_source_paths() {
+        let repo = tempfile::tempdir().unwrap();
+        assert!(std::process::Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(repo.path())
+            .status()
+            .unwrap()
+            .success());
+        let docs_dir = repo.path().join("docs");
+        std::fs::create_dir(&docs_dir).unwrap();
+        std::fs::write(
+            docs_dir.join("guide.md"),
+            "---\ntitle: Guide\nlekton-import: true\n---\n# Guide\n",
+        )
+        .unwrap();
+
+        // Exercise the same canonicalize -> Git root -> scan path as main,
+        // including the different path spellings returned by Windows and Git.
+        let root = docs_dir.canonicalize().unwrap();
+        let path_root = crate::http::find_git_root(&root).unwrap();
+        let docs = scan_documents(&root, &path_root, &LektonConfig::default(), false).unwrap();
+        assert_eq!(docs.values().next().unwrap().source_path, "docs/guide.md");
+    }
+
+    #[test]
     fn scan_prompts_reads_yaml_prompt_files() {
         let dir = tempfile::tempdir().unwrap();
         let prompts_dir = dir.path().join("prompts");

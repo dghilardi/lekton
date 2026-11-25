@@ -69,7 +69,9 @@ pub fn find_git_root(dir: &Path) -> Option<std::path::PathBuf> {
     if path.is_empty() {
         return None;
     }
-    Some(std::path::PathBuf::from(path))
+    // Match the canonicalized scan root, including Windows' verbatim prefix.
+    // Otherwise strip_prefix fails for `\\?\C:\repo` versus `C:/repo`.
+    std::path::PathBuf::from(path).canonicalize().ok()
 }
 
 /// Try to detect a git remote URL from `root`.
@@ -178,10 +180,7 @@ mod tests {
         std::fs::create_dir(&sub).unwrap();
 
         let found = find_git_root(&sub).unwrap();
-        assert_eq!(
-            found.canonicalize().unwrap(),
-            repo.path().canonicalize().unwrap()
-        );
+        assert_eq!(found, repo.path().canonicalize().unwrap());
     }
 
     #[test]

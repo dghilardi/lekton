@@ -1,4 +1,6 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Target rendering context for link transformation.
 #[derive(Copy, Clone)]
@@ -104,47 +106,48 @@ pub fn build_siblings_map(docs: &[crate::db::models::Document]) -> HashMap<Strin
         .collect()
 }
 
-/// Rewrite all link `href` attributes in a rendered HTML string.
+/// Render a document's Markdown to sanitized HTML for the Web UI, resolving
+/// every link `href` with [`transform_url`].
 ///
-/// This is a lightweight post-processor; it uses a simple state machine rather
-/// than a full HTML parser, which is sufficient because the HTML has already
-/// been produced by pulldown-cmark and sanitized by ammonia.
-pub fn rewrite_links_in_html(html: &str, ctx: &LinkContext<'_>, target: TransformTarget) -> String {
-    let mut result = String::with_capacity(html.len());
-    let mut rest = html;
+/// Targets are resolved inside the sanitizer, on attributes it has already
+/// parsed: Markdown links and raw HTML alike, and each exactly once (a resolved
+/// `/docs/{slug}` read again as a repo-root path could match a sibling's
+/// `source_path`). The sanitizer admits the `lekton` scheme only to hand it to
+/// the resolver; a `lekton://` target that does not resolve is dropped as
+/// before. Links to `/api/v1/assets/…` also get `external` in their `rel`, so
+/// the client router lets the browser download them.
+pub fn render_web_html(raw: &str, ctx: &LinkContext<'_>) -> String {
+    let source_path = ctx.source_path.map(str::to_owned);
+    let siblings = ctx.siblings.clone();
+    // The sanitizer visits an `<a>`'s attributes in order, ending with the
+    // `rel` it adds itself, so the `href` verdict is known by then.
+    let asset_link = AtomicBool::new(false);
 
-    while let Some(href_start) = find_href(rest) {
-        // Append everything before `href="`
-        result.push_str(&rest[..href_start]);
-        rest = &rest[href_start..];
-
-        // Layout: rest = "href=" + quote + url + quote + ...
-        //         idx:    0123    5       6         ?
-        let quote = rest.as_bytes()[5]; // ' or "
-        let content_start = 6; // URL starts here
-
-        if let Some(end) = rest[content_start..].find(quote as char) {
-            let url = &rest[content_start..content_start + end];
-            let transformed = transform_url(url, ctx, target);
-            let external_navigation = should_force_external_navigation(&transformed, target);
-
-            result.push_str(&format!(
-                "href={}{}{}",
-                quote as char, transformed, quote as char
-            ));
-            if external_navigation {
-                result.push_str(" rel=\"external\"");
-            }
-            rest = &rest[content_start + end + 1..]; // +1 skips closing quote
-        } else {
-            // Malformed attribute: copy as-is and continue past `href=`.
-            result.push_str("href=");
-            rest = &rest[5..];
-        }
-    }
-
-    result.push_str(rest);
-    result
+    crate::rendering::markdown::render_markdown_with_sanitizer(raw, move |sanitizer| {
+        sanitizer.add_url_schemes(&["lekton"]).attribute_filter(
+            move |element, attribute, value| {
+                let value: Cow<'_, str> = match (element, attribute) {
+                    ("a", "href") => {
+                        let ctx = LinkContext {
+                            source_path: source_path.as_deref(),
+                            siblings: &siblings,
+                        };
+                        let url = transform_url(value, &ctx, TransformTarget::Web);
+                        asset_link.store(is_api_asset_link(&url), Ordering::Relaxed);
+                        url.into()
+                    }
+                    ("a", "rel") if asset_link.swap(false, Ordering::Relaxed) => {
+                        format!("{value} external").into()
+                    }
+                    _ => value.into(),
+                };
+                // A target still in the `lekton` scheme did not resolve.
+                let unresolved = matches!(attribute, "href" | "src")
+                    && url::Url::parse(&value).is_ok_and(|url| url.scheme() == "lekton");
+                (!unresolved).then_some(value)
+            },
+        );
+    })
 }
 
 /// Rewrite inline markdown link and image URLs in a raw markdown string.
@@ -210,23 +213,6 @@ pub fn rewrite_links_in_markdown(
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/// Find the byte offset of the next `href="` or `href='` pattern in `s`.
-fn find_href(s: &str) -> Option<usize> {
-    // Look for `href=` followed by a quote character.
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i + 6 <= bytes.len() {
-        if bytes[i..i + 5] == *b"href=" {
-            let quote = bytes[i + 5];
-            if quote == b'"' || quote == b'\'' {
-                return Some(i);
-            }
-        }
-        i += 1;
-    }
-    None
-}
-
 /// Split a URL into `(path, anchor)` at the first `#`.
 fn split_anchor(url: &str) -> (&str, Option<&str>) {
     match url.find('#') {
@@ -248,10 +234,6 @@ fn normalize_path(path: &str) -> String {
         }
     }
     parts.join("/")
-}
-
-fn should_force_external_navigation(url: &str, target: TransformTarget) -> bool {
-    matches!(target, TransformTarget::Web) && is_api_asset_link(url)
 }
 
 fn is_api_asset_link(url: &str) -> bool {
@@ -441,7 +423,7 @@ mod tests {
     }
 
     #[test]
-    fn test_rewrite_links_in_html() {
+    fn test_render_web_html_resolves_relative_and_external_links() {
         let mut siblings = HashMap::new();
         siblings.insert(
             "docs/services/user.md".to_string(),
@@ -451,22 +433,172 @@ mod tests {
             source_path: Some("docs/services/device.md"),
             siblings: &siblings,
         };
-        let html = r#"<p>See <a href="./user">user service</a> and <a href="https://example.com">external</a>.</p>"#;
-        let result = rewrite_links_in_html(html, &ctx, TransformTarget::Web);
-        assert!(result.contains(r#"href="/docs/cloud/services/user""#));
-        assert!(!result.contains(r#"href="/docs/cloud/services/user" rel="external""#));
+        let result = render_web_html(
+            "See [user service](./user.md#api) and [external](https://example.com).",
+            &ctx,
+        );
+        assert!(result.contains(r#"href="/docs/cloud/services/user#api""#));
+        assert!(!result.contains(r#"href="/docs/cloud/services/user#api" rel="external""#));
         assert!(result.contains(r#"href="https://example.com""#));
     }
 
     #[test]
-    fn test_asset_links_force_external_navigation() {
+    fn test_render_web_html_resolves_lekton_uris_without_source() {
+        // Documents without a source_id have no siblings; `lekton://` URIs
+        // still resolve, with their anchor, as inline and reference links.
         let siblings = HashMap::new();
+        let ctx = LinkContext {
+            source_path: None,
+            siblings: &siblings,
+        };
+        let result = render_web_html(
+            "[Read on Lekton](lekton://docs/docs/guidelines/review)\n\n\
+             [Section](lekton://docs/cloud/design#naming) and [ref][g]\n\n\
+             [g]: lekton://docs/cloud/glossary",
+            &ctx,
+        );
+        assert!(result.contains(r#"href="/docs/docs/guidelines/review""#));
+        assert!(result.contains(r#"href="/docs/cloud/design#naming""#));
+        assert!(result.contains(r#"href="/docs/cloud/glossary""#));
+        assert!(!result.contains("lekton://"));
+    }
+
+    #[test]
+    fn test_render_web_html_resolves_lekton_uri_once() {
+        // `/docs/guide` must not be read again as the repo path of a sibling.
+        let mut siblings = HashMap::new();
+        siblings.insert("docs/guide.md".to_string(), "other/guide".to_string());
+        let ctx = LinkContext {
+            source_path: Some("docs/index.md"),
+            siblings: &siblings,
+        };
+        let result = render_web_html("[Guide](lekton://docs/guide)", &ctx);
+        assert!(result.contains(r#"href="/docs/guide""#));
+        assert!(!result.contains("/docs/other/guide"));
+    }
+
+    #[test]
+    fn test_render_web_html_keeps_sanitizing() {
+        let siblings = HashMap::new();
+        let ctx = LinkContext {
+            source_path: None,
+            siblings: &siblings,
+        };
+        let result = render_web_html(
+            "[x](javascript:alert(1)) <script>alert(1)</script> [y](lekton://other/z) \
+             <a href=\" LEKTON://docs/z\">z</a> ![i](lekton://assets/i.png)",
+            &ctx,
+        );
+        assert!(!result.contains("javascript:"));
+        assert!(!result.contains("<script"));
+        // Only `lekton://docs/` is resolvable; anything else is still dropped.
+        assert!(!result.to_lowercase().contains("lekton:"));
+    }
+
+    #[test]
+    fn test_asset_links_force_external_navigation() {
+        let mut siblings = HashMap::new();
+        siblings.insert(
+            "api/v1/assets/docs/arch.png.md".to_string(),
+            "notes/architecture".to_string(),
+        );
         let ctx = LinkContext {
             source_path: Some("docs/services/device.md"),
             siblings: &siblings,
         };
-        let html = r#"<p><a href="/api/v1/assets/docs/manual.pdf">manual</a></p>"#;
-        let result = rewrite_links_in_html(html, &ctx, TransformTarget::Web);
-        assert!(result.contains(r#"href="/api/v1/assets/docs/manual.pdf" rel="external""#));
+        let result = render_web_html(
+            "[manual](/api/v1/assets/docs/manual.pdf \"see href='/api/v1/assets/x.pdf'\") \
+             ![diagram](/api/v1/assets/docs/arch.png) [page](lekton://docs/a)",
+            &ctx,
+        );
+        // One `rel`, keeping the sanitizer's tokens; the title is untouched.
+        assert!(result.contains(
+            r#"<a href="/api/v1/assets/docs/manual.pdf" title="see href='/api/v1/assets/x.pdf'" rel="noopener noreferrer external">"#
+        ));
+        assert_eq!(result.matches("rel=").count(), 2);
+        // Images keep their target even when it looks like a sibling's path.
+        assert!(result.contains(r#"src="/api/v1/assets/docs/arch.png""#));
+        assert!(!result.contains("notes/architecture"));
+        assert!(result.contains(r#"<a href="/docs/a" rel="noopener noreferrer">"#));
+    }
+
+    #[test]
+    fn test_render_web_html_resolves_raw_html_and_autolinks() {
+        let mut siblings = HashMap::new();
+        siblings.insert(
+            "docs/services/user.md".to_string(),
+            "cloud/services/user".to_string(),
+        );
+        siblings.insert(
+            "docs/services/team@example.com.md".to_string(),
+            "cloud/services/team".to_string(),
+        );
+        let ctx = LinkContext {
+            source_path: Some("docs/services/device.md"),
+            siblings: &siblings,
+        };
+        let result = render_web_html(
+            "<a href=\"./user.md#api\">Users</a> <a href='lekton://docs/cloud/x'>X</a>\n\n\
+             <lekton://docs/cloud/guide#api> <team@example.com> [top](#intro)",
+            &ctx,
+        );
+        assert!(result.contains(r#"href="/docs/cloud/services/user#api""#));
+        assert!(result.contains(r#"href="/docs/cloud/x""#));
+        assert!(result.contains(r#"href="/docs/cloud/guide#api""#));
+        // An e-mail autolink is an address, not a repo path.
+        assert!(result.contains(r#"href="mailto:team@example.com""#));
+        assert!(!result.contains("/docs/cloud/services/team"));
+        assert!(result.contains(r##"href="#intro""##));
+    }
+
+    #[test]
+    fn test_render_web_html_reads_raw_html_attributes_as_parsed() {
+        let mut siblings = HashMap::new();
+        siblings.insert(
+            "docs/services/user.md".to_string(),
+            "cloud/services/user".to_string(),
+        );
+        let ctx = LinkContext {
+            source_path: Some("docs/services/device.md"),
+            siblings: &siblings,
+        };
+        let result = render_web_html(
+            "<a HREF = \"./user.md#api\">Users</a>\n\n\
+             <div>\n<a\nhref=\"./user.md\"\n>Block</a>\n</div>\n\n\
+             <a href=\"#intro\" title='Example: href=\"./user.md#api\"'>Intro</a>\n\n\
+             ```html\n<a href=\"./user.md\">code</a>\n```",
+            &ctx,
+        );
+        assert!(result.contains(
+            r#"<a href="/docs/cloud/services/user#api" rel="noopener noreferrer">Users</a>"#
+        ));
+        assert!(result.contains(
+            r#"<a href="/docs/cloud/services/user" rel="noopener noreferrer">Block</a>"#
+        ));
+        // Only URL attributes are resolved: the title keeps its text.
+        assert!(result.contains(r#"title="Example: href=&quot;./user.md#api&quot;""#));
+        // Code is text, not markup: only the two links above resolve.
+        assert_eq!(result.matches("/docs/cloud/services/user").count(), 2);
+        assert!(result.contains("./user.md"));
+    }
+
+    #[test]
+    fn test_asset_rel_is_scoped_to_its_own_link() {
+        let siblings = HashMap::new();
+        let ctx = LinkContext {
+            source_path: None,
+            siblings: &siblings,
+        };
+        let result = render_web_html(
+            "[manual](/api/v1/assets/a.pdf \"così \\\"<b>\\\" & più\") <a>bare</a> [next](https://example.com)",
+            &ctx,
+        );
+        assert!(result.contains(
+            r#"title="così &quot;&lt;b&gt;&quot; &amp; più" rel="noopener noreferrer external""#
+        ));
+        assert!(
+            result.contains(r#"<a href="https://example.com" rel="noopener noreferrer">next</a>"#)
+        );
+        assert!(result.contains(r#"<a rel="noopener noreferrer">bare</a>"#));
     }
 }

@@ -27,13 +27,27 @@ pub const TABLE_SCROLL_LABEL: &str = "Scrollable table";
 /// footnotes, strikethrough, task lists, and smart punctuation.
 /// Automatically adds IDs to h2-h6 headings for anchor navigation.
 pub fn render_markdown(raw: &str) -> String {
+    render_markdown_with_sanitizer(raw, |_| {})
+}
+
+/// [`render_markdown`] with the sanitizer adjusted by `customize`, for a page
+/// that rewrites attributes while sanitizing (document links, see
+/// [`crate::rendering::link_transform::render_web_html`]).
+pub fn render_markdown_with_sanitizer(
+    raw: &str,
+    customize: impl FnOnce(&mut Builder<'static>),
+) -> String {
     let html_output = render_events(Parser::new_ext(raw, MARKDOWN_OPTIONS));
 
     #[cfg(feature = "ssr")]
     let html_output = apply_syntax_highlighting(&html_output);
 
     // Post-process to add IDs to headings, then sanitize to strip any raw HTML from the source
-    sanitize_html(&add_heading_ids_simple(&html_output))
+    let mut sanitizer = sanitizer();
+    customize(&mut sanitizer);
+    sanitizer
+        .clean(&add_heading_ids_simple(&html_output))
+        .to_string()
 }
 
 /// The `id` a page gets for a Markdown heading line (`## Title {#id}`): its
@@ -200,7 +214,13 @@ fn render_events<'a>(parser: impl Iterator<Item = Event<'a>>) -> String {
 /// Also used to sanitize LLM-generated HTML (Learn mode lessons), so the same
 /// XSS allowlist governs every HTML surface in the app.
 pub fn sanitize_html(html: &str) -> String {
-    Builder::default()
+    sanitizer().clean(html).to_string()
+}
+
+/// The [`sanitize_html`] allowlist, before cleaning.
+fn sanitizer() -> Builder<'static> {
+    let mut builder = Builder::default();
+    builder
         .add_tag_attributes("pre", &["class", "data-cb-init"])
         .add_tag_attributes("code", &["class"])
         .add_tag_attributes("a", &["id", "name"])
@@ -219,9 +239,8 @@ pub fn sanitize_html(html: &str) -> String {
         .add_allowed_classes("div", &[TABLE_SCROLL_CLASS])
         .add_tag_attribute_values("div", "tabindex", &["0"])
         .add_tag_attribute_values("div", "role", &["region"])
-        .add_tag_attribute_values("div", "aria-label", &[TABLE_SCROLL_LABEL])
-        .clean(html)
-        .to_string()
+        .add_tag_attribute_values("div", "aria-label", &[TABLE_SCROLL_LABEL]);
+    builder
 }
 
 fn callout_meta(kind: BlockQuoteKind) -> (&'static str, &'static str) {
@@ -764,6 +783,14 @@ mod tests {
         // ammonia adds rel="noopener noreferrer" to external links
         assert!(result.contains("href=\"https://example.com\""));
         assert!(result.contains("Lekton"));
+    }
+
+    #[test]
+    fn test_lekton_uri_href_dropped_by_default() {
+        // The sanitizer only keeps web schemes; document pages resolve
+        // `lekton://` targets with their own sanitizer settings.
+        let result = render_markdown("[Doc](lekton://docs/a/b)");
+        assert!(!result.contains("href="));
     }
 
     #[test]

@@ -8,6 +8,10 @@ All notable changes to this project will be documented in this file.
 
 - Dependency audit accepts the new "unmaintained" advisories for `chrono` and `chrono-tz` (no vulnerability; required by the MongoDB driver, OIDC and templating crates) until upstream migrates.
 
+### Fixed
+
+- `lekton://docs/{slug}[#anchor]` links in documents are navigable in the web UI: they become `/docs/{slug}[#anchor]` during sanitization, which used to drop the unknown scheme and leave `<a>` tags without `href`. They now resolve in documents without a source too; MCP resources keep the `lekton://` URIs unchanged.
+
 ### Security
 
 - `url` 2.5.9 (RUSTSEC-2026-0592: stack overflow in `Url::origin()` on nested `blob:` URLs) and `cookie` 0.18.3 (RUSTSEC-2026-0594: private cookie nonces can repeat after `fork()`, which Lekton does not do).

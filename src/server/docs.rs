@@ -98,7 +98,7 @@ pub async fn get_doc_html(
     // - Upload documents get a specialized PDF layout, so `html` holds only the
     //   rendered summary (the PDF link is shown as a native download card) and
     //   there is no table of contents. The asset key drives that card.
-    // - Everything else renders the full markdown body, with sync link-rewriting.
+    // - Everything else renders the full markdown body, with its links resolved.
     let (html, headings, pdf_asset_key) = if is_upload_doc {
         let summary_html = doc
             .summary
@@ -110,28 +110,26 @@ pub async fn get_doc_html(
             .next();
         (summary_html, Vec::new(), pdf_asset_key)
     } else {
-        let base_html = render_markdown(&raw);
-        let html = if let Some(ref source_id) = doc.source_id {
-            use crate::rendering::link_transform::{
-                build_siblings_map, rewrite_links_in_html, LinkContext, TransformTarget,
-            };
-            // Scoped to this document's own release: a relative link inside 1.0.0
-            // must resolve against 1.0.0's tree, not whichever release happens to
-            // share the source path.
-            let siblings_docs = state
+        use crate::rendering::link_transform::{build_siblings_map, render_web_html, LinkContext};
+        // Relative links resolve against the documents of the same source,
+        // scoped to this document's own release: a relative link inside 1.0.0
+        // must resolve against 1.0.0's tree, not whichever release happens to
+        // share the source path. `lekton://docs/` URIs need no siblings, so
+        // they resolve in every document.
+        let siblings_docs = match doc.source_id.as_deref() {
+            Some(source_id) => state
                 .document_repo
                 .find_all_by_source_id_and_release(source_id, doc.release.as_deref())
                 .await
-                .map_err(|e| ServerFnError::new(e.to_string()))?;
-            let siblings = build_siblings_map(&siblings_docs);
-            let ctx = LinkContext {
-                source_path: doc.source_path.as_deref(),
-                siblings: &siblings,
-            };
-            rewrite_links_in_html(&base_html, &ctx, TransformTarget::Web)
-        } else {
-            base_html
+                .map_err(|e| ServerFnError::new(e.to_string()))?,
+            None => Vec::new(),
         };
+        let siblings = build_siblings_map(&siblings_docs);
+        let ctx = LinkContext {
+            source_path: doc.source_path.as_deref(),
+            siblings: &siblings,
+        };
+        let html = render_web_html(&raw, &ctx);
         (html, extract_headings(&raw), None)
     };
 

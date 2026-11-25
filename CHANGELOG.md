@@ -8,6 +8,10 @@ All notable changes to this project will be documented in this file.
 
 - Dependency audit accepts the new "unmaintained" advisories for `chrono` and `chrono-tz` (no vulnerability; required by the MongoDB driver, OIDC and templating crates) until upstream migrates.
 
+### Security
+
+- `url` 2.5.9 (RUSTSEC-2026-0592: stack overflow in `Url::origin()` on nested `blob:` URLs) and `cookie` 0.18.3 (RUSTSEC-2026-0594: private cookie nonces can repeat after `fork()`, which Lekton does not do).
+
 ## [0.44.0] 2026-11-17
 
 ### Changed

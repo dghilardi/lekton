@@ -15,7 +15,7 @@ pub enum TransformTarget {
 pub struct LinkContext<'a> {
     /// `source_path` of the document being rendered (e.g. `"docs/services/device.md"`).
     pub source_path: Option<&'a str>,
-    /// Map from `source_path` → `slug` for every document sharing the same
+    /// Map from normalized `source_path` → `slug` for every document sharing the same
     /// `source_id`.  Built once per render call by fetching all siblings.
     pub siblings: &'a HashMap<String, String>,
 }
@@ -96,12 +96,15 @@ pub fn transform_url(url: &str, ctx: &LinkContext<'_>, target: TransformTarget) 
 ///
 /// Documents without a `source_path` are excluded (they cannot participate in
 /// relative link resolution).
+/// Normalize keys just like resolved link paths, including absolute verbatim
+/// Windows paths stored by older clients, whose leading `//` would otherwise
+/// disappear only from the lookup candidate.
 pub fn build_siblings_map(docs: &[crate::db::models::Document]) -> HashMap<String, String> {
     docs.iter()
         .filter_map(|d| {
             d.source_path
                 .as_deref()
-                .map(|sp| (sp.to_string(), d.slug.clone()))
+                .map(|sp| (normalize_path(sp), d.slug.clone()))
         })
         .collect()
 }
@@ -312,6 +315,49 @@ mod tests {
             ),
             "/docs/cloud/user#section"
         );
+    }
+
+    #[test]
+    fn legacy_windows_source_paths_resolve_in_web_and_mcp() {
+        // Older Windows clients stored absolute verbatim paths. Exercise the
+        // production map builder as well as the HTML and MCP render paths.
+        for root in ["//?/C:/workspace/repo", "//?/F:/Jenkins/workspace/repo"] {
+            let source_path = format!("{root}/doc/README.md");
+            let target_path = format!("{root}/doc/guide.md");
+            let document = bson::from_document(bson::doc! {
+                "slug": "project/guide",
+                "title": "Guide",
+                "s3_key": "docs/guide.md",
+                "access_level": "public",
+                "service_owner": "docs",
+                "last_updated": bson::DateTime::now(),
+                "tags": [],
+                "links_out": [],
+                "backlinks": [],
+                "source_path": target_path,
+            })
+            .unwrap();
+            let siblings = build_siblings_map(&[document]);
+            let ctx = LinkContext {
+                source_path: Some(&source_path),
+                siblings: &siblings,
+            };
+
+            for link in ["guide.md#setup", "./guide.md#setup", "../doc/guide#setup"] {
+                let markdown = format!("[Guide]({link})");
+                assert!(
+                    render_web_html(&markdown, &ctx).contains("href=\"/docs/project/guide#setup\"")
+                );
+                assert_eq!(
+                    rewrite_links_in_markdown(&markdown, &ctx, TransformTarget::Mcp),
+                    "[Guide](lekton://docs/project/guide#setup)"
+                );
+            }
+            assert_eq!(
+                transform_url("missing.md", &ctx, TransformTarget::Web),
+                "missing.md"
+            );
+        }
     }
 
     #[test]

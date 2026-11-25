@@ -19,6 +19,18 @@ env:
   CARGO_PROFILE_TEST_DEBUG: 0
 
 jobs:
+  cli-windows-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Test Windows source paths and CLI behavior
+        run: cargo test -p lekton-sync --locked
+
   integration-tests:
     runs-on: ubuntu-latest
 
@@ -64,6 +76,9 @@ jobs:
           tar -xzf "$RUNNER_TEMP/pdfium.tgz" -C "$RUNNER_TEMP/pdfium" lib/libpdfium.so
           echo "LD_LIBRARY_PATH=$RUNNER_TEMP/pdfium/lib" >> "$GITHUB_ENV"
           echo "LEKTON_REQUIRE_PDFIUM=1" >> "$GITHUB_ENV"
+
+      - name: Test document link rendering
+        run: cargo test --features ssr --lib rendering::link_transform --locked
 
       - name: Run integration tests
         run: cargo test --features ssr --test '*' -- --test-threads=1

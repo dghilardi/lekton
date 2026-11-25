@@ -67,6 +67,10 @@ lekton-sync [OPTIONS] [ROOT]
 
 `ROOT` need not be the git repository root — e.g. `lekton-sync docs/` scans only that subdirectory. The "view source" link on synced documents is still built from the path relative to the repository root (detected via `git`), so it resolves correctly regardless of `ROOT` or the CLI's working directory.
 
+On Windows, the scan root and Git root are canonicalized consistently so source paths stay repository-relative. If an older CLI stored absolute Windows paths, sync each affected release again with the updated CLI to refresh its source paths; the sync detects path changes even when the document content is unchanged.
+
+The server also resolves relative links between previously imported documents that share the same absolute Windows workspace path, without rewriting stored data. A missing or incorrectly named target file still needs its Markdown link corrected.
+
 ### Environment variables
 
 | Variable | Required | Description |

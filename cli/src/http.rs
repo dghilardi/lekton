@@ -53,10 +53,17 @@ pub fn is_interactive() -> bool {
 
 /// Find the top-level directory of the git repository containing `dir`.
 ///
-/// Returns `None` if `dir` is not inside a git working tree (or `git` is not
-/// on `PATH`), so callers can fall back to treating `dir` itself as the path
-/// root.
+/// Asks `git` first, then falls back to the nearest ancestor holding a `.git`
+/// entry (a directory, or a file in worktrees and submodules), so CI images
+/// without `git`, or where `git` refuses a workspace owned by another user,
+/// still resolve the repository. Returns `None` if `dir` is not inside a
+/// working tree, so callers can fall back to treating `dir` itself as the
+/// path root.
 pub fn find_git_root(dir: &Path) -> Option<std::path::PathBuf> {
+    git_toplevel(dir).or_else(|| dot_git_ancestor(dir))
+}
+
+fn git_toplevel(dir: &Path) -> Option<std::path::PathBuf> {
     let out = std::process::Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .current_dir(dir)
@@ -72,6 +79,13 @@ pub fn find_git_root(dir: &Path) -> Option<std::path::PathBuf> {
     // Match the canonicalized scan root, including Windows' verbatim prefix.
     // Otherwise strip_prefix fails for `\\?\C:\repo` versus `C:/repo`.
     std::path::PathBuf::from(path).canonicalize().ok()
+}
+
+fn dot_git_ancestor(dir: &Path) -> Option<std::path::PathBuf> {
+    let dir = dir.canonicalize().ok()?;
+    dir.ancestors()
+        .find(|ancestor| ancestor.join(".git").exists())
+        .map(Path::to_path_buf)
 }
 
 /// Try to detect a git remote URL from `root`.
@@ -181,6 +195,22 @@ mod tests {
 
         let found = find_git_root(&sub).unwrap();
         assert_eq!(found, repo.path().canonicalize().unwrap());
+    }
+
+    #[test]
+    fn find_git_root_falls_back_to_dot_git_without_git() {
+        // An empty `.git` is not a repository to `git`, as when the binary is
+        // missing or refuses the workspace: the marker alone must still count.
+        let repo = tempfile::tempdir().unwrap();
+        std::fs::create_dir(repo.path().join(".git")).unwrap();
+        let sub = repo.path().join("docs").join("guides");
+        std::fs::create_dir_all(&sub).unwrap();
+
+        assert!(git_toplevel(&sub).is_none());
+        assert_eq!(
+            find_git_root(&sub).unwrap(),
+            repo.path().canonicalize().unwrap()
+        );
     }
 
     #[test]

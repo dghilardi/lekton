@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - Windows documentation syncs keep source paths relative to the repository, and relative links in documents already imported with absolute Windows paths resolve without a database migration.
+- `lekton-sync` finds the repository root without the `git` binary, so syncs from the CI image (which has no `git`) store source paths relative to the repository instead of the scanned directory, and "view source" links keep directories such as `docs/`. Re-sync to update existing documents. When no repository is found it now warns instead of silently using the scanned directory.
 - `lekton://docs/{slug}[#anchor]` links in documents are navigable in the web UI: they become `/docs/{slug}[#anchor]` during sanitization, which used to drop the unknown scheme and leave `<a>` tags without `href`. They now resolve in documents without a source too; MCP resources keep the `lekton://` URIs unchanged.
 
 ### Security

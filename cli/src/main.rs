@@ -155,7 +155,14 @@ async fn main() -> Result<()> {
     // `root` is merely where we're told to scan for markdown files, and may
     // be a subdirectory of the repo (or the CLI may simply be invoked from
     // one). Falls back to `root` when it's not inside a git working tree.
-    let path_root = find_git_root(&root).unwrap_or_else(|| root.clone());
+    let path_root = find_git_root(&root).unwrap_or_else(|| {
+        eprintln!(
+            "Warning: {} is not inside a git working tree; source paths will be \
+             relative to it, so \"view source\" links may miss the directories above it.",
+            root.display()
+        );
+        root.clone()
+    });
     if args.verbose && path_root != root {
         eprintln!(
             "Resolving source paths relative to git root {}",

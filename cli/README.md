@@ -65,7 +65,7 @@ lekton-sync [OPTIONS] [ROOT]
 | `--config <PATH>` | `<ROOT>/.lekton.yml` | Path to config file |
 | `-v, --verbose` | — | Verbose output |
 
-`ROOT` need not be the git repository root — e.g. `lekton-sync docs/` scans only that subdirectory. The "view source" link on synced documents is still built from the path relative to the repository root (detected via `git`), so it resolves correctly regardless of `ROOT` or the CLI's working directory.
+`ROOT` need not be the git repository root — e.g. `lekton-sync docs/` scans only that subdirectory. The "view source" link on synced documents is still built from the path relative to the repository root (detected via `git`, or by the nearest `.git` above `ROOT` when `git` is unavailable, as in the CI image), so it resolves correctly regardless of `ROOT` or the CLI's working directory.
 
 On Windows, the scan root and Git root are canonicalized consistently so source paths stay repository-relative. If an older CLI stored absolute Windows paths, sync each affected release again with the updated CLI to refresh its source paths; the sync detects path changes even when the document content is unchanged.
 

@@ -77,5 +77,8 @@ jobs:
           echo "LD_LIBRARY_PATH=$RUNNER_TEMP/pdfium/lib" >> "$GITHUB_ENV"
           echo "LEKTON_REQUIRE_PDFIUM=1" >> "$GITHUB_ENV"
 
+      - name: Test document link rendering
+        run: cargo test --features ssr --lib rendering::link_transform --locked
+
       - name: Run integration tests
         run: cargo test --features ssr --test '*' -- --test-threads=1
